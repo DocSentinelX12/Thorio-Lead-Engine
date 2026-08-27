@@ -15,25 +15,26 @@ class AirtableSyncError(Exception):
     """Raised when Airtable synchronization fails."""
 
 def _require_config() -> None:
-missing = []
+    missing = []
 
-if not BASE_ID:  
-    missing.append("AIRTABLE_BASE_ID")  
+    if not BASE_ID:
+        missing.append("AIRTABLE_BASE_ID")
 
-if not API_KEY:  
-    missing.append("AIRTABLE_API_KEY")  
+    if not API_KEY:
+        missing.append("AIRTABLE_API_KEY")
 
-if missing:  
-    raise AirtableSyncError(  
-        f"Missing Airtable configuration: {', '.join(missing)}"  
-    )
+    if missing:
+        raise AirtableSyncError(
+            f"Missing Airtable configuration: {', '.join(missing)}"
+        )
+
 
 def _request(
-method: str,
-url: str,
-payload: Optional[Dict[str, Any]] = None,
+    method: str,
+    url: str,
+    payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-_require_config()
+    _require_config()
 
 headers = {  
     "Authorization": f"Bearer {API_KEY}",  
