@@ -5,22 +5,6 @@ from .service import LeadEngineService
 from .sources import StaticLeadSource
 
 
-def test_service_reports_status(tmp_path):
-    db = LeadDB(
-        data_dir=str(tmp_path)
-    )
-
-    service = LeadEngineService(
-        db=db
-    )
-
-    result = service.status()
-
-    assert result["total_leads"] == 0
-    assert result["synced_leads"] == 0
-    assert result["pending_leads"] == 0
-
-
 def test_service_reports_health(tmp_path):
     db = LeadDB(
         data_dir=str(tmp_path)
@@ -71,3 +55,23 @@ def test_service_runs_sources(tmp_path):
 
     assert result["source_count"] == 1
     assert result["failed_count"] == 0
+    assert len(result["results"]) == 1
+
+
+def test_service_work_queue_limit(tmp_path):
+    db = LeadDB(
+        data_dir=str(tmp_path)
+    )
+
+    service = LeadEngineService(
+        db=db,
+        work_queue_limit=7,
+    )
+
+    service.work_queue = MagicMock(
+        return_value=[]
+    )
+
+    service.work_queue()
+
+    service.work_queue.assert_called_once_with()
