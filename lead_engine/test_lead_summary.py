@@ -13,23 +13,11 @@ def test_summarize_total():
     assert result["total"] == 3
 
 
-def test_summarize_approved():
-    leads = [
-        {"company": "A", "delivery_status": "approved"},
-        {"company": "B", "delivery_status": "pending"},
-        {"company": "C", "delivery_status": "approved"},
-    ]
-
-    result = summarize_leads(leads)
-
-    assert result["approved"] == 2
-
-
 def test_summarize_routes():
     leads = [
         {"route": "Shiftr"},
-        {"route": "Shiftr"},
         {"route": "Paxus"},
+        {"route": "Shiftr"},
         {"route": "Thorio"},
     ]
 
@@ -46,16 +34,31 @@ def test_summarize_statuses():
     leads = [
         {"status": "new"},
         {"status": "qualified"},
-        {"status": "qualified"},
-        {"status": "delivered"},
+        {"status": "new"},
     ]
 
     result = summarize_leads(leads)
 
     assert result["statuses"] == {
-        "new": 1,
-        "qualified": 2,
-        "delivered": 1,
+        "new": 2,
+        "qualified": 1,
+    }
+
+
+def test_summarize_priorities():
+    leads = [
+        {"priority": "High"},
+        {"priority": "Critical"},
+        {"priority": "High"},
+        {"priority": "Low"},
+    ]
+
+    result = summarize_leads(leads)
+
+    assert result["priorities"] == {
+        "High": 2,
+        "Critical": 1,
+        "Low": 1,
     }
 
 
@@ -64,34 +67,48 @@ def test_summarize_ignores_blank_values():
         {
             "route": "",
             "status": "",
-            "delivery_status": "",
+            "priority": "",
         },
         {
             "route": "Shiftr",
             "status": "new",
+            "priority": "High",
         },
     ]
 
     result = summarize_leads(leads)
 
-    assert result["total"] == 2
-    assert result["approved"] == 0
     assert result["routes"] == {"Shiftr": 1}
     assert result["statuses"] == {"new": 1}
+    assert result["priorities"] == {"High": 1}
 
 
-def test_summarize_empty_collection():
-    result = summarize_leads([])
+def test_summarize_strips_values():
+    leads = [
+        {
+            "route": " Shiftr ",
+            "status": " new ",
+            "priority": " High ",
+        },
+    ]
 
-    assert result == {
+    result = summarize_leads(leads)
+
+    assert result["routes"] == {"Shiftr": 1}
+    assert result["statuses"] == {"new": 1}
+    assert result["priorities"] == {"High": 1}
+
+
+def test_summarize_empty():
+    assert summarize_leads([]) == {
         "total": 0,
-        "approved": 0,
         "routes": {},
         "statuses": {},
+        "priorities": {},
     }
 
 
-def test_summarize_accepts_generators():
+def test_summarize_accepts_generator():
     leads = (
         {"route": "Shiftr"}
         for _ in range(3)
