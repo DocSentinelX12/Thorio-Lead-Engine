@@ -85,3 +85,22 @@ def health_report(
         "ok": healthy,
         "checks": checks,
     }
+
+
+def check_engine(
+    db: LeadDB,
+) -> Dict[str, Any]:
+    """
+    Backward-compatible engine health check.
+
+    Existing service/application code uses this
+    function as the basic database health check.
+    """
+
+    result = check_database(db)
+
+    return {
+        "status": result["status"],
+        "ok": result["ok"],
+        "database": result,
+    }
