@@ -1,72 +1,76 @@
 from .lead_filter import (
-    filter_approved_leads,
-    filter_leads,
+    filter_by_min_score,
+    filter_by_route,
+    filter_by_status,
 )
 
 
-def make_lead(
-    company,
-    route="Thorio",
-    score=80,
-    status="qualified",
-    delivery_status="approved",
-):
-    return {
-        "company": company,
-        "route": route,
-        "lead_score": score,
-        "status": status,
-        "delivery_status": delivery_status,
+def test_filter_by_min_score():
+    leads = [
+        {"company": "A", "lead_score": 90},
+        {"company": "B", "lead_score": 70},
+        {"company": "C", "lead_score": 50},
+    ]
+
+    result = filter_by_min_score(leads, 70)
+
+    assert [
+        lead["company"]
+        for lead in result
+    ] == ["A", "B"]
+
+
+def test_filter_by_min_score_includes_exact_match():
+    lead = {
+        "company": "A",
+        "lead_score": 75,
     }
 
+    assert filter_by_min_score([lead], 75) == [lead]
 
-def test_filter_by_route():
+
+def test_filter_by_min_score_ignores_invalid_scores():
     leads = [
-        make_lead("A", route="Shiftr"),
-        make_lead("B", route="Paxus"),
-        make_lead("C", route="Shiftr"),
+        {"company": "A", "lead_score": "invalid"},
+        {"company": "B", "lead_score": 80},
     ]
 
-    result = filter_leads(
-        leads,
-        route="Shiftr",
-    )
+    result = filter_by_min_score(leads, 70)
 
     assert [
         lead["company"]
         for lead in result
-    ] == ["A", "C"]
+    ] == ["B"]
 
 
-def test_filter_by_minimum_score():
+def test_filter_by_route_is_case_insensitive():
     leads = [
-        make_lead("A", score=90),
-        make_lead("B", score=50),
-        make_lead("C", score=75),
+        {"company": "A", "route": "Shiftr"},
+        {"company": "B", "route": "Paxus"},
     ]
 
-    result = filter_leads(
-        leads,
-        minimum_score=75,
-    )
+    result = filter_by_route(leads, "shiftr")
 
-    assert [
-        lead["company"]
-        for lead in result
-    ] == ["A", "C"]
+    assert result == [leads[0]]
+
+
+def test_filter_by_route_strips_whitespace():
+    lead = {
+        "company": "A",
+        "route": " Shiftr ",
+    }
+
+    assert filter_by_route([lead], "Shiftr") == [lead]
 
 
 def test_filter_by_status():
     leads = [
-        make_lead("A", status="qualified"),
-        make_lead("B", status="new"),
-        make_lead("C", status="qualified"),
+        {"company": "A", "status": "new"},
+        {"company": "B", "status": "qualified"},
+        {"company": "C", "status": "new"},
     ]
 
-    result = filter_leads(
-        leads,
-        status="qualified",
-    )
+    result = filter_by_status(leads, "new")
 
     assert [
         lead["company"]
@@ -74,94 +78,21 @@ def test_filter_by_status():
     ] == ["A", "C"]
 
 
-def test_filters_are_combined():
-    leads = [
-        make_lead(
-            "A",
-            route="Shiftr",
-            score=90,
-            status="qualified",
-        ),
-        make_lead(
-            "B",
-            route="Shiftr",
-            score=50,
-            status="qualified",
-        ),
-        make_lead(
-            "C",
-            route="Paxus",
-            score=90,
-            status="qualified",
-        ),
-    ]
+def test_filters_return_copies():
+    lead = {
+        "company": "Acme",
+        "route": "Shiftr",
+        "status": "new",
+        "lead_score": 90,
+    }
 
-    result = filter_leads(
-        leads,
-        route="Shiftr",
-        minimum_score=80,
-        status="qualified",
-    )
-
-    assert [
-        lead["company"]
-        for lead in result
-    ] == ["A"]
-
-
-def test_empty_result():
-    result = filter_leads(
-        [make_lead("A")],
-        route="Shiftr",
-    )
-
-    assert result == []
-
-
-def test_filter_returns_copies():
-    lead = make_lead("Acme")
-
-    result = filter_leads([lead])
+    result = filter_by_min_score([lead], 80)
 
     assert result[0] == lead
     assert result[0] is not lead
 
 
-def test_filter_approved_leads():
-    leads = [
-        make_lead(
-            "Approved",
-            delivery_status="approved",
-        ),
-        make_lead(
-            "Pending",
-            delivery_status="pending",
-        ),
-        make_lead(
-            "Rejected",
-            delivery_status="rejected",
-        ),
-    ]
-
-    result = filter_approved_leads(leads)
-
-    assert [
-        lead["company"]
-        for lead in result
-    ] == ["Approved"]
-
-
-def test_filter_approved_leads_is_case_insensitive():
-    lead = make_lead(
-        "Acme",
-        delivery_status=" APPROVED ",
-    )
-
-    result = filter_approved_leads([lead])
-
-    assert len(result) == 1
-    assert result[0]["company"] == "Acme"
-
-
-def test_filter_approved_leads_empty():
-    assert filter_approved_leads([]) == []
+def test_empty_filters():
+    assert filter_by_min_score([], 50) == []
+    assert filter_by_route([], "Shiftr") == []
+    assert filter_by_status([], "new") == []
