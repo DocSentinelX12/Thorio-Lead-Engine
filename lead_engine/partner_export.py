@@ -1,0 +1,100 @@
+from typing import Any, Dict, Iterable, List
+
+
+PARTNER_ROUTES = (
+    "Shiftr",
+    "Paxus",
+    "Thorio",
+)
+
+
+def build_partner_exports(
+    leads: Iterable[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Build clean partner-specific lead exports.
+
+    Review and unknown routes are excluded.
+    """
+
+    exports = {
+        route: []
+        for route in PARTNER_ROUTES
+    }
+
+    for lead in leads:
+        route = str(
+            lead.get("route", "")
+            or ""
+        ).strip()
+
+        if route not in PARTNER_ROUTES:
+            continue
+
+        exports[route].append(
+            prepare_partner_lead(lead)
+        )
+
+    return exports
+
+
+def prepare_partner_lead(
+    lead: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Normalize a lead into the stable partner delivery shape.
+    """
+
+    return {
+        "source": lead.get("source", ""),
+        "source_id": lead.get("source_id", ""),
+        "url": lead.get("url", ""),
+        "company": lead.get("company", ""),
+        "person": lead.get("person", ""),
+        "contact_name": lead.get(
+            "contact_name",
+            "",
+        ),
+        "contact_title": lead.get(
+            "contact_title",
+            "",
+        ),
+        "contact_email": lead.get(
+            "contact_email",
+            "",
+        ),
+        "signal": lead.get("signal", ""),
+        "evidence": lead.get("evidence", ""),
+        "route": lead.get("route", ""),
+        "potential_routes": lead.get(
+            "potential_routes",
+            [],
+        ),
+        "lead_score": lead.get(
+            "lead_score",
+            0,
+        ),
+        "priority": lead.get(
+            "priority",
+            "",
+        ),
+        "status": lead.get(
+            "status",
+            "",
+        ),
+    }
+
+
+def partner_export_summary(
+    leads: Iterable[Dict[str, Any]],
+) -> Dict[str, int]:
+    """
+    Return the number of deliverable leads for each partner.
+    """
+
+    exports = build_partner_exports(leads)
+
+    return {
+        partner: len(exports[partner])
+        for partner in PARTNER_ROUTES
+    }
