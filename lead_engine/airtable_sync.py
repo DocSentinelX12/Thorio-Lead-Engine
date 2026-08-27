@@ -84,58 +84,37 @@ def _table_url() -> str:
 
 def _normalize_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Convert a local lead record into Airtable fields.
+    Convert the canonical local lead record into Airtable fields.
 
+    The local Lead model remains the source of truth.
     Qualification remains a human decision.
     """
 
     fields: Dict[str, Any] = {}
 
     mapping = {
-        "lead": "Lead",
+        "source": "Source",
+        "source_id": "Source ID",
+        "url": "Source URL",
         "company": "Company",
+        "person": "Decision Maker",
         "signal": "Signal",
-        "source_url": "Source URL",
-        "source_platform": "Source Platform",
-        "signal_type": "Signal Type",
-        "recommended_partner": "Recommended Partner",
-        "lead_score": "Lead Score",
-        "priority": "Priority",
-        "decision_maker": "Decision Maker",
-        "title": "Title",
-        "discovered_date": "Discovered Date",
-        "review_status": "Review Status",
-        "duplicate_key": "Duplicate Key",
-        "notes": "Notes",
-        "qualified": "Qualified Lead?",
-        "contact_ready": "Contact Ready",
-        "referral_submitted": "Referral Submitted?",
-        "referral_opportunity_id": "Referral / Opportunity ID",
-        "budget_confirmed": "Budget Confirmed",
-        "need_confirmed": "Need Confirmed",
-        "decision_maker_confirmed": "Decision Maker Confirmed",
-        "timeline_confirmed": "Timeline Confirmed",
-        "qualification_score": "Qualification Score",
-        "reason_not_qualified": "Reason Not Qualified",
-        "contact_method": "Contact Method",
-        "last_contacted": "Last Contacted",
-        "next_action": "Next Action",
-        "thorio_fit": "Thorio Fit",
-        "remote_roles_verified": "Remote Roles Verified",
-        "thorio_revenue_potential": "Thorio Revenue Potential",
-        "why_this_lead": "Why This Lead",
-        "thorio_outreach_ready": "Thorio Outreach Ready",
-        "evidence_status": "Evidence Status",
-        "thorio_plan_recommendation": "Thorio Plan Recommendation",
-        "work_queue": "Work Queue",
-        "next_action_date": "Next Action Date",
-        "outreach_status": "Outreach Status",
+        "discovered_at": "Discovered Date",
+        "route": "Recommended Partner",
+        "potential_routes": "Potential Partners",
+        "status": "Review Status",
+        "evidence": "Evidence",
+        "possible_duplicate": "Possible Duplicate",
+        "fingerprint": "Duplicate Key",
     }
 
     for local_name, airtable_name in mapping.items():
         value = lead.get(local_name)
 
         if value is not None:
+            if isinstance(value, list):
+                value = ", ".join(str(item) for item in value)
+
             fields[airtable_name] = value
 
     return fields
@@ -193,17 +172,17 @@ def push_leads(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def find_by_duplicate_key(
-    duplicate_key: str,
+def find_by_fingerprint(
+    fingerprint: str,
 ) -> List[Dict[str, Any]]:
-    """Find an existing Airtable lead using its duplicate key."""
+    """Find an existing Airtable lead using the canonical fingerprint."""
 
-    if not duplicate_key:
+    if not fingerprint:
         return []
 
-    escaped_key = duplicate_key.replace('"', '\\"')
+    escaped_fingerprint = fingerprint.replace('"', '\\"')
 
-    formula = f'{{Duplicate Key}}="{escaped_key}"'
+    formula = f'{{Duplicate Key}}="{escaped_fingerprint}"'
 
     params = urllib.parse.urlencode(
         {
@@ -224,13 +203,14 @@ def sync_lead_if_missing(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Create a lead only if its duplicate key is not already present.
+    Create a lead only if its canonical fingerprint is not
+    already present in Airtable.
     """
 
-    duplicate_key = lead.get("duplicate_key")
+    fingerprint = lead.get("fingerprint")
 
-    if duplicate_key:
-        existing = find_by_duplicate_key(duplicate_key)
+    if fingerprint:
+        existing = find_by_fingerprint(fingerprint)
 
         if existing:
             return {
@@ -251,7 +231,7 @@ def sync_lead_if_missing(
 def sync_queue(
     leads: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Synchronize a local lead queue without losing failed records."""
+    """Synchronize local leads without losing failed records."""
 
     synced = []
     already_exists = []
