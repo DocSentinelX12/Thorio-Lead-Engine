@@ -3,6 +3,7 @@ from typing import Any, Dict
 from .database import LeadDB
 from .dedupe import Dedupe
 from .models import Lead
+from .qualification import qualify_lead
 from .router import potential_routes, route
 from .scoring import score_result
 from .sync_worker import sync_one
@@ -12,7 +13,7 @@ class LeadPipeline:
     """
     Main lead-processing pipeline.
 
-    Flow:
+    Discovery flow:
 
         Lead
           ↓
@@ -26,8 +27,9 @@ class LeadPipeline:
           ↓
         Airtable synchronization
 
+    Qualification is a separate human-review action.
+
     The local database remains the source of truth.
-    Human review remains the final qualification decision.
     """
 
     def __init__(self, db=None):
@@ -123,6 +125,44 @@ class LeadPipeline:
             "sync_status": sync_result["status"],
             "sync_error": sync_result["error"],
         }
+
+    def qualify(
+        self,
+        fingerprint: str,
+        *,
+        qualified: bool,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Apply an explicit human qualification decision.
+
+        Scoring, routing, and discovery never qualify a lead automatically.
+        """
+
+        lead = self.db.get(fingerprint)
+
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
+            )
+
+        updated = qualify_lead(
+            lead,
+            qualified=qualified,
+            reason=reason,
+        )
+
+        stored = self.db.update_payload(
+            fingerprint,
+            updated,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to update lead: {fingerprint}"
+            )
+
+        return stored
 
 
 def process_lead(
