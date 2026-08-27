@@ -1,60 +1,55 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 
 
-def filter_leads(
+def filter_by_min_score(
     leads: Iterable[Dict[str, Any]],
-    *,
-    route: Optional[str] = None,
-    minimum_score: Optional[float] = None,
-    status: Optional[str] = None,
+    minimum_score: float,
 ) -> List[Dict[str, Any]]:
-    """
-    Filter leads by route, score, and status.
-
-    All supplied filters must match.
-    Returned records are copies.
-    """
+    """Return leads whose score meets or exceeds the minimum."""
 
     result: List[Dict[str, Any]] = []
 
     for lead in leads:
-        if route is not None:
-            if str(lead.get("route", "")).strip() != route:
-                continue
+        try:
+            score = float(lead.get("lead_score", 0))
+        except (TypeError, ValueError):
+            continue
 
-        if minimum_score is not None:
-            try:
-                score = float(
-                    lead.get("lead_score", 0)
-                )
-            except (TypeError, ValueError):
-                score = 0
-
-            if score < minimum_score:
-                continue
-
-        if status is not None:
-            if str(lead.get("status", "")).strip() != status:
-                continue
-
-        result.append(dict(lead))
+        if score >= minimum_score:
+            result.append(dict(lead))
 
     return result
 
 
-def filter_approved_leads(
+def filter_by_route(
     leads: Iterable[Dict[str, Any]],
+    route: str,
 ) -> List[Dict[str, Any]]:
-    """Return leads currently approved for delivery."""
+    """Return leads assigned to the requested route."""
+
+    requested_route = str(route).strip().lower()
 
     return [
         dict(lead)
         for lead in leads
-        if str(
-            lead.get("delivery_status", "")
-            or ""
-        ).strip().lower()
-        == "approved"
+        if str(lead.get("route", "")).strip().lower()
+        == requested_route
+    ]
+
+
+def filter_by_status(
+    leads: Iterable[Dict[str, Any]],
+    status: str,
+) -> List[Dict[str, Any]]:
+    """Return leads matching the requested status."""
+
+    requested_status = str(status).strip().lower()
+
+    return [
+        dict(lead)
+        for lead in leads
+        if str(lead.get("status", "")).strip().lower()
+        == requested_status
     ]
