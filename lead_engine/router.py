@@ -2,27 +2,94 @@ import re
 from typing import Dict, List
 
 
-RULES = {
-    "Shiftr": [
-        r"\bindividual developer\b",
-        r"\bsoftware engineer\b",
-        r"\bdeveloper\b",
-        r"\bcontract developer\b",
-        r"\bengineering hire\b",
-    ],
-    "Paxus": [
-        r"\btechnology recruitment\b",
-        r"\bit recruitment\b",
-        r"\btech recruitment\b",
-        r"\btechnology staffing\b",
-    ],
-    "Thorio": [
-        r"\bremote\b",
-        r"\bremote-first\b",
-        r"\bremote hiring\b",
-        r"\bremote role\b",
-    ],
-}
+ROUTES = ("Shiftr", "Paxus", "Thorio")
+
+
+HIRING_CONTEXT = (
+    r"\bhir(?:e|ing|ed)\b"
+    r"|\brecruit(?:ment|ing|ed)?\b"
+    r"|\bstaff(?:ing|ed)?\b"
+    r"|\bopening\b"
+    r"|\bposition\b"
+    r"|\brole\b"
+    r"|\bvacanc(?:y|ies)\b"
+    r"|\bjob\b"
+)
+
+
+SHIFTR_RULES = [
+    r"\bindividual developer\b",
+    r"\bsoftware engineer\b",
+    r"\bsoftware developer\b",
+    r"\bdeveloper\b",
+    r"\bengineering hire\b",
+    r"\bengineering hiring\b",
+    r"\bcontract developer\b",
+    r"\bcontract engineer\b",
+    r"\bfreelance developer\b",
+    r"\bindividual engineer\b",
+    r"\bdeveloper contractor\b",
+    r"\bsoftware development contractor\b",
+    r"\btechnical contractor\b",
+    r"\bengineering contractor\b",
+    r"\bdevelopment team hiring\b",
+]
+
+
+PAXUS_RULES = [
+    r"\btechnology recruitment\b",
+    r"\btech recruitment\b",
+    r"\bit recruitment\b",
+    r"\btechnical recruitment\b",
+    r"\btechnology staffing\b",
+    r"\bit staffing\b",
+    r"\btechnical staffing\b",
+    r"\bengineering recruitment\b",
+    r"\bengineering staffing\b",
+    r"\btechnology talent acquisition\b",
+    r"\bit talent acquisition\b",
+    r"\brecruiting technology professionals\b",
+    r"\bstaffing technology professionals\b",
+]
+
+
+THORIO_RULES = [
+    r"\bremote software engineer\b",
+    r"\bremote software developer\b",
+    r"\bremote developer\b",
+    r"\bremote engineering\b",
+    r"\bremote technology role\b",
+    r"\bremote tech role\b",
+    r"\bremote technical role\b",
+    r"\bremote-first hiring\b",
+    r"\bremote hiring\b",
+    r"\bwork-from-home technology role\b",
+    r"\bdistributed engineering\b",
+    r"\bdistributed development\b",
+    r"\bremote engineering position\b",
+    r"\bremote engineering role\b",
+]
+
+
+def _text(company: str, signal: str, evidence: str) -> str:
+    return " ".join(
+        [
+            company or "",
+            signal or "",
+            evidence or "",
+        ]
+    ).lower()
+
+
+def _has_hiring_context(text: str) -> bool:
+    return bool(re.search(HIRING_CONTEXT, text, re.IGNORECASE))
+
+
+def _matches(text: str, patterns: List[str]) -> int:
+    return sum(
+        bool(re.search(pattern, text, re.IGNORECASE))
+        for pattern in patterns
+    )
 
 
 def score_routes(
@@ -31,21 +98,41 @@ def score_routes(
     evidence: str,
 ) -> Dict[str, int]:
     """
-    Score every potential business opportunity.
+    Score the opportunity for each business route.
 
-    A lead can match multiple businesses.
-    No qualification decision is made here.
+    Routing identifies business relevance only.
+    Qualification is handled elsewhere in the pipeline.
+
+    A single lead may receive positive scores for multiple
+    destinations.
     """
 
-    text = f"{company} {signal} {evidence}".lower()
+    text = _text(company, signal, evidence)
+    has_hiring = _has_hiring_context(text)
 
-    return {
-        name: sum(
-            bool(re.search(pattern, text))
-            for pattern in patterns
-        )
-        for name, patterns in RULES.items()
+    scores = {
+        "Shiftr": 0,
+        "Paxus": 0,
+        "Thorio": 0,
     }
+
+    if has_hiring:
+        scores["Shiftr"] = _matches(
+            text,
+            SHIFTR_RULES,
+        )
+
+        scores["Paxus"] = _matches(
+            text,
+            PAXUS_RULES,
+        )
+
+        scores["Thorio"] = _matches(
+            text,
+            THORIO_RULES,
+        )
+
+    return scores
 
 
 def route(
@@ -54,8 +141,11 @@ def route(
     evidence: str,
 ) -> str:
     """
-    Return the strongest single route for compatibility
-    with the existing Lead.route field.
+    Return the strongest single route.
+
+    The existing Lead model keeps one primary route for
+    compatibility. Secondary opportunities are preserved
+    separately by potential_routes().
     """
 
     scores = score_routes(
@@ -64,12 +154,15 @@ def route(
         evidence=evidence,
     )
 
-    best = max(scores, key=scores.get)
+    best_route = max(
+        ROUTES,
+        key=lambda name: scores[name],
+    )
 
-    if scores[best] == 0:
+    if scores[best_route] <= 0:
         return "Review"
 
-    return best
+    return best_route
 
 
 def potential_routes(
@@ -78,10 +171,10 @@ def potential_routes(
     evidence: str,
 ) -> List[str]:
     """
-    Return every business with at least one matching signal.
+    Return every business route with a positive score.
 
-    This preserves multi-opportunity leads instead of discarding
-    secondary matches.
+    This preserves leads that are relevant to more than one
+    destination.
     """
 
     scores = score_routes(
@@ -92,8 +185,8 @@ def potential_routes(
 
     return [
         name
-        for name, score in scores.items()
-        if score > 0
+        for name in ROUTES
+        if scores[name] > 0
     ]
 
 
