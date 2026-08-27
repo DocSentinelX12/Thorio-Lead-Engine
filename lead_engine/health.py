@@ -1,107 +1,111 @@
+from __future__ import annotations
+
 from typing import Any, Dict
 
-from .database import LeadDB
 
-
-def check_database(db: LeadDB) -> Dict[str, Any]:
-    """
-    Verify that the local database is accessible.
-    """
-
-    try:
-        db.pending(limit=1)
-
-        return {
-            "name": "database",
-            "status": "healthy",
-            "ok": True,
-        }
-
-    except Exception as exc:
-        return {
-            "name": "database",
-            "status": "unhealthy",
-            "ok": False,
-            "error": str(exc),
-        }
-
-
-def check_configuration(config) -> Dict[str, Any]:
-    """
-    Verify that runtime configuration is usable.
-    """
-
-    errors = []
-
-    if not config.database_dir:
-        errors.append(
-            "database_dir is empty"
-        )
-
-    if config.batch_size <= 0:
-        errors.append(
-            "batch_size must be greater than zero"
-        )
-
-    if errors:
-        return {
-            "name": "configuration",
-            "status": "unhealthy",
-            "ok": False,
-            "errors": errors,
-        }
-
-    return {
-        "name": "configuration",
-        "status": "healthy",
-        "ok": True,
-    }
-
-
-def health_report(
-    db: LeadDB,
-    config,
+def health_status(
+    *,
+    database: Any = None,
+    scheduler: Any = None,
+    worker: Any = None,
 ) -> Dict[str, Any]:
     """
-    Return the complete local health report.
+    Return a safe, dependency-light health snapshot.
+
+    Health checks are intentionally defensive so the monitoring layer
+    never takes down the lead engine while checking another component.
     """
 
-    checks = [
-        check_database(db),
-        check_configuration(config),
+    checks: Dict[str, Any] = {}
+
+    if database is None:
+        checks["database"] = {"status": "unknown"}
+    else:
+        try:
+            if hasattr(database, "health"):
+                result = database.health()
+            elif hasattr(database, "check_health"):
+                result = database.check_health()
+            else:
+                result = {"status": "available"}
+
+            checks["database"] = (
+                result if isinstance(result, dict) else {"status": str(result)}
+            )
+        except Exception as exc:
+            checks["database"] = {
+                "status": "unhealthy",
+                "error": str(exc),
+            }
+
+    if scheduler is None:
+        checks["scheduler"] = {"status": "unknown"}
+    else:
+        try:
+            if hasattr(scheduler, "health"):
+                result = scheduler.health()
+            elif hasattr(scheduler, "status"):
+                result = scheduler.status()
+            else:
+                result = {"status": "available"}
+
+            checks["scheduler"] = (
+                result if isinstance(result, dict) else {"status": str(result)}
+            )
+        except Exception as exc:
+            checks["scheduler"] = {
+                "status": "unhealthy",
+                "error": str(exc),
+            }
+
+    if worker is None:
+        checks["worker"] = {"status": "unknown"}
+    else:
+        try:
+            if hasattr(worker, "health"):
+                result = worker.health()
+            elif hasattr(worker, "status"):
+                result = worker.status()
+            else:
+                result = {"status": "available"}
+
+            checks["worker"] = (
+                result if isinstance(result, dict) else {"status": str(result)}
+            )
+        except Exception as exc:
+            checks["worker"] = {
+                "status": "unhealthy",
+                "error": str(exc),
+            }
+
+    statuses = [
+        value.get("status")
+        for value in checks.values()
+        if isinstance(value, dict)
     ]
 
-    healthy = all(
-        check["ok"]
-        for check in checks
-    )
+    if any(status == "unhealthy" for status in statuses):
+        overall = "unhealthy"
+    elif any(status == "unknown" for status in statuses):
+        overall = "degraded"
+    else:
+        overall = "healthy"
 
     return {
-        "status": (
-            "healthy"
-            if healthy
-            else "unhealthy"
-        ),
-        "ok": healthy,
+        "status": overall,
         "checks": checks,
     }
 
 
-def check_engine(
-    db: LeadDB,
+def health(
+    *,
+    database: Any = None,
+    scheduler: Any = None,
+    worker: Any = None,
 ) -> Dict[str, Any]:
-    """
-    Backward-compatible engine health check.
-
-    Existing service/application code expects the
-    `healthy` field.
-    """
-
-    result = check_database(db)
-
-    return {
-        "healthy": result["ok"],
-        "status": result["status"],
-        "ok": result["ok"],
-        "database": result,
-    }
+    """Compatibility alias for health_status."""
+    return health_status(
+        database=database,
+        scheduler=scheduler,
+        worker=worker,
+    )
