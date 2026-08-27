@@ -1,6 +1,9 @@
 from typing import Any, Dict, Iterable
 
 from .health import check_engine
+from .pipeline import LeadPipeline
+from .source_runner import SourceRunner
+from .status import get_engine_status
 from .work_queue_service import (
     get_next_work_item,
     get_work_queue,
@@ -11,8 +14,8 @@ class LeadEngineService:
     """
     Application service boundary.
 
-    The service coordinates the existing runner and database
-    components without changing their public interfaces.
+    The service coordinates the database, lead pipeline, source runner,
+    health checks, and work queue without duplicating their logic.
     """
 
     def __init__(
@@ -25,10 +28,10 @@ class LeadEngineService:
         self.work_queue_limit = work_queue_limit
 
         if runner is None:
-            from .runner import Runner
-
-            runner = Runner(
-                db=self.db
+            runner = SourceRunner(
+                pipeline=LeadPipeline(
+                    db=self.db
+                )
             )
 
         self.runner = runner
@@ -111,10 +114,6 @@ class LeadEngineService:
         )
 
     def status(self):
-        return {
-            "database": self.db.status(),
-            "health": self.health(),
-            "work_queue": len(
-                self.work_queue()
-            ),
-        }
+        return get_engine_status(
+            self.db
+        )
