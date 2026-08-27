@@ -1,15 +1,15 @@
 from unittest.mock import patch
 
+from .database import LeadDB
 from .pipeline import LeadPipeline
-from .queue import LeadQueue
 
 
 def test_pipeline_routes_and_persists_lead(tmp_path):
-    queue = LeadQueue(
-        db_path=str(tmp_path / "test_leads.db")
+    db = LeadDB(
+        data_dir=str(tmp_path)
     )
 
-    pipeline = LeadPipeline(queue=queue)
+    pipeline = LeadPipeline(db=db)
 
     with patch(
         "lead_engine.pipeline.sync_one"
@@ -24,34 +24,43 @@ def test_pipeline_routes_and_persists_lead(tmp_path):
         }
 
         result = pipeline.process(
+            source="test",
+            source_id="acme-001",
+            url="https://example.com/jobs/acme-001",
             company="Acme",
             signal="remote software engineer",
-            evidence="Company careers page says they are hiring a remote software engineer.",
-            duplicate_key="acme|remote-software-engineer",
+            evidence=(
+                "Company careers page says they are hiring "
+                "a remote software engineer."
+            ),
         )
 
-    assert result["recommended_partner"] == "Shiftr"
+    assert result["status"] == "accepted"
+    assert result["accepted"] is True
+    assert result["lead"]["route"] == "Shiftr"
+    assert "Shiftr" in result["potential_routes"]
+    assert "Thorio" in result["potential_routes"]
     assert result["sync_status"] == "synced"
 
-    stored = queue.get(
-        result["lead"]["_queue_id"]
-    )
+    pending = db.pending()
 
-    assert stored is not None
-    assert stored["company"] == "Acme"
-    assert stored["recommended_partner"] == "Shiftr"
-    assert stored["review_status"] == "Review"
-    assert stored["qualified"] is False
+    assert len(pending) == 0
+
+    stats = db.stats()
+
+    assert stats[0] == 1
+    assert stats[1] == 1
+    assert stats[2] == 0
 
     mock_sync.assert_called_once()
 
 
 def test_pipeline_does_not_lose_lead_when_sync_fails(tmp_path):
-    queue = LeadQueue(
-        db_path=str(tmp_path / "failed_leads.db")
+    db = LeadDB(
+        data_dir=str(tmp_path)
     )
 
-    pipeline = LeadPipeline(queue=queue)
+    pipeline = LeadPipeline(db=db)
 
     with patch(
         "lead_engine.pipeline.sync_one"
@@ -64,19 +73,26 @@ def test_pipeline_does_not_lose_lead_when_sync_fails(tmp_path):
         }
 
         result = pipeline.process(
+            source="test",
+            source_id="example-001",
+            url="https://example.com/jobs/example-001",
             company="Example Corp",
             signal="remote developer",
             evidence="Remote developer opening found.",
-            duplicate_key="example-corp|remote-developer",
         )
 
+    assert result["status"] == "accepted"
     assert result["sync_status"] == "failed"
+    assert result["sync_error"] == "Airtable unavailable"
 
-    stored = queue.get(
-        result["lead"]["_queue_id"]
-    )
+    pending = db.pending()
 
-    assert stored is not None
-    assert stored["company"] == "Example Corp"
-    assert stored["_sync_status"] == "failed"
-    assert stored["_last_sync_error"] == "Airtable unavailable"
+    assert len(pending) == 1
+
+    stats = db.stats()
+
+    assert stats[0] == 1
+    assert stats[1] == 0
+    assert stats[2] == 1
+
+    mock_sync.assert_called_once()
