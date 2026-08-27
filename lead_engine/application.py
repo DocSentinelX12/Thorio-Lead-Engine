@@ -1,17 +1,21 @@
 from typing import Any, Dict, Iterable
 
+from .audit import AuditLog
 from .config import LeadEngineConfig
 from .database import LeadDB
-from .service import LeadEngineService
+from .export import export_pending_leads
 from .sources import LeadSource
+from .service import LeadEngineService
 
 
 class LeadEngineApplication:
     """
     Production-facing application wrapper.
 
-    Configuration is centralized and the local database
-    remains authoritative.
+    Configuration is centralized.
+    The local database remains authoritative.
+    Operational events are recorded separately
+    in the append-only audit log.
     """
 
     def __init__(
@@ -27,6 +31,13 @@ class LeadEngineApplication:
             data_dir=self.config.database_dir
         )
 
+        self.audit = AuditLog(
+            str(
+                self.config.database_path.parent
+                / "audit.jsonl"
+            )
+        )
+
         self.service = LeadEngineService(
             db=self.db
         )
@@ -35,17 +46,34 @@ class LeadEngineApplication:
         self,
         records: Iterable[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        return self.service.process_records(
+        result = self.service.process_records(
             records
         )
+
+        self.audit.record(
+            "records_processed",
+            result=result,
+        )
+
+        return result
 
     def run_sources(
         self,
         sources: Iterable[LeadSource],
     ) -> Dict[str, Any]:
-        return self.service.run_sources(
+        sources = list(sources)
+
+        result = self.service.run_sources(
             sources
         )
+
+        self.audit.record(
+            "sources_processed",
+            source_count=len(sources),
+            result=result,
+        )
+
+        return result
 
     def status(self) -> Dict[str, Any]:
         return self.service.status()
@@ -66,6 +94,23 @@ class LeadEngineApplication:
         return self.service.work_queue(
             limit=queue_limit
         )
+
+    def export_pending(
+        self,
+        path: str,
+    ) -> Dict[str, Any]:
+        result = export_pending_leads(
+            self.db,
+            path,
+        )
+
+        self.audit.record(
+            "pending_leads_exported",
+            path=path,
+            count=result["count"],
+        )
+
+        return result
 
 
 def create_application() -> LeadEngineApplication:
