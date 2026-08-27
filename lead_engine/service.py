@@ -1,100 +1,125 @@
 from typing import Any, Dict, Iterable
 
-from .database import LeadDB
 from .health import check_engine
-from .pipeline import LeadPipeline
-from .scheduler import LeadScheduler
-from .source_runner import SourceRunner
-from .sources import LeadSource
-from .status import get_engine_status
-from .work_queue_service import get_work_queue
+from .work_queue_service import (
+    get_next_work_item,
+    get_work_queue,
+)
+from .runner import LeadRunner
+from .database import LeadDB
 
 
 class LeadEngineService:
     """
-    High-level service facade for the lead engine.
+    Application service boundary for the Lead Engine.
 
-    Application code should use this service instead of
-    directly coordinating internal modules.
+    Keeps orchestration concerns out of the database,
+    runner, and CLI layers.
     """
 
     def __init__(
         self,
-        db: LeadDB | None = None,
+        db: LeadDB,
+        runner: LeadRunner | None = None,
+        work_queue_limit: int = 50,
     ):
-        self.db = db or LeadDB()
+        self.db = db
 
-        self.pipeline = LeadPipeline(
-            db=self.db
+        self.runner = (
+            runner
+            or LeadRunner(db=db)
         )
 
-        self.runner = SourceRunner(
-            pipeline=self.pipeline
-        )
-
-        self.scheduler = LeadScheduler(
-            runner=self.runner
+        self.work_queue_limit = (
+            work_queue_limit
         )
 
     def process_records(
         self,
         records: Iterable[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """
-        Process already-collected lead records.
-        """
-
         return self.runner.process(
             records
         )
 
     def run_sources(
         self,
-        sources: Iterable[LeadSource],
+        sources,
     ) -> Dict[str, Any]:
-        """
-        Run multiple lead sources.
-        """
+        results = []
+        source_count = 0
+        failed_count = 0
 
-        return self.scheduler.run(
-            sources
-        )
+        for source in sources:
+            source_count += 1
+
+            try:
+                result = self.runner.process(
+                    source.collect()
+                )
+
+                results.append(
+                    {
+                        "source": source.__class__.__name__,
+                        "result": result,
+                    }
+                )
+
+                if result.get(
+                    "failed_count",
+                    0,
+                ):
+                    failed_count += 1
+
+            except Exception as exc:
+                failed_count += 1
+
+                results.append(
+                    {
+                        "source": source.__class__.__name__,
+                        "result": {
+                            "accepted_count": 0,
+                            "duplicate_count": 0,
+                            "failed_count": 1,
+                            "error": str(exc),
+                        },
+                    }
+                )
+
+        return {
+            "source_count": source_count,
+            "failed_count": failed_count,
+            "results": results,
+        }
 
     def work_queue(
         self,
-        limit: int = 50,
+        limit: int | None = None,
     ):
-        """
-        Return leads requiring human work.
-        """
-
         return get_work_queue(
             self.db,
-            limit=limit,
+            limit=(
+                limit
+                if limit is not None
+                else self.work_queue_limit
+            ),
         )
 
-    def status(self) -> Dict[str, Any]:
-        """
-        Return current engine status.
-        """
-
-        return get_engine_status(
+    def next_work_item(self):
+        return get_next_work_item(
             self.db
         )
 
-    def health(self) -> Dict[str, Any]:
-        """
-        Return current engine health.
-        """
-
+    def health(self):
         return check_engine(
             self.db
         )
 
-
-if __name__ == "__main__":
-    service = LeadEngineService()
-
-    print(
-        service.status()
-    )
+    def status(self):
+        return {
+            "database": self.db.status(),
+            "health": self.health(),
+            "work_queue": len(
+                self.work_queue()
+            ),
+                }
