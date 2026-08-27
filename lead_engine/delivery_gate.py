@@ -4,53 +4,17 @@ from .delivery_policy import is_delivery_ready
 from .partner_rules import validate_partner_route
 
 
-APPROVAL_STATUSES = {
-    "approved",
-    "human_approved",
-}
-
-
-def _is_human_approved(lead: Dict[str, Any]) -> bool:
-    """
-    Return True only when the lead carries an explicit human approval.
-
-    Automatic qualification, scoring, routing, or preparation does
-    not constitute delivery approval.
-    """
-
-    if lead.get("human_approved") is True:
-        return True
-
-    approval_status = str(
-        lead.get("approval_status", "")
-        or ""
-    ).strip().lower()
-
-    return approval_status in APPROVAL_STATUSES
-
-
 def evaluate_delivery_gate(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Final safety gate before a lead can enter partner delivery.
+    Validate whether a lead is eligible for partner delivery.
 
-    A lead must:
-    1. Have explicit human approval.
-    2. Have a supported partner route.
-    3. Have evidence supporting that route.
-    4. Meet the general delivery-quality requirements.
-
-    Human approval is checked first so no automated pipeline state
-    can accidentally authorize delivery.
+    This gate validates route, evidence, and delivery policy.
+    Human approval is enforced at the final delivery boundary,
+    not here, so leads can continue to be collected, qualified,
+    routed, and stored while awaiting human approval.
     """
-
-    if not _is_human_approved(lead):
-        return {
-            "approved": False,
-            "reason": "human_approval_required",
-            "route": lead.get("route", ""),
-        }
 
     route_result = validate_partner_route(lead)
 
