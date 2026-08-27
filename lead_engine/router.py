@@ -53,11 +53,22 @@ PAXUS_RULES = [
 ]
 
 
-THORIO_RULES = [
+THORIO_REMOTE_RULES = [
     r"\bremote software engineer\b",
     r"\bremote software developer\b",
     r"\bremote developer\b",
+    r"\bremote engineer\b",
     r"\bremote engineering\b",
+    r"\bremote product designer\b",
+    r"\bremote designer\b",
+    r"\bremote product manager\b",
+    r"\bremote product role\b",
+    r"\bremote data scientist\b",
+    r"\bremote data analyst\b",
+    r"\bremote data engineer\b",
+    r"\bremote machine learning\b",
+    r"\bremote ml engineer\b",
+    r"\bremote ai engineer\b",
     r"\bremote technology role\b",
     r"\bremote tech role\b",
     r"\bremote technical role\b",
@@ -82,7 +93,13 @@ def _text(company: str, signal: str, evidence: str) -> str:
 
 
 def _has_hiring_context(text: str) -> bool:
-    return bool(re.search(HIRING_CONTEXT, text, re.IGNORECASE))
+    return bool(
+        re.search(
+            HIRING_CONTEXT,
+            text,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _matches(text: str, patterns: List[str]) -> int:
@@ -98,17 +115,19 @@ def score_routes(
     evidence: str,
 ) -> Dict[str, int]:
     """
-    Score the opportunity for each business route.
+    Score an opportunity for each business route.
 
     Routing identifies business relevance only.
     Qualification is handled elsewhere in the pipeline.
 
-    A single lead may receive positive scores for multiple
-    destinations.
+    A lead may be relevant to more than one destination.
     """
 
-    text = _text(company, signal, evidence)
-    has_hiring = _has_hiring_context(text)
+    text = _text(
+        company,
+        signal,
+        evidence,
+    )
 
     scores = {
         "Shiftr": 0,
@@ -116,21 +135,23 @@ def score_routes(
         "Thorio": 0,
     }
 
-    if has_hiring:
-        scores["Shiftr"] = _matches(
-            text,
-            SHIFTR_RULES,
-        )
+    if not _has_hiring_context(text):
+        return scores
 
-        scores["Paxus"] = _matches(
-            text,
-            PAXUS_RULES,
-        )
+    scores["Shiftr"] = _matches(
+        text,
+        SHIFTR_RULES,
+    )
 
-        scores["Thorio"] = _matches(
-            text,
-            THORIO_RULES,
-        )
+    scores["Paxus"] = _matches(
+        text,
+        PAXUS_RULES,
+    )
+
+    scores["Thorio"] = _matches(
+        text,
+        THORIO_REMOTE_RULES,
+    )
 
     return scores
 
@@ -143,12 +164,13 @@ def route(
     """
     Return the primary business route.
 
-    Shiftr takes priority for direct software/developer/
-    engineering hiring signals because those are its strongest
-    existing compatibility signals.
+    Direct software/developer/engineering hiring defaults
+    to Shiftr.
 
-    Thorio remains available through potential_routes() for
-    remote technology opportunities.
+    Technology recruitment and staffing defaults to Paxus.
+
+    Remote technology hiring defaults to Thorio when no
+    stronger Shiftr or Paxus signal exists.
     """
 
     scores = score_routes(
@@ -176,9 +198,6 @@ def potential_routes(
 ) -> List[str]:
     """
     Return every business route with a positive score.
-
-    This preserves leads that are relevant to more than one
-    destination.
     """
 
     scores = score_routes(
