@@ -1,138 +1,96 @@
 from .lead_queue import (
     build_lead_queue,
-    queue_counts,
+    queue_size,
 )
 
 
-def make_lead(
-    *,
-    company,
-    route,
-    score,
-    status="qualified",
-):
+def make_lead(source_id, company="Acme", score=80):
     return {
+        "source": "linkedin",
+        "source_id": source_id,
         "company": company,
-        "route": route,
+        "contact_email": " TEST@EXAMPLE.COM ",
         "lead_score": score,
-        "status": status,
     }
 
 
-def test_approved_leads_enter_partner_queue():
+def test_build_lead_queue_deduplicates():
     leads = [
-        make_lead(
-            company="Shiftr Co",
-            route="Shiftr",
-            score=90,
-        ),
-        make_lead(
-            company="Paxus Co",
-            route="Paxus",
-            score=80,
-        ),
-        make_lead(
-            company="Thorio Co",
-            route="Thorio",
-            score=70,
-        ),
+        make_lead("1"),
+        make_lead("1"),
+        make_lead("2", company="Beta"),
     ]
 
     result = build_lead_queue(leads)
 
-    assert len(result["Shiftr"]) == 1
-    assert len(result["Paxus"]) == 1
-    assert len(result["Thorio"]) == 1
-    assert result["Review"] == []
+    assert len(result) == 2
 
 
-def test_low_score_lead_goes_to_review():
-    lead = make_lead(
-        company="Review Co",
-        route="Thorio",
-        score=25,
+def test_build_lead_queue_normalizes():
+    result = build_lead_queue(
+        [make_lead("1")]
     )
 
-    result = build_lead_queue([lead])
-
-    assert result["Thorio"] == []
-    assert len(result["Review"]) == 1
-    assert result["Review"][0]["company"] == "Review Co"
+    assert result[0]["contact_email"] == "test@example.com"
 
 
-def test_rejected_lead_is_excluded():
-    lead = make_lead(
-        company="Rejected Co",
-        route="Thorio",
-        score=0,
+def test_build_lead_queue_assigns_priority():
+    result = build_lead_queue(
+        [make_lead("1", score=95)]
     )
 
-    result = build_lead_queue([lead])
-
-    assert result["Thorio"] == []
-    assert result["Review"] == []
+    assert result[0]["priority"] == "Critical"
 
 
-def test_unknown_route_goes_to_review():
-    lead = make_lead(
-        company="Unknown Co",
-        route="Unknown",
-        score=90,
-    )
-
-    result = build_lead_queue([lead])
-
-    assert result["Shiftr"] == []
-    assert result["Paxus"] == []
-    assert result["Thorio"] == []
-    assert len(result["Review"]) == 1
-
-
-def test_queue_counts():
+def test_build_lead_queue_preserves_order():
     leads = [
-        make_lead(
-            company="A",
-            route="Shiftr",
-            score=90,
-        ),
-        make_lead(
-            company="B",
-            route="Shiftr",
-            score=80,
-        ),
-        make_lead(
-            company="C",
-            route="Paxus",
-            score=70,
-        ),
-        make_lead(
-            company="D",
-            route="Thorio",
-            score=20,
-        ),
-        make_lead(
-            company="E",
-            route="Thorio",
-            score=0,
-        ),
+        make_lead("1", company="Alpha"),
+        make_lead("2", company="Beta"),
+        make_lead("3", company="Gamma"),
     ]
 
-    assert queue_counts(leads) == {
-        "Shiftr": 2,
-        "Paxus": 1,
-        "Thorio": 0,
-        "Review": 1,
-    }
+    result = build_lead_queue(leads)
+
+    assert [
+        lead["company"]
+        for lead in result
+    ] == [
+        "Alpha",
+        "Beta",
+        "Gamma",
+    ]
 
 
-def test_queue_copies_lead_records():
-    lead = make_lead(
-        company="Acme",
-        route="Thorio",
-        score=90,
+def test_build_lead_queue_does_not_mutate():
+    lead = make_lead("1")
+
+    build_lead_queue([lead])
+
+    assert lead["company"] == "Acme"
+    assert lead["contact_email"] == " TEST@EXAMPLE.COM "
+    assert "priority" not in lead
+
+
+def test_queue_size_counts_unique_leads():
+    leads = [
+        make_lead("1"),
+        make_lead("1"),
+        make_lead("2"),
+    ]
+
+    assert queue_size(leads) == 2
+
+
+def test_queue_size_empty():
+    assert queue_size([]) == 0
+
+
+def test_queue_accepts_generator():
+    leads = (
+        make_lead(str(index))
+        for index in range(4)
     )
 
-    result = build_lead_queue([lead])
+    result = build_lead_queue(leads)
 
-    assert result["Thorio"][0] == lead
-    assert result["Thorio"][0] is not lead
+    assert len(result) == 4
