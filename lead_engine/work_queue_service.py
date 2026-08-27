@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict, List
 
 from .database import LeadDB
@@ -19,7 +20,7 @@ def get_work_queue(
     leads = []
 
     for fingerprint, payload, attempts in rows:
-        lead = dict(payload)
+        lead = json.loads(payload)
 
         lead["_fingerprint"] = fingerprint
         lead["_sync_attempts"] = attempts
