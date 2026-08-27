@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import re
@@ -6,7 +6,11 @@ from typing import List
 
 
 def normalize(value: str) -> str:
-    return re.sub(r"\s+", " ", (value or "").strip().lower())
+    return re.sub(
+        r"\s+",
+        " ",
+        (value or "").strip().lower(),
+    )
 
 
 @dataclass
@@ -25,13 +29,19 @@ class Lead:
     possible_duplicate: bool = False
     fingerprint: str = ""
 
+    qualified: bool = False
+    review_status: str = "Review"
+    reason_not_qualified: str = ""
+
     def __post_init__(self):
         if self.potential_routes is None:
             self.potential_routes = []
 
     def ensure_timestamp(self):
         if not self.discovered_at:
-            self.discovered_at = datetime.now(timezone.utc).isoformat()
+            self.discovered_at = datetime.now(
+                timezone.utc
+            ).isoformat()
 
     def compute_fingerprint(self):
         self.ensure_timestamp()
