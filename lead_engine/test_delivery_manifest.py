@@ -23,8 +23,8 @@ def make_lead(
         "evidence": evidence,
         "route": route,
         "potential_routes": [route],
-        "lead_score": 8,
-        "priority": "high",
+        "lead_score": 50,
+        "priority": "High",
         "status": "new",
     }
 
@@ -38,10 +38,12 @@ def test_manifest_routes_approved_leads():
         make_lead(
             route="Paxus",
             signal="contract staffing recruiting",
+            evidence="Company needs contract staffing and recruiting support.",
         ),
         make_lead(
             route="Thorio",
             signal="remote product designer",
+            evidence="Company is hiring a remote product designer.",
         ),
     ]
 
@@ -102,6 +104,7 @@ def test_approved_partner_leads_returns_only_partner_queue():
         make_lead(
             route="Paxus",
             signal="contract staffing",
+            evidence="Company needs contract staffing.",
         ),
         make_lead(
             route="Thorio",
