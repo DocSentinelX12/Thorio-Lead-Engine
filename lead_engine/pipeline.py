@@ -92,16 +92,16 @@ class LeadPipeline:
         payload["lead_score"] = scoring["lead_score"]
         payload["priority"] = scoring["priority"]
 
-        enriched = enrich_lead(payload)
+        payload = enrich_lead(payload)
 
-        enriched["route"] = recommended_route
-        enriched["potential_routes"] = possible_routes
-        enriched["lead_score"] = scoring["lead_score"]
-        enriched["priority"] = scoring["priority"]
+        payload["route"] = recommended_route
+        payload["potential_routes"] = possible_routes
+        payload["lead_score"] = scoring["lead_score"]
+        payload["priority"] = scoring["priority"]
 
-        lead = Lead.from_dict(enriched)
+        lead.compute_fingerprint()
 
-        fingerprint = lead.compute_fingerprint()
+        fingerprint = lead.fingerprint
 
         accepted = self.dedupe.accept(lead)
 
@@ -110,22 +110,16 @@ class LeadPipeline:
                 "status": "duplicate",
                 "accepted": False,
                 "fingerprint": fingerprint,
-                "lead": lead.to_dict(),
+                "lead": payload,
                 "potential_routes": possible_routes,
                 "lead_score": scoring["lead_score"],
                 "priority": scoring["priority"],
             }
 
-        payload = lead.to_dict()
-
-        payload["lead_score"] = scoring["lead_score"]
-        payload["priority"] = scoring["priority"]
-
         sync_result = sync_one(payload)
 
         if sync_result["status"] == "synced":
             self.db.mark_synced(fingerprint)
-
         else:
             self.db.mark_error(
                 fingerprint,
