@@ -9,16 +9,13 @@ def evaluate_delivery_gate(lead: Dict[str, Any]) -> Dict[str, Any]:
     Final safety gate before a lead can enter partner delivery.
 
     A lead must:
-    1. Meet the delivery-quality requirements.
-    2. Have evidence that supports its assigned partner route.
-    """
+    1. Have a supported partner route.
+    2. Have evidence that supports that assigned route.
+    3. Meet the general delivery-quality requirements.
 
-    if not is_delivery_ready(lead):
-        return {
-            "approved": False,
-            "reason": "delivery_policy_rejected",
-            "route": str(lead.get("route", "")).strip(),
-        }
+    Route validation happens first so unsupported routes receive the
+    correct deterministic review reason.
+    """
 
     route_result = validate_partner_route(lead)
 
@@ -26,6 +23,13 @@ def evaluate_delivery_gate(lead: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "approved": False,
             "reason": route_result["reason"],
+            "route": route_result["route"],
+        }
+
+    if not is_delivery_ready(lead):
+        return {
+            "approved": False,
+            "reason": "delivery_policy_rejected",
             "route": route_result["route"],
         }
 
