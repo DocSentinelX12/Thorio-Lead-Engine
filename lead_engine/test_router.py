@@ -93,17 +93,34 @@ def test_no_matching_signal_returns_review():
     assert result == "Review"
 
 
-def test_route_returns_primary_route_for_compatibility():
+def test_software_engineer_primary_route_is_shiftr():
     result = route(
         "Acme",
         "remote software engineer",
         "Acme is hiring a remote software engineer.",
     )
 
-    assert result in {
-        "Shiftr",
-        "Thorio",
-    }
+    assert result == "Shiftr"
+
+
+def test_paxus_primary_route():
+    result = route(
+        "RecruitCo",
+        "technology recruitment",
+        "Company needs technology recruitment support.",
+    )
+
+    assert result == "Paxus"
+
+
+def test_thorio_primary_route():
+    result = route(
+        "RemoteTech",
+        "remote product designer",
+        "Company is hiring a remote product designer.",
+    )
+
+    assert result == "Thorio"
 
 
 def test_score_routes_returns_all_destinations():
