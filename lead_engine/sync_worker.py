@@ -1,26 +1,24 @@
 from typing import Any, Dict, List
 
-from .airtable_sync import AirtableSyncError, sync_lead_if_missing
+from .airtable_sync import (
+    AirtableSyncError,
+    sync_lead_if_missing,
+)
 from .database import LeadDB
 
 
-SYNC_PENDING = "pending"
-SYNC_SYNCED = "synced"
-SYNC_FAILED = "failed"
-
-
-def sync_one(lead: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Attempt to synchronize one canonical local lead with Airtable.
-
-    The local database remains the source of truth.
-    """
-
+def sync_one(
+    lead: Dict[str, Any],
+) -> Dict[str, Any]:
     try:
         result = sync_lead_if_missing(lead)
 
         return {
-            "status": SYNC_SYNCED,
+            "status": (
+                "synced"
+                if result["status"] == "created"
+                else "already_exists"
+            ),
             "lead": lead,
             "airtable_record": result.get("record"),
             "error": None,
@@ -28,7 +26,7 @@ def sync_one(lead: Dict[str, Any]) -> Dict[str, Any]:
 
     except AirtableSyncError as exc:
         return {
-            "status": SYNC_FAILED,
+            "status": "failed",
             "lead": lead,
             "airtable_record": None,
             "error": str(exc),
@@ -37,69 +35,32 @@ def sync_one(lead: Dict[str, Any]) -> Dict[str, Any]:
 
 def sync_pending(
     db: LeadDB,
-    limit: int = 50,
 ) -> Dict[str, Any]:
-    """
-    Synchronize pending leads from the permanent local database.
+    pending = db.get_pending_sync()
 
-    Successful records are marked synced.
-    Failed records remain pending/failed for retry.
-    """
+    synced: List[Dict[str, Any]] = []
+    already_exists: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
 
-    synced = []
-    failed = []
+    for lead in pending:
+        result = sync_one(lead)
 
-    for fingerprint, payload_json, attempts in db.pending(limit):
-        try:
-            import json
+        if result["status"] == "synced":
+            synced.append(result)
+            db.mark_synced(lead)
 
-            lead = json.loads(payload_json)
+        elif result["status"] == "already_exists":
+            already_exists.append(result)
+            db.mark_synced(lead)
 
-            result = sync_one(lead)
-
-            if result["status"] == SYNC_SYNCED:
-                db.mark_synced(fingerprint)
-                synced.append(result)
-            else:
-                db.mark_error(
-                    fingerprint,
-                    result["error"] or "Unknown sync error",
-                )
-                failed.append(result)
-
-        except Exception as exc:
-            db.mark_error(fingerprint, str(exc))
-
-            failed.append(
-                {
-                    "status": SYNC_FAILED,
-                    "lead": None,
-                    "airtable_record": None,
-                    "error": str(exc),
-                }
-            )
+        else:
+            failed.append(result)
 
     return {
         "synced": synced,
+        "already_exists": already_exists,
         "failed": failed,
         "synced_count": len(synced),
+        "already_exists_count": len(already_exists),
         "failed_count": len(failed),
     }
-
-
-def should_retry(status: str) -> bool:
-    """
-    Determine whether a synchronization item should be retried.
-    """
-
-    return status in {
-        SYNC_PENDING,
-        SYNC_FAILED,
-    }
-
-
-if __name__ == "__main__":
-    print(
-        "Lead sync worker loaded. "
-        "Use sync_pending(db) to synchronize local leads safely."
-    )
