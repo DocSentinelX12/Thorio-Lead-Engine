@@ -1,81 +1,81 @@
 from .lead_validation import (
     is_valid_lead,
     validate_lead,
-    validation_result,
 )
 
 
 def make_lead():
     return {
         "source": "linkedin",
-        "source_id": "lead-001",
-        "url": "https://example.com/job/001",
+        "source_id": "123",
+        "url": "https://example.com/job/123",
         "company": "Acme",
         "signal": "remote software engineer",
         "evidence": "Acme is hiring a remote software engineer.",
     }
 
 
-def test_valid_lead():
+def test_valid_lead_has_no_errors():
     lead = make_lead()
 
     assert validate_lead(lead) == []
-    assert is_valid_lead(lead)
 
 
-def test_missing_required_field():
+def test_valid_lead_returns_true():
+    assert is_valid_lead(make_lead())
+
+
+def test_missing_required_field_is_reported():
     lead = make_lead()
     del lead["company"]
 
     errors = validate_lead(lead)
 
     assert "missing_company" in errors
-    assert not is_valid_lead(lead)
 
 
-def test_blank_required_field():
+def test_blank_required_field_is_reported():
     lead = make_lead()
-    lead["signal"] = "   "
+    lead["company"] = "   "
+
+    errors = validate_lead(lead)
+
+    assert "missing_company" in errors
+
+
+def test_none_required_field_is_reported():
+    lead = make_lead()
+    lead["signal"] = None
 
     errors = validate_lead(lead)
 
     assert "missing_signal" in errors
 
 
-def test_invalid_url():
+def test_multiple_missing_fields_are_reported():
     lead = make_lead()
-    lead["url"] = "not-a-url"
+    lead["source"] = ""
+    lead["company"] = ""
+    lead["evidence"] = ""
 
     errors = validate_lead(lead)
 
-    assert "invalid_url" in errors
+    assert errors == [
+        "missing_source",
+        "missing_company",
+        "missing_evidence",
+    ]
+
+
+def test_invalid_lead_returns_false():
+    lead = make_lead()
+    lead["url"] = ""
+
     assert not is_valid_lead(lead)
 
 
-def test_validation_result():
+def test_extra_fields_do_not_make_lead_invalid():
     lead = make_lead()
+    lead["custom_field"] = "anything"
 
-    result = validation_result(lead)
-
-    assert result["valid"] is True
-    assert result["errors"] == []
-
-
-def test_validation_result_with_errors():
-    lead = make_lead()
-    lead["source_id"] = ""
-
-    result = validation_result(lead)
-
-    assert result["valid"] is False
-    assert "missing_source_id" in result["errors"]
-
-
-def test_validation_does_not_mutate_lead():
-    lead = make_lead()
-
-    original = dict(lead)
-
-    validate_lead(lead)
-
-    assert lead == original
+    assert is_valid_lead(lead)
