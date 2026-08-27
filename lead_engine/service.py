@@ -1,6 +1,7 @@
 from typing import Any, Dict, Iterable
 
 from .health import check_engine
+from .outreach_queue import build_outreach_queue, summarize_queue
 from .pipeline import LeadPipeline
 from .source_runner import SourceRunner
 from .status import get_engine_status
@@ -14,8 +15,8 @@ class LeadEngineService:
     """
     Application service boundary.
 
-    The service coordinates the database, lead pipeline, source runner,
-    health checks, and work queue without duplicating their logic.
+    Coordinates the database, lead pipeline, source runner,
+    health checks, human work queue, and partner outreach queues.
     """
 
     def __init__(
@@ -106,6 +107,32 @@ class LeadEngineService:
     def next_work_item(self):
         return get_next_work_item(
             self.db
+        )
+
+    def outreach_queues(
+        self,
+        leads: Iterable[Dict[str, Any]],
+    ) -> Dict[str, list]:
+        """
+        Build partner delivery queues from processed leads.
+
+        Only leads that satisfy the outreach queue rules are
+        delivered to Shiftr, Paxus, or Thorio. Everything else
+        remains in Review.
+        """
+        return build_outreach_queue(
+            list(leads)
+        )
+
+    def outreach_summary(
+        self,
+        leads: Iterable[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Return counts for all partner delivery queues.
+        """
+        return summarize_queue(
+            list(leads)
         )
 
     def health(self):
