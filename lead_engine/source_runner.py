@@ -47,6 +47,20 @@ class SourceRunner:
             "failed_count": failed,
         }
 
+    def run_source(
+        self,
+        source,
+    ) -> Dict[str, Any]:
+        """
+        Collect records from one source and process them.
+        """
+
+        records = source.collect()
+
+        return self.process(
+            records
+        )
+
 
 if __name__ == "__main__":
     print(
