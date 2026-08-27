@@ -1,120 +1,89 @@
-from .lead_summary import summarize_leads
+from .lead_summary import (
+    summarize_lead,
+    summarize_leads,
+)
 
 
-def test_summarize_total():
-    leads = [
-        {"company": "A"},
-        {"company": "B"},
-        {"company": "C"},
-    ]
-
-    result = summarize_leads(leads)
-
-    assert result["total"] == 3
-
-
-def test_summarize_routes():
-    leads = [
-        {"route": "Shiftr"},
-        {"route": "Paxus"},
-        {"route": "Shiftr"},
-        {"route": "Thorio"},
-    ]
-
-    result = summarize_leads(leads)
-
-    assert result["routes"] == {
-        "Shiftr": 2,
-        "Paxus": 1,
-        "Thorio": 1,
+def test_summarize_lead():
+    lead = {
+        "company": "Acme",
+        "contact_name": "Jane Smith",
+        "route": "Shiftr",
+        "signal": "remote software engineer",
     }
 
+    assert summarize_lead(lead) == (
+        "Acme | contact: Jane Smith | "
+        "route: Shiftr | signal: remote software engineer"
+    )
 
-def test_summarize_statuses():
-    leads = [
-        {"status": "new"},
-        {"status": "qualified"},
-        {"status": "new"},
-    ]
 
-    result = summarize_leads(leads)
-
-    assert result["statuses"] == {
-        "new": 2,
-        "qualified": 1,
+def test_summarize_lead_uses_person_fallback():
+    lead = {
+        "company": "Acme",
+        "person": "John Smith",
+        "route": "Paxus",
     }
 
+    assert summarize_lead(lead) == (
+        "Acme | contact: John Smith | route: Paxus"
+    )
 
-def test_summarize_priorities():
-    leads = [
-        {"priority": "High"},
-        {"priority": "Critical"},
-        {"priority": "High"},
-        {"priority": "Low"},
-    ]
 
-    result = summarize_leads(leads)
-
-    assert result["priorities"] == {
-        "High": 2,
-        "Critical": 1,
-        "Low": 1,
+def test_summarize_lead_missing_optional_fields():
+    lead = {
+        "company": "Acme",
     }
 
+    assert summarize_lead(lead) == "Acme"
 
-def test_summarize_ignores_blank_values():
+
+def test_summarize_empty_lead():
+    assert summarize_lead({}) == ""
+
+
+def test_summarize_leads():
     leads = [
         {
-            "route": "",
-            "status": "",
-            "priority": "",
-        },
-        {
+            "company": "A",
             "route": "Shiftr",
-            "status": "new",
-            "priority": "High",
+        },
+        {
+            "company": "B",
+            "route": "Paxus",
         },
     ]
 
-    result = summarize_leads(leads)
+    assert summarize_leads(leads) == [
+        "A | route: Shiftr",
+        "B | route: Paxus",
+    ]
 
-    assert result["routes"] == {"Shiftr": 1}
-    assert result["statuses"] == {"new": 1}
-    assert result["priorities"] == {"High": 1}
+
+def test_summarize_leads_accepts_generator():
+    leads = (
+        {
+            "company": f"Company {i}",
+        }
+        for i in range(3)
+    )
+
+    assert summarize_leads(leads) == [
+        "Company 0",
+        "Company 1",
+        "Company 2",
+    ]
 
 
 def test_summarize_strips_values():
-    leads = [
-        {
-            "route": " Shiftr ",
-            "status": " new ",
-            "priority": " High ",
-        },
-    ]
-
-    result = summarize_leads(leads)
-
-    assert result["routes"] == {"Shiftr": 1}
-    assert result["statuses"] == {"new": 1}
-    assert result["priorities"] == {"High": 1}
-
-
-def test_summarize_empty():
-    assert summarize_leads([]) == {
-        "total": 0,
-        "routes": {},
-        "statuses": {},
-        "priorities": {},
+    lead = {
+        "company": "  Acme  ",
+        "contact_name": " Jane Smith ",
+        "route": " Shiftr ",
+        "signal": " remote engineer ",
     }
 
-
-def test_summarize_accepts_generator():
-    leads = (
-        {"route": "Shiftr"}
-        for _ in range(3)
+    assert summarize_lead(lead) == (
+        "Acme | contact: Jane Smith | "
+        "route: Shiftr | signal: remote engineer"
     )
-
-    result = summarize_leads(leads)
-
-    assert result["total"] == 3
-    assert result["routes"] == {"Shiftr": 3}
