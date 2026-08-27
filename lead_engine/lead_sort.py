@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List
 
 
-_PRIORITY_ORDER = {
+PRIORITY_ORDER = {
     "critical": 4,
     "high": 3,
     "medium": 2,
@@ -11,37 +11,43 @@ _PRIORITY_ORDER = {
 }
 
 
-def sort_leads(
+def sort_by_score(
     leads: Iterable[Dict[str, Any]],
+    descending: bool = True,
 ) -> List[Dict[str, Any]]:
-    """
-    Sort leads by priority and score, highest first.
-
-    Original records are not mutated.
-    """
+    """Sort leads by numeric lead score."""
 
     records = [dict(lead) for lead in leads]
 
-    def sort_key(lead: Dict[str, Any]):
-        priority = str(
-            lead.get("priority", "")
-            or ""
-        ).strip().lower()
-
+    def score(lead: Dict[str, Any]) -> float:
         try:
-            score = float(
-                lead.get("lead_score", 0)
-            )
+            return float(lead.get("lead_score", 0))
         except (TypeError, ValueError):
-            score = 0
+            return 0.0
 
-        return (
-            _PRIORITY_ORDER.get(priority, 0),
-            score,
+    return sorted(
+        records,
+        key=score,
+        reverse=descending,
+    )
+
+
+def sort_by_priority(
+    leads: Iterable[Dict[str, Any]],
+    descending: bool = True,
+) -> List[Dict[str, Any]]:
+    """Sort leads by priority."""
+
+    records = [dict(lead) for lead in leads]
+
+    def priority(lead: Dict[str, Any]) -> int:
+        return PRIORITY_ORDER.get(
+            str(lead.get("priority", "")).strip().lower(),
+            0,
         )
 
     return sorted(
         records,
-        key=sort_key,
-        reverse=True,
+        key=priority,
+        reverse=descending,
     )
