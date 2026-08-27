@@ -18,20 +18,32 @@ class Lead:
     source: str
     source_id: str
     url: str
+
     company: str = ""
     person: str = ""
     signal: str = ""
     discovered_at: str = ""
+
     route: str = "Review"
     potential_routes: List[str] = None
+
     status: str = "Unverified"
     evidence: str = ""
+
     possible_duplicate: bool = False
     fingerprint: str = ""
 
     qualified: bool = False
     review_status: str = "Review"
     reason_not_qualified: str = ""
+
+    contact_name: str = ""
+    contact_title: str = ""
+    contact_email: str = ""
+    contact_phone: str = ""
+    linkedin_url: str = ""
+    company_website: str = ""
+    enrichment_status: str = "pending"
 
     def __post_init__(self):
         if self.potential_routes is None:
