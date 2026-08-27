@@ -141,11 +141,14 @@ def route(
     evidence: str,
 ) -> str:
     """
-    Return the strongest single route.
+    Return the primary business route.
 
-    The existing Lead model keeps one primary route for
-    compatibility. Secondary opportunities are preserved
-    separately by potential_routes().
+    Shiftr takes priority for direct software/developer/
+    engineering hiring signals because those are its strongest
+    existing compatibility signals.
+
+    Thorio remains available through potential_routes() for
+    remote technology opportunities.
     """
 
     scores = score_routes(
@@ -154,15 +157,16 @@ def route(
         evidence=evidence,
     )
 
-    best_route = max(
-        ROUTES,
-        key=lambda name: scores[name],
-    )
+    if scores["Shiftr"] > 0:
+        return "Shiftr"
 
-    if scores[best_route] <= 0:
-        return "Review"
+    if scores["Paxus"] > 0:
+        return "Paxus"
 
-    return best_route
+    if scores["Thorio"] > 0:
+        return "Thorio"
+
+    return "Review"
 
 
 def potential_routes(
