@@ -20,10 +20,16 @@ def _lead_routes(lead: Dict[str, Any]) -> List[str]:
 
     if potential_routes:
         routes = []
+
         for route in potential_routes:
             route_name = str(route or "").strip()
-            if route_name in SUPPORTED_ROUTES and route_name not in routes:
+
+            if (
+                route_name in SUPPORTED_ROUTES
+                and route_name not in routes
+            ):
                 routes.append(route_name)
+
         return routes
 
     route = str(
@@ -55,9 +61,7 @@ def build_delivery_batches(
 
     for lead in leads:
         for route in _lead_routes(lead):
-            copy = dict(lead)
-            copy["delivery_route"] = route
-            batches[route].append(copy)
+            batches[route].append(dict(lead))
 
     return batches
 
