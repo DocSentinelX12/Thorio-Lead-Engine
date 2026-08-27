@@ -4,18 +4,53 @@ from .delivery_policy import is_delivery_ready
 from .partner_rules import validate_partner_route
 
 
-def evaluate_delivery_gate(lead: Dict[str, Any]) -> Dict[str, Any]:
+APPROVAL_STATUSES = {
+    "approved",
+    "human_approved",
+}
+
+
+def _is_human_approved(lead: Dict[str, Any]) -> bool:
+    """
+    Return True only when the lead carries an explicit human approval.
+
+    Automatic qualification, scoring, routing, or preparation does
+    not constitute delivery approval.
+    """
+
+    if lead.get("human_approved") is True:
+        return True
+
+    approval_status = str(
+        lead.get("approval_status", "")
+        or ""
+    ).strip().lower()
+
+    return approval_status in APPROVAL_STATUSES
+
+
+def evaluate_delivery_gate(
+    lead: Dict[str, Any],
+) -> Dict[str, Any]:
     """
     Final safety gate before a lead can enter partner delivery.
 
     A lead must:
-    1. Have a supported partner route.
-    2. Have evidence that supports that assigned route.
-    3. Meet the general delivery-quality requirements.
+    1. Have explicit human approval.
+    2. Have a supported partner route.
+    3. Have evidence supporting that route.
+    4. Meet the general delivery-quality requirements.
 
-    Route validation happens first so unsupported routes receive the
-    correct deterministic review reason.
+    Human approval is checked first so no automated pipeline state
+    can accidentally authorize delivery.
     """
+
+    if not _is_human_approved(lead):
+        return {
+            "approved": False,
+            "reason": "human_approval_required",
+            "route": lead.get("route", ""),
+        }
 
     route_result = validate_partner_route(lead)
 
@@ -40,7 +75,9 @@ def evaluate_delivery_gate(lead: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def prepare_for_delivery(lead: Dict[str, Any]) -> Dict[str, Any]:
+def prepare_for_delivery(
+    lead: Dict[str, Any],
+) -> Dict[str, Any]:
     """
     Return a delivery decision without modifying the original lead.
     """
