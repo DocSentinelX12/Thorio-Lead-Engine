@@ -143,6 +143,25 @@ class LeadEngineApplication:
             limit=queue_limit
         )
 
+    def next_work_item(self):
+        return self.service.next_work_item()
+
+    def outreach_queues(
+        self,
+        leads: Iterable[Dict[str, Any]],
+    ) -> Dict[str, list]:
+        return self.service.outreach_queues(
+            leads
+        )
+
+    def outreach_summary(
+        self,
+        leads: Iterable[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        return self.service.outreach_summary(
+            leads
+        )
+
     def export_pending(
         self,
         path: str,
