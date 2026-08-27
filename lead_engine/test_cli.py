@@ -14,7 +14,9 @@ def test_cli_status(monkeypatch, capsys):
             }
 
         def health(self):
-            return {"healthy": True}
+            return {
+                "healthy": True
+            }
 
         def work_queue(self):
             return []
@@ -28,7 +30,9 @@ def test_cli_status(monkeypatch, capsys):
         lambda: FakeApplication(),
     )
 
-    result = main(["status"])
+    result = main(
+        ["status"]
+    )
 
     assert result == 0
 
@@ -61,7 +65,9 @@ def test_cli_health(monkeypatch, capsys):
         lambda: FakeApplication(),
     )
 
-    result = main(["health"])
+    result = main(
+        ["health"]
+    )
 
     assert result == 0
 
@@ -72,7 +78,10 @@ def test_cli_health(monkeypatch, capsys):
     assert output["healthy"] is True
 
 
-def test_cli_work_queue(monkeypatch, capsys):
+def test_cli_work_queue(
+    monkeypatch,
+    capsys,
+):
     class FakeApplication:
         def status(self):
             return {}
@@ -177,3 +186,71 @@ def test_cli_import_json(
 
     assert output["source_count"] == 1
     assert output["lead_count"] == 1
+
+
+def test_cli_export_json(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    destination = tmp_path / "export.json"
+
+    class FakeDatabase:
+        pass
+
+    class FakeApplication:
+        def __init__(self):
+            self.db = FakeDatabase()
+
+        def status(self):
+            return {}
+
+        def health(self):
+            return {
+                "healthy": True
+            }
+
+        def work_queue(self):
+            return []
+
+        def run_sources(self, sources):
+            return {}
+
+    def fake_export(db, path):
+        assert isinstance(
+            db,
+            FakeDatabase,
+        )
+
+        assert path == str(destination)
+
+        return {
+            "path": path,
+            "count": 2,
+        }
+
+    monkeypatch.setattr(
+        "lead_engine.cli.create_application",
+        lambda: FakeApplication(),
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.cli.export_pending_leads",
+        fake_export,
+    )
+
+    result = main(
+        [
+            "export-json",
+            str(destination),
+        ]
+    )
+
+    assert result == 0
+
+    output = json.loads(
+        capsys.readouterr().out
+    )
+
+    assert output["count"] == 2
+    assert output["path"] == str(destination)
