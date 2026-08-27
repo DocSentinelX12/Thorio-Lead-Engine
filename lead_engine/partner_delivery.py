@@ -1,43 +1,71 @@
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
-from .delivery import build_delivery_batches
-
-
-PARTNER_ORDER = ("Shiftr", "Paxus", "Thorio")
+from .delivery_gate import evaluate_delivery_gate
 
 
-def prepare_partner_delivery(
-    leads: Iterable[Dict[str, Any]],
+PARTNER_ROUTES = ("Shiftr", "Paxus", "Thorio")
+
+
+def deliverable_partner(lead: Dict[str, Any]) -> str:
+    """
+    Return the partner that should receive a lead.
+
+    The delivery gate is authoritative. Leads that fail the gate
+    are never assigned to a partner.
+    """
+
+    gate = evaluate_delivery_gate(lead)
+
+    if not gate["approved"]:
+        return ""
+
+    route = gate["route"]
+
+    if route not in PARTNER_ROUTES:
+        return ""
+
+    return route
+
+
+def partition_leads(
+    leads: List[Dict[str, Any]],
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Prepare qualified leads for partner-specific delivery.
+    Separate approved leads into partner-specific delivery queues.
 
-    Review leads and unsupported routes are excluded by the delivery layer.
+    Rejected or unsupported leads are placed in the Review queue.
     """
 
-    batches = build_delivery_batches(leads)
-
-    return {
-        partner: list(batches.get(partner, []))
-        for partner in PARTNER_ORDER
+    result: Dict[str, List[Dict[str, Any]]] = {
+        "Shiftr": [],
+        "Paxus": [],
+        "Thorio": [],
+        "Review": [],
     }
 
+    for lead in leads:
+        partner = deliverable_partner(lead)
 
-def partner_delivery_summary(
-    leads: Iterable[Dict[str, Any]],
-) -> Dict[str, Any]:
+        if partner:
+            result[partner].append(dict(lead))
+        else:
+            result["Review"].append(dict(lead))
+
+    return result
+
+
+def delivery_counts(
+    leads: List[Dict[str, Any]],
+) -> Dict[str, int]:
     """
-    Return delivery counts plus the overall number of deliverable leads.
+    Return delivery counts by partner and review queue.
     """
 
-    batches = prepare_partner_delivery(leads)
-
-    counts = {
-        partner: len(batches[partner])
-        for partner in PARTNER_ORDER
-    }
+    partitioned = partition_leads(leads)
 
     return {
-        "counts": counts,
-        "total": sum(counts.values()),
+        "Shiftr": len(partitioned["Shiftr"]),
+        "Paxus": len(partitioned["Paxus"]),
+        "Thorio": len(partitioned["Thorio"]),
+        "Review": len(partitioned["Review"]),
     }
