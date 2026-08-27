@@ -62,11 +62,7 @@ def _request(
             return json.loads(body) if body else {}
 
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode(
-            "utf-8",
-            errors="replace",
-        )
-
+        body = exc.read().decode("utf-8", errors="replace")
         raise AirtableSyncError(
             f"Airtable API error {exc.code}: {body}"
         ) from exc
@@ -85,19 +81,28 @@ def _table_url() -> str:
     )
 
 
+def _normalize_routes(value: Any) -> List[str]:
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        value = [value]
+
+    if not isinstance(value, list):
+        return []
+
+    allowed = {"Paxus", "Shiftr", "Thorio"}
+
+    return [
+        str(route)
+        for route in value
+        if str(route) in allowed
+    ]
+
+
 def _normalize_lead(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Convert the canonical local lead record into Airtable fields.
-
-    The local Lead model remains the source of truth.
-
-    Routing, scoring, enrichment, and qualification metadata
-    are preserved so Airtable contains the complete operational
-    record needed for downstream outreach.
-    """
-
     fields: Dict[str, Any] = {}
 
     mapping = {
@@ -111,7 +116,6 @@ def _normalize_lead(
         "discovered_at": "Discovered Date",
 
         "route": "Recommended Partner",
-        "potential_routes": "Potential Partners",
 
         "lead_score": "Lead Score",
         "priority": "Priority",
@@ -131,6 +135,22 @@ def _normalize_lead(
 
         "possible_duplicate": "Possible Duplicate",
         "fingerprint": "Duplicate Key",
+
+        "qualification_score": "Qualification Score",
+        "budget_confirmed": "Budget Confirmed",
+        "need_confirmed": "Need Confirmed",
+        "decision_maker_confirmed": "Decision Maker Confirmed",
+        "timeline_confirmed": "Timeline Confirmed",
+
+        "thorio_fit": "Thorio Fit",
+        "remote_roles_verified": "Remote Roles Verified",
+        "thorio_revenue_potential": "Thorio Revenue Potential",
+        "thorio_outreach_ready": "Thorio Outreach Ready",
+
+        "evidence_status": "Evidence Status",
+        "work_queue": "Work Queue",
+        "next_action_date": "Next Action Date",
+        "outreach_status": "Outreach Status",
     }
 
     for local_name, airtable_name in mapping.items():
@@ -140,12 +160,16 @@ def _normalize_lead(
             continue
 
         if isinstance(value, list):
-            value = ", ".join(
-                str(item)
-                for item in value
-            )
+            value = ", ".join(str(item) for item in value)
 
         fields[airtable_name] = value
+
+    routes = _normalize_routes(
+        lead.get("potential_routes")
+    )
+
+    if routes:
+        fields["Applicable Routes"] = routes
 
     return fields
 
@@ -153,8 +177,6 @@ def _normalize_lead(
 def push_lead(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Push one local lead into Airtable."""
-
     payload = {
         "records": [
             {
@@ -170,55 +192,9 @@ def push_lead(
     )
 
 
-def push_leads(
-    leads: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Push local leads to Airtable in batches of 10."""
-
-    if not leads:
-        return {
-            "records": [],
-            "synced_count": 0,
-        }
-
-    results = []
-
-    for start in range(0, len(leads), 10):
-        batch = leads[start:start + 10]
-
-        payload = {
-            "records": [
-                {
-                    "fields": _normalize_lead(lead)
-                }
-                for lead in batch
-            ]
-        }
-
-        result = _request(
-            "POST",
-            _table_url(),
-            payload,
-        )
-
-        results.extend(
-            result.get("records", [])
-        )
-
-    return {
-        "records": results,
-        "synced_count": len(results),
-    }
-
-
 def find_by_fingerprint(
     fingerprint: str,
 ) -> List[Dict[str, Any]]:
-    """
-    Find an existing Airtable lead using the
-    canonical fingerprint.
-    """
-
     if not fingerprint:
         return []
 
@@ -243,20 +219,12 @@ def find_by_fingerprint(
         f"{_table_url()}?{params}",
     )
 
-    return result.get(
-        "records",
-        [],
-    )
+    return result.get("records", [])
 
 
 def sync_lead_if_missing(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Create a lead only if its canonical fingerprint
-    is not already present in Airtable.
-    """
-
     fingerprint = lead.get("fingerprint")
 
     if fingerprint:
@@ -272,37 +240,24 @@ def sync_lead_if_missing(
 
     result = push_lead(lead)
 
-    records = result.get(
-        "records",
-        [],
-    )
+    records = result.get("records", [])
 
     return {
         "status": "created",
-        "record": (
-            records[0]
-            if records
-            else None
-        ),
+        "record": records[0] if records else None,
     }
 
 
 def sync_queue(
     leads: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """
-    Synchronize local leads without losing failed records.
-    """
-
     synced = []
     already_exists = []
     failed = []
 
     for lead in leads:
         try:
-            result = sync_lead_if_missing(
-                lead
-            )
+            result = sync_lead_if_missing(lead)
 
             if result["status"] == "created":
                 synced.append(lead)
@@ -329,8 +284,5 @@ def sync_queue(
 
 if __name__ == "__main__":
     print(
-        "Airtable sync module loaded. "
-        "Use sync_queue() or "
-        "sync_lead_if_missing() from "
-        "the lead engine."
-    )
+        "Airtable sync module loaded."
+        )
