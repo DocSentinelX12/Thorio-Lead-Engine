@@ -2,13 +2,13 @@ import os
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass
 class LeadEngineConfig:
     """
-    Central configuration for the lead engine.
+    Central configuration for the Lead Engine.
 
-    Secrets are read from environment variables and are never
-    stored in source code.
+    Secrets are read from environment variables only.
+    They are never stored in source code.
     """
 
     database_dir: str = "data"
@@ -19,36 +19,9 @@ class LeadEngineConfig:
 
     @classmethod
     def from_environment(cls):
-        """
-        Build configuration from environment variables.
-        """
-
-        sync_enabled = os.getenv(
-            "LEAD_ENGINE_SYNC_ENABLED",
-            "true",
-        ).strip().lower() not in {
-            "0",
-            "false",
-            "no",
-            "off",
-        }
-
-        batch_size_raw = os.getenv(
-            "LEAD_ENGINE_BATCH_SIZE",
-            "50",
-        )
-
-        try:
-            batch_size = int(batch_size_raw)
-        except ValueError:
-            batch_size = 50
-
-        if batch_size < 1:
-            batch_size = 50
-
         return cls(
             database_dir=os.getenv(
-                "LEAD_ENGINE_DATA_DIR",
+                "LEAD_ENGINE_DATABASE_DIR",
                 "data",
             ),
             airtable_base_id=os.getenv(
@@ -56,15 +29,49 @@ class LeadEngineConfig:
                 "",
             ),
             airtable_table=os.getenv(
-                "AIRTABLE_LEAD_TABLE",
+                "AIRTABLE_TABLE",
                 "Lead Radar",
             ),
-            batch_size=batch_size,
-            sync_enabled=sync_enabled,
+            batch_size=int(
+                os.getenv(
+                    "LEAD_ENGINE_BATCH_SIZE",
+                    "50",
+                )
+            ),
+            sync_enabled=os.getenv(
+                "LEAD_ENGINE_SYNC_ENABLED",
+                "true",
+            ).lower()
+            in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            },
         )
 
+    @property
+    def database_path(self):
+        from pathlib import Path
 
-if __name__ == "__main__":
-    print(
-        LeadEngineConfig.from_environment()
-    )
+        return (
+            Path(self.database_dir)
+            / "leads.sqlite3"
+        )
+
+    def safe_dict(self):
+        """
+        Return configuration suitable for logs.
+
+        Secrets are intentionally excluded.
+        """
+
+        return {
+            "database_dir": self.database_dir,
+            "airtable_configured": bool(
+                self.airtable_base_id
+            ),
+            "airtable_table": self.airtable_table,
+            "batch_size": self.batch_size,
+            "sync_enabled": self.sync_enabled,
+        }
