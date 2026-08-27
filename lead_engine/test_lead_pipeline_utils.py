@@ -61,6 +61,15 @@ def test_valid_prepared_leads_assigns_priority():
     assert result[0]["priority"] == "Critical"
 
 
+def test_valid_prepared_leads_allows_missing_route():
+    lead = make_lead()
+
+    result = valid_prepared_leads([lead])
+
+    assert len(result) == 1
+    assert result[0]["company"] == "Acme"
+
+
 def test_valid_prepared_leads_empty():
     assert valid_prepared_leads([]) == []
 
