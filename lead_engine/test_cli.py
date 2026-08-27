@@ -19,6 +19,10 @@ def test_cli_status(monkeypatch, capsys):
         def work_queue(self):
             return []
 
+        def run_sources(self, sources):
+            return {}
+
+
     monkeypatch.setattr(
         "lead_engine.cli.create_application",
         lambda: FakeApplication(),
@@ -49,6 +53,9 @@ def test_cli_health(monkeypatch, capsys):
         def work_queue(self):
             return []
 
+        def run_sources(self, sources):
+            return {}
+
     monkeypatch.setattr(
         "lead_engine.cli.create_application",
         lambda: FakeApplication(),
@@ -71,7 +78,9 @@ def test_cli_work_queue(monkeypatch, capsys):
             return {}
 
         def health(self):
-            return {"healthy": True}
+            return {
+                "healthy": True
+            }
 
         def work_queue(self):
             return [
@@ -81,12 +90,17 @@ def test_cli_work_queue(monkeypatch, capsys):
                 }
             ]
 
+        def run_sources(self, sources):
+            return {}
+
     monkeypatch.setattr(
         "lead_engine.cli.create_application",
         lambda: FakeApplication(),
     )
 
-    result = main(["work-queue"])
+    result = main(
+        ["work-queue"]
+    )
 
     assert result == 0
 
@@ -96,3 +110,70 @@ def test_cli_work_queue(monkeypatch, capsys):
 
     assert len(output) == 1
     assert output[0]["company"] == "Example Corp"
+
+
+def test_cli_import_json(
+    monkeypatch,
+    capsys,
+    tmp_path,
+):
+    path = tmp_path / "leads.json"
+
+    path.write_text(
+        """
+        [
+            {
+                "source": "test",
+                "source_id": "cli-json-001",
+                "url": "https://example.com/cli-json-001",
+                "company": "CLI Corp",
+                "signal": "remote developer",
+                "evidence": "Remote developer opening."
+            }
+        ]
+        """,
+        encoding="utf-8",
+    )
+
+    class FakeApplication:
+        def status(self):
+            return {}
+
+        def health(self):
+            return {
+                "healthy": True
+            }
+
+        def work_queue(self):
+            return []
+
+        def run_sources(self, sources):
+            collected = list(
+                sources[0].collect()
+            )
+
+            return {
+                "source_count": len(sources),
+                "lead_count": len(collected),
+            }
+
+    monkeypatch.setattr(
+        "lead_engine.cli.create_application",
+        lambda: FakeApplication(),
+    )
+
+    result = main(
+        [
+            "import-json",
+            str(path),
+        ]
+    )
+
+    assert result == 0
+
+    output = json.loads(
+        capsys.readouterr().out
+    )
+
+    assert output["source_count"] == 1
+    assert output["lead_count"] == 1
