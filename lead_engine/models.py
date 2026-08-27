@@ -2,6 +2,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 import hashlib
 import re
+from typing import List
 
 
 def normalize(value: str) -> str:
@@ -18,10 +19,15 @@ class Lead:
     signal: str = ""
     discovered_at: str = ""
     route: str = "Review"
+    potential_routes: List[str] = None
     status: str = "Unverified"
     evidence: str = ""
     possible_duplicate: bool = False
     fingerprint: str = ""
+
+    def __post_init__(self):
+        if self.potential_routes is None:
+            self.potential_routes = []
 
     def ensure_timestamp(self):
         if not self.discovered_at:
