@@ -5,34 +5,33 @@ from .work_queue_service import (
     get_next_work_item,
     get_work_queue,
 )
-from .runner import LeadRunner
-from .database import LeadDB
 
 
 class LeadEngineService:
     """
-    Application service boundary for the Lead Engine.
+    Application service boundary.
 
-    Keeps orchestration concerns out of the database,
-    runner, and CLI layers.
+    The service coordinates the existing runner and database
+    components without changing their public interfaces.
     """
 
     def __init__(
         self,
-        db: LeadDB,
-        runner: LeadRunner | None = None,
+        db,
+        runner=None,
         work_queue_limit: int = 50,
     ):
         self.db = db
+        self.work_queue_limit = work_queue_limit
 
-        self.runner = (
-            runner
-            or LeadRunner(db=db)
-        )
+        if runner is None:
+            from .runner import Runner
 
-        self.work_queue_limit = (
-            work_queue_limit
-        )
+            runner = Runner(
+                db=self.db
+            )
+
+        self.runner = runner
 
     def process_records(
         self,
@@ -46,16 +45,18 @@ class LeadEngineService:
         self,
         sources,
     ) -> Dict[str, Any]:
-        results = []
         source_count = 0
         failed_count = 0
+        results = []
 
         for source in sources:
             source_count += 1
 
             try:
+                records = source.collect()
+
                 result = self.runner.process(
-                    source.collect()
+                    records
                 )
 
                 results.append(
@@ -64,12 +65,6 @@ class LeadEngineService:
                         "result": result,
                     }
                 )
-
-                if result.get(
-                    "failed_count",
-                    0,
-                ):
-                    failed_count += 1
 
             except Exception as exc:
                 failed_count += 1
@@ -122,4 +117,4 @@ class LeadEngineService:
             "work_queue": len(
                 self.work_queue()
             ),
-                }
+        }
