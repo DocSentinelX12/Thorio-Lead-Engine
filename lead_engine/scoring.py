@@ -2,18 +2,18 @@ from typing import Dict
 
 
 SIGNAL_WEIGHTS = {
-    "software engineer": 3,
-    "developer": 3,
-    "engineering hire": 3,
-    "contract developer": 3,
-    "technology recruitment": 3,
-    "it recruitment": 3,
-    "tech recruitment": 3,
-    "technology staffing": 3,
-    "remote": 2,
-    "remote-first": 2,
-    "remote hiring": 2,
-    "remote role": 2,
+    "software engineer": 5,
+    "developer": 5,
+    "engineering hire": 5,
+    "contract developer": 5,
+    "technology recruitment": 5,
+    "it recruitment": 5,
+    "tech recruitment": 5,
+    "technology staffing": 5,
+    "remote": 3,
+    "remote-first": 3,
+    "remote hiring": 3,
+    "remote role": 3,
 }
 
 
@@ -85,6 +85,6 @@ if __name__ == "__main__":
         score_result(
             "Acme",
             "remote software engineer",
-            "Remote engineering opening.",
+            "Remote software engineer opening.",
         )
     )
