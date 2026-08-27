@@ -36,10 +36,19 @@ def build_delivery_manifest(
     """
     Build the final delivery manifest.
 
-    Only leads that pass every delivery gate and have evidence supporting
-    their assigned partner route are placed into partner queues.
+    Every lead passes through the delivery gate before entering a
+    partner queue.
 
-    Leads that fail validation are placed into Review instead.
+    Supported routes:
+        Shiftr
+        Paxus
+        Thorio
+
+    Anything rejected by the delivery gate is placed into Review
+    with the exact rejection reason.
+
+    Unsupported routes are therefore preserved in Review with
+    the reason "unsupported_route".
     """
 
     manifest: Dict[str, Any] = {
