@@ -93,13 +93,14 @@ def check_engine(
     """
     Backward-compatible engine health check.
 
-    Existing service/application code uses this
-    function as the basic database health check.
+    Existing service/application code expects the
+    `healthy` field.
     """
 
     result = check_database(db)
 
     return {
+        "healthy": result["ok"],
         "status": result["status"],
         "ok": result["ok"],
         "database": result,
