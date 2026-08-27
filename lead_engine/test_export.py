@@ -1,67 +1,66 @@
-import json
+from lead_engine.export import (
+    export_all_partners,
+    export_partner_leads,
+)
 
-from .database import LeadDB
-from .export import export_pending_leads
 
-
-def test_export_pending_leads(tmp_path):
-    db = LeadDB(
-        data_dir=str(tmp_path / "database")
-    )
-
-    db.insert_if_new(
+def test_export_partner_leads_returns_requested_partner():
+    leads = [
         {
-            "fingerprint": "export-001",
-            "company": "Export Corp",
-            "signal": "remote developer",
-            "status": "Unverified",
-        }
-    )
-
-    destination = tmp_path / "exports" / "leads.json"
-
-    result = export_pending_leads(
-        db,
-        str(destination),
-    )
-
-    assert result["count"] == 1
-    assert destination.exists()
-
-    data = json.loads(
-        destination.read_text(
-            encoding="utf-8"
-        )
-    )
-
-    assert len(data) == 1
-    assert data[0]["company"] == "Export Corp"
-    assert data[0]["fingerprint"] == "export-001"
-
-
-def test_export_does_not_mark_lead_synced(tmp_path):
-    db = LeadDB(
-        data_dir=str(tmp_path / "database")
-    )
-
-    db.insert_if_new(
+            "company": "Shiftr Lead",
+            "route": "Shiftr",
+        },
         {
-            "fingerprint": "export-002",
-            "company": "Still Pending Corp",
-            "signal": "developer",
-            "status": "Unverified",
-        }
+            "company": "Paxus Lead",
+            "route": "Paxus",
+        },
+        {
+            "company": "Thorio Lead",
+            "route": "Thorio",
+        },
+    ]
+
+    result = export_partner_leads(
+        leads,
+        "Shiftr",
     )
 
-    destination = tmp_path / "leads.json"
+    assert len(result) == 1
+    assert result[0]["company"] == "Shiftr Lead"
 
-    export_pending_leads(
-        db,
-        str(destination),
+
+def test_export_partner_leads_rejects_unknown_partner():
+    result = export_partner_leads(
+        [
+            {
+                "company": "Unknown",
+                "route": "Review",
+            }
+        ],
+        "Unknown",
     )
 
-    stats = db.stats()
+    assert result == []
 
-    assert stats[0] == 1
-    assert stats[1] == 0
-    assert stats[2] == 1
+
+def test_export_all_partners_groups_leads():
+    leads = [
+        {
+            "company": "A",
+            "route": "Shiftr",
+        },
+        {
+            "company": "B",
+            "route": "Paxus",
+        },
+        {
+            "company": "C",
+            "route": "Thorio",
+        },
+    ]
+
+    result = export_all_partners(leads)
+
+    assert len(result["Shiftr"]) == 1
+    assert len(result["Paxus"]) == 1
+    assert len(result["Thorio"]) == 1
