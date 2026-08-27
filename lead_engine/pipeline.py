@@ -1,7 +1,9 @@
 from typing import Any, Dict
 
-from .queue import LeadQueue
-from .router import route
+from .database import LeadDB
+from .dedupe import Dedupe
+from .models import Lead
+from .router import potential_routes, route
 from .sync_worker import sync_one
 
 
@@ -11,99 +13,126 @@ class LeadPipeline:
 
     Flow:
 
-        signal
+        Lead
           ↓
-        router
+        Router
           ↓
-        local persistent queue
+        Dedupe
+          ↓
+        Local LeadDB
           ↓
         Airtable synchronization
 
+    The local database remains the source of truth.
     Human review remains the final qualification decision.
     """
 
-    def __init__(self, queue: LeadQueue | None = None):
-        self.queue = queue or LeadQueue()
+    def __init__(self, db: LeadDB | None = None):
+        self.db = db or LeadDB()
+        self.dedupe = Dedupe(self.db)
 
     def process(
         self,
-        company: str,
-        signal: str,
-        evidence: str,
+        source: str,
+        source_id: str,
+        url: str,
+        company: str = "",
+        person: str = "",
+        signal: str = "",
+        evidence: str = "",
         **extra_fields: Any,
     ) -> Dict[str, Any]:
         """
         Process one discovered lead.
-
-        The router provides a recommendation only.
-        The lead is persisted locally before Airtable synchronization.
         """
 
-        recommended_partner = route(
+        recommended_route = route(
             company=company,
             signal=signal,
             evidence=evidence,
         )
 
-        lead = {
-            "company": company,
-            "signal": signal,
-            "evidence": evidence,
-            "recommended_partner": recommended_partner,
-            "review_status": "Review",
-            "qualified": False,
+        possible_routes = potential_routes(
+            company=company,
+            signal=signal,
+            evidence=evidence,
+        )
+
+        lead = Lead(
+            source=source,
+            source_id=source_id,
+            url=url,
+            company=company,
+            person=person,
+            signal=signal,
+            route=recommended_route,
+            potential_routes=possible_routes,
+            evidence=evidence,
             **extra_fields,
-        }
+        )
 
-        if not lead.get("duplicate_key"):
-            raise ValueError(
-                "A duplicate_key is required before a lead "
-                "can enter the pipeline."
-            )
+        lead.ensure_timestamp()
+        fingerprint = lead.compute_fingerprint()
 
-        queue_record = self.queue.add(lead)
+        accepted = self.dedupe.accept(lead)
 
-        sync_result = sync_one(queue_record)
+        if not accepted:
+            return {
+                "status": "duplicate",
+                "accepted": False,
+                "fingerprint": fingerprint,
+                "lead": lead.to_dict(),
+                "potential_routes": possible_routes,
+            }
+
+        payload = lead.to_dict()
+
+        sync_result = sync_one(payload)
 
         if sync_result["status"] == "synced":
-            self.queue.mark_synced(
-                lead_id=queue_record["_queue_id"],
-                airtable_record_id=(
-                    sync_result["airtable_record"] or {}
-                ).get("id"),
-            )
+            self.db.mark_synced(fingerprint)
+
         else:
-            self.queue.mark_failed(
-                lead_id=queue_record["_queue_id"],
-                error=sync_result["error"] or "Unknown sync error",
+            self.db.mark_error(
+                fingerprint,
+                sync_result["error"] or "Unknown sync error",
             )
 
         return {
-            "lead": queue_record,
-            "recommended_partner": recommended_partner,
+            "status": "accepted",
+            "accepted": True,
+            "fingerprint": fingerprint,
+            "lead": payload,
+            "potential_routes": possible_routes,
             "sync_status": sync_result["status"],
             "sync_error": sync_result["error"],
         }
 
 
 def process_lead(
-    company: str,
-    signal: str,
-    evidence: str,
-    duplicate_key: str,
+    source: str,
+    source_id: str,
+    url: str,
+    company: str = "",
+    person: str = "",
+    signal: str = "",
+    evidence: str = "",
     **extra_fields: Any,
 ) -> Dict[str, Any]:
     """
-    Convenience function for processing a single lead.
+    Convenience function for processing one discovered lead.
     """
 
     pipeline = LeadPipeline()
 
     return pipeline.process(
+        source=source,
+        source_id=source_id,
+        url=url,
         company=company,
+        person=person,
         signal=signal,
         evidence=evidence,
-        duplicate_key=duplicate_key,
         **extra_fields,
     )
 
@@ -112,4 +141,4 @@ if __name__ == "__main__":
     print(
         "Lead pipeline loaded. "
         "Use process_lead() to process discovered opportunities."
-)
+    )
