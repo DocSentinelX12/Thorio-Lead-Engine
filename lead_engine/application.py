@@ -1,11 +1,12 @@
 from typing import Any, Dict, Iterable
+from pathlib import Path
 
 from .audit import AuditLog
 from .config import LeadEngineConfig
 from .database import LeadDB
 from .export import export_pending_leads
-from .sources import LeadSource
 from .service import LeadEngineService
+from .sources import LeadSource
 
 
 class LeadEngineApplication:
@@ -31,11 +32,13 @@ class LeadEngineApplication:
             data_dir=self.config.database_dir
         )
 
+        audit_path = (
+            Path(self.config.database_dir)
+            / "audit.jsonl"
+        )
+
         self.audit = AuditLog(
-            str(
-                self.config.database_path.parent
-                / "audit.jsonl"
-            )
+            str(audit_path)
         )
 
         self.service = LeadEngineService(
