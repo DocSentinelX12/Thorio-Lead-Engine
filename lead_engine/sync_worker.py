@@ -35,26 +35,33 @@ def sync_one(
 
 def sync_pending(
     db: LeadDB,
+    limit: int = 50,
 ) -> Dict[str, Any]:
-    pending = db.list_unsynced()
+    rows = db.pending(limit=limit)
 
     synced: List[Dict[str, Any]] = []
     already_exists: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
 
-    for lead in pending:
+    for fingerprint, payload, attempts in rows:
+        lead = dict(payload)
+
         result = sync_one(lead)
 
         if result["status"] == "synced":
             synced.append(result)
-            db.mark_synced(lead)
+            db.mark_synced(fingerprint)
 
         elif result["status"] == "already_exists":
             already_exists.append(result)
-            db.mark_synced(lead)
+            db.mark_synced(fingerprint)
 
         else:
             failed.append(result)
+            db.mark_error(
+                fingerprint,
+                result["error"],
+            )
 
     return {
         "synced": synced,
