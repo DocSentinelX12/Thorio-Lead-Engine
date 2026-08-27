@@ -24,7 +24,7 @@ def sync_one(
             "error": None,
         }
 
-    except AirtableSyncError as exc:
+    except Exception as exc:
         return {
             "status": "failed",
             "lead": lead,
@@ -36,7 +36,7 @@ def sync_one(
 def sync_pending(
     db: LeadDB,
 ) -> Dict[str, Any]:
-    pending = db.get_pending_sync()
+    pending = db.list_unsynced()
 
     synced: List[Dict[str, Any]] = []
     already_exists: List[Dict[str, Any]] = []
