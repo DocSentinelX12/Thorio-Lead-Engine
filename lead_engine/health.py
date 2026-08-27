@@ -3,56 +3,85 @@ from typing import Any, Dict
 from .database import LeadDB
 
 
-def check_database(
-    db: LeadDB,
-) -> Dict[str, Any]:
+def check_database(db: LeadDB) -> Dict[str, Any]:
     """
     Verify that the local database is accessible.
     """
 
     try:
-        total, synced, pending = db.stats()
+        db.pending(limit=1)
 
         return {
             "name": "database",
-            "healthy": True,
-            "total_leads": total,
-            "synced_leads": synced,
-            "pending_leads": pending,
-            "error": None,
+            "status": "healthy",
+            "ok": True,
         }
 
     except Exception as exc:
         return {
             "name": "database",
-            "healthy": False,
-            "total_leads": 0,
-            "synced_leads": 0,
-            "pending_leads": 0,
+            "status": "unhealthy",
+            "ok": False,
             "error": str(exc),
         }
 
 
-def check_engine(
-    db: LeadDB,
-) -> Dict[str, Any]:
+def check_configuration(config) -> Dict[str, Any]:
     """
-    Return the overall health of the local lead engine.
+    Verify that runtime configuration is usable.
     """
 
-    database = check_database(db)
+    errors = []
+
+    if not config.database_dir:
+        errors.append(
+            "database_dir is empty"
+        )
+
+    if config.batch_size <= 0:
+        errors.append(
+            "batch_size must be greater than zero"
+        )
+
+    if errors:
+        return {
+            "name": "configuration",
+            "status": "unhealthy",
+            "ok": False,
+            "errors": errors,
+        }
 
     return {
-        "healthy": database["healthy"],
-        "checks": [
-            database,
-        ],
+        "name": "configuration",
+        "status": "healthy",
+        "ok": True,
     }
 
 
-if __name__ == "__main__":
-    db = LeadDB()
+def health_report(
+    db: LeadDB,
+    config,
+) -> Dict[str, Any]:
+    """
+    Return the complete local health report.
+    """
 
-    print(
-        check_engine(db)
+    checks = [
+        check_database(db),
+        check_configuration(config),
+    ]
+
+    healthy = all(
+        check["ok"]
+        for check in checks
     )
+
+    return {
+        "status": (
+            "healthy"
+            if healthy
+            else "unhealthy"
+        ),
+        "ok": healthy,
+        "checks": checks,
+    }
