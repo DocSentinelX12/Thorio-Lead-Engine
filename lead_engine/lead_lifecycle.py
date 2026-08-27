@@ -39,18 +39,12 @@ ALLOWED_TRANSITIONS = {
 
 
 def normalize_status(value: Any) -> str:
-    """
-    Normalize a lead status value.
-    """
-
+    """Normalize a lead status value."""
     return str(value or "").strip().lower()
 
 
 def is_valid_status(value: Any) -> bool:
-    """
-    Return True when the supplied status is supported.
-    """
-
+    """Return True when the supplied status is supported."""
     return normalize_status(value) in VALID_STATUSES
 
 
@@ -58,10 +52,7 @@ def can_transition(
     current_status: Any,
     new_status: Any,
 ) -> bool:
-    """
-    Return True when a lead may move from its current status
-    to the requested new status.
-    """
+    """Return whether a lead may move to the requested status."""
 
     current = normalize_status(current_status)
     new = normalize_status(new_status)
@@ -80,12 +71,30 @@ def transition_lead(
     new_status: str,
 ) -> Dict[str, Any]:
     """
-    Return a copy of a lead with its status transitioned.
+    Return a copy of the lead with the requested status.
 
-    Invalid transitions raise ValueError instead of silently
-    corrupting the lead lifecycle.
+    Invalid lifecycle transitions raise ValueError.
     """
 
     result = dict(lead)
 
-    current_status = normalize_status
+    current_status = normalize_status(
+        result.get("status", "new")
+    )
+
+    target_status = normalize_status(
+        new_status
+    )
+
+    if not can_transition(
+        current_status,
+        target_status,
+    ):
+        raise ValueError(
+            "Invalid lead status transition: "
+            f"{current_status!r} -> {target_status!r}"
+        )
+
+    result["status"] = target_status
+
+    return result
