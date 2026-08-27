@@ -4,6 +4,7 @@ from .database import LeadDB
 from .dedupe import Dedupe
 from .models import Lead
 from .router import potential_routes, route
+from .scoring import score_result
 from .sync_worker import sync_one
 
 
@@ -16,6 +17,8 @@ class LeadPipeline:
         Lead
           ↓
         Router
+          ↓
+        Scoring
           ↓
         Dedupe
           ↓
@@ -58,6 +61,12 @@ class LeadPipeline:
             evidence=evidence,
         )
 
+        scoring = score_result(
+            company=company,
+            signal=signal,
+            evidence=evidence,
+        )
+
         lead = Lead(
             source=source,
             source_id=source_id,
@@ -83,9 +92,14 @@ class LeadPipeline:
                 "fingerprint": fingerprint,
                 "lead": lead.to_dict(),
                 "potential_routes": possible_routes,
+                "lead_score": scoring["lead_score"],
+                "priority": scoring["priority"],
             }
 
         payload = lead.to_dict()
+
+        payload["lead_score"] = scoring["lead_score"]
+        payload["priority"] = scoring["priority"]
 
         sync_result = sync_one(payload)
 
@@ -104,6 +118,8 @@ class LeadPipeline:
             "fingerprint": fingerprint,
             "lead": payload,
             "potential_routes": possible_routes,
+            "lead_score": scoring["lead_score"],
+            "priority": scoring["priority"],
             "sync_status": sync_result["status"],
             "sync_error": sync_result["error"],
         }
@@ -141,4 +157,4 @@ if __name__ == "__main__":
     print(
         "Lead pipeline loaded. "
         "Use process_lead() to process discovered opportunities."
-    )
+)
