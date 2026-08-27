@@ -5,6 +5,7 @@ from .audit import AuditLog
 from .config import LeadEngineConfig
 from .database import LeadDB
 from .export import export_pending_leads
+from .metrics import LeadEngineMetrics
 from .service import LeadEngineService
 from .sources import LeadSource
 
@@ -41,6 +42,8 @@ class LeadEngineApplication:
             str(audit_path)
         )
 
+        self.metrics = LeadEngineMetrics()
+
         self.service = LeadEngineService(
             db=self.db
         )
@@ -53,9 +56,14 @@ class LeadEngineApplication:
             records
         )
 
+        self.metrics.update_from_result(
+            result
+        )
+
         self.audit.record(
             "records_processed",
             result=result,
+            metrics=self.metrics.snapshot(),
         )
 
         return result
@@ -66,14 +74,51 @@ class LeadEngineApplication:
     ) -> Dict[str, Any]:
         sources = list(sources)
 
+        self.metrics.increment(
+            "sources_started",
+            len(sources),
+        )
+
         result = self.service.run_sources(
             sources
         )
+
+        completed = result.get(
+            "source_count",
+            0,
+        )
+
+        failed = result.get(
+            "failed_count",
+            0,
+        )
+
+        self.metrics.increment(
+            "sources_completed",
+            completed,
+        )
+
+        self.metrics.increment(
+            "sources_failed",
+            failed,
+        )
+
+        for source_result in result.get(
+            "results",
+            [],
+        ):
+            self.metrics.update_from_result(
+                source_result.get(
+                    "result",
+                    {},
+                )
+            )
 
         self.audit.record(
             "sources_processed",
             source_count=len(sources),
             result=result,
+            metrics=self.metrics.snapshot(),
         )
 
         return result
@@ -114,6 +159,9 @@ class LeadEngineApplication:
         )
 
         return result
+
+    def metrics_snapshot(self) -> Dict[str, int]:
+        return self.metrics.snapshot()
 
 
 def create_application() -> LeadEngineApplication:
