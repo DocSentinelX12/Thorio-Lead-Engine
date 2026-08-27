@@ -11,7 +11,7 @@ def build_delivery_batches(
     Group qualified leads into partner-specific delivery batches.
 
     Only supported partner routes are included. Review and unknown routes
-    remain out of partner delivery.
+    are excluded from delivery.
     """
 
     batches: Dict[str, List[Dict[str, Any]]] = {
@@ -28,3 +28,18 @@ def build_delivery_batches(
         batches[route].append(dict(lead))
 
     return batches
+
+
+def delivery_counts(
+    leads: Iterable[Dict[str, Any]],
+) -> Dict[str, int]:
+    """
+    Return the number of deliverable leads for each partner.
+    """
+
+    batches = build_delivery_batches(leads)
+
+    return {
+        route: len(batches[route])
+        for route in SUPPORTED_ROUTES
+    }
