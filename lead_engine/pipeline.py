@@ -1,144 +1,98 @@
-from typing import Any, Dict
+from unittest.mock import patch
 
 from .database import LeadDB
-from .dedupe import Dedupe
-from .models import Lead
-from .router import potential_routes, route
-from .sync_worker import sync_one
+from .pipeline import LeadPipeline
 
 
-class LeadPipeline:
-    """
-    Main lead-processing pipeline.
+def test_pipeline_routes_and_persists_lead(tmp_path):
+    db = LeadDB(
+        data_dir=str(tmp_path)
+    )
 
-    Flow:
+    pipeline = LeadPipeline(db=db)
 
-        Lead
-          ↓
-        Router
-          ↓
-        Dedupe
-          ↓
-        Local LeadDB
-          ↓
-        Airtable synchronization
-
-    The local database remains the source of truth.
-    Human review remains the final qualification decision.
-    """
-
-    def __init__(self, db: LeadDB | None = None):
-        self.db = db or LeadDB()
-        self.dedupe = Dedupe(self.db)
-
-    def process(
-        self,
-        source: str,
-        source_id: str,
-        url: str,
-        company: str = "",
-        person: str = "",
-        signal: str = "",
-        evidence: str = "",
-        **extra_fields: Any,
-    ) -> Dict[str, Any]:
-        """
-        Process one discovered lead.
-        """
-
-        recommended_route = route(
-            company=company,
-            signal=signal,
-            evidence=evidence,
-        )
-
-        possible_routes = potential_routes(
-            company=company,
-            signal=signal,
-            evidence=evidence,
-        )
-
-        lead = Lead(
-            source=source,
-            source_id=source_id,
-            url=url,
-            company=company,
-            person=person,
-            signal=signal,
-            route=recommended_route,
-            potential_routes=possible_routes,
-            evidence=evidence,
-            **extra_fields,
-        )
-
-        lead.ensure_timestamp()
-        fingerprint = lead.compute_fingerprint()
-
-        accepted = self.dedupe.accept(lead)
-
-        if not accepted:
-            return {
-                "status": "duplicate",
-                "accepted": False,
-                "fingerprint": fingerprint,
-                "lead": lead.to_dict(),
-                "potential_routes": possible_routes,
-            }
-
-        payload = lead.to_dict()
-
-        sync_result = sync_one(payload)
-
-        if sync_result["status"] == "synced":
-            self.db.mark_synced(fingerprint)
-
-        else:
-            self.db.mark_error(
-                fingerprint,
-                sync_result["error"] or "Unknown sync error",
-            )
-
-        return {
-            "status": "accepted",
-            "accepted": True,
-            "fingerprint": fingerprint,
-            "lead": payload,
-            "potential_routes": possible_routes,
-            "sync_status": sync_result["status"],
-            "sync_error": sync_result["error"],
+    with patch(
+        "lead_engine.pipeline.sync_one"
+    ) as mock_sync:
+        mock_sync.return_value = {
+            "status": "synced",
+            "lead": {},
+            "airtable_record": {
+                "id": "rec_test_123"
+            },
+            "error": None,
         }
 
+        result = pipeline.process(
+            source="test",
+            source_id="acme-001",
+            url="https://example.com/jobs/acme-001",
+            company="Acme",
+            signal="remote software engineer",
+            evidence=(
+                "Company careers page says they are hiring "
+                "a remote software engineer."
+            ),
+        )
 
-def process_lead(
-    source: str,
-    source_id: str,
-    url: str,
-    company: str = "",
-    person: str = "",
-    signal: str = "",
-    evidence: str = "",
-    **extra_fields: Any,
-) -> Dict[str, Any]:
-    """
-    Convenience function for processing one discovered lead.
-    """
+    assert result["status"] == "accepted"
+    assert result["accepted"] is True
+    assert result["lead"]["route"] == "Shiftr"
+    assert "Shiftr" in result["potential_routes"]
+    assert "Thorio" in result["potential_routes"]
+    assert result["sync_status"] == "synced"
 
-    pipeline = LeadPipeline()
+    pending = db.pending()
 
-    return pipeline.process(
-        source=source,
-        source_id=source_id,
-        url=url,
-        company=company,
-        person=person,
-        signal=signal,
-        evidence=evidence,
-        **extra_fields,
+    assert len(pending) == 0
+
+    stats = db.stats()
+
+    assert stats[0] == 1
+    assert stats[1] == 1
+    assert stats[2] == 0
+
+    mock_sync.assert_called_once()
+
+
+def test_pipeline_does_not_lose_lead_when_sync_fails(tmp_path):
+    db = LeadDB(
+        data_dir=str(tmp_path)
     )
 
+    pipeline = LeadPipeline(db=db)
 
-if __name__ == "__main__":
-    print(
-        "Lead pipeline loaded. "
-        "Use process_lead() to process discovered opportunities."
-    )
+    with patch(
+        "lead_engine.pipeline.sync_one"
+    ) as mock_sync:
+        mock_sync.return_value = {
+            "status": "failed",
+            "lead": {},
+            "airtable_record": None,
+            "error": "Airtable unavailable",
+        }
+
+        result = pipeline.process(
+            source="test",
+            source_id="example-001",
+            url="https://example.com/jobs/example-001",
+            company="Example Corp",
+            signal="remote developer",
+            evidence="Remote developer opening found.",
+        )
+
+    assert result["status"] == "accepted"
+    assert result["sync_status"] == "failed"
+    assert result["sync_error"] == "Airtable unavailable"
+
+    pending = db.pending()
+
+    assert len(pending) == 1
+
+    stats = db.stats()
+
+    assert stats[0] == 1
+    assert stats[1] == 0
+    assert stats[2] == 1
+
+    mock_sync.assert_called_once()
