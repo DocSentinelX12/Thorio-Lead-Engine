@@ -1,68 +1,62 @@
 from lead_engine.delivery import (
+    SUPPORTED_ROUTES,
     build_delivery_batches,
-    delivery_counts,
-    total_deliverable_leads,
 )
 
 
-def test_build_delivery_batches_groups_leads_by_partner():
+def test_supported_routes_are_defined():
+    assert SUPPORTED_ROUTES == (
+        "Shiftr",
+        "Paxus",
+        "Thorio",
+    )
+
+
+def test_delivery_batches_group_leads_by_partner():
     leads = [
-        {
-            "company": "Thorio Company",
-            "route": "Thorio",
-            "signal": "remote software engineer",
-        },
-        {
-            "company": "Shiftr Company",
-            "route": "Shiftr",
-            "signal": "technology implementation project",
-        },
-        {
-            "company": "Paxus Company",
-            "route": "Paxus",
-            "signal": "technology consulting project",
-        },
+        {"company": "Alpha", "route": "Shiftr"},
+        {"company": "Beta", "route": "Paxus"},
+        {"company": "Gamma", "route": "Thorio"},
+        {"company": "Delta", "route": "Shiftr"},
     ]
 
     result = build_delivery_batches(leads)
 
-    assert len(result["Thorio"]) == 1
-    assert len(result["Shiftr"]) == 1
-    assert len(result["Paxus"]) == 1
+    assert [lead["company"] for lead in result["Shiftr"]] == [
+        "Alpha",
+        "Delta",
+    ]
+    assert [lead["company"] for lead in result["Paxus"]] == [
+        "Beta",
+    ]
+    assert [lead["company"] for lead in result["Thorio"]] == [
+        "Gamma",
+    ]
 
-    assert result["Thorio"][0]["company"] == "Thorio Company"
-    assert result["Shiftr"][0]["company"] == "Shiftr Company"
-    assert result["Paxus"][0]["company"] == "Paxus Company"
 
-
-def test_review_leads_are_not_delivered():
+def test_delivery_batches_ignore_review_and_unknown_routes():
     leads = [
-        {
-            "company": "Review Company",
-            "route": "Review",
-            "signal": "unclear opportunity",
-        }
+        {"company": "Review Lead", "route": "Review"},
+        {"company": "Unknown Lead", "route": "Something Else"},
+        {"company": "Valid Lead", "route": "Thorio"},
     ]
 
     result = build_delivery_batches(leads)
 
-    assert result["Thorio"] == []
     assert result["Shiftr"] == []
     assert result["Paxus"] == []
+    assert len(result["Thorio"]) == 1
+    assert result["Thorio"][0]["company"] == "Valid Lead"
 
 
-def test_delivery_counts():
-    leads = [
-        {"company": "A", "route": "Thorio"},
-        {"company": "B", "route": "Thorio"},
-        {"company": "C", "route": "Shiftr"},
-        {"company": "D", "route": "Paxus"},
-    ]
-
-    assert delivery_counts(leads) == {
-        "Thorio": 2,
-        "Shiftr": 1,
-        "Paxus": 1,
+def test_delivery_batches_copy_lead_records():
+    lead = {
+        "company": "Acme",
+        "route": "Shiftr",
+        "lead_score": 90,
     }
 
-    assert total_deliverable_leads(leads) == 4
+    result = build_delivery_batches([lead])
+
+    assert result["Shiftr"][0] == lead
+    assert result["Shiftr"][0] is not lead
