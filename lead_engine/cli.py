@@ -2,6 +2,7 @@ import argparse
 import json
 
 from .application import create_application
+from .export import export_pending_leads
 from .json_source import JsonLeadSource
 
 
@@ -40,6 +41,16 @@ def build_parser():
         help="Path to the JSON lead file.",
     )
 
+    export_parser = subparsers.add_parser(
+        "export-json",
+        help="Export pending local leads to JSON.",
+    )
+
+    export_parser.add_argument(
+        "path",
+        help="Destination JSON file.",
+    )
+
     return parser
 
 
@@ -66,6 +77,12 @@ def main(argv=None):
 
         result = application.run_sources(
             [source]
+        )
+
+    elif args.command == "export-json":
+        result = export_pending_leads(
+            application.db,
+            args.path,
         )
 
     else:
