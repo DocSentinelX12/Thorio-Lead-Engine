@@ -1,38 +1,43 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, List
+
+
+def summarize_lead(lead: Dict[str, Any]) -> str:
+    """Create a concise human-readable lead summary."""
+
+    company = str(lead.get("company", "") or "").strip()
+    route = str(lead.get("route", "") or "").strip()
+    signal = str(lead.get("signal", "") or "").strip()
+    contact = str(
+        lead.get("contact_name", "")
+        or lead.get("person", "")
+        or ""
+    ).strip()
+
+    parts: List[str] = []
+
+    if company:
+        parts.append(company)
+
+    if contact:
+        parts.append(f"contact: {contact}")
+
+    if route:
+        parts.append(f"route: {route}")
+
+    if signal:
+        parts.append(f"signal: {signal}")
+
+    return " | ".join(parts)
 
 
 def summarize_leads(
     leads: Iterable[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Return a compact summary of a lead collection."""
+) -> List[str]:
+    """Create summaries for multiple leads."""
 
-    records = list(leads)
-
-    routes: Dict[str, int] = {}
-    statuses: Dict[str, int] = {}
-    priorities: Dict[str, int] = {}
-
-    for lead in records:
-        route = str(lead.get("route", "") or "").strip()
-        status = str(lead.get("status", "") or "").strip()
-        priority = str(
-            lead.get("priority", "") or ""
-        ).strip()
-
-        if route:
-            routes[route] = routes.get(route, 0) + 1
-
-        if status:
-            statuses[status] = statuses.get(status, 0) + 1
-
-        if priority:
-            priorities[priority] = priorities.get(priority, 0) + 1
-
-    return {
-        "total": len(records),
-        "routes": routes,
-        "statuses": statuses,
-        "priorities": priorities,
-    }
+    return [
+        summarize_lead(lead)
+        for lead in leads
+    ]
