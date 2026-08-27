@@ -44,7 +44,7 @@ def test_qualification_is_explicit():
         reason="Human review approved",
     )
 
-    assert result["status"] == "qualified"
+    assert result["status"] == "Qualified"
 
 
 def test_unknown_lead_cannot_be_qualified():
@@ -82,7 +82,7 @@ def test_qualification_can_reject_lead():
         reason="Does not meet requirements",
     )
 
-    assert result["status"] != "qualified"
+    assert result["status"] != "Qualified"
     assert result["company"] == "Acme"
 
 
