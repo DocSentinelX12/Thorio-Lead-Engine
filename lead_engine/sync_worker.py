@@ -1,9 +1,7 @@
+import json
 from typing import Any, Dict, List
 
-from .airtable_sync import (
-    AirtableSyncError,
-    sync_lead_if_missing,
-)
+from .airtable_sync import sync_lead_if_missing
 from .database import LeadDB
 
 
@@ -43,8 +41,20 @@ def sync_pending(
     already_exists: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
 
-    for fingerprint, payload, attempts in rows:
-        lead = dict(payload)
+    for fingerprint, payload_json, attempts in rows:
+        try:
+            lead = json.loads(payload_json)
+        except (TypeError, ValueError) as exc:
+            result = {
+                "status": "failed",
+                "lead": {},
+                "airtable_record": None,
+                "error": f"Invalid stored lead payload: {exc}",
+            }
+
+            failed.append(result)
+            db.mark_error(fingerprint, result["error"])
+            continue
 
         result = sync_one(lead)
 
