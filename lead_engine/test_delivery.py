@@ -1,6 +1,7 @@
 from lead_engine.delivery import (
     SUPPORTED_ROUTES,
     build_delivery_batches,
+    delivery_counts,
 )
 
 
@@ -60,3 +61,27 @@ def test_delivery_batches_copy_lead_records():
 
     assert result["Shiftr"][0] == lead
     assert result["Shiftr"][0] is not lead
+
+
+def test_delivery_counts():
+    leads = [
+        {"company": "A", "route": "Shiftr"},
+        {"company": "B", "route": "Shiftr"},
+        {"company": "C", "route": "Paxus"},
+        {"company": "D", "route": "Thorio"},
+        {"company": "E", "route": "Review"},
+    ]
+
+    assert delivery_counts(leads) == {
+        "Shiftr": 2,
+        "Paxus": 1,
+        "Thorio": 1,
+    }
+
+
+def test_delivery_counts_empty():
+    assert delivery_counts([]) == {
+        "Shiftr": 0,
+        "Paxus": 0,
+        "Thorio": 0,
+    }
