@@ -1,4 +1,5 @@
 from typing import Any, Dict, List
+import re
 
 
 PARTNER_ROUTES = {
@@ -56,6 +57,24 @@ def normalize_text(value: Any) -> str:
     return " ".join(str(value or "").lower().split())
 
 
+def _term_matches_text(term: str, text: str) -> bool:
+    """
+    Match a route term as a whole word or phrase.
+
+    This prevents short terms such as 'it', 'ai', and 'ml'
+    from matching inside unrelated words or company names.
+    """
+
+    term = normalize_text(term)
+
+    if not term:
+        return False
+
+    pattern = r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])"
+
+    return re.search(pattern, text) is not None
+
+
 def route_matches_partner(
     route: str,
     signal: str = "",
@@ -65,8 +84,9 @@ def route_matches_partner(
     """
     Determine whether the lead's evidence supports its assigned partner route.
 
-    This is intentionally conservative. A lead should not be delivered merely
-    because a generic word such as 'hiring' appears.
+    Route terms are matched as complete words or phrases rather than
+    arbitrary substrings. Generic words must therefore not create a
+    false-positive route merely because they occur inside another word.
     """
 
     route = str(route or "").strip()
@@ -86,7 +106,10 @@ def route_matches_partner(
 
     terms = PARTNER_ROUTES[route]["required_signal_terms"]
 
-    return any(term in text for term in terms)
+    return any(
+        _term_matches_text(term, text)
+        for term in terms
+    )
 
 
 def validate_partner_route(lead: Dict[str, Any]) -> Dict[str, Any]:
