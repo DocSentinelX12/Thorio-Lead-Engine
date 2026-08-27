@@ -12,7 +12,7 @@ TABLE_NAME = os.getenv("AIRTABLE_LEAD_TABLE", "Lead Radar")
 API_KEY = os.getenv("AIRTABLE_API_KEY")
 
 class AirtableSyncError(Exception):
-"""Raised when Airtable synchronization fails."""
+    """Raised when Airtable synchronization fails."""
 
 def _require_config() -> None:
 missing = []
