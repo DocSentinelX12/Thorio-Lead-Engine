@@ -30,7 +30,7 @@ class LeadPipeline:
           ↓
         Airtable synchronization
 
-    Qualification is a separate human-review action.
+    Qualification remains an explicit human-review action.
 
     The local database remains the source of truth.
     """
@@ -52,6 +52,8 @@ class LeadPipeline:
     ) -> Dict[str, Any]:
         """
         Process one discovered lead.
+
+        Discovery never qualifies a lead automatically.
         """
 
         recommended_route = route(
