@@ -11,15 +11,35 @@ PARTNER_ROUTES = (
 )
 
 
+def _review_lead(
+    lead: Dict[str, Any],
+    reason: str,
+) -> Dict[str, Any]:
+    result = dict(lead)
+    result["delivery_status"] = "review"
+    result["delivery_reason"] = reason
+    return result
+
+
+def _approved_lead(
+    lead: Dict[str, Any],
+) -> Dict[str, Any]:
+    result = prepare_partner_lead(lead)
+    result["delivery_status"] = "approved"
+    result["delivery_reason"] = ""
+    return result
+
+
 def build_delivery_manifest(
     leads: Iterable[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """
-    Build the final delivery manifest for processed leads.
+    Build the final delivery manifest.
 
-    Every lead is evaluated through the delivery gate before it can
-    appear in a partner queue. Rejected leads remain visible in the
-    review queue with their rejection reason.
+    Only leads that pass every delivery gate and have evidence supporting
+    their assigned partner route are placed into partner queues.
+
+    Leads that fail validation are placed into Review instead.
     """
 
     manifest: Dict[str, Any] = {
@@ -39,36 +59,33 @@ def build_delivery_manifest(
         decision = prepare_for_delivery(lead)
 
         if not decision["approved"]:
-            review_lead = dict(lead)
-            review_lead["delivery_status"] = "review"
-            review_lead["delivery_reason"] = decision["reason"]
-
-            manifest["Review"].append(review_lead)
+            manifest["Review"].append(
+                _review_lead(
+                    lead,
+                    decision["reason"],
+                )
+            )
             continue
 
         route = decision["route"]
 
         if route not in PARTNER_ROUTES:
-            review_lead = dict(lead)
-            review_lead["delivery_status"] = "review"
-            review_lead["delivery_reason"] = "unsupported_route"
-
-            manifest["Review"].append(review_lead)
+            manifest["Review"].append(
+                _review_lead(
+                    lead,
+                    "unsupported_route",
+                )
+            )
             continue
 
-        partner_lead = prepare_partner_lead(
-            decision["lead"]
+        manifest[route].append(
+            _approved_lead(
+                decision["lead"],
+            )
         )
-
-        partner_lead["delivery_status"] = "approved"
-        partner_lead["delivery_reason"] = ""
-
-        manifest[route].append(partner_lead)
 
     for route in PARTNER_ROUTES:
-        manifest["counts"][route] = len(
-            manifest[route]
-        )
+        manifest["counts"][route] = len(manifest[route])
 
     manifest["counts"]["Review"] = len(
         manifest["Review"]
