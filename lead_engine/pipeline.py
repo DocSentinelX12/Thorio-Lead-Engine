@@ -2,6 +2,7 @@ from typing import Any, Dict
 
 from .database import LeadDB
 from .dedupe import Dedupe
+from .enrichment import enrich_lead
 from .models import Lead
 from .qualification import qualify_lead
 from .router import potential_routes, route
@@ -20,6 +21,8 @@ class LeadPipeline:
         Router
           ↓
         Scoring
+          ↓
+        Enrichment
           ↓
         Dedupe
           ↓
@@ -83,6 +86,21 @@ class LeadPipeline:
         )
 
         lead.ensure_timestamp()
+
+        payload = lead.to_dict()
+
+        payload["lead_score"] = scoring["lead_score"]
+        payload["priority"] = scoring["priority"]
+
+        enriched = enrich_lead(payload)
+
+        enriched["route"] = recommended_route
+        enriched["potential_routes"] = possible_routes
+        enriched["lead_score"] = scoring["lead_score"]
+        enriched["priority"] = scoring["priority"]
+
+        lead = Lead.from_dict(enriched)
+
         fingerprint = lead.compute_fingerprint()
 
         accepted = self.dedupe.accept(lead)
