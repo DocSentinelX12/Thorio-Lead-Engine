@@ -54,13 +54,6 @@ SIGNAL_WEIGHTS = {
     "distributed development": 7,
     "remote engineering position": 8,
     "remote engineering role": 8,
-
-    # General buying-intent signals
-    "hiring": 2,
-    "opening": 2,
-    "position": 1,
-    "role": 1,
-    "job": 1,
 }
 
 
@@ -107,10 +100,10 @@ def score_lead(
     """
     Calculate a lead-intent score.
 
-    This score measures the strength of the observable
-    opportunity signal only.
+    The score is based only on meaningful opportunity signals.
 
-    It does not qualify or reject a lead.
+    Generic words such as "hiring", "opening", "position",
+    "role", and "job" do not create a score by themselves.
     """
 
     text = _build_text(
@@ -137,8 +130,8 @@ def score_route(
     """
     Calculate a route-specific opportunity score.
 
-    This allows the same lead to be evaluated differently
-    for Shiftr, Paxus, and Thorio.
+    The same lead can receive different scores for Shiftr,
+    Paxus, and Thorio based on route-specific signals.
     """
 
     text = _build_text(
@@ -193,7 +186,7 @@ def score_result(
     """
     Return the overall score and review priority.
 
-    Qualification remains a separate human decision.
+    Qualification remains a separate decision.
     """
 
     score = score_lead(
