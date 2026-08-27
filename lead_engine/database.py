@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 
 class LeadDB:
@@ -44,7 +45,10 @@ class LeadDB:
 
         self.conn.commit()
 
-    def insert_if_new(self, payload):
+    def insert_if_new(
+        self,
+        payload: Dict[str, Any],
+    ) -> bool:
         cursor = self.conn.execute(
             """
             INSERT OR IGNORE INTO leads
@@ -53,13 +57,66 @@ class LeadDB:
             """,
             (
                 payload["fingerprint"],
-                json.dumps(payload, ensure_ascii=False),
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                ),
             ),
         )
 
         self.conn.commit()
 
         return cursor.rowcount == 1
+
+    def get(
+        self,
+        fingerprint: str,
+    ) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT payload
+            FROM leads
+            WHERE fingerprint = ?
+            """,
+            (fingerprint,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        return json.loads(row[0])
+
+    def update_payload(
+        self,
+        fingerprint: str,
+        updates: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        current = self.get(fingerprint)
+
+        if current is None:
+            return None
+
+        current.update(updates)
+
+        self.conn.execute(
+            """
+            UPDATE leads
+            SET payload = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE fingerprint = ?
+            """,
+            (
+                json.dumps(
+                    current,
+                    ensure_ascii=False,
+                ),
+                fingerprint,
+            ),
+        )
+
+        self.conn.commit()
+
+        return current
 
     def pending(self, limit=50):
         return self.conn.execute(
