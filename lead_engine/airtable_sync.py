@@ -62,7 +62,10 @@ def _request(
             return json.loads(body) if body else {}
 
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        body = exc.read().decode(
+            "utf-8",
+            errors="replace",
+        )
 
         raise AirtableSyncError(
             f"Airtable API error {exc.code}: {body}"
@@ -82,12 +85,17 @@ def _table_url() -> str:
     )
 
 
-def _normalize_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_lead(
+    lead: Dict[str, Any],
+) -> Dict[str, Any]:
     """
     Convert the canonical local lead record into Airtable fields.
 
     The local Lead model remains the source of truth.
-    Qualification remains a human decision.
+
+    Routing, scoring, enrichment, and qualification metadata
+    are preserved so Airtable contains the complete operational
+    record needed for downstream outreach.
     """
 
     fields: Dict[str, Any] = {}
@@ -99,11 +107,28 @@ def _normalize_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
         "company": "Company",
         "person": "Decision Maker",
         "signal": "Signal",
+        "evidence": "Evidence",
         "discovered_at": "Discovered Date",
+
         "route": "Recommended Partner",
         "potential_routes": "Potential Partners",
+
+        "lead_score": "Lead Score",
+        "priority": "Priority",
+
         "status": "Review Status",
-        "evidence": "Evidence",
+        "review_status": "Human Review Status",
+        "qualified": "Qualified",
+        "reason_not_qualified": "Reason Not Qualified",
+
+        "contact_name": "Contact Name",
+        "contact_title": "Contact Title",
+        "contact_email": "Contact Email",
+        "contact_phone": "Contact Phone",
+        "linkedin_url": "LinkedIn URL",
+        "company_website": "Company Website",
+        "enrichment_status": "Enrichment Status",
+
         "possible_duplicate": "Possible Duplicate",
         "fingerprint": "Duplicate Key",
     }
@@ -111,16 +136,23 @@ def _normalize_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
     for local_name, airtable_name in mapping.items():
         value = lead.get(local_name)
 
-        if value is not None:
-            if isinstance(value, list):
-                value = ", ".join(str(item) for item in value)
+        if value is None:
+            continue
 
-            fields[airtable_name] = value
+        if isinstance(value, list):
+            value = ", ".join(
+                str(item)
+                for item in value
+            )
+
+        fields[airtable_name] = value
 
     return fields
 
 
-def push_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
+def push_lead(
+    lead: Dict[str, Any],
+) -> Dict[str, Any]:
     """Push one local lead into Airtable."""
 
     payload = {
@@ -138,11 +170,16 @@ def push_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-def push_leads(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
+def push_leads(
+    leads: List[Dict[str, Any]],
+) -> Dict[str, Any]:
     """Push local leads to Airtable in batches of 10."""
 
     if not leads:
-        return {"records": []}
+        return {
+            "records": [],
+            "synced_count": 0,
+        }
 
     results = []
 
@@ -164,7 +201,9 @@ def push_leads(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
             payload,
         )
 
-        results.extend(result.get("records", []))
+        results.extend(
+            result.get("records", [])
+        )
 
     return {
         "records": results,
@@ -175,14 +214,22 @@ def push_leads(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
 def find_by_fingerprint(
     fingerprint: str,
 ) -> List[Dict[str, Any]]:
-    """Find an existing Airtable lead using the canonical fingerprint."""
+    """
+    Find an existing Airtable lead using the
+    canonical fingerprint.
+    """
 
     if not fingerprint:
         return []
 
-    escaped_fingerprint = fingerprint.replace('"', '\\"')
+    escaped_fingerprint = fingerprint.replace(
+        '"',
+        '\\"',
+    )
 
-    formula = f'{{Duplicate Key}}="{escaped_fingerprint}"'
+    formula = (
+        f'{{Duplicate Key}}="{escaped_fingerprint}"'
+    )
 
     params = urllib.parse.urlencode(
         {
@@ -196,21 +243,26 @@ def find_by_fingerprint(
         f"{_table_url()}?{params}",
     )
 
-    return result.get("records", [])
+    return result.get(
+        "records",
+        [],
+    )
 
 
 def sync_lead_if_missing(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Create a lead only if its canonical fingerprint is not
-    already present in Airtable.
+    Create a lead only if its canonical fingerprint
+    is not already present in Airtable.
     """
 
     fingerprint = lead.get("fingerprint")
 
     if fingerprint:
-        existing = find_by_fingerprint(fingerprint)
+        existing = find_by_fingerprint(
+            fingerprint
+        )
 
         if existing:
             return {
@@ -220,18 +272,27 @@ def sync_lead_if_missing(
 
     result = push_lead(lead)
 
-    records = result.get("records", [])
+    records = result.get(
+        "records",
+        [],
+    )
 
     return {
         "status": "created",
-        "record": records[0] if records else None,
+        "record": (
+            records[0]
+            if records
+            else None
+        ),
     }
 
 
 def sync_queue(
     leads: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Synchronize local leads without losing failed records."""
+    """
+    Synchronize local leads without losing failed records.
+    """
 
     synced = []
     already_exists = []
@@ -239,7 +300,9 @@ def sync_queue(
 
     for lead in leads:
         try:
-            result = sync_lead_if_missing(lead)
+            result = sync_lead_if_missing(
+                lead
+            )
 
             if result["status"] == "created":
                 synced.append(lead)
@@ -267,5 +330,7 @@ def sync_queue(
 if __name__ == "__main__":
     print(
         "Airtable sync module loaded. "
-        "Use sync_queue() or sync_lead_if_missing() from the lead engine."
+        "Use sync_queue() or "
+        "sync_lead_if_missing() from "
+        "the lead engine."
     )
