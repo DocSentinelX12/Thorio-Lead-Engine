@@ -2,6 +2,7 @@ import argparse
 import json
 
 from .application import create_application
+from .json_source import JsonLeadSource
 
 
 def build_parser():
@@ -29,6 +30,16 @@ def build_parser():
         help="Show the current human work queue.",
     )
 
+    import_parser = subparsers.add_parser(
+        "import-json",
+        help="Import leads from a JSON file.",
+    )
+
+    import_parser.add_argument(
+        "path",
+        help="Path to the JSON lead file.",
+    )
+
     return parser
 
 
@@ -47,6 +58,15 @@ def main(argv=None):
 
     elif args.command == "work-queue":
         result = application.work_queue()
+
+    elif args.command == "import-json":
+        source = JsonLeadSource(
+            args.path
+        )
+
+        result = application.run_sources(
+            [source]
+        )
 
     else:
         parser.error(
