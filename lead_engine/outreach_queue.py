@@ -1,108 +1,70 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 
-DELIVERY_ROUTES = {
+ROUTES = (
     "Shiftr",
     "Paxus",
     "Thorio",
-}
+    "Review",
+)
 
 
 def build_outreach_queue(
-    leads: List[Dict[str, Any]],
+    leads: Iterable[Dict[str, Any]],
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Organize qualified leads into the correct partner queue.
+    Split processed leads into their final delivery queues.
 
-    A lead is only delivered when:
-    - it has a supported route
-    - it is qualified
-    - it is not marked as a duplicate
-    - it has a meaningful lead score
+    A lead is placed according to its existing route.
+    Unknown or missing routes go to Review rather than being lost.
     """
 
     queues = {
-        "Shiftr": [],
-        "Paxus": [],
-        "Thorio": [],
-        "Review": [],
+        route_name: []
+        for route_name in ROUTES
     }
 
     for lead in leads:
-        route = str(
-            lead.get("route", "")
+        route_name = str(
+            lead.get("route", "Review")
         ).strip()
 
-        qualified = lead.get(
-            "qualified",
-            True,
-        )
+        if route_name not in queues:
+            route_name = "Review"
 
-        duplicate = lead.get(
-            "possible_duplicate",
-            False,
-        )
-
-        score = lead.get(
-            "lead_score",
-            0,
-        )
-
-        try:
-            score = int(score)
-        except (TypeError, ValueError):
-            score = 0
-
-        if duplicate:
-            queues["Review"].append(lead)
-            continue
-
-        if not qualified:
-            queues["Review"].append(lead)
-            continue
-
-        if route not in DELIVERY_ROUTES:
-            queues["Review"].append(lead)
-            continue
-
-        if score <= 0:
-            queues["Review"].append(lead)
-            continue
-
-        queues[route].append(lead)
+        queues[route_name].append(lead)
 
     return queues
 
 
-def get_route_queue(
-    leads: List[Dict[str, Any]],
-    route: str,
-) -> List[Dict[str, Any]]:
-    """
-    Return only qualified, deliverable leads for one route.
-    """
-
-    queues = build_outreach_queue(leads)
-
-    return queues.get(
-        route,
-        [],
-    )
-
-
 def summarize_queue(
-    leads: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    leads: Iterable[Dict[str, Any]],
+) -> Dict[str, int]:
     """
-    Return operational counts for the current lead queue.
+    Return the number of leads assigned to each delivery route.
     """
 
     queues = build_outreach_queue(leads)
 
     return {
-        "total": len(leads),
-        "shiftr": len(queues["Shiftr"]),
-        "paxus": len(queues["Paxus"]),
-        "thorio": len(queues["Thorio"]),
-        "review": len(queues["Review"]),
-  }
+        route_name: len(
+            queues[route_name]
+        )
+        for route_name in ROUTES
+    }
+
+
+def get_route_leads(
+    leads: Iterable[Dict[str, Any]],
+    route_name: str,
+) -> List[Dict[str, Any]]:
+    """
+    Return only leads assigned to the requested route.
+    """
+
+    queues = build_outreach_queue(leads)
+
+    if route_name not in queues:
+        return []
+
+    return queues[route_name]
