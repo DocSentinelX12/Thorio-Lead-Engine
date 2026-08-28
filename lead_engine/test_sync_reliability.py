@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from .database import LeadDB
@@ -93,13 +94,21 @@ def test_sync_pending_rejects_non_object_payload(tmp_path):
 
     fingerprint = result["fingerprint"]
 
+    current = db.get(fingerprint)
+
+    assert current is not None
+
     db.update_payload(
         fingerprint,
-        [
-            "not",
-            "a",
-            "lead",
-        ],
+        {
+            "payload": json.dumps(
+                [
+                    "not",
+                    "a",
+                    "lead",
+                ]
+            )
+        },
     )
 
     result = sync_pending(db)
