@@ -1,102 +1,68 @@
-from typing import Any, Dict, Iterable
-import logging
+from typing import Any, Dict, Iterable, Optional
 
-from .pipeline import LeadPipeline
-
-
-logger = logging.getLogger(__name__)
+from .checkpoint_runner import CheckpointRunner
+from .sources import LeadSource
 
 
 class SourceRunner:
     """
-    Run normalized source records through the existing lead pipeline.
+    Runs configured lead sources through the canonical checkpoint
+    and processing path.
+
+    Source collection is isolated from processing so a failure in
+    one source does not prevent other configured sources from running.
     """
 
-    def __init__(self, pipeline: LeadPipeline):
-        self.pipeline = pipeline
-
-    def process(
+    def __init__(
         self,
-        records: Iterable[Dict[str, Any]],
-    ) -> Dict[str, int]:
-        """
-        Process every source record independently.
+        checkpoint_runner: CheckpointRunner,
+    ):
+        self.checkpoint_runner = checkpoint_runner
 
-        A malformed record or pipeline failure must never stop
-        subsequent records from being processed.
-        """
-
-        accepted = 0
-        duplicates = 0
-        failed = 0
-
-        for record in records:
-            if not isinstance(record, dict):
-                failed += 1
-
-                logger.error(
-                    "Lead pipeline rejected non-object source record: "
-                    "type=%s",
-                    type(record).__name__,
-                )
-                continue
-
-            try:
-                result = self.pipeline.process(
-                    **record
-                )
-
-            except Exception:
-                failed += 1
-
-                source = str(
-                    record.get("source", "unknown")
-                )
-                source_id = str(
-                    record.get("source_id", "unknown")
-                )
-
-                logger.exception(
-                    "Lead pipeline failed while processing "
-                    "source record: source=%s source_id=%s",
-                    source,
-                    source_id,
-                )
-                continue
-
-            if result.get("status") == "duplicate":
-                duplicates += 1
-
-            elif result.get("accepted") is True:
-                accepted += 1
-
-        return {
-            "accepted_count": accepted,
-            "duplicate_count": duplicates,
-            "failed_count": failed,
-        }
-
-    def run_source(
+    def run(
         self,
-        source,
+        source: LeadSource,
+        process,
     ) -> Dict[str, Any]:
         """
-        Collect records from one source and process them.
-
-        Source collection failures are allowed to propagate to the
-        service boundary so the source itself is recorded as failed
-        without terminating processing of other configured sources.
+        Run one source and persist its checkpoint only as records
+        are successfully processed.
         """
 
-        records = source.collect()
+        def fetch(checkpoint: Optional[str]):
+            return source.collect()
 
-        return self.process(
-            records
+        def process_item(item: Dict[str, Any]):
+            return process(item)
+
+        def checkpoint_for_item(item: Dict[str, Any]):
+            return item.get("source_id")
+
+        results = self.checkpoint_runner.run_with_checkpoint(
+            fetch=fetch,
+            process=process_item,
+            checkpoint_for_item=checkpoint_for_item,
         )
 
+        processed_count = 0
+        failed_count = 0
 
-if __name__ == "__main__":
-    print(
-        "Source runner loaded. "
-        "Normalized source records can now enter the lead pipeline."
-    )
+        for result in results:
+            if isinstance(result, dict):
+                if result.get("status") == "failed":
+                    failed_count += 1
+                else:
+                    processed_count += 1
+            elif result is None:
+                processed_count += 1
+            else:
+                processed_count += 1
+
+        return {
+            "source": source.name,
+            "processed_count": processed_count,
+            "failed_count": failed_count,
+            "total": len(results),
+            "results": results,
+            "checkpoint": self.checkpoint_runner.get_checkpoint(),
+        }
