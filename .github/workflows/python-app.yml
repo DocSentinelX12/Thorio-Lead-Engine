@@ -83,7 +83,7 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Find previous successful engine state
+      - name: Find newest usable engine state
         id: previous_state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -110,23 +110,25 @@ jobs:
 
             if [ -n "$artifact_id" ]; then
               previous_run_id="$run_id"
-              echo "Found previous Lead Engine state: $run_id"
+              echo "Found newest usable Lead Engine state: $run_id"
               echo "State artifact ID: $artifact_id"
               break
             fi
           done < <(
             gh run list \
               --workflow python-app.yml \
-              --status success \
               --branch main \
               --limit 50 \
-              --json databaseId,event \
+              --json databaseId,event,status \
               --jq '
                 .[]
                 | select(
-                    .event == "schedule"
-                    or .event == "push"
-                    or .event == "workflow_dispatch"
+                    .status == "completed"
+                    and (
+                      .event == "schedule"
+                      or .event == "push"
+                      or .event == "workflow_dispatch"
+                    )
                   )
                 | .databaseId
               '
