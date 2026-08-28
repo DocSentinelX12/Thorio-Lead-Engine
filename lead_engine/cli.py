@@ -4,6 +4,7 @@ import json
 from .application import create_application
 from .export import export_pending_leads
 from .json_source import JsonLeadSource
+from .source_registry import configured_sources
 
 
 def build_parser():
@@ -29,6 +30,11 @@ def build_parser():
     subparsers.add_parser(
         "work-queue",
         help="Show the current human work queue.",
+    )
+
+    subparsers.add_parser(
+        "run",
+        help="Run all configured lead-discovery sources.",
     )
 
     import_parser = subparsers.add_parser(
@@ -79,6 +85,13 @@ def main(argv=None):
 
     elif args.command == "work-queue":
         result = application.work_queue()
+
+    elif args.command == "run":
+        sources = configured_sources()
+
+        result = application.run_sources(
+            sources
+        )
 
     elif args.command == "import-json":
         source = JsonLeadSource(
