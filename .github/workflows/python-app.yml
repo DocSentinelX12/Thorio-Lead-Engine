@@ -73,11 +73,37 @@ jobs:
             pip install -r requirements.txt
           fi
 
+      - name: Find previous successful engine run
+        id: previous_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_run_id="$(
+            gh run list \
+              --workflow python-app.yml \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty'
+          )"
+
+          echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$previous_run_id" ]; then
+            echo "Previous successful run: $previous_run_id"
+          else
+            echo "No previous successful run found."
+          fi
+
       - name: Download previous Lead Engine state
+        if: steps.previous_run.outputs.run_id != ''
         uses: actions/download-artifact@v5
         with:
           name: thorio-lead-engine-state
           path: data
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.previous_run.outputs.run_id }}
         continue-on-error: true
 
       - name: Ensure Lead Engine data directory exists
