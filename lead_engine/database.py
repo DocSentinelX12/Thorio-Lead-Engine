@@ -7,7 +7,10 @@ from typing import Any, Dict, Optional
 class LeadDB:
     def __init__(self, data_dir="data"):
         self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         self.path = self.data_dir / "leads.sqlite3"
 
@@ -16,8 +19,15 @@ class LeadDB:
             timeout=30,
         )
 
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=FULL")
+        self.conn.execute(
+            "PRAGMA journal_mode=WAL"
+        )
+        self.conn.execute(
+            "PRAGMA synchronous=FULL"
+        )
+        self.conn.execute(
+            "PRAGMA foreign_keys=ON"
+        )
 
         self.conn.execute(
             """
@@ -59,6 +69,23 @@ class LeadDB:
         self,
         payload: Dict[str, Any],
     ) -> bool:
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "Lead payload must be an object."
+            )
+
+        fingerprint = payload.get("fingerprint")
+
+        if not fingerprint:
+            raise ValueError(
+                "Lead payload must contain a fingerprint."
+            )
+
+        serialized = json.dumps(
+            payload,
+            ensure_ascii=False,
+        )
+
         cursor = self.conn.execute(
             """
             INSERT OR IGNORE INTO leads
@@ -66,11 +93,8 @@ class LeadDB:
             VALUES (?, ?)
             """,
             (
-                payload["fingerprint"],
-                json.dumps(
-                    payload,
-                    ensure_ascii=False,
-                ),
+                str(fingerprint),
+                serialized,
             ),
         )
 
@@ -94,13 +118,25 @@ class LeadDB:
         if not row:
             return None
 
-        return json.loads(row[0])
+        payload = json.loads(row[0])
+
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "Stored lead payload must be an object."
+            )
+
+        return payload
 
     def update_payload(
         self,
         fingerprint: str,
         updates: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
+        if not isinstance(updates, dict):
+            raise ValueError(
+                "Lead updates must be an object."
+            )
+
         current = self.get(fingerprint)
 
         if current is None:
@@ -129,6 +165,19 @@ class LeadDB:
         return current
 
     def pending(self, limit=50):
+        if not isinstance(limit, int) or isinstance(
+            limit,
+            bool,
+        ):
+            raise ValueError(
+                "Pending limit must be an integer."
+            )
+
+        if limit <= 0:
+            raise ValueError(
+                "Pending limit must be greater than zero."
+            )
+
         return self.conn.execute(
             """
             SELECT fingerprint, payload, attempts
@@ -140,7 +189,10 @@ class LeadDB:
             (limit,),
         ).fetchall()
 
-    def mark_synced(self, fingerprint):
+    def mark_synced(
+        self,
+        fingerprint,
+    ):
         self.conn.execute(
             """
             UPDATE leads
@@ -153,7 +205,11 @@ class LeadDB:
 
         self.conn.commit()
 
-    def mark_error(self, fingerprint, error):
+    def mark_error(
+        self,
+        fingerprint,
+        error,
+    ):
         self.conn.execute(
             """
             UPDATE leads
@@ -170,7 +226,21 @@ class LeadDB:
 
         self.conn.commit()
 
-    def set_checkpoint(self, collector, checkpoint):
+    def set_checkpoint(
+        self,
+        collector,
+        checkpoint,
+    ):
+        if not collector:
+            raise ValueError(
+                "Checkpoint collector is required."
+            )
+
+        if checkpoint is None:
+            raise ValueError(
+                "Checkpoint value is required."
+            )
+
         self.conn.execute(
             """
             INSERT INTO checkpoints
@@ -183,14 +253,17 @@ class LeadDB:
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
-                collector,
-                checkpoint,
+                str(collector),
+                str(checkpoint),
             ),
         )
 
         self.conn.commit()
 
-    def get_checkpoint(self, collector):
+    def get_checkpoint(
+        self,
+        collector,
+    ):
         row = self.conn.execute(
             """
             SELECT checkpoint
@@ -218,13 +291,30 @@ class LeadDB:
         if not row:
             return None
 
-        return json.loads(row[0])
+        value = json.loads(row[0])
+
+        if not isinstance(value, dict):
+            raise ValueError(
+                "Stored state value must be an object."
+            )
+
+        return value
 
     def set_state(
         self,
         key: str,
         value: Dict[str, Any],
     ) -> None:
+        if not key:
+            raise ValueError(
+                "State key is required."
+            )
+
+        if not isinstance(value, dict):
+            raise ValueError(
+                "State value must be an object."
+            )
+
         self.conn.execute(
             """
             INSERT INTO state
@@ -265,3 +355,26 @@ class LeadDB:
             FROM leads
             """
         ).fetchone()
+
+    def close(self) -> None:
+        if self.conn is not None:
+            self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback,
+    ):
+        self.close()
+        return False
+
+
+if __name__ == "__main__":
+    print(
+        "Lead database loaded. "
+        "SQLite persistence is ready."
+    )
