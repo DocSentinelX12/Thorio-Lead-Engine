@@ -39,9 +39,19 @@ class SourceRunner:
 
             except Exception:
                 failed += 1
+
+                source = str(
+                    record.get("source", "unknown")
+                )
+                source_id = str(
+                    record.get("source_id", "unknown")
+                )
+
                 logger.exception(
-                    "Lead pipeline failed while processing source record: %s",
-                    record,
+                    "Lead pipeline failed while processing "
+                    "source record: source=%s source_id=%s",
+                    source,
+                    source_id,
                 )
                 continue
 
@@ -76,4 +86,4 @@ if __name__ == "__main__":
     print(
         "Source runner loaded. "
         "Normalized source records can now enter the lead pipeline."
-    )
+                )
