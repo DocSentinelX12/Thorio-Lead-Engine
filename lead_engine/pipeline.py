@@ -35,9 +35,14 @@ class LeadPipeline:
     The local database remains the source of truth.
     """
 
-    def __init__(self, db=None):
+    def __init__(
+        self,
+        db=None,
+        sync_enabled: bool = True,
+    ):
         self.db = db or LeadDB()
         self.dedupe = Dedupe(self.db)
+        self.sync_enabled = sync_enabled
 
     def process(
         self,
@@ -116,6 +121,19 @@ class LeadPipeline:
                 "potential_routes": possible_routes,
                 "lead_score": scoring["lead_score"],
                 "priority": scoring["priority"],
+            }
+
+        if not self.sync_enabled:
+            return {
+                "status": "accepted",
+                "accepted": True,
+                "fingerprint": fingerprint,
+                "lead": payload,
+                "potential_routes": possible_routes,
+                "lead_score": scoring["lead_score"],
+                "priority": scoring["priority"],
+                "sync_status": "disabled",
+                "sync_error": None,
             }
 
         sync_result = sync_one(payload)
@@ -211,4 +229,4 @@ if __name__ == "__main__":
     print(
         "Lead pipeline loaded. "
         "Use process_lead() to process discovered opportunities."
-)
+            )
