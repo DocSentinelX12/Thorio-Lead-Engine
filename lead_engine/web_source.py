@@ -1,6 +1,7 @@
-from typing import Any, Dict, Iterable, List
-from urllib.request import Request, urlopen
 import json
+from typing import Any, Dict, Iterable, List
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 class WebLeadSource:
@@ -8,12 +9,23 @@ class WebLeadSource:
 
     name = "web"
 
-    def __init__(self, url: str, timeout: int = 20):
+    def __init__(
+        self,
+        url: str,
+        timeout: int = 20,
+    ):
         if not isinstance(url, str) or not url.strip():
             raise ValueError("Web source URL is required.")
 
+        if not isinstance(timeout, int) or isinstance(timeout, bool):
+            raise ValueError(
+                "Web source timeout must be an integer."
+            )
+
         if timeout <= 0:
-            raise ValueError("Web source timeout must be positive.")
+            raise ValueError(
+                "Web source timeout must be positive."
+            )
 
         self.url = url.strip()
         self.timeout = timeout
@@ -27,17 +39,39 @@ class WebLeadSource:
             },
         )
 
-        with urlopen(
-            request,
-            timeout=self.timeout,
-        ) as response:
-            raw = response.read()
+        try:
+            with urlopen(
+                request,
+                timeout=self.timeout,
+            ) as response:
+                raw = response.read()
+
+        except HTTPError as exc:
+            raise ValueError(
+                f"Web source request failed with HTTP {exc.code}."
+            ) from exc
+
+        except URLError as exc:
+            raise ValueError(
+                f"Web source request failed: {exc.reason}"
+            ) from exc
+
+        except TimeoutError as exc:
+            raise ValueError(
+                "Web source request timed out."
+            ) from exc
 
         try:
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            payload = json.loads(
+                raw.decode("utf-8")
+            )
+        except UnicodeDecodeError as exc:
             raise ValueError(
                 "Web source must return valid UTF-8 JSON."
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "Web source must return valid JSON."
             ) from exc
 
         if isinstance(payload, dict):
@@ -58,7 +92,8 @@ class WebLeadSource:
         for index, lead in enumerate(leads):
             if not isinstance(lead, dict):
                 raise ValueError(
-                    f"Web source lead at index {index} must be an object."
+                    f"Web source lead at index {index} "
+                    "must be an object."
                 )
 
         return leads
@@ -75,4 +110,4 @@ def collect_from_url(
             url=url,
             timeout=timeout,
         ).collect()
-        )
+    )
