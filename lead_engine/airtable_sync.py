@@ -59,10 +59,33 @@ def _request(
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             body = response.read().decode("utf-8")
-            return json.loads(body) if body else {}
+
+            if not body:
+                return {}
+
+            try:
+                result = json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise AirtableSyncError(
+                    "Airtable returned invalid JSON."
+                ) from exc
+
+            if not isinstance(result, dict):
+                raise AirtableSyncError(
+                    "Airtable returned an invalid JSON response."
+                )
+
+            return result
 
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            body = exc.read().decode(
+                "utf-8",
+                errors="replace",
+            )
+        except Exception:
+            body = "Unable to read Airtable error response."
+
         raise AirtableSyncError(
             f"Airtable API error {exc.code}: {body}"
         ) from exc
@@ -70,6 +93,21 @@ def _request(
     except urllib.error.URLError as exc:
         raise AirtableSyncError(
             f"Airtable connection failed: {exc.reason}"
+        ) from exc
+
+    except UnicodeDecodeError as exc:
+        raise AirtableSyncError(
+            "Airtable returned invalid UTF-8 response data."
+        ) from exc
+
+    except TimeoutError as exc:
+        raise AirtableSyncError(
+            "Airtable request timed out."
+        ) from exc
+
+    except OSError as exc:
+        raise AirtableSyncError(
+            f"Airtable request failed: {exc}"
         ) from exc
 
 
@@ -172,7 +210,6 @@ def _signal_type(lead: Dict[str, Any]) -> str:
         for phrase in (
             "software",
             "developer",
-            "developer",
             "engineer",
             "engineering",
             "tech",
@@ -255,7 +292,9 @@ def _review_status(lead: Dict[str, Any]) -> str:
     return "Reviewing"
 
 
-def _contact_method(lead: Dict[str, Any]) -> Optional[str]:
+def _contact_method(
+    lead: Dict[str, Any],
+) -> Optional[str]:
     value = _text(lead.get("contact_method"))
 
     allowed = {
@@ -279,7 +318,9 @@ def _contact_method(lead: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _thorio_fit(lead: Dict[str, Any]) -> Optional[str]:
+def _thorio_fit(
+    lead: Dict[str, Any],
+) -> Optional[str]:
     value = _text(lead.get("thorio_fit"))
 
     allowed = {
