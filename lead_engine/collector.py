@@ -11,11 +11,18 @@ REQUIRED_FIELDS = {
 }
 
 
-def validate_lead_input(lead: Dict[str, Any]) -> None:
+def validate_lead_input(
+    lead: Dict[str, Any],
+) -> None:
     """
     Validate the minimum information required before a lead
     enters the processing pipeline.
     """
+
+    if not isinstance(lead, dict):
+        raise ValueError(
+            "Lead input must be an object."
+        )
 
     missing = [
         field
