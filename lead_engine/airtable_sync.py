@@ -16,7 +16,6 @@ API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_MAX_RETRIES = 3
 AIRTABLE_INITIAL_BACKOFF = 1.0
 AIRTABLE_MAX_BACKOFF = 30.0
-AIRTABLE_BATCH_SIZE = 10
 
 
 class AirtableSyncError(Exception):
@@ -806,64 +805,6 @@ def push_lead(
     )
 
 
-def push_leads(
-    leads: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """
-    Create multiple new Airtable records in supported batches.
-
-    Airtable accepts up to 10 records per create request.
-    This function intentionally does not perform duplicate
-    checking. Duplicate checking remains the responsibility
-    of sync_queue() before this function is called.
-    """
-
-    if not leads:
-        return {
-            "records": []
-        }
-
-    all_records = []
-
-    for start in range(
-        0,
-        len(leads),
-        AIRTABLE_BATCH_SIZE,
-    ):
-        batch = leads[
-            start:start + AIRTABLE_BATCH_SIZE
-        ]
-
-        payload = {
-            "records": [
-                {
-                    "fields": _normalize_lead(
-                        lead
-                    )
-                }
-                for lead in batch
-            ]
-        }
-
-        result = _request(
-            "POST",
-            _table_url(),
-            payload,
-        )
-
-        records = result.get(
-            "records",
-            [],
-        )
-
-        if isinstance(records, list):
-            all_records.extend(records)
-
-    return {
-        "records": all_records
-    }
-
-
 def find_by_fingerprint(
     fingerprint: str,
 ) -> List[Dict[str, Any]]:
@@ -937,23 +878,6 @@ def sync_lead_if_missing(
     }
 
 
-def _queue_key(
-    lead: Dict[str, Any],
-) -> str:
-    """
-    Return the safest local key for preventing duplicate
-    work within one sync_queue() call.
-
-    Fingerprint is preferred because it is the engine's
-    canonical duplicate key. Leads without a fingerprint
-    are intentionally not collapsed here.
-    """
-
-    return _text(
-        lead.get("fingerprint")
-    )
-
-
 def sync_queue(
     leads: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -961,49 +885,39 @@ def sync_queue(
     already_exists = []
     failed = []
 
-    # Remove duplicate fingerprints from the incoming queue
-    # before making any Airtable requests. Leads without a
-    # fingerprint remain independent and are still processed.
-    unique_leads = []
-    seen_fingerprints = set()
-
     for lead in leads:
-        fingerprint = _queue_key(
-            lead
-        )
+        try:
+            result = sync_lead_if_missing(
+                lead
+            )
 
-        if fingerprint:
-            if fingerprint in seen_fingerprints:
+            if result["status"] == "created":
+                synced.append(lead)
+
+            else:
                 already_exists.append(
                     lead
                 )
-                continue
 
-            seen_fingerprints.add(
-                fingerprint
+        except AirtableSyncError as exc:
+            failed.append(
+                {
+                    "lead": lead,
+                    "error": str(exc),
+                }
             )
 
-        unique_leads.append(
-            lead
-        )
+    return {
+        "synced": synced,
+        "already_exists": already_exists,
+        "failed": failed,
+        "synced_count": len(synced),
+        "already_exists_count": len(already_exists),
+        "failed_count": len(failed),
+    }
 
-    # Preserve the existing Airtable duplicate check.
-    # We do this before batching creates so that batching
-    # cannot bypass the existing dedupe protection.
-    to_create = []
 
-    for lead in unique_leads:
-        try:
-            fingerprint = _text(
-                lead.get("fingerprint")
-            )
-
-            if fingerprint:
-                existing = find_by_fingerprint(
-                    fingerprint
-                )
-
-                if existing:
-                    already_exists.append(
-                        lead
-        )
+if __name__ == "__main__":
+    print(
+        "Airtable sync module loaded."
+    )
