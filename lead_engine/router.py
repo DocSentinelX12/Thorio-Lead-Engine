@@ -17,6 +17,47 @@ HIRING_CONTEXT = (
 )
 
 
+# These are specific technology job titles. They are strong enough
+# to establish hiring intent when a source omits words such as
+# "hiring", "opening", or "job".
+#
+# Generic company/technology terms are intentionally excluded.
+# For example, "software company" must not become a Shiftr lead.
+JOB_ROLE_CONTEXT = (
+    r"\bsoftware engineer\b"
+    r"|\bsoftware developer\b"
+    r"\bsoftware development engineer\b"
+    r"|\bfull[- ]stack engineer\b"
+    r"|\bfull[- ]stack developer\b"
+    r"|\bfrontend engineer\b"
+    r"|\bfront[- ]end engineer\b"
+    r"|\bfrontend developer\b"
+    r"|\bfront[- ]end developer\b"
+    r"|\bbackend engineer\b"
+    r"|\bback[- ]end engineer\b"
+    r"|\bbackend developer\b"
+    r"|\bback[- ]end developer\b"
+    r"|\bdata engineer\b"
+    r"|\bdata scientist\b"
+    r"|\bdata analyst\b"
+    r"|\bmachine learning engineer\b"
+    r"|\bml engineer\b"
+    r"|\bai engineer\b"
+    r"|\bai developer\b"
+    r"|\bdevops engineer\b"
+    r"|\bcloud engineer\b"
+    r"|\bplatform engineer\b"
+    r"|\bsite reliability engineer\b"
+    r"|\bsre\b"
+    r"|\bproduct manager\b"
+    r"|\bproduct designer\b"
+    r"|\bux designer\b"
+    r"|\bui designer\b"
+    r"|\btechnical designer\b"
+    r"|\btechnology professional\b"
+)
+
+
 SHIFTR_RULES = [
     r"\bindividual developer\b",
     r"\bsoftware engineer\b",
@@ -82,7 +123,11 @@ THORIO_REMOTE_RULES = [
 ]
 
 
-def _text(company: str, signal: str, evidence: str) -> str:
+def _text(
+    company: str,
+    signal: str,
+    evidence: str,
+) -> str:
     return " ".join(
         [
             company or "",
@@ -92,7 +137,9 @@ def _text(company: str, signal: str, evidence: str) -> str:
     ).lower()
 
 
-def _has_hiring_context(text: str) -> bool:
+def _has_hiring_context(
+    text: str,
+) -> bool:
     return bool(
         re.search(
             HIRING_CONTEXT,
@@ -102,9 +149,30 @@ def _has_hiring_context(text: str) -> bool:
     )
 
 
-def _matches(text: str, patterns: List[str]) -> int:
+def _has_job_role_context(
+    text: str,
+) -> bool:
+    return bool(
+        re.search(
+            JOB_ROLE_CONTEXT,
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _matches(
+    text: str,
+    patterns: List[str],
+) -> int:
     return sum(
-        bool(re.search(pattern, text, re.IGNORECASE))
+        bool(
+            re.search(
+                pattern,
+                text,
+                re.IGNORECASE,
+            )
+        )
         for pattern in patterns
     )
 
@@ -121,6 +189,10 @@ def score_routes(
     Qualification is handled elsewhere in the pipeline.
 
     A lead may be relevant to more than one destination.
+
+    Explicit hiring language or a specific technology job title
+    establishes enough context to evaluate the route. Generic
+    company descriptions do not.
     """
 
     text = _text(
@@ -135,7 +207,10 @@ def score_routes(
         "Thorio": 0,
     }
 
-    if not _has_hiring_context(text):
+    if not (
+        _has_hiring_context(text)
+        or _has_job_role_context(text)
+    ):
         return scores
 
     scores["Shiftr"] = _matches(
