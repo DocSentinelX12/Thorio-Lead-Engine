@@ -1,23 +1,21 @@
 from typing import Any, Dict, Iterable, List
 from urllib.request import Request, urlopen
+import json
 
 
 class WebLeadSource:
-    """
-    Simple HTTP source adapter.
-
-    Fetches a JSON endpoint containing a list of standardized
-    lead records. Discovery remains separate from qualification.
-    """
+    """HTTP source adapter for a JSON lead feed."""
 
     name = "web"
 
-    def __init__(
-        self,
-        url: str,
-        timeout: int = 20,
-    ):
-        self.url = url
+    def __init__(self, url: str, timeout: int = 20):
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("Web source URL is required.")
+
+        if timeout <= 0:
+            raise ValueError("Web source timeout must be positive.")
+
+        self.url = url.strip()
         self.timeout = timeout
 
     def collect(self) -> Iterable[Dict[str, Any]]:
@@ -33,11 +31,14 @@ class WebLeadSource:
             request,
             timeout=self.timeout,
         ) as response:
-            import json
+            raw = response.read()
 
-            payload = json.loads(
-                response.read().decode("utf-8")
-            )
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                "Web source must return valid UTF-8 JSON."
+            ) from exc
 
         if isinstance(payload, dict):
             leads = payload.get("leads", [])
@@ -54,6 +55,12 @@ class WebLeadSource:
                 "Web source 'leads' value must be a list."
             )
 
+        for index, lead in enumerate(leads):
+            if not isinstance(lead, dict):
+                raise ValueError(
+                    f"Web source lead at index {index} must be an object."
+                )
+
         return leads
 
 
@@ -61,13 +68,11 @@ def collect_from_url(
     url: str,
     timeout: int = 20,
 ) -> List[Dict[str, Any]]:
-    """
-    Convenience function for fetching leads from a JSON URL.
-    """
+    """Fetch and validate leads from a JSON URL."""
 
     return list(
         WebLeadSource(
             url=url,
             timeout=timeout,
         ).collect()
-    )
+        )
