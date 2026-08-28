@@ -148,9 +148,11 @@ jobs:
         run: |
           mkdir -p data
 
-      - name: Run configured Lead Engine sources
+      - name: Run Lead Engine continuously for bounded window
         run: |
-          python -m lead_engine run
+          python -m lead_engine run-scheduled \
+            --interval 60 \
+            --cycles 10
 
       - name: Save Lead Engine state
         if: always()
