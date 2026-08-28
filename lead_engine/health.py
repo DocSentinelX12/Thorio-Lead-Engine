@@ -1,107 +1,48 @@
 from typing import Any, Dict
 
-from .database import LeadDB
 
-
-def check_database(db: LeadDB) -> Dict[str, Any]:
+class LeadEngineHealth:
     """
-    Verify that the local database is accessible.
-    """
+    Health reporting for the lead engine.
 
-    try:
-        db.pending(limit=1)
-
-        return {
-            "name": "database",
-            "status": "healthy",
-            "ok": True,
-        }
-
-    except Exception as exc:
-        return {
-            "name": "database",
-            "status": "unhealthy",
-            "ok": False,
-            "error": str(exc),
-        }
-
-
-def check_configuration(config) -> Dict[str, Any]:
-    """
-    Verify that runtime configuration is usable.
+    Health checks are intentionally defensive. A failure while
+    checking the database must produce an unhealthy response
+    rather than crashing the health caller.
     """
 
-    errors = []
+    def __init__(self, db):
+        self.db = db
 
-    if not config.database_dir:
-        errors.append(
-            "database_dir is empty"
-        )
+    def check(self) -> Dict[str, Any]:
+        try:
+            stats = self.db.stats()
 
-    if config.batch_size <= 0:
-        errors.append(
-            "batch_size must be greater than zero"
-        )
+            return {
+                "healthy": True,
+                "database": {
+                    "healthy": True,
+                    "lead_count": stats[0],
+                },
+            }
 
-    if errors:
-        return {
-            "name": "configuration",
-            "status": "unhealthy",
-            "ok": False,
-            "errors": errors,
-        }
-
-    return {
-        "name": "configuration",
-        "status": "healthy",
-        "ok": True,
-    }
+        except Exception:
+            return {
+                "healthy": False,
+                "database": {
+                    "healthy": False,
+                    "lead_count": 0,
+                },
+            }
 
 
-def health_report(
-    db: LeadDB,
-    config,
-) -> Dict[str, Any]:
+def health(db) -> Dict[str, Any]:
     """
-    Return the complete local health report.
+    Return the current health status of the lead engine.
     """
+    return LeadEngineHealth(db).check()
 
-    checks = [
-        check_database(db),
-        check_configuration(config),
-    ]
 
-    healthy = all(
-        check["ok"]
-        for check in checks
+if __name__ == "__main__":
+    print(
+        "Lead engine health module loaded."
     )
-
-    return {
-        "status": (
-            "healthy"
-            if healthy
-            else "unhealthy"
-        ),
-        "ok": healthy,
-        "checks": checks,
-    }
-
-
-def check_engine(
-    db: LeadDB,
-) -> Dict[str, Any]:
-    """
-    Backward-compatible engine health check.
-
-    Existing service/application code expects the
-    `healthy` field.
-    """
-
-    result = check_database(db)
-
-    return {
-        "healthy": result["ok"],
-        "status": result["status"],
-        "ok": result["ok"],
-        "database": result,
-    }
