@@ -49,6 +49,16 @@ class LeadEngineService:
         self,
         sources,
     ) -> Dict[str, Any]:
+        """
+        Run every configured source independently.
+
+        A source that returns no records is considered a successful
+        empty source. It must not be treated as a failure and must
+        not prevent subsequent sources from running.
+
+        A source collection or processing exception is isolated to
+        that source and recorded in its result.
+        """
         source_count = 0
         failed_count = 0
         results = []
@@ -56,14 +66,36 @@ class LeadEngineService:
         for source in sources:
             source_count += 1
 
+            source_name = source.__class__.__name__
+
             try:
                 result = self.runner.run_source(
                     source
                 )
 
+                if result is None:
+                    result = {
+                        "accepted_count": 0,
+                        "duplicate_count": 0,
+                        "failed_count": 0,
+                        "empty": True,
+                    }
+                else:
+                    result = dict(result)
+
+                    if (
+                        result.get("accepted_count", 0) == 0
+                        and result.get("duplicate_count", 0) == 0
+                        and result.get("failed_count", 0) == 0
+                    ):
+                        result.setdefault(
+                            "empty",
+                            True,
+                        )
+
                 results.append(
                     {
-                        "source": source.__class__.__name__,
+                        "source": source_name,
                         "result": result,
                     }
                 )
@@ -73,7 +105,7 @@ class LeadEngineService:
 
                 results.append(
                     {
-                        "source": source.__class__.__name__,
+                        "source": source_name,
                         "result": {
                             "accepted_count": 0,
                             "duplicate_count": 0,
