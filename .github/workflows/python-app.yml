@@ -83,7 +83,7 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Find previous successful engine run
+      - name: Find previous completed engine run
         id: previous_run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,8 +91,8 @@ jobs:
           previous_run_id="$(
             gh run list \
               --workflow python-app.yml \
-              --status success \
-              --limit 20 \
+              --status completed \
+              --limit 50 \
               --json databaseId,headBranch,event \
               --jq '
                 map(
@@ -112,9 +112,9 @@ jobs:
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
 
           if [ -n "$previous_run_id" ]; then
-            echo "Previous successful engine run: $previous_run_id"
+            echo "Previous completed engine run: $previous_run_id"
           else
-            echo "No previous successful engine run found."
+            echo "No previous completed engine run found."
           fi
 
       - name: Download previous Lead Engine state
