@@ -1,8 +1,6 @@
-import html
 import re
 from typing import Any, Dict, Iterable, List
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -11,11 +9,7 @@ USER_AGENT = "Thorio-Lead-Engine/1.0"
 REMOTE_JOB_TERMS = (
     "remote",
     "work from home",
-    "work-from-home",
     "distributed",
-    "anywhere",
-    "remote-first",
-    "remote first",
 )
 
 TECH_JOB_TERMS = (
@@ -25,9 +19,7 @@ TECH_JOB_TERMS = (
     "engineering",
     "data",
     "machine learning",
-    "machine-learning",
     "artificial intelligence",
-    "artificial-intelligence",
     "ai",
     "devops",
     "cloud",
@@ -36,42 +28,6 @@ TECH_JOB_TERMS = (
     "product designer",
     "ux",
     "ui",
-    "technical",
-    "technology",
-)
-
-JOB_TITLE_TERMS = (
-    "engineer",
-    "developer",
-    "software",
-    "data scientist",
-    "data analyst",
-    "data engineer",
-    "machine learning",
-    "artificial intelligence",
-    "ai engineer",
-    "devops",
-    "cloud engineer",
-    "platform engineer",
-    "product manager",
-    "product designer",
-    "ux designer",
-    "ui designer",
-    "technical",
-)
-
-JOB_URL_TERMS = (
-    "/job",
-    "/jobs",
-    "/career",
-    "/careers",
-    "/position",
-    "/positions",
-    "/opening",
-    "/openings",
-    "/vacancy",
-    "/vacancies",
-    "/apply",
 )
 
 
@@ -81,15 +37,14 @@ class FreeSourceError(Exception):
 
 class FreeJobSource:
     """
-    Lightweight collector for public job-board pages.
+    Lightweight collector for a public job-board page.
 
-    Uses only Python standard-library functionality.
+    This adapter intentionally uses only standard-library HTTP
+    functionality. It does not require a paid API, scraping service,
+    proxy, database, or third-party package.
 
-    The collector is intentionally conservative about what it sends
-    downstream. It discovers likely remote technology job listings,
-    preserves the original listing URL, and leaves qualification,
-    routing, scoring, deduplication, and outreach decisions to later
-    stages of the pipeline.
+    The adapter extracts obvious job-like links and converts them
+    into the normalized source-record format expected downstream.
     """
 
     def __init__(
@@ -159,20 +114,13 @@ class FreeJobSource:
 
         try:
             return raw.decode("utf-8")
-
-        except UnicodeDecodeError:
-            try:
-                return raw.decode("latin-1")
-
-            except UnicodeDecodeError as exc:
-                raise FreeSourceError(
-                    f"{self.name} returned unreadable text."
-                ) from exc
+        except UnicodeDecodeError as exc:
+            raise FreeSourceError(
+                f"{self.name} returned invalid UTF-8."
+            ) from exc
 
     @staticmethod
     def _strip_html(value: str) -> str:
-        value = html.unescape(value)
-
         value = re.sub(
             r"<script\b[^>]*>.*?</script>",
             " ",
@@ -182,13 +130,6 @@ class FreeJobSource:
 
         value = re.sub(
             r"<style\b[^>]*>.*?</style>",
-            " ",
-            value,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-
-        value = re.sub(
-            r"<noscript\b[^>]*>.*?</noscript>",
             " ",
             value,
             flags=re.IGNORECASE | re.DOTALL,
@@ -209,284 +150,98 @@ class FreeJobSource:
         return value.strip()
 
     @staticmethod
-    def _page_text(html_content: str) -> str:
-        return FreeJobSource._strip_html(
-            html_content
-        ).lower()
-
-    @staticmethod
-    def _contains_remote(text: str) -> bool:
+    def _is_technology_job(text: str) -> bool:
         lowered = text.lower()
 
-        return any(
+        has_remote = any(
             term in lowered
             for term in REMOTE_JOB_TERMS
         )
 
-    @staticmethod
-    def _contains_technology(text: str) -> bool:
-        lowered = text.lower()
-
-        return any(
+        has_technology = any(
             term in lowered
             for term in TECH_JOB_TERMS
         )
 
-    @staticmethod
-    def _contains_job_title(text: str) -> bool:
-        lowered = text.lower()
-
-        return any(
-            term in lowered
-            for term in JOB_TITLE_TERMS
-        )
-
-    @staticmethod
-    def _looks_like_job_url(url: str) -> bool:
-        lowered = url.lower()
-
-        return any(
-            term in lowered
-            for term in JOB_URL_TERMS
-        )
-
-    @staticmethod
-    def _is_http_url(url: str) -> bool:
-        try:
-            parsed = urlparse(url)
-        except ValueError:
-            return False
-
-        return parsed.scheme in {
-            "http",
-            "https",
-        } and bool(parsed.netloc)
-
-    def _absolute_url(self, href: str) -> str:
-        href = html.unescape(
-            href.strip()
-        )
-
-        if not href:
-            return ""
-
-        absolute = urljoin(
-            self.url,
-            href,
-        )
-
-        if not self._is_http_url(absolute):
-            return ""
-
-        return absolute
-
-    @staticmethod
-    def _clean_title(title: str) -> str:
-        title = FreeJobSource._strip_html(title)
-
-        title = re.sub(
-            r"\s+",
-            " ",
-            title,
-        )
-
-        return title.strip()
-
-    @staticmethod
-    def _extract_company(
-        title: str,
-        context: str,
-    ) -> str:
-        """
-        Extract an obvious company name when a source places it
-        directly in the listing text.
-
-        This intentionally returns an empty value when the company
-        cannot be identified safely. Downstream enrichment can handle
-        the missing company instead of inventing one.
-        """
-
-        patterns = (
-            r"\bat\s+([A-Z][A-Za-z0-9&.,' -]{1,80})",
-            r"\b@\s*([A-Z][A-Za-z0-9&.,' -]{1,80})",
-        )
-
-        for pattern in patterns:
-            match = re.search(
-                pattern,
-                title,
-            )
-
-            if match:
-                company = match.group(1).strip(
-                    " .,-"
-                )
-
-                if company:
-                    return company
-
-        for pattern in patterns:
-            match = re.search(
-                pattern,
-                context,
-            )
-
-            if match:
-                company = match.group(1).strip(
-                    " .,-"
-                )
-
-                if company:
-                    return company
-
-        return ""
-
-    @staticmethod
-    def _candidate_score(
-        title: str,
-        context: str,
-        href: str,
-    ) -> int:
-        text = " ".join(
-            [
-                title,
-                context,
-                href,
-            ]
-        ).lower()
-
-        score = 0
-
-        if FreeJobSource._contains_remote(text):
-            score += 2
-
-        if FreeJobSource._contains_technology(text):
-            score += 2
-
-        if FreeJobSource._contains_job_title(title):
-            score += 3
-
-        if FreeJobSource._looks_like_job_url(href):
-            score += 1
-
-        return score
+        return has_remote and has_technology
 
     def _extract_links(
         self,
-        html_content: str,
+        html: str,
     ) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
-        seen_urls = set()
 
         pattern = re.compile(
-            r"<a\b"
-            r"[^>]*?"
-            r"href\s*=\s*"
-            r"[\"']"
-            r"([^\"']+)"
-            r"[\"']"
-            r"[^>]*>"
+            r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>'
             r"(.*?)"
             r"</a>",
             flags=re.IGNORECASE | re.DOTALL,
         )
 
-        matches = pattern.findall(
-            html_content
-        )
+        for href, anchor in pattern.findall(html):
+            title = self._strip_html(anchor)
 
-        for href, anchor in matches:
-            title = self._clean_title(
-                anchor
-            )
-
-            absolute_url = self._absolute_url(
-                href
-            )
-
-            if not title or not absolute_url:
+            if not title:
                 continue
 
-            if absolute_url in seen_urls:
+            if not self._is_technology_job(title):
                 continue
 
-            context = self._clean_title(
-                html_content[
-                    max(
-                        0,
-                        html_content.find(anchor) - 500,
-                    ):
-                    html_content.find(anchor)
-                    + len(anchor)
-                    + 500
-                ]
-            )
-
-            score = self._candidate_score(
-                title,
-                context,
-                absolute_url,
-            )
-
-            if score < 4:
-                continue
-
-            combined = " ".join(
-                [
-                    title,
-                    context,
-                    absolute_url,
-                ]
-            )
-
-            if not self._contains_remote(
-                combined
+            if href.startswith("//"):
+                href = "https:" + href
+            elif href.startswith("/"):
+                base = self.url.rstrip("/")
+                href = base + href
+            elif not href.startswith(
+                ("http://", "https://")
             ):
                 continue
-
-            if not self._contains_technology(
-                combined
-            ):
-                continue
-
-            company = self._extract_company(
-                title,
-                context,
-            )
-
-            seen_urls.add(
-                absolute_url
-            )
 
             records.append(
                 {
                     "source": self.name,
-                    "source_id": absolute_url,
-                    "company": company,
+                    "source_id": href,
+                    "company": "",
                     "signal": title,
                     "evidence": (
-                        f"Remote technology job listing "
-                        f"discovered from {self.name}."
+                        f"Public listing discovered from "
+                        f"{self.name}."
                     ),
-                    "url": absolute_url,
+                    "url": href,
                 }
             )
 
         return records
 
-    def _extract_json_ld_jobs(
-        self,
-        html_content: str,
-    ) -> List[Dict[str, Any]]:
-        """
-        Discover JobPosting structured-data records when a site
-        exposes them.
+    def collect(self) -> Iterable[Dict[str, Any]]:
+        html = self._fetch()
 
-        Invalid or unrelated JSON-LD is ignored safely.
-        """
+        records = self._extract_links(html)
 
-        records: List[Dict[str, Any]] = []
+        # Never make an empty source failure.
+        # A source can legitimately have no matching listings.
+        return records
 
-        pattern = re.compile(
-            r"<script\b[^>]*"
-            r"type\s*=\s*[\"']application/ld\+json[
+
+def collect_free_source(
+    name: str,
+    url: str,
+    timeout: int = 20,
+) -> List[Dict[str, Any]]:
+    """
+    Collect normalized records from one free public source.
+    """
+
+    return list(
+        FreeJobSource(
+            name=name,
+            url=url,
+            timeout=timeout,
+        ).collect()
+    )
+
+
+if __name__ == "__main__":
+    print(
+        "Free public source adapter loaded."
+    )
