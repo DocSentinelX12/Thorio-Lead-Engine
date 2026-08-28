@@ -65,13 +65,9 @@ class WebLeadSource:
             payload = json.loads(
                 raw.decode("utf-8")
             )
-        except UnicodeDecodeError as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError(
                 "Web source must return valid UTF-8 JSON."
-            ) from exc
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                "Web source must return valid JSON."
             ) from exc
 
         if isinstance(payload, dict):
