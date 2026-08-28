@@ -67,11 +67,39 @@ def test_sync_pending_rejects_non_object_payload(tmp_path):
         data_dir=str(tmp_path)
     )
 
-    fingerprint = "invalid-payload-001"
+    pipeline = LeadPipeline(db=db)
 
-    db.insert(
-        fingerprint=fingerprint,
-        payload_json='["not", "a", "lead"]',
+    with patch(
+        "lead_engine.pipeline.sync_one"
+    ) as mock_sync:
+        mock_sync.return_value = {
+            "status": "failed",
+            "lead": {},
+            "airtable_record": None,
+            "error": "Airtable unavailable",
+        }
+
+        result = pipeline.process(
+            source="test",
+            source_id="invalid-payload-001",
+            url="https://example.com/jobs/invalid-payload-001",
+            company="Invalid Payload Corp",
+            signal="remote software engineer",
+            evidence="Remote software engineer opening found.",
+        )
+
+    assert result["accepted"] is True
+    assert result["sync_status"] == "failed"
+
+    fingerprint = result["fingerprint"]
+
+    db.update_payload(
+        fingerprint,
+        [
+            "not",
+            "a",
+            "lead",
+        ],
     )
 
     result = sync_pending(db)
@@ -87,6 +115,6 @@ def test_sync_pending_rejects_non_object_payload(tmp_path):
 
     stats = db.stats()
 
-    assert stats[0] == 0
+    assert stats[0] == 1
     assert stats[1] == 0
     assert stats[2] == 1
