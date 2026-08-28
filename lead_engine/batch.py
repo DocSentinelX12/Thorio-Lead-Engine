@@ -1,6 +1,10 @@
 from typing import Any, Dict, Iterable, List
+import logging
 
 from .ingest import LeadIngestor
+
+
+logger = logging.getLogger(__name__)
 
 
 class BatchProcessor:
@@ -23,14 +27,37 @@ class BatchProcessor:
 
         for lead in leads:
             try:
-                result = self.ingestor.ingest_one(lead)
+                result = self.ingestor.ingest_one(
+                    lead
+                )
                 processed.append(result)
 
-            except Exception as exc:
+            except Exception:
+                source = str(
+                    lead.get(
+                        "source",
+                        "unknown",
+                    )
+                )
+                source_id = str(
+                    lead.get(
+                        "source_id",
+                        "unknown",
+                    )
+                )
+
+                logger.exception(
+                    "Lead ingestion failed: "
+                    "source=%s source_id=%s",
+                    source,
+                    source_id,
+                )
+
                 failed.append(
                     {
-                        "lead": lead,
-                        "error": str(exc),
+                        "source": source,
+                        "source_id": source_id,
+                        "error": "lead processing failed",
                     }
                 )
 
@@ -47,4 +74,4 @@ if __name__ == "__main__":
     print(
         "Batch processor loaded. "
         "Use BatchProcessor.process() to process lead batches."
-    )
+        )
