@@ -136,7 +136,7 @@ jobs:
 
       - name: Download previous Lead Engine state
         if: steps.previous_state.outputs.run_id != ''
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: thorio-lead-engine-state
           path: data
