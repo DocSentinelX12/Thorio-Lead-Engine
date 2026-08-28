@@ -55,9 +55,6 @@ jobs:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
       AIRTABLE_LEAD_TABLE: ${{ secrets.AIRTABLE_LEAD_TABLE }}
-      THORIO_LEAD_SOURCE_URL: ${{ secrets.THORIO_LEAD_SOURCE_URL }}
-      THORIO_LEAD_SOURCE_TIMEOUT: ${{ secrets.THORIO_LEAD_SOURCE_TIMEOUT }}
-
       # Free public job-board discovery.
       # No paid API or external Thorio feed is required.
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
