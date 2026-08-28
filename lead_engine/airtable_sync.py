@@ -881,36 +881,23 @@ def sync_lead_if_missing(
 def sync_queue(
     leads: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """
-    Synchronize a queue of leads using bounded Airtable batches.
-
-    Existing fingerprint dedupe is preserved before creation.
-    Airtable batches are deliberately small so a failed batch can
-    be retried safely without affecting the local database.
-    """
-
     synced = []
     already_exists = []
     failed = []
 
-    pending_create = []
-
     for lead in leads:
         try:
-            fingerprint = _text(
-                lead.get("fingerprint")
+            result = sync_lead_if_missing(
+                lead
             )
 
-            if fingerprint:
-                existing = find_by_fingerprint(
-                    fingerprint
+            if result["status"] == "created":
+                synced.append(lead)
+
+            else:
+                already_exists.append(
+                    lead
                 )
-
-                if existing:
-                    already_exists.append(lead)
-                    continue
-
-            pending_create.append(lead)
 
         except AirtableSyncError as exc:
             failed.append(
@@ -920,81 +907,7 @@ def sync_queue(
                 }
             )
 
-    # Airtable safely accepts up to 10 records per create request.
-    batch_size = 10
-
-    for start in range(
-        0,
-        len(pending_create),
-        batch_size,
-    ):
-        batch = pending_create[
-            start:start + batch_size
-        ]
-
-        payload = {
-            "records": [
-                {
-                    "fields": _normalize_lead(
-                        lead
-                    )
-                }
-                for lead in batch
-            ]
-        }
-
-        try:
-            result = _request(
-                "POST",
-                _table_url(),
-                payload,
-            )
-
-            records = result.get(
-                "records",
-                [],
-            )
-
-            if len(records) != len(batch):
-                raise AirtableSyncError(
-                    "Airtable returned an unexpected "
-                    "number of created records."
-                )
-
-            synced.extend(batch)
-
-        except Exception as exc:
-            # Fall back to the existing one-lead path.
-            # This preserves reliability if a batch is rejected.
-            for lead in batch:
-                try:
-                    result = sync_lead_if_missing(
-                        lead
-                    )
-
-                    if result["status"] == "created":
-                        synced.append(lead)
-                    else:
-                        already_exists.append(lead)
-
-                except Exception as individual_exc:
-                    failed.append(
-                        {
-                            "lead": lead,
-                            "error": str(
-                                individual_exc
-                            ),
-                        }
-                    )
-
     return {
-        "synced": synced,
-        "already_exists": already_exists,
-        "failed": failed,
-        "synced_count": len(synced),
-        "already_exists_count": len(already_exists),
-        "failed_count": len(failed),
-    }
         "synced": synced,
         "already_exists": already_exists,
         "failed": failed,
