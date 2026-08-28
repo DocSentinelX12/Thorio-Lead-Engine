@@ -82,17 +82,29 @@ jobs:
             gh run list \
               --workflow python-app.yml \
               --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty'
+              --limit 20 \
+              --json databaseId,headBranch,event \
+              --jq '
+                map(
+                  select(
+                    .headBranch == "main"
+                    and (
+                      .event == "schedule"
+                      or .event == "push"
+                      or .event == "workflow_dispatch"
+                    )
+                  )
+                )
+                | .[0].databaseId // empty
+              '
           )"
 
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
 
           if [ -n "$previous_run_id" ]; then
-            echo "Previous successful run: $previous_run_id"
+            echo "Previous successful engine run: $previous_run_id"
           else
-            echo "No previous successful run found."
+            echo "No previous successful engine run found."
           fi
 
       - name: Download previous Lead Engine state
@@ -104,7 +116,6 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.previous_run.outputs.run_id }}
-        continue-on-error: true
 
       - name: Ensure Lead Engine data directory exists
         run: |
