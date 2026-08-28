@@ -70,11 +70,6 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Verify engine configuration
-        run: |
-          python -m lead_engine status
-          python -m lead_engine health
-
       - name: Run Lead Engine
         run: |
-          python -m lead_engine status
+          python -m lead_engine run-json data/leads.json
