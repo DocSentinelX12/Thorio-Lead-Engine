@@ -2,9 +2,11 @@ import argparse
 import json
 
 from .application import create_application
+from .config import LeadEngineConfig
 from .export import export_pending_leads
 from .json_source import JsonLeadSource
 from .source_registry import configured_sources
+from .sync_worker import sync_pending
 
 
 def build_parser():
@@ -70,6 +72,18 @@ def build_parser():
     return parser
 
 
+def _sync_pending_if_enabled(
+    application,
+):
+    if not application.config.sync_enabled:
+        return None
+
+    return sync_pending(
+        application.db,
+        limit=application.config.batch_size,
+    )
+
+
 def main(argv=None):
     parser = build_parser()
 
@@ -93,6 +107,13 @@ def main(argv=None):
             sources
         )
 
+        sync_result = _sync_pending_if_enabled(
+            application
+        )
+
+        if sync_result is not None:
+            result["sync"] = sync_result
+
     elif args.command == "import-json":
         source = JsonLeadSource(
             args.path
@@ -102,6 +123,13 @@ def main(argv=None):
             [source]
         )
 
+        sync_result = _sync_pending_if_enabled(
+            application
+        )
+
+        if sync_result is not None:
+            result["sync"] = sync_result
+
     elif args.command == "run-json":
         source = JsonLeadSource(
             args.path
@@ -110,6 +138,13 @@ def main(argv=None):
         result = application.run_sources(
             [source]
         )
+
+        sync_result = _sync_pending_if_enabled(
+            application
+        )
+
+        if sync_result is not None:
+            result["sync"] = sync_result
 
     elif args.command == "export-json":
         result = export_pending_leads(
