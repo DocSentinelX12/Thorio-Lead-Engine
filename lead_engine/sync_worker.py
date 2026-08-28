@@ -1,34 +1,7 @@
-import json
 from typing import Any, Dict, List
 
 from .airtable_sync import sync_lead_if_missing
 from .database import LeadDB
-
-
-def sync_one(
-    lead: Dict[str, Any],
-) -> Dict[str, Any]:
-    try:
-        result = sync_lead_if_missing(lead)
-
-        return {
-            "status": (
-                "synced"
-                if result["status"] == "created"
-                else "already_exists"
-            ),
-            "lead": lead,
-            "airtable_record": result.get("record"),
-            "error": None,
-        }
-
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "lead": lead,
-            "airtable_record": None,
-            "error": str(exc),
-        }
 
 
 def sync_pending(
@@ -41,39 +14,88 @@ def sync_pending(
     already_exists: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
 
-    for fingerprint, payload_json, attempts in rows:
-        try:
-            lead = json.loads(payload_json)
-        except (TypeError, ValueError) as exc:
-            result = {
-                "status": "failed",
-                "lead": {},
-                "airtable_record": None,
-                "error": f"Invalid stored lead payload: {exc}",
-            }
-
-            failed.append(result)
-            db.mark_error(fingerprint, result["error"])
+    for fingerprint, payload, attempts in rows:
+        if isinstance(payload, dict):
+            lead = dict(payload)
+        else:
+            failed.append(
+                {
+                    "fingerprint": fingerprint,
+                    "attempts": attempts,
+                    "error": "Invalid pending lead payload",
+                }
+            )
             continue
 
-        result = sync_one(lead)
+        try:
+            result = sync_lead_if_missing(lead)
 
-        if result["status"] == "synced":
-            synced.append(result)
-            db.mark_synced(fingerprint)
+            status = result.get("status")
 
-        elif result["status"] == "already_exists":
-            already_exists.append(result)
-            db.mark_synced(fingerprint)
+            if status == "created":
+                db.mark_synced(
+                    fingerprint,
+                    result.get("record"),
+                )
 
-        else:
-            failed.append(result)
-            db.mark_error(
+                synced.append(
+                    {
+                        "fingerprint": fingerprint,
+                        "record": result.get("record"),
+                        "attempts": attempts,
+                    }
+                )
+
+            elif status == "exists":
+                db.mark_synced(
+                    fingerprint,
+                    result.get("record"),
+                )
+
+                already_exists.append(
+                    {
+                        "fingerprint": fingerprint,
+                        "record": result.get("record"),
+                        "attempts": attempts,
+                    }
+                )
+
+            else:
+                db.mark_sync_failed(
+                    fingerprint,
+                    result.get(
+                        "error",
+                        "Airtable sync failed",
+                    ),
+                )
+
+                failed.append(
+                    {
+                        "fingerprint": fingerprint,
+                        "attempts": attempts,
+                        "error": result.get(
+                            "error",
+                            "Airtable sync failed",
+                        ),
+                    }
+                )
+
+        except Exception as exc:
+            db.mark_sync_failed(
                 fingerprint,
-                result["error"],
+                str(exc),
+            )
+
+            failed.append(
+                {
+                    "fingerprint": fingerprint,
+                    "attempts": attempts,
+                    "error": str(exc),
+                }
             )
 
     return {
+        "processed": len(rows),
         "synced": synced,
         "already_exists": already_exists,
         "failed": failed,
