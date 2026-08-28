@@ -2,11 +2,15 @@ import argparse
 import json
 
 from .application import create_application
-from .config import LeadEngineConfig
 from .export import export_pending_leads
 from .json_source import JsonLeadSource
+from .scheduler import LeadScheduler
 from .source_registry import configured_sources
 from .sync_worker import sync_pending
+
+
+DEFAULT_SCHEDULE_INTERVAL = 60.0
+DEFAULT_SCHEDULE_CYCLES = 10
 
 
 def build_parser():
@@ -36,7 +40,29 @@ def build_parser():
 
     subparsers.add_parser(
         "run",
-        help="Run all configured lead-discovery sources.",
+        help="Run all configured lead-discovery sources once.",
+    )
+
+    scheduled_parser = subparsers.add_parser(
+        "run-scheduled",
+        help=(
+            "Run configured sources continuously for a bounded "
+            "execution window."
+        ),
+    )
+
+    scheduled_parser.add_argument(
+        "--interval",
+        type=float,
+        default=DEFAULT_SCHEDULE_INTERVAL,
+        help="Seconds between source cycles.",
+    )
+
+    scheduled_parser.add_argument(
+        "--cycles",
+        type=int,
+        default=DEFAULT_SCHEDULE_CYCLES,
+        help="Number of source cycles to complete.",
     )
 
     import_parser = subparsers.add_parser(
@@ -122,6 +148,19 @@ def main(argv=None):
 
         if sync_result is not None:
             result["sync"] = sync_result
+
+    elif args.command == "run-scheduled":
+        sources = configured_sources()
+
+        scheduler = LeadScheduler(
+            application.service.runner
+        )
+
+        result = scheduler.run_bounded(
+            sources=sources,
+            interval_seconds=args.interval,
+            max_cycles=args.cycles,
+        )
 
     elif args.command == "import-json":
         source = JsonLeadSource(
