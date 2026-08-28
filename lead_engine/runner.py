@@ -1,22 +1,22 @@
 from typing import Any, Dict, Iterable
 
-from .batch import BatchProcessor
-from .ingest import LeadIngestor
 from .pipeline import LeadPipeline
 from .sources import LeadSource
 
 
 class LeadEngineRunner:
     """
-    Operational entry point connecting a source to the lead engine.
+    Compatibility runner for executing LeadSource instances.
+
+    The application service is the production execution boundary.
+    This runner delegates directly to the same LeadPipeline used by
+    the application so there is only one processing path.
 
     Flow:
 
         Source
           ↓
-        Ingest
-          ↓
-        Pipeline
+        LeadPipeline
           ↓
         Local DB
           ↓
@@ -27,8 +27,6 @@ class LeadEngineRunner:
 
     def __init__(self, pipeline: LeadPipeline):
         self.pipeline = pipeline
-        self.ingestor = LeadIngestor(pipeline)
-        self.batch = BatchProcessor(self.ingestor)
 
     def run_source(
         self,
@@ -37,20 +35,48 @@ class LeadEngineRunner:
         """
         Collect and process all records from one source.
         """
-
         records = source.collect()
 
-        return self.batch.process(records)
+        return self.run_records(
+            records
+        )
 
     def run_records(
         self,
         records: Iterable[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Process already-collected records.
+        Process already-collected records through the
+        canonical lead pipeline.
         """
+        accepted_count = 0
+        duplicate_count = 0
+        failed_count = 0
 
-        return self.batch.process(records)
+        for record in records:
+            if not isinstance(record, dict):
+                failed_count += 1
+                continue
+
+            try:
+                result = self.pipeline.process(
+                    **record
+                )
+            except Exception:
+                failed_count += 1
+                continue
+
+            if result.get("status") == "duplicate":
+                duplicate_count += 1
+
+            elif result.get("accepted") is True:
+                accepted_count += 1
+
+        return {
+            "accepted_count": accepted_count,
+            "duplicate_count": duplicate_count,
+            "failed_count": failed_count,
+        }
 
 
 def run_source(
@@ -60,14 +86,15 @@ def run_source(
     Convenience function for running a source with
     the default lead pipeline.
     """
-
     pipeline = LeadPipeline()
 
     runner = LeadEngineRunner(
         pipeline=pipeline
     )
 
-    return runner.run_source(source)
+    return runner.run_source(
+        source
+    )
 
 
 if __name__ == "__main__":
