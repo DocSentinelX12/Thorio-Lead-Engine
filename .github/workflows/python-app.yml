@@ -11,6 +11,16 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
+# Never allow two runs for the same branch to operate on the
+# persistent Lead Engine state at the same time.
+#
+# cancel-in-progress is intentionally false because a scheduled
+# engine run must finish rather than being cancelled halfway
+# through processing and state persistence.
+concurrency:
+  group: thorio-lead-engine-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   actions: read
