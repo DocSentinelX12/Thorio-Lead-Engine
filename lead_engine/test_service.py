@@ -164,9 +164,6 @@ def test_service_work_queue_uses_default_limit(tmp_path):
         work_queue_limit=25,
     )
 
-    with Mock() as unused:
-        pass
-
     assert service.work_queue_limit == 25
 
 
