@@ -60,3 +60,33 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
     assert stats[0] == 1
     assert stats[1] == 1
     assert stats[2] == 0
+
+
+def test_sync_pending_rejects_non_object_payload(tmp_path):
+    db = LeadDB(
+        data_dir=str(tmp_path)
+    )
+
+    fingerprint = "invalid-payload-001"
+
+    db.insert(
+        fingerprint=fingerprint,
+        payload_json='["not", "a", "lead"]',
+    )
+
+    result = sync_pending(db)
+
+    assert result["synced_count"] == 0
+    assert result["already_exists_count"] == 0
+    assert result["failed_count"] == 1
+
+    assert (
+        result["failed"][0]["error"]
+        == "Invalid stored lead payload: expected an object."
+    )
+
+    stats = db.stats()
+
+    assert stats[0] == 0
+    assert stats[1] == 0
+    assert stats[2] == 1
