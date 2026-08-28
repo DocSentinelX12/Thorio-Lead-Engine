@@ -77,6 +77,9 @@ class LeadScheduler:
         When max_cycles is supplied, execution stops after exactly
         that many completed cycles. This makes the scheduler safe
         for bounded CI execution.
+
+        If no sources are configured, execution stops immediately
+        rather than repeatedly running empty cycles.
         """
 
         source_list = list(sources)
@@ -90,6 +93,21 @@ class LeadScheduler:
             raise ValueError(
                 "max_cycles must be greater than or equal to 1."
             )
+
+        # Defensive production guard:
+        # never waste a bounded execution window repeatedly running
+        # with no lead-discovery sources configured.
+        if not source_list:
+            return {
+                "cycles": 0,
+                "results": [],
+                "failed": [],
+                "sync": [],
+                "source_count": 0,
+                "result_count": 0,
+                "failed_count": 0,
+                "status": "no_sources_configured",
+            }
 
         cycles = 0
         total_results = []
@@ -130,6 +148,7 @@ class LeadScheduler:
             "source_count": len(source_list),
             "result_count": len(total_results),
             "failed_count": len(total_failed),
+            "status": "completed",
         }
 
     def run_bounded(
