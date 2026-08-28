@@ -86,3 +86,47 @@ def test_source_runner_continues_after_pipeline_failure():
     assert result["failed_count"] == 1
     assert result["accepted_count"] == 1
     assert result["duplicate_count"] == 0
+
+
+def test_source_runner_run_source_collects_and_processes_records():
+    pipeline = Mock()
+
+    pipeline.process.side_effect = [
+        {
+            "accepted": True,
+            "status": "accepted",
+        },
+        {
+            "accepted": False,
+            "status": "duplicate",
+        },
+    ]
+
+    source = Mock()
+
+    source.collect.return_value = [
+        {
+            "source": "web",
+            "source_id": "runner-001",
+        },
+        {
+            "source": "web",
+            "source_id": "runner-002",
+        },
+    ]
+
+    runner = SourceRunner(pipeline)
+
+    result = runner.run_source(
+        source
+    )
+
+    assert result == {
+        "accepted_count": 1,
+        "duplicate_count": 1,
+        "failed_count": 0,
+    }
+
+    source.collect.assert_called_once()
+
+    assert pipeline.process.call_count == 2
