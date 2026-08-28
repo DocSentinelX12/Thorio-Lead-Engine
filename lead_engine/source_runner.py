@@ -1,69 +1,46 @@
-from typing import Any, Dict, Iterable
-
-from .pipeline import LeadPipeline
+from typing import Any, Dict, Iterable, List
 
 
-class SourceRunner:
+def run_source(source: Any) -> Dict[str, Any]:
     """
-    Run normalized source records through the existing lead pipeline.
+    Run one lead source without allowing a source failure
+    to crash the entire engine.
     """
+    name = getattr(source, "name", source.__class__.__name__)
 
-    def __init__(self, pipeline: LeadPipeline):
-        self.pipeline = pipeline
-
-    def process(
-        self,
-        records: Iterable[Dict[str, Any]],
-    ) -> Dict[str, int]:
-        """
-        Process every record independently.
-
-        A failure on one record does not stop the remaining records.
-        """
-
-        accepted = 0
-        duplicates = 0
-        failed = 0
-
-        for record in records:
-            try:
-                result = self.pipeline.process(
-                    **record
-                )
-
-            except Exception:
-                failed += 1
-                continue
-
-            if result.get("status") == "duplicate":
-                duplicates += 1
-
-            elif result.get("accepted") is True:
-                accepted += 1
+    try:
+        leads = list(source.collect())
 
         return {
-            "accepted_count": accepted,
-            "duplicate_count": duplicates,
-            "failed_count": failed,
+            "source": name,
+            "status": "success",
+            "count": len(leads),
+            "leads": leads,
+            "error": None,
         }
 
-    def run_source(
-        self,
-        source,
-    ) -> Dict[str, Any]:
-        """
-        Collect records from one source and process them.
-        """
-
-        records = source.collect()
-
-        return self.process(
-            records
-        )
+    except Exception as exc:
+        return {
+            "source": name,
+            "status": "failed",
+            "count": 0,
+            "leads": [],
+            "error": str(exc),
+        }
 
 
-if __name__ == "__main__":
-    print(
-        "Source runner loaded. "
-        "Normalized source records can now enter the lead pipeline."
-    )
+def run_sources(
+    sources: Iterable[Any],
+) -> List[Dict[str, Any]]:
+    """
+    Run all configured sources independently.
+
+    A failure in one source must not prevent other sources
+    from running.
+    """
+    results: List[Dict[str, Any]] = []
+
+    for source in sources:
+        results.append(run_source(source))
+
+    return results
