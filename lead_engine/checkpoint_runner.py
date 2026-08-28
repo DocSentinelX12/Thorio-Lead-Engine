@@ -1,23 +1,28 @@
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Dict
 
 
 class CheckpointRunner:
     """
-    Execute a source from its persisted checkpoint.
+    Run a lead source through the existing LeadEngineRunner while
+    persisting the source checkpoint only after a successful run.
 
-    Checkpoints are advanced only after an item has been
-    successfully processed. If processing raises an exception,
-    the checkpoint is left unchanged so the item can be retried
-    on the next engine run.
+    The local database remains authoritative for checkpoint state.
     """
 
-    def __init__(self, db, collector):
+    def __init__(
+        self,
+        db,
+        runner,
+    ):
         self.db = db
-        self.collector = collector
+        self.runner = runner
 
-    def get_checkpoint(self) -> str:
+    def get_checkpoint(
+        self,
+        source,
+    ) -> str:
         checkpoint = self.db.get_checkpoint(
-            self.collector
+            source.name
         )
 
         if checkpoint is None:
@@ -27,88 +32,71 @@ class CheckpointRunner:
 
     def save_checkpoint(
         self,
+        source,
         checkpoint: Any,
     ) -> None:
         self.db.set_checkpoint(
-            self.collector,
+            source.name,
             checkpoint,
         )
 
     def run(
         self,
-        fetch: Callable[[str], Iterable[Any]],
-        process: Callable[[Any], Optional[Any]],
-    ):
+        source,
+        checkpoint: Any,
+    ) -> Dict[str, Any]:
         """
-        Run records starting from the persisted checkpoint.
+        Run one source and persist its checkpoint only when the
+        entire source run completes without failed records.
 
-        This method preserves the existing non-checkpoint-aware
-        behavior. Checkpoint persistence is handled by
-        run_with_checkpoint().
-        """
-
-        checkpoint = self.get_checkpoint()
-
-        items = fetch(checkpoint)
-
-        if items is None:
-            return []
-
-        results = []
-
-        for item in items:
-            result = process(item)
-            results.append(result)
-
-        return results
-
-    def run_with_checkpoint(
-        self,
-        fetch: Callable[[str], Iterable[Any]],
-        process: Callable[[Any], Optional[Any]],
-        checkpoint_for_item: Callable[[Any], Any],
-    ):
-        """
-        Process source items while durably advancing the checkpoint.
-
-        The critical ordering is:
-
-            fetch
-              ↓
-            process item
-              ↓
-            determine checkpoint
-              ↓
-            persist checkpoint
-
-        The checkpoint is NEVER advanced before process() succeeds.
-
-        If process() raises an exception, the exception propagates and
-        the checkpoint remains at the last successfully processed item.
+        A failed source run never advances the checkpoint.
         """
 
-        checkpoint = self.get_checkpoint()
+        previous_checkpoint = self.get_checkpoint(
+            source
+        )
 
-        items = fetch(checkpoint)
+        result = self.runner.run_source(
+            source
+        )
 
-        if items is None:
-            return []
+        if not isinstance(result, dict):
+            result = {
+                "result": result,
+                "processed_count": 0,
+                "failed_count": 1,
+                "total": 0,
+            }
 
-        results = []
+        failed_count = result.get(
+            "failed_count",
+            0,
+        )
 
-        for item in items:
-            # Do not move the checkpoint before processing succeeds.
-            result = process(item)
+        try:
+            failed_count = int(
+                failed_count or 0
+            )
+        except (TypeError, ValueError):
+            failed_count = 1
 
-            results.append(result)
+        if failed_count == 0:
+            self.save_checkpoint(
+                source,
+                checkpoint,
+            )
+            current_checkpoint = checkpoint
+        else:
+            current_checkpoint = previous_checkpoint
 
-            next_checkpoint = checkpoint_for_item(item)
+        return {
+            **result,
+            "previous_checkpoint": previous_checkpoint,
+            "checkpoint": current_checkpoint,
+        }
 
-            if next_checkpoint is not None:
-                self.save_checkpoint(
-                    next_checkpoint
-                )
 
-                checkpoint = next_checkpoint
-
-        return results
+if __name__ == "__main__":
+    print(
+        "Checkpoint runner loaded."
+    )
