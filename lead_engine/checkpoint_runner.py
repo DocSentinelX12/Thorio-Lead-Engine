@@ -1,72 +1,68 @@
-from typing import Any, Dict
-
-from .database import LeadDB
-from .runner import LeadEngineRunner
-from .sources import LeadSource
+from typing import Any, Callable, Optional
 
 
 class CheckpointRunner:
-    """
-    Runs a source while maintaining its durable checkpoint.
-
-    The local database remains authoritative.
-    """
-
-    def __init__(
-        self,
-        db: LeadDB,
-        runner: LeadEngineRunner,
-    ):
+    def __init__(self, db, collector):
         self.db = db
-        self.runner = runner
+        self.collector = collector
 
-    def get_checkpoint(
-        self,
-        source: LeadSource,
-    ) -> str:
-        return self.db.get_checkpoint(source.name)
+    def get_checkpoint(self) -> str:
+        return self.db.get_checkpoint(
+            self.collector
+        )
 
-    def set_checkpoint(
-        self,
-        source: LeadSource,
-        checkpoint: str,
-    ) -> None:
+    def save_checkpoint(self, checkpoint: Any) -> None:
         self.db.set_checkpoint(
-            source.name,
+            self.collector,
             checkpoint,
         )
 
     def run(
         self,
-        source: LeadSource,
-        checkpoint: str = "",
-    ) -> Dict[str, Any]:
-        """
-        Run a source and save its checkpoint only after
-        successful processing.
-        """
+        fetch: Callable[[str], Any],
+        process: Callable[[Any], Optional[Any]],
+    ):
+        checkpoint = self.get_checkpoint()
 
-        previous_checkpoint = self.get_checkpoint(source)
+        items = fetch(checkpoint)
 
-        result = self.runner.run_source(source)
+        if items is None:
+            return []
 
-        if result.get("failed_count", 0) == 0:
-            if checkpoint:
-                self.set_checkpoint(
-                    source,
-                    checkpoint,
+        results = []
+
+        for item in items:
+            result = process(item)
+
+            results.append(result)
+
+        return results
+
+    def run_with_checkpoint(
+        self,
+        fetch: Callable[[str], Any],
+        process: Callable[[Any], Optional[Any]],
+        checkpoint_for_item: Callable[[Any], Any],
+    ):
+        checkpoint = self.get_checkpoint()
+
+        items = fetch(checkpoint)
+
+        if items is None:
+            return []
+
+        results = []
+
+        for item in items:
+            result = process(item)
+
+            results.append(result)
+
+            next_checkpoint = checkpoint_for_item(item)
+
+            if next_checkpoint is not None:
+                self.save_checkpoint(
+                    next_checkpoint
                 )
 
-        return {
-            "source": source.name,
-            "previous_checkpoint": previous_checkpoint,
-            "checkpoint": self.get_checkpoint(source),
-            "result": result,
-        }
-
-
-if __name__ == "__main__":
-    print(
-        "Checkpoint runner loaded. "
-        "Sources can now maintain durable checkpoints."
-    )
+        return results
