@@ -75,12 +75,21 @@ def build_parser():
 def _sync_pending_if_enabled(
     application,
 ):
-    if not application.config.sync_enabled:
+    config = getattr(
+        application,
+        "config",
+        None,
+    )
+
+    if config is None:
+        return None
+
+    if not config.sync_enabled:
         return None
 
     return sync_pending(
         application.db,
-        limit=application.config.batch_size,
+        limit=config.batch_size,
     )
 
 
@@ -172,4 +181,4 @@ def main(argv=None):
 if __name__ == "__main__":
     raise SystemExit(
         main()
-    )
+)
