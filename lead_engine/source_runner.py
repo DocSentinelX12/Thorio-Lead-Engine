@@ -20,11 +20,10 @@ class SourceRunner:
         records: Iterable[Dict[str, Any]],
     ) -> Dict[str, int]:
         """
-        Process every record independently.
+        Process every source record independently.
 
-        A failure on one record does not stop the remaining records.
-        Failed records are counted and logged so operational failures
-        are visible instead of being silently discarded.
+        A malformed record or pipeline failure must never stop
+        subsequent records from being processed.
         """
 
         accepted = 0
@@ -32,6 +31,16 @@ class SourceRunner:
         failed = 0
 
         for record in records:
+            if not isinstance(record, dict):
+                failed += 1
+
+                logger.error(
+                    "Lead pipeline rejected non-object source record: "
+                    "type=%s",
+                    type(record).__name__,
+                )
+                continue
+
             try:
                 result = self.pipeline.process(
                     **record
@@ -73,6 +82,10 @@ class SourceRunner:
     ) -> Dict[str, Any]:
         """
         Collect records from one source and process them.
+
+        Source collection failures are allowed to propagate to the
+        service boundary so the source itself is recorded as failed
+        without terminating processing of other configured sources.
         """
 
         records = source.collect()
@@ -86,4 +99,4 @@ if __name__ == "__main__":
     print(
         "Source runner loaded. "
         "Normalized source records can now enter the lead pipeline."
-                )
+    )
