@@ -9,20 +9,13 @@ class LeadEngineRunner:
     Compatibility runner for executing LeadSource instances.
 
     The application service is the production execution boundary.
-    This runner delegates directly to the same LeadPipeline used by
-    the application so there is only one processing path.
+    This runner delegates to the canonical LeadPipeline.
 
-    Flow:
+    The runner preserves the established result contract:
 
-        Source
-          ↓
-        LeadPipeline
-          ↓
-        Local DB
-          ↓
-        Airtable sync
-
-    The local database remains authoritative.
+        processed_count
+        failed_count
+        total
     """
 
     def __init__(self, pipeline: LeadPipeline):
@@ -46,14 +39,22 @@ class LeadEngineRunner:
         records: Iterable[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Process already-collected records through the
-        canonical lead pipeline.
+        Process collected records through the canonical
+        lead pipeline.
+
+        A record counts as processed when the pipeline accepts
+        the record or identifies it as a duplicate.
+
+        A record counts as failed when the record is invalid or
+        pipeline processing raises an exception.
         """
-        accepted_count = 0
-        duplicate_count = 0
+        processed_count = 0
         failed_count = 0
+        total = 0
 
         for record in records:
+            total += 1
+
             if not isinstance(record, dict):
                 failed_count += 1
                 continue
@@ -66,16 +67,15 @@ class LeadEngineRunner:
                 failed_count += 1
                 continue
 
-            if result.get("status") == "duplicate":
-                duplicate_count += 1
-
-            elif result.get("accepted") is True:
-                accepted_count += 1
+            if isinstance(result, dict):
+                processed_count += 1
+            else:
+                failed_count += 1
 
         return {
-            "accepted_count": accepted_count,
-            "duplicate_count": duplicate_count,
+            "processed_count": processed_count,
             "failed_count": failed_count,
+            "total": total,
         }
 
 
