@@ -1,51 +1,84 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
-from lead_engine.airtable_sync import sync_lead_if_missing
+from lead_engine.airtable_approval_state import (
+    approval_key,
+    get_approval_state,
+    mark_approval_processed,
+    should_process_approval,
+)
 
 
-def test_new_lead_enters_review_without_delivery_approval():
-    lead = {
-        "company": "Approval State Corp",
-        "source": "company website",
-        "url": "https://example.com/careers",
-        "signal": "Remote software engineering",
-        "evidence": "Company is hiring remote software engineers.",
-        "fingerprint": "approval-state-001",
-        "potential_routes": [
-            "Paxus",
+def test_approval_key_is_deterministic():
+    assert approval_key(
+        "rec_123"
+    ) == "airtable_approval:rec_123"
+
+
+def test_unknown_approval_should_be_processed():
+    db = MagicMock()
+    db.get_state.return_value = None
+
+    assert should_process_approval(
+        db,
+        "rec_new",
+        "approved",
+        ["Shiftr"],
+    ) is True
+
+
+def test_same_approval_does_not_need_reprocessing():
+    db = MagicMock()
+
+    db.get_state.return_value = {
+        "record_id": "rec_existing",
+        "status": "approved",
+        "approved_routes": [
+            "Shiftr",
+        ],
+    }
+
+    assert should_process_approval(
+        db,
+        "rec_existing",
+        "approved",
+        ["Shiftr"],
+    ) is False
+
+
+def test_changed_routes_require_reprocessing():
+    db = MagicMock()
+
+    db.get_state.return_value = {
+        "record_id": "rec_existing",
+        "status": "approved",
+        "approved_routes": [
+            "Shiftr",
+        ],
+    }
+
+    assert should_process_approval(
+        db,
+        "rec_existing",
+        "approved",
+        [
             "Shiftr",
             "Thorio",
         ],
-        "qualified": True,
-        "lead_score": 90,
+    ) is True
+
+
+def test_changed_status_requires_reprocessing():
+    db = MagicMock()
+
+    db.get_state.return_value = {
+        "record_id": "rec_existing",
+        "status": "pending",
+        "approved_routes": [],
     }
 
-    with patch(
-        "lead_engine.airtable_sync.find_by_fingerprint",
-        return_value=[],
-    ), patch(
-        "lead_engine.airtable_sync._request",
-        return_value={
-            "records": [
-                {
-                    "id": "rec_approval_001",
-                    "fields": {},
-                }
-            ]
-        },
-    ) as mock_request:
-        result = sync_lead_if_missing(lead)
-
-    assert result["status"] == "created"
-
-    payload = mock_request.call_args.args[2]
-    fields = payload["records"][0]["fields"]
-
-    assert fields["Review Status"] == "Qualified"
-    assert fields["Outreach Status"] == "Not Contacted"
-    assert fields["Qualified Lead?"] is True
-    assert fields["Applicable Routes"] == [
-        "Paxus",
-        "Shiftr",
-        "Thorio",
-    ]
+    assert should_process_approval(
+        db,
+        "rec_existing",
+        "approved",
+        ["Paxus"],
+    ) is True
