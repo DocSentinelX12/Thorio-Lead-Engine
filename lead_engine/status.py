@@ -197,8 +197,8 @@ def get_engine_status(
 
     The local database remains authoritative.
 
-    Existing status fields are preserved for compatibility while
-    additional operational information is exposed for monitoring.
+    The engine is healthy only when there are no pending leads
+    and no synchronization failures.
     """
 
     total, synced, pending = db.stats()
@@ -208,12 +208,17 @@ def get_engine_status(
     source_details = _source_observability(db)
     sync_details = _sync_observability(db)
 
+    has_pending_leads = pending > 0
+
     has_sync_failures = (
         failed_details["failed_sync_leads"] > 0
         or sync_details["failed_sync_runs"] > 0
     )
 
-    healthy = not has_sync_failures
+    healthy = not (
+        has_pending_leads
+        or has_sync_failures
+    )
 
     return {
         # Existing public status contract.
@@ -332,4 +337,4 @@ if __name__ == "__main__":
 
     print(
         get_engine_status(db)
-)
+    )
