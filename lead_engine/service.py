@@ -57,10 +57,8 @@ class LeadEngineService:
             source_count += 1
 
             try:
-                records = source.collect()
-
-                result = self.runner.process(
-                    records
+                result = self.runner.run_source(
+                    source
                 )
 
                 results.append(
