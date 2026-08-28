@@ -14,6 +14,10 @@ class LeadScheduler:
     does not prevent the remaining sources from running.
 
     Each cycle also retries locally pending Airtable syncs.
+
+    The scheduler supports bounded execution so a GitHub Actions
+    workflow can continuously work for a fixed window without
+    running forever.
     """
 
     def __init__(self, runner: LeadEngineRunner):
@@ -68,8 +72,11 @@ class LeadScheduler:
         max_cycles: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Continuously cycle through all configured sources and
-        retry pending Airtable synchronizations.
+        Continuously cycle through all configured sources.
+
+        When max_cycles is supplied, execution stops after exactly
+        that many completed cycles. This makes the scheduler safe
+        for bounded CI execution.
         """
 
         source_list = list(sources)
@@ -92,17 +99,28 @@ class LeadScheduler:
         while max_cycles is None or cycles < max_cycles:
             result = self.run(source_list)
 
-            total_results.extend(result["results"])
-            total_failed.extend(result["failed"])
-            total_sync.append(result["sync"])
+            total_results.extend(
+                result["results"]
+            )
+            total_failed.extend(
+                result["failed"]
+            )
+            total_sync.append(
+                result["sync"]
+            )
 
             cycles += 1
 
-            if max_cycles is not None and cycles >= max_cycles:
+            if (
+                max_cycles is not None
+                and cycles >= max_cycles
+            ):
                 break
 
             if interval_seconds:
-                time.sleep(interval_seconds)
+                time.sleep(
+                    interval_seconds
+                )
 
         return {
             "cycles": cycles,
@@ -114,9 +132,34 @@ class LeadScheduler:
             "failed_count": len(total_failed),
         }
 
+    def run_bounded(
+        self,
+        sources: Iterable[LeadSource],
+        interval_seconds: float = 60.0,
+        max_cycles: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Run a bounded continuous execution window.
+
+        This is the production-safe entry point for scheduled
+        environments such as GitHub Actions.
+
+        The local database is reused for every cycle, so leads,
+        dedupe state, checkpoints, retry state, and pending
+        synchronization records remain available throughout
+        the entire execution window.
+        """
+
+        return self.run_forever(
+            sources=sources,
+            interval_seconds=interval_seconds,
+            max_cycles=max_cycles,
+        )
+
 
 if __name__ == "__main__":
     print(
         "Lead scheduler loaded. "
-        "Use LeadScheduler.run_forever() for continuous source execution."
+        "Use run_bounded() for bounded production execution "
+        "or run_forever() for an intentionally continuous process."
     )
