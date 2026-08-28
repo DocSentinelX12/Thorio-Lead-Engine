@@ -138,8 +138,12 @@ class LeadPipeline:
 
         sync_result = sync_one(payload)
 
-        if sync_result["status"] == "synced":
+        if sync_result["status"] in {
+            "synced",
+            "already_exists",
+        }:
             self.db.mark_synced(fingerprint)
+
         else:
             self.db.mark_error(
                 fingerprint,
@@ -229,4 +233,4 @@ if __name__ == "__main__":
     print(
         "Lead pipeline loaded. "
         "Use process_lead() to process discovered opportunities."
-            )
+)
