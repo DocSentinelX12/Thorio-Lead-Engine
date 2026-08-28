@@ -11,12 +11,6 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
-# Never allow two runs for the same branch to operate on the
-# persistent Lead Engine state at the same time.
-#
-# cancel-in-progress is intentionally false because a scheduled
-# engine run must finish rather than being cancelled halfway
-# through processing and state persistence.
 concurrency:
   group: thorio-lead-engine-${{ github.ref }}
   cancel-in-progress: false
@@ -83,49 +77,72 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Find previous completed engine run
-        id: previous_run
+      - name: Find previous successful engine state
+        id: previous_state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          previous_run_id="$(
+          previous_run_id=""
+
+          while IFS= read -r run_id; do
+            [ -z "$run_id" ] && continue
+
+            artifact_id="$(
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
+                --paginate \
+                --jq '
+                  .artifacts[]
+                  | select(
+                      .name == "thorio-lead-engine-state"
+                      and .expired == false
+                    )
+                  | .id
+                ' \
+                | head -n 1
+            )"
+
+            if [ -n "$artifact_id" ]; then
+              previous_run_id="$run_id"
+              echo "Found previous successful run with Lead Engine state: $run_id"
+              echo "State artifact ID: $artifact_id"
+              break
+            fi
+          done < <(
             gh run list \
               --workflow python-app.yml \
-              --status completed \
+              --status success \
+              --branch main \
               --limit 50 \
-              --json databaseId,headBranch,event \
+              --json databaseId,event \
               --jq '
-                map(
-                  select(
-                    .headBranch == "main"
-                    and (
-                      .event == "schedule"
-                      or .event == "push"
-                      or .event == "workflow_dispatch"
-                    )
+                .[]
+                | select(
+                    .event == "schedule"
+                    or .event == "push"
+                    or .event == "workflow_dispatch"
                   )
-                )
-                | .[0].databaseId // empty
+                | .databaseId
               '
-          )"
+          )
 
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
 
           if [ -n "$previous_run_id" ]; then
-            echo "Previous completed engine run: $previous_run_id"
+            echo "Previous Lead Engine state run: $previous_run_id"
           else
-            echo "No previous completed engine run found."
+            echo "No previous Lead Engine state artifact found."
           fi
 
       - name: Download previous Lead Engine state
-        if: steps.previous_run.outputs.run_id != ''
+        if: steps.previous_state.outputs.run_id != ''
         uses: actions/download-artifact@v5
         with:
           name: thorio-lead-engine-state
           path: data
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ steps.previous_run.outputs.run_id }}
+          run-id: ${{ steps.previous_state.outputs.run_id }}
 
       - name: Ensure Lead Engine data directory exists
         run: |
