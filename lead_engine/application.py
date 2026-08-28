@@ -45,7 +45,9 @@ class LeadEngineApplication:
         self.metrics = LeadEngineMetrics()
 
         self.service = LeadEngineService(
-            db=self.db
+            db=self.db,
+            sync_enabled=self.config.sync_enabled,
+            work_queue_limit=self.config.batch_size,
         )
 
     def process_records(
