@@ -1,6 +1,10 @@
 from typing import Any, Dict, Iterable
+import logging
 
 from .pipeline import LeadPipeline
+
+
+logger = logging.getLogger(__name__)
 
 
 class SourceRunner:
@@ -19,6 +23,8 @@ class SourceRunner:
         Process every record independently.
 
         A failure on one record does not stop the remaining records.
+        Failed records are counted and logged so operational failures
+        are visible instead of being silently discarded.
         """
 
         accepted = 0
@@ -33,6 +39,10 @@ class SourceRunner:
 
             except Exception:
                 failed += 1
+                logger.exception(
+                    "Lead pipeline failed while processing source record: %s",
+                    record,
+                )
                 continue
 
             if result.get("status") == "duplicate":
