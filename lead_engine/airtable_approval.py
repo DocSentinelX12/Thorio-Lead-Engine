@@ -77,8 +77,15 @@ def build_approved_lead(
     if not routes:
         return None
 
+    result_lead = dict(lead)
+
+    # delivery_approval.py uses "routes" as its
+    # canonical route input. Keep the original
+    # potential_routes intact.
+    result_lead["routes"] = routes
+
     result = approve_lead(
-        lead,
+        result_lead,
         approved_routes=routes,
     )
 
@@ -158,4 +165,4 @@ def read_approval(
         "status": "pending",
         "record": record,
         "lead": lead,
-  }
+    }
