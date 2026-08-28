@@ -1,68 +1,29 @@
-from typing import Any, Callable, Optional
-
-
 class CheckpointRunner:
-    def __init__(self, db, collector):
+    def __init__(self, db, runner):
         self.db = db
-        self.collector = collector
+        self.runner = runner
 
-    def get_checkpoint(self) -> str:
-        return self.db.get_checkpoint(
-            self.collector
+    def run(self, source, checkpoint):
+        previous_checkpoint = self.db.get_checkpoint(
+            source.name
         )
 
-    def save_checkpoint(self, checkpoint: Any) -> None:
-        self.db.set_checkpoint(
-            self.collector,
+        result = self.runner.run_source(
+            source,
             checkpoint,
         )
 
-    def run(
-        self,
-        fetch: Callable[[str], Any],
-        process: Callable[[Any], Optional[Any]],
-    ):
-        checkpoint = self.get_checkpoint()
+        if result["failed_count"] == 0:
+            self.db.set_checkpoint(
+                source.name,
+                checkpoint,
+            )
+            saved_checkpoint = checkpoint
+        else:
+            saved_checkpoint = previous_checkpoint
 
-        items = fetch(checkpoint)
-
-        if items is None:
-            return []
-
-        results = []
-
-        for item in items:
-            result = process(item)
-
-            results.append(result)
-
-        return results
-
-    def run_with_checkpoint(
-        self,
-        fetch: Callable[[str], Any],
-        process: Callable[[Any], Optional[Any]],
-        checkpoint_for_item: Callable[[Any], Any],
-    ):
-        checkpoint = self.get_checkpoint()
-
-        items = fetch(checkpoint)
-
-        if items is None:
-            return []
-
-        results = []
-
-        for item in items:
-            result = process(item)
-
-            results.append(result)
-
-            next_checkpoint = checkpoint_for_item(item)
-
-            if next_checkpoint is not None:
-                self.save_checkpoint(
-                    next_checkpoint
-                )
-
-        return results
+        return {
+            **result,
+            "previous_checkpoint": previous_checkpoint,
+            "checkpoint": saved_checkpoint,
+        }
