@@ -41,6 +41,16 @@ def build_parser():
         help="Path to the JSON lead file.",
     )
 
+    run_parser = subparsers.add_parser(
+        "run-json",
+        help="Run a JSON lead source through the complete pipeline.",
+    )
+
+    run_parser.add_argument(
+        "path",
+        help="Path to the JSON lead source file.",
+    )
+
     export_parser = subparsers.add_parser(
         "export-json",
         help="Export pending local leads to JSON.",
@@ -71,6 +81,15 @@ def main(argv=None):
         result = application.work_queue()
 
     elif args.command == "import-json":
+        source = JsonLeadSource(
+            args.path
+        )
+
+        result = application.run_sources(
+            [source]
+        )
+
+    elif args.command == "run-json":
         source = JsonLeadSource(
             args.path
         )
