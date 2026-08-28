@@ -43,6 +43,16 @@ class LeadDB:
             """
         )
 
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         self.conn.commit()
 
     def insert_if_new(
@@ -191,6 +201,51 @@ class LeadDB:
         ).fetchone()
 
         return row[0] if row else ""
+
+    def get_state(
+        self,
+        key: str,
+    ) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT value
+            FROM state
+            WHERE key = ?
+            """,
+            (key,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        return json.loads(row[0])
+
+    def set_state(
+        self,
+        key: str,
+        value: Dict[str, Any],
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO state
+            (key, value)
+            VALUES (?, ?)
+
+            ON CONFLICT(key)
+            DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                key,
+                json.dumps(
+                    value,
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+        self.conn.commit()
 
     def stats(self):
         return self.conn.execute(
