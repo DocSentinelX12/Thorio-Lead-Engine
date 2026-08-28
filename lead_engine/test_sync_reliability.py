@@ -68,50 +68,34 @@ def test_sync_pending_rejects_non_object_payload(tmp_path):
         data_dir=str(tmp_path)
     )
 
-    pipeline = LeadPipeline(db=db)
+    fingerprint = "invalid-payload-001"
 
-    with patch(
-        "lead_engine.pipeline.sync_one"
-    ) as mock_sync:
-        mock_sync.return_value = {
-            "status": "failed",
-            "lead": {},
-            "airtable_record": None,
-            "error": "Airtable unavailable",
-        }
-
-        result = pipeline.process(
-            source="test",
-            source_id="invalid-payload-001",
-            url="https://example.com/jobs/invalid-payload-001",
-            company="Invalid Payload Corp",
-            signal="remote software engineer",
-            evidence="Remote software engineer opening found.",
-        )
-
-    assert result["accepted"] is True
-    assert result["sync_status"] == "failed"
-
-    fingerprint = result["fingerprint"]
-
-    current = db.get(fingerprint)
-
-    assert current is not None
-
-    db.update_payload(
-        fingerprint,
-        {
-            "payload": json.dumps(
+    db.conn.execute(
+        """
+        INSERT INTO leads
+        (fingerprint, payload, synced, attempts)
+        VALUES (?, ?, 0, 0)
+        """,
+        (
+            fingerprint,
+            json.dumps(
                 [
                     "not",
                     "a",
                     "lead",
                 ]
-            )
-        },
+            ),
+        ),
     )
 
-    result = sync_pending(db)
+    db.conn.commit()
+
+    with patch(
+        "lead_engine.sync_worker.sync_lead_if_missing"
+    ) as mock_sync:
+        result = sync_pending(db)
+
+    mock_sync.assert_not_called()
 
     assert result["synced_count"] == 0
     assert result["already_exists_count"] == 0
