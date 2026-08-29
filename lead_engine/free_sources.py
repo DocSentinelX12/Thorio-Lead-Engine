@@ -157,7 +157,7 @@ class FreeJobSource:
     def collect(self) -> List[Dict[str, Any]]:
         html = self._fetch()
 
-        records = []
+        records: List[Dict[str, Any]] = []
 
         records.extend(
             self._extract_json_ld(html)
@@ -172,7 +172,7 @@ class FreeJobSource:
         )
 
         seen = set()
-        collected = []
+        collected: List[Dict[str, Any]] = []
 
         for record in records:
             if not isinstance(record, dict):
@@ -192,7 +192,7 @@ class FreeJobSource:
                 break
 
         return collected
-        
+
     def _fetch(self) -> str:
         request = Request(
             self.url,
@@ -234,7 +234,10 @@ class FreeJobSource:
             ) from exc
 
         try:
-            return raw.decode("utf-8", errors="replace")
+            return raw.decode(
+                "utf-8",
+                errors="replace",
+            )
         except Exception as exc:
             raise FreeSourceError(
                 f"{self.name} response could not be decoded."
@@ -383,16 +386,6 @@ class FreeJobSource:
         cls,
         text: str,
     ) -> bool:
-        """
-        Preserve the original public behavior for callers that use
-        this helper directly.
-
-        A text-only candidate is considered a technology job only
-        when both remote and technology signals are present.
-        Broader discovery is handled by _extract_links and
-        _extract_json_ld.
-        """
-
         return (
             cls._has_remote_signal(text)
             and cls._has_technology_signal(text)
@@ -403,9 +396,7 @@ class FreeJobSource:
         *values: Any,
     ) -> str:
         for value in values:
-            cleaned = FreeJobSource._clean_text(
-                value
-            )
+            cleaned = FreeJobSource._clean_text(value)
 
             if cleaned:
                 return cleaned
@@ -440,10 +431,12 @@ class FreeJobSource:
             r'employer[^>]*>\s*([^<]+)',
         )
 
+        combined = attrs + " " + body
+
         for pattern in patterns:
             match = re.search(
                 pattern,
-                attrs + " " + body,
+                combined,
                 flags=re.IGNORECASE,
             )
 
@@ -467,9 +460,7 @@ class FreeJobSource:
         surrounding: str,
         url: str,
     ) -> str:
-        title = cls._clean_text(
-            anchor_text
-        )
+        title = cls._clean_text(anchor_text)
 
         if title and not cls._looks_like_job_text(title):
             return cls._truncate(
@@ -558,42 +549,15 @@ class FreeJobSource:
         if not combined.strip():
             return False
 
-        # A job-looking URL is sufficient for discovery.
-        # Qualification happens downstream.
         if cls._looks_like_job_url(url):
             return True
 
-        # Explicit job language plus a technology signal.
         if (
             cls._looks_like_job_text(title)
             and cls._has_technology_signal(combined)
         ):
             return True
 
-        # Remote + technology signals anywhere in the
-        # surrounding listing context.
-        if (
-            cls._has_remote_signal(combined)
-            and cls._has_technology_signal(combined)
-        ):
-            return True
-
-        return False
-
-        # A job-looking URL is sufficient for discovery.
-        # Qualification happens downstream.
-        if cls._looks_like_job_url(url):
-            return True
-
-        # Explicit job language plus a technology signal.
-        if (
-            cls._looks_like_job_text(title)
-            and cls._has_technology_signal(combined)
-        ):
-            return True
-
-        # Remote + technology signals anywhere in the
-        # surrounding listing context.
         if (
             cls._has_remote_signal(combined)
             and cls._has_technology_signal(combined)
@@ -743,9 +707,6 @@ class FreeJobSource:
                     item.get("sameAs"),
                 )
 
-                if not url:
-                    url = self_url = ""
-
                 if not cls._url_is_http(url):
                     continue
 
@@ -755,10 +716,7 @@ class FreeJobSource:
                     "hiringOrganization"
                 )
 
-                if isinstance(
-                    hiring,
-                    dict,
-                ):
+                if isinstance(hiring, dict):
                     company = cls._first_nonempty(
                         hiring.get("name"),
                     )
@@ -774,67 +732,105 @@ class FreeJobSource:
                     "jobLocation"
                 )
 
-                if isinstance(
-                    job_location,
-                    dict,
-                ):
+                if isinstance(job_location, dict):
                     address = job_location.get(
                         "address"
                     )
 
-                    if isinstance(
-                        address,
-                        dict,
-                    ):
-                        location_text = (
-                            cls._first_nonempty(
-                                address.get(
-                                    "addressLocality"
+                    if isinstance(address, dict):
+                        location_text = " ".join(
+                            value
+                            for value in (
+                                cls._first_nonempty(
+                                    address.get(
+                                        "streetAddress"
+                                    ),
                                 ),
-                                address.get(
-                                    "addressRegion"
+                                cls._first_nonempty(
+                                    address.get(
+                                        "addressLocality"
+                                    ),
                                 ),
-                                address.get(
-                                    "addressCountry"
+                                cls._first_nonempty(
+                                    address.get(
+                                        "addressRegion"
+                                    ),
+                                ),
+                                cls._first_nonempty(
+                                    address.get(
+                                        "postalCode"
+                                    ),
+                                ),
+                                cls._first_nonempty(
+                                    address.get(
+                                        "addressCountry"
+                                    ),
                                 ),
                             )
+                            if value
                         )
 
                     else:
-                        location_text = (
-                            cls._clean_text(
-                                address
-                            )
+                        location_text = cls._clean_text(
+                            address
                         )
 
-                elif isinstance(
-                    job_location,
-                    list,
-                ):
-                    location_text = cls._clean_text(
-                        " ".join(
-                            cls._clean_text(
-                                location
+                elif isinstance(job_location, list):
+                    location_parts = []
+
+                    for location in job_location:
+                        if isinstance(location, dict):
+                            address = location.get(
+                                "address"
                             )
-                            if not isinstance(
-                                location,
+
+                            if isinstance(
+                                address,
                                 dict,
-                            )
-                            else cls._clean_text(
-                                location.get(
-                                    "address"
+                            ):
+                                location_parts.append(
+                                    " ".join(
+                                        value
+                                        for value in (
+                                            cls._first_nonempty(
+                                                address.get(
+                                                    "addressLocality"
+                                                ),
+                                            ),
+                                            cls._first_nonempty(
+                                                address.get(
+                                                    "addressRegion"
+                                                ),
+                                            ),
+                                            cls._first_nonempty(
+                                                address.get(
+                                                    "addressCountry"
+                                                ),
+                                            ),
+                                        )
+                                        if value
+                                    )
+                                )
+                            else:
+                                location_parts.append(
+                                    cls._clean_text(
+                                        address
+                                    )
+                                )
+                        else:
+                            location_parts.append(
+                                cls._clean_text(
+                                    location
                                 )
                             )
-                            for location in job_location
-                        )
+
+                    location_text = cls._clean_text(
+                        " ".join(location_parts)
                     )
 
-                remote_value = (
-                    item.get("jobLocationType")
-                    or item.get(
-                        "workplaceType"
-                    )
-                    or ""
+                remote_value = cls._first_nonempty(
+                    item.get("jobLocationType"),
+                    item.get("workplaceType"),
                 )
 
                 context = " ".join(
@@ -843,9 +839,7 @@ class FreeJobSource:
                         title,
                         description,
                         location_text,
-                        cls._clean_text(
-                            remote_value
-                        ),
+                        remote_value,
                     )
                     if value
                 )
@@ -855,12 +849,8 @@ class FreeJobSource:
                 ):
                     continue
 
-                if not (
-                    cls._has_remote_signal(
-                        context
-                    )
-                    or "remote" in context.lower()
-                    or "anywhere" in context.lower()
+                if not cls._has_remote_signal(
+                    context
                 ):
                     continue
 
@@ -869,12 +859,16 @@ class FreeJobSource:
                     title=title,
                     company=company,
                     evidence=(
-                        f"JobPosting structured data "
-                        f"discovered from {self.name}."
+                        "JobPosting structured data "
+                        f"discovered from {cls._clean_text('source')}."
                     ),
                 )
 
                 if record:
+                    record["evidence"] = (
+                        "JobPosting structured data "
+                        "discovered from the configured source."
+                    )
                     records.append(record)
 
                 if len(records) >= MAX_RECORDS_PER_PAGE:
@@ -916,4 +910,76 @@ class FreeJobSource:
             if not cls._url_is_http(url):
                 continue
 
-        
+            attrs = (
+                f"{before} {after}"
+            )
+
+            anchor_text = cls._clean_text(
+                anchor
+            )
+
+            start = max(
+                0,
+                html.find(
+                    "<a",
+                    max(
+                        0,
+                        html.find(href) - 500,
+                    ),
+                ) - 1500,
+            )
+
+            end = min(
+                len(html),
+                html.find(
+                    "</a>",
+                    max(
+                        0,
+                        html.find(href),
+                    ),
+                ) + 1500,
+            )
+
+            surrounding = html[start:end]
+
+            context = cls._clean_text(
+                surrounding
+            )
+
+            if not cls._candidate_is_useful(
+                anchor_text,
+                context,
+                url,
+            ):
+                continue
+
+            title = cls._extract_title_from_context(
+                anchor_text,
+                surrounding,
+                url,
+            )
+
+            company = cls._extract_company(
+                attrs,
+                surrounding,
+            )
+
+            evidence = (
+                f"Job listing link discovered from "
+                f"{source_name}."
+            )
+
+            record = cls._make_record(
+                url=url,
+                title=title,
+                company=company,
+                evidence=evidence,
+            )
+
+            if record:
+                records.append(record)
+
+            if len(records) >= MAX_RECORDS_PER_PAGE:
+                break
+
+        return records
