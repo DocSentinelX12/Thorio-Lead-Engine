@@ -10,6 +10,11 @@ logger = logging.getLogger(__name__)
 class SourceRunner:
     """
     Run normalized source records through the existing lead pipeline.
+
+    The runner also reports how many records were discovered by the
+    source before downstream processing. This allows production
+    monitoring to distinguish an empty source from a source whose
+    records failed downstream.
     """
 
     def __init__(self, pipeline: LeadPipeline):
@@ -29,8 +34,11 @@ class SourceRunner:
         accepted = 0
         duplicates = 0
         failed = 0
+        discovered = 0
 
         for record in records:
+            discovered += 1
+
             if not isinstance(record, dict):
                 failed += 1
 
@@ -71,6 +79,7 @@ class SourceRunner:
                 accepted += 1
 
         return {
+            "discovered_count": discovered,
             "accepted_count": accepted,
             "duplicate_count": duplicates,
             "failed_count": failed,
