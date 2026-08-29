@@ -32,6 +32,11 @@ def build_parser():
         "health",
         help="Run lead engine health checks.",
     )
+    
+        subparsers.add_parser(
+        "poll-approvals",
+        help="Poll Airtable for human approval changes.",
+    )
 
     subparsers.add_parser(
         "work-queue",
@@ -131,6 +136,9 @@ def main(argv=None):
 
     elif args.command == "health":
         result = application.health()
+        
+    elif args.command == "poll-approvals":
+        result = application.poll_approvals()
 
     elif args.command == "work-queue":
         result = application.work_queue()
