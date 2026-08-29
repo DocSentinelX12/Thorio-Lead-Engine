@@ -121,7 +121,7 @@ class LeadScheduler:
         return {
             "results": results,
             "failed": failed,
-            "source_count": len(results) + len(failed),
+            "source_count": len(results),
             "successful_source_count": len(results),
             "failed_count": len(failed),
             "discovered_count": discovered_total,
