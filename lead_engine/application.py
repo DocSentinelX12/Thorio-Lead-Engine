@@ -1,6 +1,7 @@
 from typing import Any, Dict, Iterable
 from pathlib import Path
 
+from .airtable_approval_poller import AirtableApprovalPoller
 from .audit import AuditLog
 from .config import LeadEngineConfig
 from .database import LeadDB
@@ -59,6 +60,13 @@ class LeadEngineApplication:
             db=self.db,
             runner=runner,
             work_queue_limit=self.config.batch_size,
+        )
+
+        self.approval_poller = AirtableApprovalPoller(
+            db=self.db,
+            interval_seconds=(
+                self.config.approval_poll_interval_seconds
+            ),
         )
 
     def process_records(
@@ -136,6 +144,16 @@ class LeadEngineApplication:
 
         return result
 
+    def poll_approvals(self) -> Dict[str, Any]:
+        result = self.approval_poller.run_once_safely()
+
+        self.audit.record(
+            "airtable_approvals_polled",
+            result=result,
+        )
+
+        return result
+
     def status(self) -> Dict[str, Any]:
         return self.service.status()
 
@@ -192,14 +210,13 @@ class LeadEngineApplication:
 
         return result
 
-    def metrics_snapshot(self) -> Dict[str, int]:
+    def metrics_snapshot(
+        self,
+    ) -> Dict[str, int]:
         return self.metrics.snapshot()
 
 
 def create_application() -> LeadEngineApplication:
-    """
-    Create the default application instance.
-    """
     return LeadEngineApplication()
 
 
