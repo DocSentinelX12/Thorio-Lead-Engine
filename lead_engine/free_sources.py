@@ -160,7 +160,10 @@ class FreeJobSource:
         records: List[Dict[str, Any]] = []
 
         records.extend(
-            self._extract_json_ld(html)
+            self._extract_json_ld(
+                html,
+                self.name,
+            )
         )
 
         records.extend(
@@ -549,15 +552,20 @@ class FreeJobSource:
         if not combined.strip():
             return False
 
+        # A job-looking URL is sufficient for discovery.
+        # Qualification happens downstream.
         if cls._looks_like_job_url(url):
             return True
 
+        # Explicit job language plus a technology signal.
         if (
             cls._looks_like_job_text(title)
             and cls._has_technology_signal(combined)
         ):
             return True
 
+        # Remote + technology signals anywhere in the
+        # surrounding listing context.
         if (
             cls._has_remote_signal(combined)
             and cls._has_technology_signal(combined)
@@ -632,6 +640,7 @@ class FreeJobSource:
     def _extract_json_ld(
         cls,
         html: str,
+        source_name: str = "",
     ) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
 
@@ -854,21 +863,31 @@ class FreeJobSource:
                 ):
                     continue
 
+                source_label = (
+                    source_name.strip()
+                    if isinstance(source_name, str)
+                    else ""
+                )
+
+                if source_label:
+                    evidence = (
+                        "JobPosting structured data "
+                        f"discovered from {source_label}."
+                    )
+                else:
+                    evidence = (
+                        "JobPosting structured data "
+                        "discovered from the configured source."
+                    )
+
                 record = cls._make_record(
                     url=url,
                     title=title,
                     company=company,
-                    evidence=(
-                        "JobPosting structured data "
-                        f"discovered from {cls._clean_text('source')}."
-                    ),
+                    evidence=evidence,
                 )
 
                 if record:
-                    record["evidence"] = (
-                        "JobPosting structured data "
-                        "discovered from the configured source."
-                    )
                     records.append(record)
 
                 if len(records) >= MAX_RECORDS_PER_PAGE:
@@ -918,26 +937,39 @@ class FreeJobSource:
                 anchor
             )
 
+            href_position = html.find(href)
+
+            if href_position < 0:
+                continue
+
+            opening_position = html.rfind(
+                "<a",
+                0,
+                href_position,
+            )
+
+            if opening_position < 0:
+                opening_position = max(
+                    0,
+                    href_position - 500,
+                )
+
+            closing_position = html.find(
+                "</a>",
+                href_position,
+            )
+
+            if closing_position < 0:
+                closing_position = href_position + len(href)
+
             start = max(
                 0,
-                html.find(
-                    "<a",
-                    max(
-                        0,
-                        html.find(href) - 500,
-                    ),
-                ) - 1500,
+                opening_position - 1500,
             )
 
             end = min(
                 len(html),
-                html.find(
-                    "</a>",
-                    max(
-                        0,
-                        html.find(href),
-                    ),
-                ) + 1500,
+                closing_position + 1500,
             )
 
             surrounding = html[start:end]
@@ -965,7 +997,7 @@ class FreeJobSource:
             )
 
             evidence = (
-                f"Job listing link discovered from "
+                "Job listing link discovered from "
                 f"{source_name}."
             )
 
@@ -983,3 +1015,4 @@ class FreeJobSource:
                 break
 
         return records
+          
