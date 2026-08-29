@@ -538,8 +538,8 @@ class FreeJobSource:
 
         return ""
 
-      @classmethod
-      def _candidate_is_useful(
+    @classmethod
+    def _candidate_is_useful(
         cls,
         title: str,
         context: str,
@@ -557,6 +557,28 @@ class FreeJobSource:
 
         if not combined.strip():
             return False
+
+        # A job-looking URL is sufficient for discovery.
+        # Qualification happens downstream.
+        if cls._looks_like_job_url(url):
+            return True
+
+        # Explicit job language plus a technology signal.
+        if (
+            cls._looks_like_job_text(title)
+            and cls._has_technology_signal(combined)
+        ):
+            return True
+
+        # Remote + technology signals anywhere in the
+        # surrounding listing context.
+        if (
+            cls._has_remote_signal(combined)
+            and cls._has_technology_signal(combined)
+        ):
+            return True
+
+        return False
 
         # A job-looking URL is sufficient for discovery.
         # Qualification happens downstream.
