@@ -59,9 +59,42 @@ def test_production_path_processes_multiple_sources_and_preserves_isolation(
     assert successful_result["accepted_count"] == 2
 
 
-def test_production_path_deduplicates_across_separate_runs(
+def test_production_path_allows_unqualified_lead_to_be_rechecked(
     tmp_path,
 ):
+    config = LeadEngineConfig(
+        database_dir=str(tmp_path / "database"),
+        sync_enabled=False,
+        batch_size=50,
+    )
+
+    application = LeadEngineApplication(config=config)
+    source = StaticLeadSource(
+        [_lead("integration-duplicate")]
+    )
+
+    first = application.run_sources([source])
+    second = application.run_sources([source])
+
+    first_result = first["results"][0]["result"]
+    second_result = second["results"][0]["result"]
+
+    # A newly discovered lead is accepted for qualification.
+    assert first_result["accepted_count"] == 1
+    assert first_result["duplicate_count"] == 0
+
+    # Seeing the same unqualified lead again must NOT classify it
+    # as a true duplicate. It remains eligible for qualification.
+    assert second_result["accepted_count"] == 1
+    assert second_result["duplicate_count"] == 0
+
+    stored = application.db.get(
+        first_result["accepted"][0]["fingerprint"]
+    )
+
+    assert stored is not None
+    assert stored["qualification_status"] == "unqualified"
+    
     config = LeadEngineConfig(
         database_dir=str(tmp_path / "database"),
         sync_enabled=False,
