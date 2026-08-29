@@ -6,7 +6,6 @@ IN_REVIEW = "In Review"
 QUALIFIED = "Qualified"
 NOT_QUALIFIED = "Not Qualified"
 
-
 VALID_STATUSES = {
     UNVERIFIED,
     IN_REVIEW,
@@ -34,6 +33,10 @@ def qualify_lead(
 
     This function requires an explicit caller decision.
     Scoring, routing, or evidence alone never qualifies a lead.
+
+    qualification_status is kept synchronized with the human
+    qualification decision because the pipeline uses it as the
+    authoritative duplicate/qualification state.
     """
 
     if not isinstance(qualified, bool):
@@ -47,12 +50,14 @@ def qualify_lead(
         updated["qualified"] = True
         updated["status"] = QUALIFIED
         updated["review_status"] = "Qualified"
+        updated["qualification_status"] = "qualified"
         updated["reason_not_qualified"] = ""
 
     else:
         updated["qualified"] = False
         updated["status"] = NOT_QUALIFIED
         updated["review_status"] = "Not Qualified"
+        updated["qualification_status"] = "not_qualified"
         updated["reason_not_qualified"] = reason
 
     return updated
@@ -69,6 +74,7 @@ def begin_review(
 
     updated["status"] = IN_REVIEW
     updated["review_status"] = "Review"
+    updated["qualification_status"] = "in_review"
 
     return updated
 
