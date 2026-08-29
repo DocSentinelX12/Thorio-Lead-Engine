@@ -1,5 +1,7 @@
 from typing import Any, Dict, Iterable, List
 
+from .delivery_approval import delivery_authorized
+
 
 PARTNER_ROUTES = (
     "Shiftr",
@@ -12,9 +14,11 @@ def build_partner_exports(
     leads: Iterable[Dict[str, Any]],
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Build clean partner-specific lead exports.
+    Build partner-specific exports only for leads that have
+    passed the delivery policy AND have explicit human approval
+    for the specific partner route.
 
-    Review and unknown routes are excluded.
+    Unapproved, rejected, and unknown routes are excluded.
     """
 
     exports = {
@@ -29,6 +33,12 @@ def build_partner_exports(
         ).strip()
 
         if route not in PARTNER_ROUTES:
+            continue
+
+        if not delivery_authorized(
+            lead,
+            route,
+        ):
             continue
 
         exports[route].append(
@@ -89,7 +99,8 @@ def partner_export_summary(
     leads: Iterable[Dict[str, Any]],
 ) -> Dict[str, int]:
     """
-    Return the number of deliverable leads for each partner.
+    Return the number of human-approved, deliverable leads
+    for each partner.
     """
 
     exports = build_partner_exports(leads)
