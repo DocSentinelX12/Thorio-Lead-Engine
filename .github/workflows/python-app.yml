@@ -55,8 +55,7 @@ jobs:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
       AIRTABLE_LEAD_TABLE: ${{ secrets.AIRTABLE_LEAD_TABLE }}
-      # Free public job-board discovery.
-      # No paid API or external Thorio feed is required.
+
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "20"
 
@@ -155,9 +154,31 @@ jobs:
 
       - name: Run Lead Engine continuously for bounded window
         run: |
+          set -o pipefail
           python -m lead_engine run-scheduled \
             --interval 60 \
-            --cycles 10
+            --cycles 10 \
+            2>&1 | tee data/scheduled-run-output.txt
+
+      - name: Report actual Lead Engine result
+        if: always()
+        run: |
+          echo ""
+          echo "=============================================="
+          echo "THORIO LEAD ENGINE PRODUCTION RUN REPORT"
+          echo "=============================================="
+          echo ""
+
+          if [ -f data/scheduled-run-output.txt ]; then
+            cat data/scheduled-run-output.txt
+          else
+            echo "No scheduled run output file was created."
+          fi
+
+          echo ""
+          echo "=============================================="
+          echo "END LEAD ENGINE PRODUCTION RUN REPORT"
+          echo "=============================================="
 
       - name: Save Lead Engine state
         if: always()
