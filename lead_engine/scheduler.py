@@ -29,6 +29,16 @@ class LeadScheduler:
     ) -> Dict[str, Any]:
         """
         Run each source once, then retry pending Airtable syncs.
+
+        Every source receives an explicit production result containing:
+
+            source
+            discovered_count
+            processed_count
+            failed_count
+
+        Source failures are isolated so one broken source cannot
+        prevent other sources from running.
         """
 
         results = []
@@ -36,7 +46,11 @@ class LeadScheduler:
 
         for source in sources:
             try:
-                result = self.runner.run_source(source)
+                result = self.runner.run_source(
+                    source
+                )
+
+                result = dict(result)
 
                 results.append(
                     {
@@ -57,11 +71,63 @@ class LeadScheduler:
             self.runner.pipeline.db
         )
 
+        discovered_total = sum(
+            int(
+                item["result"].get(
+                    "discovered_count",
+                    item["result"].get(
+                        "total",
+                        0,
+                    ),
+                )
+                or 0
+            )
+            for item in results
+        )
+
+        accepted_total = sum(
+            int(
+                item["result"].get(
+                    "accepted_count",
+                    0,
+                )
+                or 0
+            )
+            for item in results
+        )
+
+        duplicate_total = sum(
+            int(
+                item["result"].get(
+                    "duplicate_count",
+                    0,
+                )
+                or 0
+            )
+            for item in results
+        )
+
+        processing_failed_total = sum(
+            int(
+                item["result"].get(
+                    "failed_count",
+                    0,
+                )
+                or 0
+            )
+            for item in results
+        )
+
         return {
             "results": results,
             "failed": failed,
-            "source_count": len(results),
+            "source_count": len(results) + len(failed),
+            "successful_source_count": len(results),
             "failed_count": len(failed),
+            "discovered_count": discovered_total,
+            "accepted_count": accepted_total,
+            "duplicate_count": duplicate_total,
+            "processing_failed_count": processing_failed_total,
             "sync": sync_result,
         }
 
@@ -75,8 +141,7 @@ class LeadScheduler:
         Continuously cycle through all configured sources.
 
         When max_cycles is supplied, execution stops after exactly
-        that many completed cycles. This makes the scheduler safe
-        for bounded CI execution.
+        that many completed cycles.
 
         If no sources are configured, execution stops immediately
         rather than repeatedly running empty cycles.
@@ -94,9 +159,6 @@ class LeadScheduler:
                 "max_cycles must be greater than or equal to 1."
             )
 
-        # Defensive production guard:
-        # never waste a bounded execution window repeatedly running
-        # with no lead-discovery sources configured.
         if not source_list:
             return {
                 "cycles": 0,
@@ -104,8 +166,13 @@ class LeadScheduler:
                 "failed": [],
                 "sync": [],
                 "source_count": 0,
+                "successful_source_count": 0,
                 "result_count": 0,
                 "failed_count": 0,
+                "discovered_count": 0,
+                "accepted_count": 0,
+                "duplicate_count": 0,
+                "processing_failed_count": 0,
                 "status": "no_sources_configured",
             }
 
@@ -114,17 +181,46 @@ class LeadScheduler:
         total_failed = []
         total_sync = []
 
+        total_discovered = 0
+        total_accepted = 0
+        total_duplicates = 0
+        total_processing_failed = 0
+
         while max_cycles is None or cycles < max_cycles:
-            result = self.run(source_list)
+            result = self.run(
+                source_list
+            )
 
             total_results.extend(
                 result["results"]
             )
+
             total_failed.extend(
                 result["failed"]
             )
+
             total_sync.append(
                 result["sync"]
+            )
+
+            total_discovered += result.get(
+                "discovered_count",
+                0,
+            )
+
+            total_accepted += result.get(
+                "accepted_count",
+                0,
+            )
+
+            total_duplicates += result.get(
+                "duplicate_count",
+                0,
+            )
+
+            total_processing_failed += result.get(
+                "processing_failed_count",
+                0,
             )
 
             cycles += 1
@@ -146,8 +242,18 @@ class LeadScheduler:
             "failed": total_failed,
             "sync": total_sync,
             "source_count": len(source_list),
+            "successful_source_count": (
+                len(source_list)
+                - len(total_failed)
+            ),
             "result_count": len(total_results),
             "failed_count": len(total_failed),
+            "discovered_count": total_discovered,
+            "accepted_count": total_accepted,
+            "duplicate_count": total_duplicates,
+            "processing_failed_count": (
+                total_processing_failed
+            ),
             "status": "completed",
         }
 
