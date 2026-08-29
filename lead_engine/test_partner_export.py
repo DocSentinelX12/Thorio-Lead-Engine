@@ -48,12 +48,13 @@ def test_build_partner_exports_routes_approved_leads_by_partner():
                 "Remote Tech is hiring a remote software engineer."
             ),
         ),
+        
         make_lead(
             route="Shiftr",
             company="AI Systems",
-            signal="AI implementation project",
+            signal="technology implementation project",
             evidence=(
-                "AI Systems has an AI implementation project."
+                "AI Systems has a technology implementation project."
             ),
         ),
         make_lead(
