@@ -119,13 +119,9 @@ class FreeJobSource:
     """
     Free public job-board collector.
 
-    The collector is intentionally discovery-oriented. It does not
-    qualify, score, route, deduplicate against the database, or sync
-    to Airtable. Those responsibilities remain downstream.
-
-    The collector uses only Python's standard library and public
-    pages. It supports several common job-board structures instead
-    of requiring the anchor text itself to contain every signal.
+    Discovery only. Qualification, scoring, routing,
+    deduplication, persistence, and Airtable synchronization
+    remain downstream.
     """
 
     def __init__(
@@ -305,7 +301,7 @@ class FreeJobSource:
         if href.startswith("#"):
             return ""
 
-        if href.startswith(
+        if href.lower().startswith(
             (
                 "javascript:",
                 "mailto:",
@@ -338,7 +334,7 @@ class FreeJobSource:
         lowered = text.lower()
 
         return any(
-            term in lowered
+            term.lower() in lowered
             for term in terms
         )
 
@@ -552,20 +548,15 @@ class FreeJobSource:
         if not combined.strip():
             return False
 
-        # A job-looking URL is sufficient for discovery.
-        # Qualification happens downstream.
         if cls._looks_like_job_url(url):
             return True
 
-        # Explicit job language plus a technology signal.
         if (
             cls._looks_like_job_text(title)
             and cls._has_technology_signal(combined)
         ):
             return True
 
-        # Remote + technology signals anywhere in the
-        # surrounding listing context.
         if (
             cls._has_remote_signal(combined)
             and cls._has_technology_signal(combined)
@@ -929,9 +920,7 @@ class FreeJobSource:
             if not cls._url_is_http(url):
                 continue
 
-            attrs = (
-                f"{before} {after}"
-            )
+            attrs = f"{before} {after}"
 
             anchor_text = cls._clean_text(
                 anchor
@@ -960,7 +949,9 @@ class FreeJobSource:
             )
 
             if closing_position < 0:
-                closing_position = href_position + len(href)
+                closing_position = (
+                    href_position + len(href)
+                )
 
             start = max(
                 0,
@@ -1015,4 +1006,3 @@ class FreeJobSource:
                 break
 
         return records
-          
