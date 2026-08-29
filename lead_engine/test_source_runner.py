@@ -25,6 +25,7 @@ def test_source_runner_processes_all_records_independently():
     )
 
     assert result == {
+        "discovered_count": 4,
         "accepted_count": 2,
         "duplicate_count": 1,
         "failed_count": 1,
@@ -57,6 +58,7 @@ def test_source_runner_runs_source_collection():
     result = runner.run_source(source)
 
     assert result == {
+        "discovered_count": 2,
         "accepted_count": 2,
         "duplicate_count": 0,
         "failed_count": 0,
@@ -122,6 +124,7 @@ def test_source_runner_run_source_collects_and_processes_records():
     )
 
     assert result == {
+        "discovered_count": 2,
         "accepted_count": 1,
         "duplicate_count": 1,
         "failed_count": 0,
