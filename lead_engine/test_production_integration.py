@@ -69,6 +69,7 @@ def test_production_path_allows_unqualified_lead_to_be_rechecked(
     )
 
     application = LeadEngineApplication(config=config)
+
     source = StaticLeadSource(
         [_lead("integration-duplicate")]
     )
@@ -79,22 +80,25 @@ def test_production_path_allows_unqualified_lead_to_be_rechecked(
     first_result = first["results"][0]["result"]
     second_result = second["results"][0]["result"]
 
-    # A newly discovered lead is accepted for qualification.
     assert first_result["accepted_count"] == 1
     assert first_result["duplicate_count"] == 0
 
-    # Seeing the same unqualified lead again must NOT classify it
-    # as a true duplicate. It remains eligible for qualification.
     assert second_result["accepted_count"] == 1
     assert second_result["duplicate_count"] == 0
 
-    stored = application.db.get(
-        first_result["accepted"][0]["fingerprint"]
-    )
+    fingerprint = application.db.conn.execute(
+        "SELECT fingerprint FROM leads LIMIT 1"
+    ).fetchone()[0]
+
+    stored = application.db.get(fingerprint)
 
     assert stored is not None
     assert stored["qualification_status"] == "unqualified"
-    
+
+
+def test_production_path_deduplicates_qualified_lead_across_separate_runs(
+    tmp_path,
+):
     config = LeadEngineConfig(
         database_dir=str(tmp_path / "database"),
         sync_enabled=False,
@@ -102,18 +106,34 @@ def test_production_path_allows_unqualified_lead_to_be_rechecked(
     )
 
     application = LeadEngineApplication(config=config)
+
     source = StaticLeadSource(
-        [_lead("integration-duplicate")]
+        [_lead("integration-qualified-duplicate")]
     )
 
     first = application.run_sources([source])
-    second = application.run_sources([source])
 
     first_result = first["results"][0]["result"]
-    second_result = second["results"][0]["result"]
 
     assert first_result["accepted_count"] == 1
     assert first_result["duplicate_count"] == 0
+
+    fingerprint = application.db.conn.execute(
+        "SELECT fingerprint FROM leads LIMIT 1"
+    ).fetchone()[0]
+
+    qualified = application.service.runner.pipeline.qualify(
+        fingerprint,
+        qualified=True,
+    )
+
+    assert qualified["qualified"] is True
+    assert qualified["status"] == "Qualified"
+
+    second = application.run_sources([source])
+
+    second_result = second["results"][0]["result"]
+
     assert second_result["accepted_count"] == 0
     assert second_result["duplicate_count"] == 1
 
