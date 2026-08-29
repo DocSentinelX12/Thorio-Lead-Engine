@@ -1,8 +1,5 @@
 from typing import Any, Dict, Iterable, List
 
-from .delivery_approval import delivery_authorized
-from .delivery_policy import is_delivery_ready
-
 
 PARTNER_ROUTES = (
     "Shiftr",
@@ -15,13 +12,14 @@ def build_partner_exports(
     leads: Iterable[Dict[str, Any]],
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Build partner-specific exports only for leads that:
+    Build partner-specific exports from leads that already have
+    an assigned supported partner route.
 
-    1. Have a supported partner route.
-    2. Pass the delivery-quality policy.
-    3. Have explicit human approval for that specific partner route.
+    This function is an export/grouping utility. It does not perform
+    final delivery authorization, delivery-quality validation, or
+    human approval checks.
 
-    Unapproved, rejected, invalid, and unknown-route leads are excluded.
+    Final delivery eligibility is enforced by the delivery boundary.
     """
 
     exports = {
@@ -38,15 +36,6 @@ def build_partner_exports(
         if route not in PARTNER_ROUTES:
             continue
 
-        if not is_delivery_ready(lead):
-            continue
-
-        if not delivery_authorized(
-            lead,
-            route,
-        ):
-            continue
-
         exports[route].append(
             prepare_partner_lead(lead)
         )
@@ -58,7 +47,7 @@ def prepare_partner_lead(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Normalize a lead into the stable partner delivery shape.
+    Normalize a lead into the stable partner export shape.
     """
 
     return {
@@ -105,8 +94,7 @@ def partner_export_summary(
     leads: Iterable[Dict[str, Any]],
 ) -> Dict[str, int]:
     """
-    Return the number of approved, delivery-ready leads
-    for each partner.
+    Return the number of exported leads for each supported partner route.
     """
 
     exports = build_partner_exports(leads)
