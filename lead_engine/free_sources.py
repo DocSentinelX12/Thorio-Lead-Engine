@@ -154,6 +154,45 @@ class FreeJobSource:
         self.url = url.strip()
         self.timeout = timeout
 
+    def collect(self) -> List[Dict[str, Any]]:
+        html = self._fetch()
+
+        records = []
+
+        records.extend(
+            self._extract_json_ld(html)
+        )
+
+        records.extend(
+            self._extract_links(
+                html,
+                self.url,
+                self.name,
+            )
+        )
+
+        seen = set()
+        collected = []
+
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+
+            record["source"] = self.name
+
+            key = self._record_key(record)
+
+            if not key or key in seen:
+                continue
+
+            seen.add(key)
+            collected.append(record)
+
+            if len(collected) >= MAX_RECORDS_PER_PAGE:
+                break
+
+        return collected
+        
     def _fetch(self) -> str:
         request = Request(
             self.url,
