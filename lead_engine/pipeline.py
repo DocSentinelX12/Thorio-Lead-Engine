@@ -24,15 +24,18 @@ class LeadPipeline:
           ↓
         Enrichment
           ↓
-        Dedupe
-          ↓
         Local LeadDB
           ↓
-        Airtable synchronization
+        Human qualification
+          ↓
+        Final duplicate gate
+          ↓
+        Airtable synchronization / approval routing
 
-    Qualification remains an explicit human-review action.
+    A discovered lead is stored for qualification, but discovery itself
+    does not classify the lead as a true duplicate.
 
-    The local database remains the source of truth.
+    The final duplicate gate is reserved for qualified leads.
     """
 
     def __init__(
@@ -56,9 +59,13 @@ class LeadPipeline:
         **extra_fields: Any,
     ) -> Dict[str, Any]:
         """
-        Process one discovered lead.
+        Process one newly discovered lead.
 
-        Discovery never qualifies a lead automatically.
+        Discovery is NOT the final duplicate decision.
+
+        A lead is prepared and stored as an unqualified discovery so
+        that qualification can happen first. A previously rejected or
+        unqualified lead must not permanently block a later discovery.
         """
 
         recommended_route = route(
@@ -106,60 +113,96 @@ class LeadPipeline:
         payload["lead_score"] = scoring["lead_score"]
         payload["priority"] = scoring["priority"]
 
+        payload.setdefault("qualification_status", "unqualified")
+
         lead.compute_fingerprint()
 
         fingerprint = lead.fingerprint
 
-        accepted = self.dedupe.accept(lead)
+        existing = self.db.get(fingerprint)
 
-        if not accepted:
-            return {
-                "status": "duplicate",
-                "accepted": False,
-                "fingerprint": fingerprint,
-                "lead": payload,
-                "potential_routes": possible_routes,
-                "lead_score": scoring["lead_score"],
-                "priority": scoring["priority"],
-            }
+        if existing is not None:
+            existing_status = str(
+                existing.get(
+                    "qualification_status",
+                    existing.get("qualification", ""),
+                )
+            ).strip().lower()
 
-        if not self.sync_enabled:
-            return {
-                "status": "accepted",
-                "accepted": True,
-                "fingerprint": fingerprint,
-                "lead": payload,
-                "potential_routes": possible_routes,
-                "lead_score": scoring["lead_score"],
-                "priority": scoring["priority"],
-                "sync_status": "disabled",
-                "sync_error": None,
-            }
+            if existing_status in {
+                "qualified",
+                "true",
+                "approved",
+                "accepted",
+            }:
+                return {
+                    "status": "duplicate",
+                    "accepted": False,
+                    "fingerprint": fingerprint,
+                    "lead": existing,
+                    "potential_routes": possible_routes,
+                    "lead_score": scoring["lead_score"],
+                    "priority": scoring["priority"],
+                }
 
-        sync_result = sync_one(payload)
-
-        if sync_result["status"] in {
-            "synced",
-            "already_exists",
-        }:
-            self.db.mark_synced(fingerprint)
-
-        else:
-            self.db.mark_error(
+            # Existing discovery was not qualified.
+            #
+            # Refresh its discovery data instead of counting the new
+            # discovery as a true duplicate.
+            stored = self.db.update_payload(
                 fingerprint,
-                sync_result["error"] or "Unknown sync error",
+                payload,
             )
 
+            if stored is None:
+                raise ValueError(
+                    f"Unable to refresh existing lead: {fingerprint}"
+                )
+
+            payload = stored
+
+        else:
+            payload["qualification_status"] = "unqualified"
+
+            if not self.db.insert_if_new(payload):
+                existing = self.db.get(fingerprint)
+
+                if existing is not None:
+                    existing_status = str(
+                        existing.get(
+                            "qualification_status",
+                            existing.get("qualification", ""),
+                        )
+                    ).strip().lower()
+
+                    if existing_status in {
+                        "qualified",
+                        "true",
+                        "approved",
+                        "accepted",
+                    }:
+                        return {
+                            "status": "duplicate",
+                            "accepted": False,
+                            "fingerprint": fingerprint,
+                            "lead": existing,
+                            "potential_routes": possible_routes,
+                            "lead_score": scoring["lead_score"],
+                            "priority": scoring["priority"],
+                        }
+
+                    payload = existing
+
         return {
-            "status": "accepted",
+            "status": "pending_qualification",
             "accepted": True,
             "fingerprint": fingerprint,
             "lead": payload,
             "potential_routes": possible_routes,
             "lead_score": scoring["lead_score"],
             "priority": scoring["priority"],
-            "sync_status": sync_result["status"],
-            "sync_error": sync_result["error"],
+            "sync_status": "awaiting_qualification",
+            "sync_error": None,
         }
 
     def qualify(
@@ -170,9 +213,10 @@ class LeadPipeline:
         reason: str = "",
     ) -> Dict[str, Any]:
         """
-        Apply an explicit human qualification decision.
+        Apply the explicit human qualification decision.
 
-        Scoring, routing, and discovery never qualify a lead automatically.
+        Qualification is the point at which a discovered lead becomes
+        eligible for the final duplicate/approval gate.
         """
 
         lead = self.db.get(fingerprint)
