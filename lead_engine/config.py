@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 DEFAULT_BATCH_SIZE = 50
+DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS = 60
 
 
 @dataclass
@@ -20,6 +21,9 @@ class LeadEngineConfig:
     airtable_table: str = "Lead Radar"
     batch_size: int = DEFAULT_BATCH_SIZE
     sync_enabled: bool = True
+    approval_poll_interval_seconds: int = (
+        DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
+    )
 
     @classmethod
     def from_environment(cls):
@@ -45,12 +49,41 @@ class LeadEngineConfig:
         )
 
         try:
-            batch_size = int(raw_batch_size)
-        except (TypeError, ValueError):
+            batch_size = int(
+                raw_batch_size
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
             batch_size = DEFAULT_BATCH_SIZE
 
         if batch_size <= 0:
             batch_size = DEFAULT_BATCH_SIZE
+
+        raw_poll_interval = os.getenv(
+            "LEAD_ENGINE_APPROVAL_POLL_INTERVAL",
+            str(
+                DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
+            ),
+        )
+
+        try:
+            approval_poll_interval_seconds = int(
+                raw_poll_interval
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            approval_poll_interval_seconds = (
+                DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
+            )
+
+        if approval_poll_interval_seconds < 1:
+            approval_poll_interval_seconds = (
+                DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
+            )
 
         sync_enabled = os.getenv(
             "LEAD_ENGINE_SYNC_ENABLED",
@@ -71,6 +104,9 @@ class LeadEngineConfig:
             airtable_table=airtable_table,
             batch_size=batch_size,
             sync_enabled=sync_enabled,
+            approval_poll_interval_seconds=(
+                approval_poll_interval_seconds
+            ),
         )
 
     @property
@@ -81,12 +117,6 @@ class LeadEngineConfig:
         )
 
     def safe_dict(self):
-        """
-        Return configuration suitable for logs.
-
-        Secrets are intentionally excluded.
-        """
-
         return {
             "database_dir": self.database_dir,
             "airtable_configured": bool(
@@ -95,4 +125,7 @@ class LeadEngineConfig:
             "airtable_table": self.airtable_table,
             "batch_size": self.batch_size,
             "sync_enabled": self.sync_enabled,
+            "approval_poll_interval_seconds": (
+                self.approval_poll_interval_seconds
+            ),
         }
