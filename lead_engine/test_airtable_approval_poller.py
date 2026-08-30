@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import patch
 
 from lead_engine.airtable_approval_poller import (
     AirtableApprovalPoller,
