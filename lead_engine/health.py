@@ -127,12 +127,11 @@ def health_report(
     db: LeadDB,
     config,
 ) -> Dict[str, Any]:
-    """Return the complete production health report."""
+    """Return the core engine health report."""
 
     checks = [
         check_database(db),
         check_configuration(config),
-        check_airtable_configuration(config),
     ]
 
     healthy = all(
