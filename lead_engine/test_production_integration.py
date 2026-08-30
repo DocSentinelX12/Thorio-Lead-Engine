@@ -332,3 +332,83 @@ def test_production_path_local_database_remains_authoritative_when_sync_disabled
 
 if __name__ == "__main__":
     print("Production integration tests loaded.")
+
+
+def test_production_end_to_end_scheduled_path(
+    tmp_path,
+    monkeypatch,
+):
+    config = LeadEngineConfig(
+        database_dir=str(tmp_path / "database"),
+        sync_enabled=True,
+        batch_size=50,
+    )
+
+    def fake_sync_pending(db, limit=50):
+        return {
+            "synced": [
+                {
+                    "status": "synced",
+                }
+            ],
+            "already_exists": [],
+            "failed": [],
+            "synced_count": 1,
+            "already_exists_count": 0,
+            "failed_count": 0,
+        }
+
+    monkeypatch.setattr(
+        "lead_engine.scheduler.sync_pending",
+        fake_sync_pending,
+    )
+
+    application = LeadEngineApplication(
+        config=config
+    )
+
+    source = StaticLeadSource(
+        [
+            _lead(
+                "production-e2e-001",
+                "Production E2E Corp",
+            )
+        ]
+    )
+
+    from .runner import LeadEngineRunner
+    from .scheduler import LeadScheduler
+
+    runner = LeadEngineRunner(
+        pipeline=application.service.runner.pipeline
+    )
+
+    scheduler = LeadScheduler(
+        runner
+    )
+
+    result = scheduler.run_bounded(
+        sources=[source],
+        interval_seconds=0,
+        max_cycles=1,
+    )
+
+    assert result["status"] == "completed"
+    assert result["cycles"] == 1
+    assert result["source_count"] == 1
+    assert result["successful_source_count"] == 1
+    assert result["failed_count"] == 0
+    assert result["discovered_count"] == 1
+    assert result["accepted_count"] == 1
+    assert result["processing_failed_count"] == 0
+
+    assert len(result["results"]) == 1
+    assert result["results"][0]["source"] == source.name
+
+    assert len(result["sync"]) == 1
+    assert result["sync"][0]["synced_count"] == 1
+
+    status = application.status()
+
+    assert status["total_leads"] == 1
+    assert status["pending_leads"] == 1
