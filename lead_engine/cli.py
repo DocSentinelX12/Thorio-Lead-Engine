@@ -4,6 +4,7 @@ import json
 from .application import create_application
 from .export import export_pending_leads
 from .json_source import JsonLeadSource
+from .runtime_lock import RuntimeLock
 from .scheduler import LeadScheduler
 from .source_registry import configured_sources
 from .sync_worker import sync_pending
@@ -124,6 +125,43 @@ def _sync_pending_if_enabled(
     )
 
 
+def _run_scheduled_with_lock(
+    application,
+    sources,
+    interval_seconds,
+    max_cycles,
+):
+    lock_path = (
+        application.config.database_dir
+    )
+
+    lock = RuntimeLock(
+        str(
+            __import__("pathlib").Path(lock_path)
+            / "engine.lock"
+        )
+    )
+
+    if not lock.acquire():
+        raise RuntimeError(
+            "Lead Engine is already running."
+        )
+
+    try:
+        scheduler = LeadScheduler(
+            application.service.runner
+        )
+
+        return scheduler.run_bounded(
+            sources=sources,
+            interval_seconds=interval_seconds,
+            max_cycles=max_cycles,
+        )
+
+    finally:
+        lock.release()
+
+
 def main(argv=None):
     parser = build_parser()
 
@@ -160,11 +198,8 @@ def main(argv=None):
     elif args.command == "run-scheduled":
         sources = configured_sources()
 
-        scheduler = LeadScheduler(
-            application.service.runner
-        )
-
-        result = scheduler.run_bounded(
+        result = _run_scheduled_with_lock(
+            application=application,
             sources=sources,
             interval_seconds=args.interval,
             max_cycles=args.cycles,
@@ -228,4 +263,4 @@ def main(argv=None):
 if __name__ == "__main__":
     raise SystemExit(
         main()
-)
+    )
