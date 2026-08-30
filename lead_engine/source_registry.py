@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
 
 from .free_sources import FreeJobSource
 from .sources import LeadSource
@@ -23,6 +24,28 @@ def _free_source_catalog_path() -> Path:
         return Path(configured)
 
     return DEFAULT_FREE_SOURCE_CATALOG_PATH
+
+
+def _validate_source_url(
+    url: str,
+    index: int,
+) -> None:
+    parsed = urlparse(url)
+
+    if parsed.scheme.lower() not in {
+        "http",
+        "https",
+    }:
+        raise RuntimeError(
+            "Free source catalog entry "
+            f"{index + 1} has an invalid URL scheme: {url}"
+        )
+
+    if not parsed.netloc:
+        raise RuntimeError(
+            "Free source catalog entry "
+            f"{index + 1} has an invalid URL: {url}"
+        )
 
 
 def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
@@ -61,26 +84,28 @@ def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
                 f"{index + 1} must be an object."
             )
 
-        name = str(
-            entry.get("name", "")
-        ).strip()
+        name = entry.get(
+            "name",
+            ""
+        )
 
-        url = str(
-            entry.get("url", "")
-        ).strip()
+        url = entry.get(
+            "url",
+            ""
+        )
 
         enabled = entry.get(
             "enabled",
             True,
         )
 
-        if not name:
+        if not isinstance(name, str) or not name.strip():
             raise RuntimeError(
                 "Free source catalog entry "
                 f"{index + 1} is missing 'name'."
             )
 
-        if not url:
+        if not isinstance(url, str) or not url.strip():
             raise RuntimeError(
                 "Free source catalog entry "
                 f"{index + 1} is missing 'url'."
@@ -91,6 +116,14 @@ def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
                 "Free source catalog entry "
                 f"{index + 1} has invalid 'enabled'."
             )
+
+        name = name.strip()
+        url = url.strip()
+
+        _validate_source_url(
+            url,
+            index,
+        )
 
         normalized_name = name.casefold()
         normalized_url = url.casefold()
@@ -117,15 +150,6 @@ def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
             )
 
     return tuple(catalog)
-
-
-FREE_SOURCE_CATALOG = _load_free_source_catalog()
-
-
-FREE_SOURCE_NAMES = tuple(
-    name
-    for name, _url in FREE_SOURCE_CATALOG
-)
 
 
 def _free_sources_enabled() -> bool:
@@ -179,7 +203,9 @@ def configured_sources() -> List[LeadSource]:
         sources.append(web_source)
 
     if _free_sources_enabled():
-        for name, url in FREE_SOURCE_CATALOG:
+        catalog = _load_free_source_catalog()
+
+        for name, url in catalog:
             sources.append(
                 _free_source_instance(
                     name=name,
@@ -191,17 +217,24 @@ def configured_sources() -> List[LeadSource]:
 
 
 def available_free_sources() -> List[str]:
-    return list(FREE_SOURCE_NAMES)
+    catalog = _load_free_source_catalog()
+
+    return [
+        name
+        for name, _url in catalog
+    ]
 
 
 if __name__ == "__main__":
+    catalog = _load_free_source_catalog()
+
     print(
         "Lead source registry loaded."
     )
 
     print(
         f"Free source catalog: "
-        f"{len(FREE_SOURCE_CATALOG)} sources"
+        f"{len(catalog)} sources"
     )
 
     print(
