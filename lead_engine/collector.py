@@ -15,8 +15,11 @@ def validate_lead_input(
     lead: Dict[str, Any],
 ) -> None:
     """
-    Validate the minimum information required before a lead
-    enters the processing pipeline.
+    Validate the required discovery fields at the production
+    input boundary.
+
+    Invalid records raise ValueError so SourceRunner can isolate
+    the bad record without stopping the source or remaining leads.
     """
 
     if not isinstance(lead, dict):
@@ -24,16 +27,36 @@ def validate_lead_input(
             "Lead input must be an object."
         )
 
-    missing = [
-        field
-        for field in REQUIRED_FIELDS
-        if not lead.get(field)
-    ]
+    required_fields = (
+        "source",
+        "source_id",
+        "url",
+        "company",
+        "signal",
+        "evidence",
+    )
 
-    if missing:
+    for field in required_fields:
+        value = lead.get(field)
+
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Lead field '{field}' must be a string."
+            )
+
+        if not value.strip():
+            raise ValueError(
+                f"Lead field '{field}' cannot be empty."
+            )
+
+    url = lead["url"].strip()
+
+    if not (
+        url.startswith("https://")
+        or url.startswith("http://")
+    ):
         raise ValueError(
-            "Lead is missing required fields: "
-            + ", ".join(sorted(missing))
+            "Lead field 'url' must be an HTTP or HTTPS URL."
         )
 
 
