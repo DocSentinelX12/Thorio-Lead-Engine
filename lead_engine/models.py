@@ -57,20 +57,20 @@ class Lead:
             ).isoformat()
 
     def compute_fingerprint(self):
-      self.ensure_timestamp()
+        self.ensure_timestamp()
 
-    identity_payload = {
-        "source": self.source,
-        "source_id": self.source_id,
-        "url": self.url,
-        "company": self.company,
-        "person": self.person,
-        "signal": self.signal,
-    }
+        identity_payload = {
+            "source": self.source,
+            "source_id": self.source_id,
+            "url": self.url,
+            "company": self.company,
+            "person": self.person,
+            "signal": self.signal,
+        }
 
-    self.fingerprint = lead_identity(identity_payload)
+        self.fingerprint = lead_identity(identity_payload)
 
-    return self.fingerprint
+        return self.fingerprint
 
     def to_dict(self):
         self.compute_fingerprint()
