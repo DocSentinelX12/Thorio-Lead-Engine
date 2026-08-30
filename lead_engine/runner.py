@@ -10,8 +10,8 @@ class LeadEngineRunner:
     Compatibility wrapper around the canonical SourceRunner.
 
     SourceRunner is the single record-processing execution path.
-    This class preserves the existing LeadEngineRunner API for
-    callers and tests that still use it.
+    This class preserves the existing LeadEngineRunner API while
+    exposing the complete production result needed by the scheduler.
     """
 
     def __init__(self, pipeline: LeadPipeline):
@@ -34,20 +34,7 @@ class LeadEngineRunner:
             source
         )
 
-        return {
-            "processed_count": (
-                result.get("accepted_count", 0)
-                + result.get("duplicate_count", 0)
-            ),
-            "failed_count": result.get(
-                "failed_count",
-                0,
-            ),
-            "total": result.get(
-                "discovered_count",
-                0,
-            ),
-        }
+        return dict(result)
 
     def run_records(
         self,
@@ -60,20 +47,7 @@ class LeadEngineRunner:
             records
         )
 
-        return {
-            "processed_count": (
-                result.get("accepted_count", 0)
-                + result.get("duplicate_count", 0)
-            ),
-            "failed_count": result.get(
-                "failed_count",
-                0,
-            ),
-            "total": result.get(
-                "discovered_count",
-                0,
-            ),
-        }
+        return dict(result)
 
 
 def run_source(
