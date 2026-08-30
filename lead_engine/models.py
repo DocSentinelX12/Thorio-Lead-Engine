@@ -1,3 +1,4 @@
+from .lead_identity import lead_identity
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
