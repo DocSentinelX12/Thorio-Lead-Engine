@@ -1,0 +1,97 @@
+[
+  {
+    "name": "NoDesk",
+    "url": "https://nodesk.co/remote-jobs/",
+    "enabled": true
+  },
+  {
+    "name": "Welcome to the Jungle",
+    "url": "https://www.welcometothejungle.com/en/pages/jobs",
+    "enabled": true
+  },
+  {
+    "name": "EURES",
+    "url": "https://europa.eu/eures/portal/jv-se/home?lang=en&pageCode=find_a_job",
+    "enabled": true
+  },
+  {
+    "name": "Remotive",
+    "url": "https://remotive.com/",
+    "enabled": true
+  },
+  {
+    "name": "Working Nomads",
+    "url": "https://www.workingnomads.com/jobs",
+    "enabled": true
+  },
+  {
+    "name": "We Work Remotely",
+    "url": "https://weworkremotely.com/remote-jobs/all-jobs",
+    "enabled": true
+  },
+  {
+    "name": "Remote OK",
+    "url": "https://remoteok.com/",
+    "enabled": true
+  },
+  {
+    "name": "Jobspresso",
+    "url": "https://jobspresso.co/jobs/",
+    "enabled": true
+  },
+  {
+    "name": "Landing Jobs",
+    "url": "https://landing.jobs/",
+    "enabled": true
+  },
+  {
+    "name": "EU Remote Jobs",
+    "url": "https://euremotejobs.com/",
+    "enabled": true
+  },
+  {
+    "name": "WorkWave",
+    "url": "https://jobs.lever.co/workwave/?workplaceType=remote",
+    "enabled": true
+  },
+  {
+    "name": "AI Jobs",
+    "url": "https://ai-jobs.net/",
+    "enabled": true
+  },
+  {
+    "name": "Total",
+    "url": "https://www.totaljobs.com/",
+    "enabled": true
+  },
+  {
+    "name": "FlexJobs",
+    "url": "https://www.flexjobs.com/",
+    "enabled": true
+  },
+  {
+    "name": "US Remotely",
+    "url": "https://usremotely.com/",
+    "enabled": true
+  },
+  {
+    "name": "Rocketship",
+    "url": "https://rocketship.fm/jobs",
+    "enabled": true
+  },
+  {
+    "name": "JobFill.AI",
+    "url": "https://jobfill.ai/",
+    "enabled": true
+  },
+  {
+    "name": "Remote Woman",
+    "url": "https://remotewoman.com/",
+    "enabled": true
+  },
+  {
+    "name": "Wellfound",
+    "url": "https://wellfound.com/remote",
+    "enabled": true
+  }
+]
