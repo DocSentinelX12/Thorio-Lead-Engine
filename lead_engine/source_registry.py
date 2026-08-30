@@ -1,97 +1,127 @@
+import json
 import os
-from typing import List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 from .free_sources import FreeJobSource
 from .sources import LeadSource
 from .web_source_config import create_web_source_from_env
 
 
-# Free/public discovery catalog.
-#
-# These are public web pages, not paid APIs.
-# Each source is independent. A failure in one source is handled
-# by the existing service boundary without stopping other sources.
-FREE_SOURCE_CATALOG: Tuple[Tuple[str, str], ...] = (
-    (
-        "NoDesk",
-        "https://nodesk.co/remote-jobs/",
-    ),
-    (
-        "Welcome to the Jungle",
-        "https://www.welcometothejungle.com/en/pages/jobs",
-    ),
-    (
-        "EURES",
-        "https://europa.eu/eures/portal/jv-se/home?lang=en&pageCode=find_a_job",
-    ),
-    (
-        "Remotive",
-        "https://remotive.com/",
-    ),
-    (
-        "Working Nomads",
-        "https://www.workingnomads.com/jobs",
-    ),
-    (
-        "We Work Remotely",
-        "https://weworkremotely.com/remote-jobs/all-jobs",
-    ),
-    (
-        "Remote OK",
-        "https://remoteok.com/",
-    ),
-    (
-        "Jobspresso",
-        "https://jobspresso.co/jobs/",
-    ),
-    (
-        "Landing Jobs",
-        "https://landing.jobs/",
-    ),
-    (
-        "EU Remote Jobs",
-        "https://euremotejobs.com/",
-    ),
-    (
-        "WorkWave",
-        "https://jobs.lever.co/workwave/?workplaceType=remote",
-    ),
-    (
-        "AI Jobs",
-        "https://ai-jobs.net/",
-    ),
-    (
-        "Total",
-        "https://www.totaljobs.com/",
-    ),
-    (
-        "FlexJobs",
-        "https://www.flexjobs.com/",
-    ),
-    (
-        "US Remotely",
-        "https://usremotely.com/",
-    ),
-    (
-        "Rocketship",
-        "https://rocketship.fm/jobs",
-    ),
-    (
-        "JobFill.AI",
-        "https://jobfill.ai/",
-    ),
-    (
-        "Remote Woman",
-        "https://remotewoman.com/",
-    ),
-    (
-        "Wellfound",
-        "https://wellfound.com/remote",
-    ),
+DEFAULT_FREE_SOURCE_CATALOG_PATH = (
+    Path(__file__).with_name("free_sources.json")
 )
 
 
-# Preserve the existing public name catalog contract.
+def _free_source_catalog_path() -> Path:
+    configured = os.getenv(
+        "THORIO_FREE_SOURCE_CATALOG",
+        "",
+    ).strip()
+
+    if configured:
+        return Path(configured)
+
+    return DEFAULT_FREE_SOURCE_CATALOG_PATH
+
+
+def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
+    path = _free_source_catalog_path()
+
+    try:
+        with path.open(
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            data = json.load(handle)
+
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Free source catalog not found: {path}"
+        ) from exc
+
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Free source catalog contains invalid JSON: {path}"
+        ) from exc
+
+    if not isinstance(data, list):
+        raise RuntimeError(
+            "Free source catalog must contain a JSON array."
+        )
+
+    catalog: List[Tuple[str, str]] = []
+    seen_names = set()
+    seen_urls = set()
+
+    for index, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                "Free source catalog entry "
+                f"{index + 1} must be an object."
+            )
+
+        name = str(
+            entry.get("name", "")
+        ).strip()
+
+        url = str(
+            entry.get("url", "")
+        ).strip()
+
+        enabled = entry.get(
+            "enabled",
+            True,
+        )
+
+        if not name:
+            raise RuntimeError(
+                "Free source catalog entry "
+                f"{index + 1} is missing 'name'."
+            )
+
+        if not url:
+            raise RuntimeError(
+                "Free source catalog entry "
+                f"{index + 1} is missing 'url'."
+            )
+
+        if not isinstance(enabled, bool):
+            raise RuntimeError(
+                "Free source catalog entry "
+                f"{index + 1} has invalid 'enabled'."
+            )
+
+        normalized_name = name.casefold()
+        normalized_url = url.casefold()
+
+        if normalized_name in seen_names:
+            raise RuntimeError(
+                f"Duplicate free source name: {name}"
+            )
+
+        if normalized_url in seen_urls:
+            raise RuntimeError(
+                f"Duplicate free source URL: {url}"
+            )
+
+        seen_names.add(normalized_name)
+        seen_urls.add(normalized_url)
+
+        if enabled:
+            catalog.append(
+                (
+                    name,
+                    url,
+                )
+            )
+
+    return tuple(catalog)
+
+
+FREE_SOURCE_CATALOG = _load_free_source_catalog()
+
+
 FREE_SOURCE_NAMES = tuple(
     name
     for name, _url in FREE_SOURCE_CATALOG
@@ -99,17 +129,6 @@ FREE_SOURCE_NAMES = tuple(
 
 
 def _free_sources_enabled() -> bool:
-    """
-    Determine whether the free public source catalog is active.
-
-    Default is disabled so existing installations and tests that
-    intentionally run without configured sources remain unchanged.
-
-    The production workflow can enable this with:
-
-        LEAD_ENGINE_FREE_SOURCES_ENABLED=true
-    """
-
     value = os.getenv(
         "LEAD_ENGINE_FREE_SOURCES_ENABLED",
         "",
@@ -124,10 +143,6 @@ def _free_sources_enabled() -> bool:
 
 
 def _free_source_timeout() -> int:
-    """
-    Return the timeout used by free public source adapters.
-    """
-
     raw = os.getenv(
         "LEAD_ENGINE_FREE_SOURCE_TIMEOUT",
         "20",
@@ -148,14 +163,6 @@ def _free_source_instance(
     name: str,
     url: str,
 ) -> LeadSource:
-    """
-    Build one independent free source adapter.
-
-    FreeJobSource exposes the same collect() contract used by
-    SourceRunner, while keeping each source's identity and URL
-    separate.
-    """
-
     return FreeJobSource(
         name=name,
         url=url,
@@ -164,29 +171,13 @@ def _free_source_instance(
 
 
 def configured_sources() -> List[LeadSource]:
-    """
-    Return all currently active lead-discovery sources.
-
-    Sources are deliberately independent:
-
-        free source -> normalized records -> SourceRunner -> pipeline
-
-    The existing optional JSON source remains supported for
-    backward compatibility.
-
-    Free public sources are activated only when explicitly enabled.
-    """
-
     sources: List[LeadSource] = []
 
-    # Preserve the existing external JSON source when explicitly
-    # configured.
     web_source = create_web_source_from_env()
 
     if web_source is not None:
         sources.append(web_source)
 
-    # Activate the free public catalog independently.
     if _free_sources_enabled():
         for name, url in FREE_SOURCE_CATALOG:
             sources.append(
@@ -200,13 +191,6 @@ def configured_sources() -> List[LeadSource]:
 
 
 def available_free_sources() -> List[str]:
-    """
-    Return every source currently represented in the free catalog.
-
-    This is metadata only. Activation is controlled separately by
-    LEAD_ENGINE_FREE_SOURCES_ENABLED.
-    """
-
     return list(FREE_SOURCE_NAMES)
 
 
