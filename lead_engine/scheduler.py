@@ -11,6 +11,10 @@ class LeadScheduler:
     """
     Continuous execution layer for lead sources.
 
+    Each configured source is isolated from every other source.
+    A source failure is recorded without preventing subsequent
+    sources from running.
+
     Checkpoints are integrated into the actual production source
     execution path. A source checkpoint advances only after that
     source completes without processing failures.
@@ -30,7 +34,12 @@ class LeadScheduler:
         results = []
         failed = []
 
-        for source in sources:
+        source_list = list(sources)
+        source_count = len(source_list)
+
+        for source in source_list:
+            source_name = source.name
+
             try:
                 previous_checkpoint = (
                     self.checkpoint_runner.get_checkpoint(
@@ -80,7 +89,7 @@ class LeadScheduler:
 
                 results.append(
                     {
-                        "source": source.name,
+                        "source": source_name,
                         "result": result,
                     }
                 )
@@ -88,7 +97,7 @@ class LeadScheduler:
             except Exception as exc:
                 failed.append(
                     {
-                        "source": source.name,
+                        "source": source_name,
                         "error": str(exc),
                     }
                 )
@@ -147,7 +156,7 @@ class LeadScheduler:
         return {
             "results": results,
             "failed": failed,
-            "source_count": len(results),
+            "source_count": source_count,
             "successful_source_count": len(results),
             "failed_count": len(failed),
             "discovered_count": discovered_total,
@@ -261,8 +270,7 @@ class LeadScheduler:
             "sync": total_sync,
             "source_count": len(source_list),
             "successful_source_count": (
-                len(source_list)
-                - len(total_failed)
+                len(total_results)
             ),
             "result_count": len(total_results),
             "failed_count": len(total_failed),
@@ -285,4 +293,11 @@ class LeadScheduler:
             sources=sources,
             interval_seconds=interval_seconds,
             max_cycles=max_cycles,
-            )
+        )
+
+
+if __name__ == "__main__":
+    print(
+        "Lead scheduler loaded. "
+        "Configured sources are isolated during execution."
+    )
