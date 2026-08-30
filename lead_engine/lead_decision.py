@@ -7,6 +7,8 @@ DECISION_APPROVE = "approve"
 DECISION_REVIEW = "review"
 DECISION_REJECT = "reject"
 
+MINIMUM_APPROVAL_SCORE = 50
+
 
 def _score(lead: Dict[str, Any]) -> int:
     value = lead.get("lead_score", 0)
@@ -39,8 +41,8 @@ def decide_lead(
 
     Approval requires:
     - a supported partner route
-    - a qualifying score
-    - a lifecycle status that is eligible for delivery
+    - a score meeting the production approval threshold
+    - a lifecycle status eligible for delivery
 
     Borderline or incomplete records go to review.
     Clearly invalid records are rejected.
@@ -63,7 +65,7 @@ def decide_lead(
     if score <= 0:
         return DECISION_REJECT
 
-    if score < 50:
+    if score < MINIMUM_APPROVAL_SCORE:
         return DECISION_REVIEW
 
     if status in {
@@ -89,9 +91,7 @@ def apply_lead_decision(
 
     result = dict(lead)
 
-    decision = decide_lead(
-        result
-    )
+    decision = decide_lead(result)
 
     result["decision"] = decision
 
