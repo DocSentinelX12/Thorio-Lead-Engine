@@ -1,31 +1,13 @@
-from pathlib import Path
 from typing import Any, Dict
 
 from .database import LeadDB
 
 
 def check_database(db: LeadDB) -> Dict[str, Any]:
-    """Verify that the production database is accessible and usable."""
+    """Verify that the local database is accessible and usable."""
 
     try:
         db.pending(limit=1)
-
-        database_path = getattr(
-            db,
-            "database_path",
-            None,
-        )
-
-        if database_path is not None:
-            path = Path(database_path)
-
-            if not path.exists():
-                return {
-                    "name": "database",
-                    "status": "unhealthy",
-                    "ok": False,
-                    "error": "database file does not exist",
-                }
 
         return {
             "name": "database",
@@ -43,7 +25,7 @@ def check_database(db: LeadDB) -> Dict[str, Any]:
 
 
 def check_configuration(config) -> Dict[str, Any]:
-    """Verify that runtime configuration is usable."""
+    """Verify that required runtime configuration is valid."""
 
     errors = []
 
@@ -64,7 +46,10 @@ def check_configuration(config) -> Dict[str, Any]:
         None,
     )
 
-    if not isinstance(batch_size, int) or batch_size <= 0:
+    if (
+        not isinstance(batch_size, int)
+        or batch_size <= 0
+    ):
         errors.append(
             "batch_size must be greater than zero"
         )
@@ -98,6 +83,46 @@ def check_configuration(config) -> Dict[str, Any]:
     }
 
 
+def check_airtable_configuration(
+    config,
+) -> Dict[str, Any]:
+    """Verify required Airtable production configuration."""
+
+    base_id = getattr(
+        config,
+        "airtable_base_id",
+        "",
+    )
+
+    table = getattr(
+        config,
+        "airtable_table",
+        "",
+    )
+
+    if not base_id:
+        return {
+            "name": "airtable_configuration",
+            "status": "unhealthy",
+            "ok": False,
+            "error": "AIRTABLE_BASE_ID is not configured",
+        }
+
+    if not table:
+        return {
+            "name": "airtable_configuration",
+            "status": "unhealthy",
+            "ok": False,
+            "error": "Airtable table is not configured",
+        }
+
+    return {
+        "name": "airtable_configuration",
+        "status": "healthy",
+        "ok": True,
+    }
+
+
 def health_report(
     db: LeadDB,
     config,
@@ -107,6 +132,7 @@ def health_report(
     checks = [
         check_database(db),
         check_configuration(config),
+        check_airtable_configuration(config),
     ]
 
     healthy = all(
@@ -130,9 +156,6 @@ def check_engine(
 ) -> Dict[str, Any]:
     """
     Backward-compatible database health check.
-
-    Existing service/application code expects the
-    `healthy` field.
     """
 
     result = check_database(db)
@@ -142,5 +165,4 @@ def check_engine(
         "status": result["status"],
         "ok": result["ok"],
         "database": result,
-    }
-```0
+                       }
