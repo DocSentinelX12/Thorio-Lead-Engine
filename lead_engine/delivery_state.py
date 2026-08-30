@@ -11,11 +11,23 @@ DELIVERY_STATES = (
 )
 
 
+TERMINAL_STATES = {
+    "delivered",
+    "failed",
+}
+
+
+SUPPORTED_ROUTES = {
+    "Shiftr",
+    "Paxus",
+    "Thorio",
+}
+
+
 def normalize_delivery_state(value: Any) -> str:
     """
-    Normalize a delivery state into a supported state.
-
-    Unknown or empty values become pending.
+    Normalize delivery state into the single authoritative
+    delivery-state vocabulary.
     """
 
     state = str(value or "").strip().lower()
@@ -26,22 +38,33 @@ def normalize_delivery_state(value: Any) -> str:
     return "pending"
 
 
+def get_delivery_state(
+    lead: Dict[str, Any],
+) -> str:
+    """
+    Return the authoritative delivery state for a lead.
+    """
+
+    return normalize_delivery_state(
+        lead.get("delivery_status")
+    )
+
+
 def set_delivery_state(
     lead: Dict[str, Any],
     state: str,
     reason: str = "",
 ) -> Dict[str, Any]:
     """
-    Return a copy of a lead with its delivery state updated.
-
-    Existing lead data is preserved.
+    Return a copy of a lead with its authoritative delivery
+    state and reason updated.
     """
 
     result = dict(lead)
 
-    result["delivery_status"] = normalize_delivery_state(
-        state
-    )
+    normalized = normalize_delivery_state(state)
+
+    result["delivery_status"] = normalized
     result["delivery_reason"] = str(
         reason or ""
     ).strip()
@@ -53,39 +76,25 @@ def is_delivery_complete(
     lead: Dict[str, Any],
 ) -> bool:
     """
-    Return True when the lead has reached a terminal
-    delivery state.
+    Return True only when delivery has reached a terminal state.
     """
 
-    return normalize_delivery_state(
-        lead.get("delivery_status")
-    ) in {
-        "delivered",
-        "failed",
-    }
+    return get_delivery_state(lead) in TERMINAL_STATES
 
 
 def is_ready_for_delivery(
     lead: Dict[str, Any],
 ) -> bool:
     """
-    Return True only when the lead has been explicitly
-    approved for delivery and has a supported partner route.
+    Return True only when the authoritative delivery state is
+    approved and the lead has a supported partner route.
     """
 
-    status = normalize_delivery_state(
-        lead.get("delivery_status")
-    )
+    if get_delivery_state(lead) != "approved":
+        return False
 
     route = str(
         lead.get("route", "")
     ).strip()
 
-    return (
-        status == "approved"
-        and route in {
-            "Shiftr",
-            "Paxus",
-            "Thorio",
-        }
-  )
+    return route in SUPPORTED_ROUTES
