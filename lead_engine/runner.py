@@ -29,12 +29,40 @@ class LeadEngineRunner:
     ) -> Dict[str, Any]:
         """
         Collect and process one source through the canonical runner.
+
+        Preserves the canonical SourceRunner result while exposing the
+        compatibility fields required by existing callers.
         """
-        result = self._runner.run_source(
-            source
+        result = dict(
+            self._runner.run_source(
+                source
+            )
         )
 
-        return dict(result)
+        result.setdefault(
+            "processed_count",
+            result.get(
+                "accepted_count",
+                0,
+            )
+            + result.get(
+                "duplicate_count",
+                0,
+            ),
+        )
+
+        result.setdefault(
+            "total",
+            result.get(
+                "discovered_count",
+                result.get(
+                    "processed_count",
+                    0,
+                ),
+            ),
+        )
+
+        return result
 
     def run_records(
         self,
@@ -42,12 +70,42 @@ class LeadEngineRunner:
     ) -> Dict[str, Any]:
         """
         Process records through the canonical SourceRunner.
+
+        Failed records are isolated by SourceRunner. Preserve its
+        canonical result while exposing the compatibility fields
+        required by existing callers.
         """
-        result = self._runner.process(
-            records
+        result = dict(
+            self._runner.process(
+                records
+            )
         )
 
-        return dict(result)
+        result.setdefault(
+            "processed_count",
+            result.get(
+                "accepted_count",
+                0,
+            )
+            + result.get(
+                "duplicate_count",
+                0,
+            ),
+        )
+
+        result.setdefault(
+            "total",
+            result.get(
+                "processed_count",
+                0,
+            )
+            + result.get(
+                "failed_count",
+                0,
+            ),
+        )
+
+        return result
 
 
 def run_source(
