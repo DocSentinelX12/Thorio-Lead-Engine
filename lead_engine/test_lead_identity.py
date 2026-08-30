@@ -58,3 +58,23 @@ def test_add_lead_identity_preserves_original_fields():
         "company": "Acme",
         "route": "Thorio",
     }
+
+
+def test_identity_ignores_non_identity_fields():
+    first = {
+        "source": "linkedin",
+        "source_id": "ABC-123",
+        "company": "Acme",
+        "route": "Thorio",
+        "lead_score": 50,
+    }
+
+    second = {
+        "source": "linkedin",
+        "source_id": "ABC-123",
+        "company": "Acme",
+        "route": "Paxus",
+        "lead_score": 100,
+    }
+
+    assert lead_identity(first) == lead_identity(second)
