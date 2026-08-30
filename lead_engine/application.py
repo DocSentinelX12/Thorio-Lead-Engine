@@ -11,6 +11,7 @@ from .pipeline import LeadPipeline
 from .service import LeadEngineService
 from .source_runner import SourceRunner
 from .sources import LeadSource
+from .health import health_report
 
 
 class LeadEngineApplication:
@@ -157,8 +158,19 @@ class LeadEngineApplication:
     def status(self) -> Dict[str, Any]:
         return self.service.status()
 
-    def health(self) -> Dict[str, Any]:
-        return self.service.health()
+        def health(self) -> Dict[str, Any]:
+        from .source_registry import configured_sources
+
+        report = health_report(
+            self.db,
+            self.config,
+            sources=configured_sources(),
+        )
+
+        return {
+            **report,
+            "healthy": report["ok"],
+        }
 
     def work_queue(
         self,
