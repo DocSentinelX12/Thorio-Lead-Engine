@@ -98,44 +98,6 @@ def check_configuration(config) -> Dict[str, Any]:
     }
 
 
-def check_airtable_configuration(config) -> Dict[str, Any]:
-    """Verify that required Airtable configuration is present."""
-
-    base_id = getattr(
-        config,
-        "airtable_base_id",
-        "",
-    )
-
-    table = getattr(
-        config,
-        "airtable_table",
-        "",
-    )
-
-    if not base_id:
-        return {
-            "name": "airtable_configuration",
-            "status": "unhealthy",
-            "ok": False,
-            "error": "AIRTABLE_BASE_ID is not configured",
-        }
-
-    if not table:
-        return {
-            "name": "airtable_configuration",
-            "status": "unhealthy",
-            "ok": False,
-            "error": "Airtable table is not configured",
-        }
-
-    return {
-        "name": "airtable_configuration",
-        "status": "healthy",
-        "ok": True,
-    }
-
-
 def health_report(
     db: LeadDB,
     config,
@@ -145,7 +107,6 @@ def health_report(
     checks = [
         check_database(db),
         check_configuration(config),
-        check_airtable_configuration(config),
     ]
 
     healthy = all(
@@ -181,4 +142,5 @@ def check_engine(
         "status": result["status"],
         "ok": result["ok"],
         "database": result,
-            }
+    }
+```0
