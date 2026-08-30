@@ -2,9 +2,10 @@ import json
 import re
 from html import unescape
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from .http_retry import HTTPRetryError, fetch_url
 
 
 USER_AGENT = "Thorio-Lead-Engine/1.0"
@@ -206,28 +207,12 @@ class FreeJobSource:
         )
 
         try:
-            with urlopen(
+            raw = fetch_url(
                 request,
                 timeout=self.timeout,
-            ) as response:
-                raw = response.read()
+            )
 
-        except HTTPError as exc:
-            raise FreeSourceError(
-                f"{self.name} returned HTTP {exc.code}."
-            ) from exc
-
-        except URLError as exc:
-            raise FreeSourceError(
-                f"{self.name} connection failed: {exc.reason}"
-            ) from exc
-
-        except TimeoutError as exc:
-            raise FreeSourceError(
-                f"{self.name} request timed out."
-            ) from exc
-
-        except OSError as exc:
+        except HTTPRetryError as exc:
             raise FreeSourceError(
                 f"{self.name} request failed: {exc}"
             ) from exc
