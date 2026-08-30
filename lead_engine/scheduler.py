@@ -1,6 +1,7 @@
 import time
 from typing import Any, Dict, Iterable, Optional
 
+from .checkpoint_runner import CheckpointRunner
 from .runner import LeadEngineRunner
 from .sources import LeadSource
 from .sync_worker import sync_pending
@@ -10,47 +11,72 @@ class LeadScheduler:
     """
     Continuous execution layer for lead sources.
 
-    Sources are processed independently. A failure in one source
-    does not prevent the remaining sources from running.
-
-    Each cycle also retries locally pending Airtable syncs.
-
-    The scheduler supports bounded execution so a GitHub Actions
-    workflow can continuously work for a fixed window without
-    running forever.
+    Checkpoints are integrated into the actual production source
+    execution path. A source checkpoint advances only after that
+    source completes without processing failures.
     """
 
     def __init__(self, runner: LeadEngineRunner):
         self.runner = runner
+        self.checkpoint_runner = CheckpointRunner(
+            db=runner.pipeline.db,
+            runner=runner,
+        )
 
     def run(
         self,
         sources: Iterable[LeadSource],
     ) -> Dict[str, Any]:
-        """
-        Run each source once, then retry pending Airtable syncs.
-
-        Every source receives an explicit production result containing:
-
-            source
-            discovered_count
-            processed_count
-            failed_count
-
-        Source failures are isolated so one broken source cannot
-        prevent other sources from running.
-        """
-
         results = []
         failed = []
 
         for source in sources:
             try:
+                previous_checkpoint = (
+                    self.checkpoint_runner.get_checkpoint(
+                        source
+                    )
+                )
+
                 result = self.runner.run_source(
                     source
                 )
 
                 result = dict(result)
+
+                failed_count = result.get(
+                    "failed_count",
+                    0,
+                )
+
+                try:
+                    failed_count = int(
+                        failed_count or 0
+                    )
+                except (TypeError, ValueError):
+                    failed_count = 1
+
+                if failed_count == 0:
+                    checkpoint = result.get(
+                        "checkpoint"
+                    )
+
+                    if checkpoint is not None:
+                        self.checkpoint_runner.save_checkpoint(
+                            source,
+                            checkpoint,
+                        )
+
+                    current_checkpoint = checkpoint
+                else:
+                    current_checkpoint = previous_checkpoint
+
+                result["previous_checkpoint"] = (
+                    previous_checkpoint
+                )
+                result["checkpoint"] = (
+                    current_checkpoint
+                )
 
                 results.append(
                     {
@@ -127,7 +153,9 @@ class LeadScheduler:
             "discovered_count": discovered_total,
             "accepted_count": accepted_total,
             "duplicate_count": duplicate_total,
-            "processing_failed_count": processing_failed_total,
+            "processing_failed_count": (
+                processing_failed_total
+            ),
             "sync": sync_result,
         }
 
@@ -137,16 +165,6 @@ class LeadScheduler:
         interval_seconds: float = 60.0,
         max_cycles: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Continuously cycle through all configured sources.
-
-        When max_cycles is supplied, execution stops after exactly
-        that many completed cycles.
-
-        If no sources are configured, execution stops immediately
-        rather than repeatedly running empty cycles.
-        """
-
         source_list = list(sources)
 
         if interval_seconds < 0:
@@ -263,28 +281,8 @@ class LeadScheduler:
         interval_seconds: float = 60.0,
         max_cycles: int = 10,
     ) -> Dict[str, Any]:
-        """
-        Run a bounded continuous execution window.
-
-        This is the production-safe entry point for scheduled
-        environments such as GitHub Actions.
-
-        The local database is reused for every cycle, so leads,
-        dedupe state, checkpoints, retry state, and pending
-        synchronization records remain available throughout
-        the entire execution window.
-        """
-
         return self.run_forever(
             sources=sources,
             interval_seconds=interval_seconds,
             max_cycles=max_cycles,
-        )
-
-
-if __name__ == "__main__":
-    print(
-        "Lead scheduler loaded. "
-        "Use run_bounded() for bounded production execution "
-        "or run_forever() for an intentionally continuous process."
-    )
+            )
