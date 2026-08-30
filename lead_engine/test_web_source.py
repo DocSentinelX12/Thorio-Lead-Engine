@@ -7,17 +7,7 @@ from .web_source import WebLeadSource, collect_from_url
 
 
 def mock_response(payload):
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def read(self):
-            return json.dumps(payload).encode("utf-8")
-
-    return Response()
+    return json.dumps(payload).encode("utf-8")
 
 
 def test_web_source_accepts_list():
@@ -29,10 +19,12 @@ def test_web_source_accepts_list():
     ]
 
     with patch(
-        "lead_engine.web_source.urlopen",
+        "lead_engine.web_source.fetch_url",
         return_value=mock_response(payload),
     ):
-        result = collect_from_url("https://example.com/leads")
+        result = collect_from_url(
+            "https://example.com/leads"
+        )
 
     assert result == payload
 
@@ -48,10 +40,12 @@ def test_web_source_accepts_leads_object():
     }
 
     with patch(
-        "lead_engine.web_source.urlopen",
+        "lead_engine.web_source.fetch_url",
         return_value=mock_response(payload),
     ):
-        result = collect_from_url("https://example.com/leads")
+        result = collect_from_url(
+            "https://example.com/leads"
+        )
 
     assert result == payload["leads"]
 
@@ -64,36 +58,30 @@ def test_web_source_rejects_non_object_lead():
     }
 
     with patch(
-        "lead_engine.web_source.urlopen",
+        "lead_engine.web_source.fetch_url",
         return_value=mock_response(payload),
     ):
         with pytest.raises(
             ValueError,
             match="lead at index 0 must be an object",
         ):
-            collect_from_url("https://example.com/leads")
+            collect_from_url(
+                "https://example.com/leads"
+            )
 
 
 def test_web_source_rejects_invalid_payload():
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def read(self):
-            return b"not valid json"
-
     with patch(
-        "lead_engine.web_source.urlopen",
-        return_value=Response(),
+        "lead_engine.web_source.fetch_url",
+        return_value=b"not valid json",
     ):
         with pytest.raises(
             ValueError,
             match="valid UTF-8 JSON",
         ):
-            collect_from_url("https://example.com/leads")
+            collect_from_url(
+                "https://example.com/leads"
+            )
 
 
 def test_web_source_requires_url():
