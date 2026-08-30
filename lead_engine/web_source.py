@@ -1,7 +1,8 @@
 import json
 from typing import Any, Dict, Iterable, List
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from .http_retry import HTTPRetryError, fetch_url
 
 
 class WebLeadSource:
@@ -40,25 +41,14 @@ class WebLeadSource:
         )
 
         try:
-            with urlopen(
+            raw = fetch_url(
                 request,
                 timeout=self.timeout,
-            ) as response:
-                raw = response.read()
+            )
 
-        except HTTPError as exc:
+        except HTTPRetryError as exc:
             raise ValueError(
-                f"Web source request failed with HTTP {exc.code}."
-            ) from exc
-
-        except URLError as exc:
-            raise ValueError(
-                f"Web source request failed: {exc.reason}"
-            ) from exc
-
-        except TimeoutError as exc:
-            raise ValueError(
-                "Web source request timed out."
+                f"Web source request failed: {exc}"
             ) from exc
 
         try:
