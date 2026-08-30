@@ -59,7 +59,8 @@ def test_scheduler_keeps_running_after_source_failure():
 
     result = scheduler.run(sources)
 
-    assert result["source_count"] == 1
+    assert result["source_count"] == 2
+    assert result["successful_source_count"] == 1
     assert result["failed_count"] == 1
     assert result["failed"][0]["error"] == "source unavailable"
     assert runner.run_source.call_count == 2
