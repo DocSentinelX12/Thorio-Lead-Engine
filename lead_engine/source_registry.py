@@ -6,12 +6,20 @@ from urllib.parse import urlparse
 
 from .free_sources import FreeJobSource
 from .sources import LeadSource
+from .web_source import WebLeadSource
 from .web_source_config import create_web_source_from_env
 
 
 DEFAULT_FREE_SOURCE_CATALOG_PATH = (
     Path(__file__).with_name("free_sources.json")
 )
+
+DEFAULT_FREE_SOURCE_TYPE = "html"
+
+SUPPORTED_FREE_SOURCE_TYPES = {
+    "html",
+    "json",
+}
 
 
 def _free_source_catalog_path() -> Path:
@@ -48,7 +56,40 @@ def _validate_source_url(
         )
 
 
-def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
+def _normalize_source_type(
+    value: Any,
+    index: int,
+) -> str:
+    if value is None:
+        return DEFAULT_FREE_SOURCE_TYPE
+
+    if not isinstance(value, str):
+        raise RuntimeError(
+            "Free source catalog entry "
+            f"{index + 1} has invalid 'type'."
+        )
+
+    source_type = value.strip().lower()
+
+    if not source_type:
+        return DEFAULT_FREE_SOURCE_TYPE
+
+    if source_type not in SUPPORTED_FREE_SOURCE_TYPES:
+        supported = ", ".join(
+            sorted(SUPPORTED_FREE_SOURCE_TYPES)
+        )
+
+        raise RuntimeError(
+            "Free source catalog entry "
+            f"{index + 1} has unsupported 'type': "
+            f"{source_type}. Supported types: {supported}."
+        )
+
+    return source_type
+
+
+def _load_free_source_catalog(
+) -> Tuple[Tuple[str, str, str], ...]:
     path = _free_source_catalog_path()
 
     try:
@@ -73,7 +114,7 @@ def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
             "Free source catalog must contain a JSON array."
         )
 
-    catalog: List[Tuple[str, str]] = []
+    catalog: List[Tuple[str, str, str]] = []
     seen_names = set()
     seen_urls = set()
 
@@ -86,17 +127,22 @@ def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
 
         name = entry.get(
             "name",
-            ""
+            "",
         )
 
         url = entry.get(
             "url",
-            ""
+            "",
         )
 
         enabled = entry.get(
             "enabled",
             True,
+        )
+
+        source_type = _normalize_source_type(
+            entry.get("type"),
+            index,
         )
 
         if not isinstance(name, str) or not name.strip():
@@ -146,6 +192,7 @@ def _load_free_source_catalog() -> Tuple[Tuple[str, str], ...]:
                 (
                     name,
                     url,
+                    source_type,
                 )
             )
 
@@ -186,11 +233,29 @@ def _free_source_timeout() -> int:
 def _free_source_instance(
     name: str,
     url: str,
+    source_type: str = DEFAULT_FREE_SOURCE_TYPE,
 ) -> LeadSource:
-    return FreeJobSource(
-        name=name,
-        url=url,
-        timeout=_free_source_timeout(),
+    timeout = _free_source_timeout()
+
+    if source_type == "html":
+        return FreeJobSource(
+            name=name,
+            url=url,
+            timeout=timeout,
+        )
+
+    if source_type == "json":
+        source = WebLeadSource(
+            url=url,
+            timeout=timeout,
+        )
+
+        source.name = name
+
+        return source
+
+    raise RuntimeError(
+        f"Unsupported free source type: {source_type}"
     )
 
 
@@ -205,11 +270,12 @@ def configured_sources() -> List[LeadSource]:
     if _free_sources_enabled():
         catalog = _load_free_source_catalog()
 
-        for name, url in catalog:
+        for name, url, source_type in catalog:
             sources.append(
                 _free_source_instance(
                     name=name,
                     url=url,
+                    source_type=source_type,
                 )
             )
 
@@ -221,7 +287,7 @@ def available_free_sources() -> List[str]:
 
     return [
         name
-        for name, _url in catalog
+        for name, _url, _source_type in catalog
     ]
 
 
@@ -245,4 +311,4 @@ if __name__ == "__main__":
     print(
         f"Configured source count: "
         f"{len(configured_sources())}"
-    )
+)
