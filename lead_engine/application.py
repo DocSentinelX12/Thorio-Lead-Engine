@@ -158,7 +158,7 @@ class LeadEngineApplication:
     def status(self) -> Dict[str, Any]:
         return self.service.status()
 
-        def health(self) -> Dict[str, Any]:
+    def health(self) -> Dict[str, Any]:
         from .source_registry import configured_sources
 
         report = health_report(
