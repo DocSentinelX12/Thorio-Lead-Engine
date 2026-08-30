@@ -1,81 +1,78 @@
 from typing import Any, Dict, Iterable
 
 from .pipeline import LeadPipeline
+from .source_runner import SourceRunner
 from .sources import LeadSource
 
 
 class LeadEngineRunner:
     """
-    Compatibility runner for executing LeadSource instances.
+    Compatibility wrapper around the canonical SourceRunner.
 
-    The application service is the production execution boundary.
-    This runner delegates to the canonical LeadPipeline.
-
-    The runner preserves the established result contract:
-
-        processed_count
-        failed_count
-        total
+    SourceRunner is the single record-processing execution path.
+    This class preserves the existing LeadEngineRunner API for
+    callers and tests that still use it.
     """
 
     def __init__(self, pipeline: LeadPipeline):
-        self.pipeline = pipeline
+        self._runner = SourceRunner(
+            pipeline=pipeline
+        )
+
+    @property
+    def pipeline(self) -> LeadPipeline:
+        return self._runner.pipeline
 
     def run_source(
         self,
         source: LeadSource,
     ) -> Dict[str, Any]:
         """
-        Collect and process all records from one source.
+        Collect and process one source through the canonical runner.
         """
-        records = source.collect()
-
-        return self.run_records(
-            records
+        result = self._runner.run_source(
+            source
         )
+
+        return {
+            "processed_count": (
+                result.get("accepted_count", 0)
+                + result.get("duplicate_count", 0)
+            ),
+            "failed_count": result.get(
+                "failed_count",
+                0,
+            ),
+            "total": result.get(
+                "discovered_count",
+                0,
+            ),
+        }
 
     def run_records(
         self,
         records: Iterable[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Process collected records through the canonical
-        lead pipeline.
-
-        A record counts as processed when the pipeline accepts
-        the record or identifies it as a duplicate.
-
-        A record counts as failed when the record is invalid or
-        pipeline processing raises an exception.
+        Process records through the canonical SourceRunner.
         """
-        processed_count = 0
-        failed_count = 0
-        total = 0
-
-        for record in records:
-            total += 1
-
-            if not isinstance(record, dict):
-                failed_count += 1
-                continue
-
-            try:
-                result = self.pipeline.process(
-                    **record
-                )
-            except Exception:
-                failed_count += 1
-                continue
-
-            if isinstance(result, dict):
-                processed_count += 1
-            else:
-                failed_count += 1
+        result = self._runner.process(
+            records
+        )
 
         return {
-            "processed_count": processed_count,
-            "failed_count": failed_count,
-            "total": total,
+            "processed_count": (
+                result.get("accepted_count", 0)
+                + result.get("duplicate_count", 0)
+            ),
+            "failed_count": result.get(
+                "failed_count",
+                0,
+            ),
+            "total": result.get(
+                "discovered_count",
+                0,
+            ),
         }
 
 
@@ -83,8 +80,9 @@ def run_source(
     source: LeadSource,
 ) -> Dict[str, Any]:
     """
-    Convenience function for running a source with
-    the default lead pipeline.
+    Compatibility convenience function.
+
+    Uses the canonical SourceRunner through LeadEngineRunner.
     """
     pipeline = LeadPipeline()
 
