@@ -1,5 +1,6 @@
 from typing import Any, Dict
 
+from .collector import validate_lead_input
 from .database import LeadDB
 from .dedupe import Dedupe
 from .enrichment import enrich_lead
@@ -66,6 +67,17 @@ class LeadPipeline:
         evidence: str = "",
         **extra_fields: Any,
     ) -> Dict[str, Any]:
+
+        validate_lead_input(
+            {
+                "source": source,
+                "source_id": source_id,
+                "url": url,
+                "company": company,
+                "signal": signal,
+                "evidence": evidence,
+            }
+        )
 
         recommended_route = route(
             company=company,
