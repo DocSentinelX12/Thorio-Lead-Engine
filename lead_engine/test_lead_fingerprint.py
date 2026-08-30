@@ -89,3 +89,21 @@ def test_whitespace_and_case_do_not_change_identity():
     }
 
     assert same_lead(first, second)
+
+
+def test_fingerprint_uses_canonical_lead_identity():
+    first = {
+        "source": "linkedin",
+        "source_id": "ABC-123",
+        "company": "Acme",
+        "route": "Thorio",
+    }
+
+    second = {
+        "source": "linkedin",
+        "source_id": "ABC-123",
+        "company": "Different Company",
+        "route": "Paxus",
+    }
+
+    assert lead_fingerprint(first) == lead_fingerprint(second)
