@@ -701,6 +701,81 @@ def _normalize_lead(
                 "contact_ready",
                 False,
             )
+    fields: Dict[str, Any] = {
+        "Lead": lead_name,
+        "Company": company,
+        "Signal": signal,
+        "Source URL": _text(
+            lead.get("url")
+        ),
+        "Source Platform": _source_platform(
+            lead
+        ),
+        "Signal Type": _signal_type(
+            lead
+        ),
+        "Recommended Partner": _recommended_partner(
+            lead
+        ),
+        "Lead Score": lead.get(
+            "lead_score",
+            0,
+        ),
+        "Priority": _priority(
+            lead
+        ),
+        "Decision Maker": _text(
+            lead.get("person")
+        ),
+        "Title": _text(
+            lead.get("contact_title")
+        ),
+        "Duplicate Key": _text(
+            lead.get("fingerprint")
+        ),
+        "Review Status": _review_status(
+            lead
+        ),
+        "Qualified Lead?": bool(
+            lead.get("qualified", False)
+        ),
+        "Budget Confirmed": bool(
+            lead.get(
+                "budget_confirmed",
+                False,
+            )
+        ),
+        "Need Confirmed": bool(
+            lead.get(
+                "need_confirmed",
+                False,
+            )
+        ),
+        "Decision Maker Confirmed": bool(
+            lead.get(
+                "decision_maker_confirmed",
+                False,
+            )
+        ),
+        "Timeline Confirmed": bool(
+            lead.get(
+                "timeline_confirmed",
+                False,
+            )
+        ),
+        "Qualification Score": lead.get(
+            "qualification_score"
+        ),
+        "Reason Not Qualified": _text(
+            lead.get(
+                "reason_not_qualified"
+            )
+        ),
+        "Contact Ready": bool(
+            lead.get(
+                "contact_ready",
+                False,
+            )
         ),
         "Referral Submitted?": bool(
             lead.get(
@@ -733,6 +808,122 @@ def _normalize_lead(
             lead
         ),
     }
+
+    # ---------------------------------------------------------
+    # PAXUS REFERRAL LIFECYCLE
+    # ---------------------------------------------------------
+    # These fields are persisted only as state.
+    # They do NOT qualify a lead, bypass deduplication,
+    # or authorize partner delivery.
+    # ---------------------------------------------------------
+
+    paxus_fields = {
+        "Paxus Eligible": bool(
+            lead.get(
+                "paxus_eligible",
+                False,
+            )
+        ),
+        "Paxus Outreach Ready": bool(
+            lead.get(
+                "paxus_outreach_ready",
+                False,
+            )
+        ),
+        "Paxus Contacted": bool(
+            lead.get(
+                "paxus_contacted",
+                False,
+            )
+        ),
+        "Paxus Contact Responded": bool(
+            lead.get(
+                "paxus_contact_responded",
+                False,
+            )
+        ),
+        "Paxus Referral Interest": bool(
+            lead.get(
+                "paxus_referral_interest",
+                False,
+            )
+        ),
+        "Paxus Consent Confirmed": bool(
+            lead.get(
+                "paxus_consent_confirmed",
+                False,
+            )
+        ),
+        "Paxus Referral Submitted": bool(
+            lead.get(
+                "paxus_referral_submitted",
+                False,
+            )
+        ),
+        "Paxus Referral Accepted": bool(
+            lead.get(
+                "paxus_referral_accepted",
+                False,
+            )
+        ),
+        "Paxus Introduction Made": bool(
+            lead.get(
+                "paxus_introduction_made",
+                False,
+            )
+        ),
+        "Paxus Recruiting Active": bool(
+            lead.get(
+                "paxus_recruiting_active",
+                False,
+            )
+        ),
+        "Paxus Placement Made": bool(
+            lead.get(
+                "paxus_placement_made",
+                False,
+            )
+        ),
+        "Paxus Client Paid": bool(
+            lead.get(
+                "paxus_client_paid",
+                False,
+            )
+        ),
+        "Paxus Commission Due": bool(
+            lead.get(
+                "paxus_commission_due",
+                False,
+            )
+        ),
+    }
+
+    for field_name, value in paxus_fields.items():
+        fields[field_name] = value
+
+    paxus_text_fields = {
+        "Paxus Referral Status": "paxus_referral_status",
+        "Paxus Referral ID": "paxus_referral_id",
+        "Paxus Contact Name": "paxus_contact_name",
+        "Paxus Contact Title": "paxus_contact_title",
+        "Paxus Contact Email": "paxus_contact_email",
+        "Paxus Consent Date": "paxus_consent_date",
+        "Paxus Referral Submitted Date": "paxus_referral_submitted_date",
+        "Paxus Acceptance Date": "paxus_acceptance_date",
+        "Paxus Introduction Date": "paxus_introduction_date",
+        "Paxus Placement Date": "paxus_placement_date",
+        "Paxus Client Payment Date": "paxus_client_payment_date",
+        "Paxus Commission Date": "paxus_commission_date",
+        "Paxus Referral Notes": "paxus_referral_notes",
+    }
+
+    for field_name, lead_key in paxus_text_fields.items():
+        value = _text(
+            lead.get(lead_key)
+        )
+
+        if value:
+            fields[field_name] = value
 
     discovered_at = _text(
         lead.get("discovered_at")
