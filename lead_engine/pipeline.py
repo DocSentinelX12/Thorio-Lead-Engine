@@ -306,7 +306,7 @@ class LeadPipeline:
             "airtable_record": None,
         }
 
-    def qualify(
+def qualify(
         self,
         fingerprint: str,
         *,
@@ -327,18 +327,117 @@ class LeadPipeline:
             reason=reason,
         )
 
-        stored = self.db.update_payload(
-            fingerprint,
-            updated,
-        )
-
-        if stored is None:
-            raise ValueError(
-                f"Unable to update lead: {fingerprint}"
+        if qualified:
+            company = str(
+                updated.get("company", "")
+            )
+            signal = str(
+                updated.get("signal", "")
+            )
+            evidence = str(
+                updated.get("evidence", "")
             )
 
-        return stored
+            recommended_route = route(
+                company=company,
+                signal=signal,
+                evidence=evidence,
+            )
 
+            possible_routes = potential_routes(
+                company=company,
+                signal=signal,
+                evidence=evidence,
+            )
+
+            scoring = score_result(
+                company=company,
+                signal=signal,
+                evidence=evidence,
+            )
+
+            updated["route"] = recommended_route
+            updated["potential_routes"] = possible_routes
+            updated["lead_score"] = scoring[
+                "lead_score"
+            ]
+            updated["priority"] = scoring[
+                "priority"
+            ]
+
+            stored_existing = self.db.get(
+                fingerprint
+            )
+
+            if stored_existing is not None:
+                existing_status_values = (
+                    stored_existing.get(
+                        "qualification_status"
+                    ),
+                    stored_existing.get(
+                        "qualification"
+                    ),
+                    stored_existing.get(
+                        "review_status"
+                    ),
+                    stored_existing.get(
+                        "status"
+                    ),
+                )
+
+                existing_status = ""
+
+                for value in existing_status_values:
+                    if value is None:
+                        continue
+
+                    normalized = str(
+                        value
+                    ).strip().lower()
+
+                    if normalized:
+                        existing_status = normalized
+                        break
+
+                # The record being qualified is the canonical
+                # discovery record for this fingerprint. Do not
+                # treat that same record as a duplicate of itself.
+                if existing_status not in {
+                    "qualified",
+                    "approved",
+                    "accepted",
+                }:
+                    stored = self.db.update_payload(
+                        fingerprint,
+                        updated,
+                    )
+
+                    if stored is None:
+                        raise ValueError(
+                            f"Unable to update lead: {fingerprint}"
+                        )
+
+                    updated = stored
+
+                else:
+                    # Preserve an already-qualified canonical
+                    # record rather than creating or replacing it.
+                    updated = stored_existing
+
+        else:
+            stored = self.db.update_payload(
+                fingerprint,
+                updated,
+            )
+
+            if stored is None:
+                raise ValueError(
+                    f"Unable to update lead: {fingerprint}"
+                )
+
+            updated = stored
+
+        return updated
 
 def process_lead(
     source: str,
