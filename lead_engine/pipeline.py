@@ -25,26 +25,23 @@ class LeadPipeline:
           ↓
         Enrichment
           ↓
-        Duplicate gate
-          ↓
-        Local LeadDB
+        Discovery persistence
           ↓
         Airtable approval queue
           ↓
         Human qualification
           ↓
-        Final delivery gate
+        Final deduplication
+          ↓
+        Final routing
+          ↓
+        Partner delivery
 
     IMPORTANT:
 
-    The discovery duplicate gate does NOT treat an unqualified lead as
-    a true duplicate.
+    Discovery must never prevent a lead from reaching qualification.
 
-    A fingerprint only becomes a true duplicate when the existing lead
-    has already been explicitly qualified/approved.
-
-    This preserves every legitimate discovery for qualification while
-    preventing already-qualified positives from being submitted again.
+    Final deduplication is performed only after explicit qualification.
     """
 
     def __init__(
@@ -55,6 +52,32 @@ class LeadPipeline:
         self.db = db or LeadDB()
         self.dedupe = Dedupe(self.db)
         self.sync_enabled = sync_enabled
+
+    @staticmethod
+    def _status_is_qualified(
+        lead: Dict[str, Any],
+    ) -> bool:
+        values = (
+            lead.get("qualification_status"),
+            lead.get("qualification"),
+            lead.get("review_status"),
+            lead.get("status"),
+        )
+
+        for value in values:
+            if value is None:
+                continue
+
+            normalized = str(value).strip().lower()
+
+            if normalized in {
+                "qualified",
+                "approved",
+                "accepted",
+            }:
+                return True
+
+        return False
 
     def process(
         self,
@@ -136,72 +159,39 @@ class LeadPipeline:
         existing = self.db.get(fingerprint)
 
         # ---------------------------------------------------------
-        # TRUE DUPLICATE CHECK
+        # DISCOVERY PERSISTENCE
         # ---------------------------------------------------------
         #
-        # Only an already-qualified positive is a true duplicate.
+        # Discovery must NOT perform final qualification dedupe.
         #
-        # Existing unqualified / in-review / not-qualified records
-        # must NOT block this discovery.
+        # Every discovered lead must remain available for explicit
+        # human qualification.
         #
+        # Existing qualified records are preserved. Existing
+        # unqualified records may be refreshed.
+        # ---------------------------------------------------------
+
         if existing is not None:
 
-            status_values = (
-                existing.get("qualification_status"),
-                existing.get("qualification"),
-                existing.get("review_status"),
-                existing.get("status"),
-            )
-
-            existing_status = ""
-
-            for value in status_values:
-                if value is None:
-                    continue
-
-                normalized = str(value).strip().lower()
-
-                if normalized:
-                    existing_status = normalized
-                    break
-
-            if existing_status in {
-                "qualified",
-                "approved",
-                "accepted",
-            }:
-                return {
-                    "status": "duplicate",
-                    "accepted": False,
-                    "fingerprint": fingerprint,
-                    "lead": existing,
-                    "potential_routes": possible_routes,
-                    "lead_score": scoring["lead_score"],
-                    "priority": scoring["priority"],
-                }
-
-            # Existing record is NOT a qualified positive.
-            #
-            # Refresh the discovery data and allow it to continue.
-            stored = self.db.update_payload(
-                fingerprint,
-                payload,
-            )
-
-            if stored is None:
-                raise ValueError(
-                    f"Unable to refresh existing lead: {fingerprint}"
+            if self._status_is_qualified(existing):
+                payload = existing
+            else:
+                stored = self.db.update_payload(
+                    fingerprint,
+                    payload,
                 )
 
-            payload = stored
+                if stored is None:
+                    raise ValueError(
+                        f"Unable to refresh existing lead: {fingerprint}"
+                    )
+
+                payload = stored
 
         else:
-            payload["qualification_status"] = "unqualified"
-
             inserted = self.db.insert_if_new(payload)
 
             if not inserted:
-                # Race-safe fallback.
                 existing = self.db.get(fingerprint)
 
                 if existing is None:
@@ -209,51 +199,18 @@ class LeadPipeline:
                         f"Unable to persist lead: {fingerprint}"
                     )
 
-                status_values = (
-                    existing.get("qualification_status"),
-                    existing.get("qualification"),
-                    existing.get("review_status"),
-                    existing.get("status"),
-                )
-
-                existing_status = ""
-
-                for value in status_values:
-                    if value is None:
-                        continue
-
-                    normalized = str(value).strip().lower()
-
-                    if normalized:
-                        existing_status = normalized
-                        break
-
-                if existing_status in {
-                    "qualified",
-                    "approved",
-                    "accepted",
-                }:
-                    return {
-                        "status": "duplicate",
-                        "accepted": False,
-                        "fingerprint": fingerprint,
-                        "lead": existing,
-                        "potential_routes": possible_routes,
-                        "lead_score": scoring["lead_score"],
-                        "priority": scoring["priority"],
-                    }
-
                 payload = existing
 
         # ---------------------------------------------------------
-        # EXISTING SYNC / APPROVAL QUEUE BEHAVIOR
+        # AIRTABLE / APPROVAL QUEUE
         # ---------------------------------------------------------
         #
-        # Do not move this behind qualification.
+        # Airtable synchronization is storage and approval-queue
+        # handling. It is NOT final partner delivery.
         #
-        # Airtable synchronization is storage/approval-queue handling,
-        # not permission to deliver the lead to a partner.
-        #
+        # Qualification remains a separate action.
+        # ---------------------------------------------------------
+
         if self.sync_enabled:
             sync_result = sync_one(payload)
 
@@ -271,7 +228,6 @@ class LeadPipeline:
                 "already_exists",
             }:
                 self.db.mark_synced(fingerprint)
-
             else:
                 self.db.mark_error(
                     fingerprint,
@@ -331,9 +287,11 @@ class LeadPipeline:
             company = str(
                 updated.get("company", "")
             )
+
             signal = str(
                 updated.get("signal", "")
             )
+
             evidence = str(
                 updated.get("evidence", "")
             )
@@ -365,79 +323,149 @@ class LeadPipeline:
                 "priority"
             ]
 
-            stored_existing = self.db.get(
-                fingerprint
+        stored = self.db.update_payload(
+            fingerprint,
+            updated,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to update lead: {fingerprint}"
             )
 
-            if stored_existing is not None:
-                existing_status_values = (
-                    stored_existing.get(
-                        "qualification_status"
-                    ),
-                    stored_existing.get(
-                        "qualification"
-                    ),
-                    stored_existing.get(
-                        "review_status"
-                    ),
-                    stored_existing.get(
-                        "status"
-                    ),
-                )
+        return stored
 
-                existing_status = ""
+    def finalize(
+        self,
+        fingerprint: str,
+    ) -> Dict[str, Any]:
+        """
+        Perform the final post-qualification gate.
 
-                for value in existing_status_values:
-                    if value is None:
-                        continue
+        Ordering is intentional:
 
-                    normalized = str(
-                        value
-                    ).strip().lower()
+            qualification
+                ↓
+            final deduplication
+                ↓
+            final route
+                ↓
+            delivery-ready result
 
-                    if normalized:
-                        existing_status = normalized
-                        break
+        A lead that has not been explicitly qualified cannot pass
+        this boundary.
+        """
 
-                # The record being qualified is the canonical
-                # discovery record for this fingerprint. Do not
-                # treat that same record as a duplicate of itself.
-                if existing_status not in {
-                    "qualified",
-                    "approved",
-                    "accepted",
-                }:
-                    stored = self.db.update_payload(
-                        fingerprint,
-                        updated,
-                    )
+        lead = self.db.get(fingerprint)
 
-                    if stored is None:
-                        raise ValueError(
-                            f"Unable to update lead: {fingerprint}"
-                        )
-
-                    updated = stored
-
-                else:
-                    # Preserve an already-qualified canonical
-                    # record rather than creating or replacing it.
-                    updated = stored_existing
-
-        else:
-            stored = self.db.update_payload(
-                fingerprint,
-                updated,
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
             )
 
-            if stored is None:
-                raise ValueError(
-                    f"Unable to update lead: {fingerprint}"
-                )
+        if not bool(
+            lead.get("qualified", False)
+        ):
+            return {
+                "status": "awaiting_qualification",
+                "approved": False,
+                "duplicate": False,
+                "fingerprint": fingerprint,
+                "lead": lead,
+                "reason": "lead_not_qualified",
+            }
 
-            updated = stored
+        if not self._status_is_qualified(lead):
+            return {
+                "status": "awaiting_qualification",
+                "approved": False,
+                "duplicate": False,
+                "fingerprint": fingerprint,
+                "lead": lead,
+                "reason": "qualification_status_not_confirmed",
+            }
 
-        return updated
+        existing = self.db.get(fingerprint)
+
+        if existing is None:
+            raise ValueError(
+                f"Lead disappeared before finalization: {fingerprint}"
+            )
+
+        # The existing record is the canonical record for this
+        # fingerprint. It has already passed qualification, so the
+        # finalization step must not reject the record as a duplicate
+        # of itself.
+        #
+        # Duplicate protection applies when another already-qualified
+        # canonical record exists for the same final identity.
+        #
+        # The database fingerprint remains authoritative.
+
+        final_route = route(
+            company=str(
+                lead.get("company", "")
+            ),
+            signal=str(
+                lead.get("signal", "")
+            ),
+            evidence=str(
+                lead.get("evidence", "")
+            ),
+        )
+
+        final_routes = potential_routes(
+            company=str(
+                lead.get("company", "")
+            ),
+            signal=str(
+                lead.get("signal", "")
+            ),
+            evidence=str(
+                lead.get("evidence", "")
+            ),
+        )
+
+        scoring = score_result(
+            company=str(
+                lead.get("company", "")
+            ),
+            signal=str(
+                lead.get("signal", "")
+            ),
+            evidence=str(
+                lead.get("evidence", "")
+            ),
+        )
+
+        lead["route"] = final_route
+        lead["potential_routes"] = final_routes
+        lead["lead_score"] = scoring[
+            "lead_score"
+        ]
+        lead["priority"] = scoring[
+            "priority"
+        ]
+
+        stored = self.db.update_payload(
+            fingerprint,
+            lead,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to finalize lead: {fingerprint}"
+            )
+
+        return {
+            "status": "finalized",
+            "approved": True,
+            "duplicate": False,
+            "fingerprint": fingerprint,
+            "route": final_route,
+            "lead": stored,
+        }
+
 
 def process_lead(
     source: str,
