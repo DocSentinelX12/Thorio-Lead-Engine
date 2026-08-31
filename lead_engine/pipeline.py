@@ -174,19 +174,37 @@ class LeadPipeline:
         if existing is not None:
 
             if self._status_is_qualified(existing):
-                payload = existing
-            else:
-                stored = self.db.update_payload(
-                    fingerprint,
-                    payload,
+                return {
+                    "status": "duplicate",
+                    "accepted": False,
+                    "duplicate": True,
+                    "fingerprint": fingerprint,
+                    "lead": existing,
+                    "potential_routes": possible_routes,
+                    "lead_score": existing.get(
+                        "lead_score",
+                        scoring["lead_score"],
+                    ),
+                    "priority": existing.get(
+                        "priority",
+                        scoring["priority"],
+                    ),
+                    "sync_status": None,
+                    "sync_error": None,
+                    "airtable_record": None,
+                }
+
+            stored = self.db.update_payload(
+                fingerprint,
+                payload,
+            )
+
+            if stored is None:
+                raise ValueError(
+                    f"Unable to refresh existing lead: {fingerprint}"
                 )
 
-                if stored is None:
-                    raise ValueError(
-                        f"Unable to refresh existing lead: {fingerprint}"
-                    )
-
-                payload = stored
+            payload = stored
 
         else:
             inserted = self.db.insert_if_new(payload)
