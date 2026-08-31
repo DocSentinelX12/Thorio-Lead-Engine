@@ -306,7 +306,7 @@ class LeadPipeline:
             "airtable_record": None,
         }
 
-def qualify(
+    def qualify(
         self,
         fingerprint: str,
         *,
