@@ -626,7 +626,7 @@ def _normalize_lead(
         )
     )
 
-        fields: Dict[str, Any] = {
+    fields: Dict[str, Any] = {
         "Lead": lead_name,
         "Company": company,
         "Signal": signal,
