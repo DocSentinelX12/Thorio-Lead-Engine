@@ -348,14 +348,30 @@ def _recommended_partner(
         for route in routes
     }
 
-    if {"Paxus", "Shiftr"} <= normalized:
+    has_paxus = "Paxus" in normalized
+    has_shiftr = "Shiftr" in normalized
+    has_thorio = "Thorio" in normalized
+
+    if has_paxus and has_shiftr and has_thorio:
+        return "Both + Thorio"
+
+    if has_paxus and has_shiftr:
         return "Both"
 
-    if "Shiftr" in normalized:
+    if has_shiftr and has_thorio:
+        return "Shiftr + Thorio"
+
+    if has_paxus and has_thorio:
+        return "Paxus + Thorio"
+
+    if has_shiftr:
         return "Shiftr"
 
-    if "Paxus" in normalized:
+    if has_paxus:
         return "Paxus"
+
+    if has_thorio:
+        return "Thorio"
 
     return "Review"
 
