@@ -344,25 +344,20 @@ def _recommended_partner(
         routes = []
 
     normalized = {
-        _text(route)
+        str(route).strip().lower()
         for route in routes
+        if route
     }
 
-    has_paxus = "Paxus" in normalized
-    has_shiftr = "Shiftr" in normalized
-    has_thorio = "Thorio" in normalized
+    has_paxus = "paxus" in normalized
+    has_shiftr = "shiftr" in normalized
 
-    if has_paxus and has_shiftr and has_thorio:
-        return "Both + Thorio"
-
+    # Thorio remains independently represented by
+    # "Applicable Routes". The legacy Recommended Partner
+    # field intentionally preserves the existing Paxus/Shiftr
+    # contract used throughout the system.
     if has_paxus and has_shiftr:
         return "Both"
-
-    if has_shiftr and has_thorio:
-        return "Shiftr + Thorio"
-
-    if has_paxus and has_thorio:
-        return "Paxus + Thorio"
 
     if has_shiftr:
         return "Shiftr"
@@ -370,7 +365,7 @@ def _recommended_partner(
     if has_paxus:
         return "Paxus"
 
-    if has_thorio:
+    if "thorio" in normalized:
         return "Thorio"
 
     return "Review"
