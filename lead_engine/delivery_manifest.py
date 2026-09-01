@@ -95,6 +95,15 @@ def build_delivery_manifest(
                     else []
                 )
 
+        if not candidate_routes:
+            manifest["Review"].append(
+                _review_lead(
+                    dict(lead),
+                    "unsupported_route",
+                )
+            )
+            continue
+
         seen_routes = set()
 
         for route in candidate_routes:
