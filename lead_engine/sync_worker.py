@@ -26,6 +26,8 @@ def sync_one(
         }
 
     try:
+        result = sync_lead_if_missing(lead)
+
         referral_result = None
 
         referral = lead_to_paxus_referral(lead)
@@ -41,7 +43,7 @@ def sync_one(
             or referral.commission_due
         ):
             referral_result = sync_paxus_referral_state(
-              referral
+                referral
             )
 
         return {
