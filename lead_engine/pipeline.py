@@ -957,13 +957,11 @@ class LeadPipeline:
 
         return stored
 
-    def record_paxus_client_payment(
+        def record_paxus_client_payment(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(
-            fingerprint
-        )
+        lead = self.db.get(fingerprint)
 
         if lead is None:
             raise ValueError(
@@ -980,12 +978,12 @@ class LeadPipeline:
 
         updated = merge_paxus_referral_into_lead(
             lead,
-            referral,
+            referral
         )
 
         stored = self.db.update_payload(
             fingerprint,
-            updated,
+            updated
         )
 
         if stored is None:
@@ -993,12 +991,7 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
-        self._sync_paxus_lifecycle(
-            stored
-        )
-
         return stored
-
 
 def process_lead(
     source: str,
