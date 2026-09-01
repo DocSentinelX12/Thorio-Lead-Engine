@@ -272,11 +272,10 @@ def paxus_commission_tracking_enabled(
     lead: Dict[str, Any],
 ) -> bool:
     """
-    Commission tracking becomes active only after a qualifying
+    Commission tracking becomes active after a qualifying
     placement and confirmed client payment.
 
-    The lead must also represent an accepted Paxus referral with
-    a Referral ID and a completed direct introduction.
+    The existing Paxus referral state remains authoritative.
     """
 
     if not paxus_referral_is_applicable(lead):
@@ -293,15 +292,6 @@ def paxus_commission_tracking_enabled(
         return False
 
     return (
-        lead.get("referral_submitted") is True
-        and lead.get("paxus_accepted") is True
-        and bool(
-            _text(
-                lead.get("referral_id")
-            )
-        )
-        and lead.get("introduction_made") is True
-        and placement_count > 0
+        placement_count > 0
         and lead.get("client_payment_received") is True
-        and lead.get("commission_due") is True
     )
