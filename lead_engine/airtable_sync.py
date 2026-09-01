@@ -1302,11 +1302,9 @@ def sync_lead_if_missing(
     """
     Upsert a canonical lead into Lead Radar.
 
-    Existing records are updated rather than treated as
-    permanently immutable. This is required so later
-    qualification, approval, routing, and referral state
-    can propagate without creating duplicate Lead Radar
-    records.
+    Existing records are preserved as the deduplication
+    result. New records are created when no matching
+    fingerprint exists.
     """
 
     if not isinstance(lead, dict):
@@ -1318,37 +1316,20 @@ def sync_lead_if_missing(
         lead.get("fingerprint")
     )
 
-    fields = _normalize_lead(
-        lead
-    )
-
     if fingerprint:
         existing = find_by_fingerprint(
             fingerprint
         )
 
         if existing:
-            record_id = existing[0].get(
-                "id"
-            )
-
-            if not record_id:
-                raise AirtableSyncError(
-                    "Existing Lead Radar record has no Airtable record ID."
-                )
-
-            result = update_master_record(
-                "lead_radar",
-                record_id,
-                fields,
-            )
-
             return {
                 "status": "already_exists",
-                "record": result[
-                    "records"
-                ][0],
+                "record": existing[0],
             }
+
+    fields = _normalize_lead(
+        lead
+    )
 
     result = create_master_record(
         "lead_radar",
