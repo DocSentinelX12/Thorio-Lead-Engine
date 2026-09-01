@@ -688,6 +688,8 @@ class LeadPipeline:
         if lead is None:
             raise ValueError(
                 f"Lead not found: {fingerprint}"
+            )
+            
     def _sync_paxus_lifecycle(
         self,
         lead: Dict[str, Any],
