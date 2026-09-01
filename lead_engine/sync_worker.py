@@ -1,7 +1,9 @@
 import json
 from typing import Any, Dict, List
-
-from .airtable_sync import sync_lead_if_missing
+from .airtable_sync import (
+    sync_lead_if_missing,
+    sync_paxus_referral_state,
+)
 from .database import LeadDB
 
 
@@ -9,10 +11,8 @@ def sync_one(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Synchronize one lead to Airtable.
-
-    Airtable failures are contained and returned as a failed
-    result so the local database remains the source of truth.
+    Synchronize one lead and any existing Paxus referral state
+    to Airtable.
     """
 
     if not isinstance(lead, dict):
@@ -26,6 +26,13 @@ def sync_one(
     try:
         result = sync_lead_if_missing(lead)
 
+        referral_result = None
+
+        if lead.get("referral_submitted") is True:
+            referral_result = sync_paxus_referral_state(
+                lead
+            )
+
         return {
             "status": (
                 "synced"
@@ -34,6 +41,11 @@ def sync_one(
             ),
             "lead": lead,
             "airtable_record": result.get("record"),
+            "referral_record": (
+                referral_result.get("record")
+                if referral_result
+                else None
+            ),
             "error": None,
         }
 
@@ -42,6 +54,7 @@ def sync_one(
             "status": "failed",
             "lead": lead,
             "airtable_record": None,
+            "referral_record": None,
             "error": str(exc),
         }
 
