@@ -5,6 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
+
 from .config import LeadEngineConfig
 
 
@@ -248,7 +249,9 @@ def _configured_tables() -> Dict[str, str]:
     config = LeadEngineConfig.from_environment()
     tables = config.airtable_tables
 
-    if not MASTER_TRACKER_TABLE_KEYS.issubset(tables.keys()):
+    if not MASTER_TRACKER_TABLE_KEYS.issubset(
+        tables.keys()
+    ):
         raise AirtableSyncError(
             "Airtable table configuration is incomplete."
         )
@@ -256,13 +259,17 @@ def _configured_tables() -> Dict[str, str]:
     return dict(tables)
 
 
-def _table_name(table_key: str) -> str:
+def _table_name(
+    table_key: str,
+) -> str:
     if table_key not in MASTER_TRACKER_TABLE_KEYS:
         raise AirtableSyncError(
             f"Unknown Airtable table key: {table_key}"
         )
 
-    table_name = _configured_tables().get(table_key)
+    table_name = _configured_tables().get(
+        table_key
+    )
 
     if not table_name:
         raise AirtableSyncError(
@@ -272,14 +279,171 @@ def _table_name(table_key: str) -> str:
     return table_name
 
 
-def _master_table_url(table_key: str) -> str:
-    table_name = _table_name(table_key)
+def _master_table_url(
+    table_key: str,
+) -> str:
+    table_name = _table_name(
+        table_key
+    )
 
     return (
         f"{AIRTABLE_API_URL}/"
         f"{BASE_ID}/"
         f"{urllib.parse.quote(table_name, safe='')}"
     )
+
+
+def find_master_records(
+    table_key: str,
+    field_name: str,
+    value: Any,
+) -> List[Dict[str, Any]]:
+    """
+    Find Airtable records in a configured master-tracker
+    table by an exact field value.
+
+    All Airtable pagination is followed so the lookup does
+    not silently stop at the first page.
+    """
+
+    if not _text(value):
+        return []
+
+    escaped = _text(value).replace(
+        "\\",
+        "\\\\",
+    ).replace(
+        '"',
+        '\\"',
+    )
+
+    escaped_field = _text(field_name)
+
+    if not escaped_field:
+        raise ValueError(
+            "Airtable lookup requires a field name."
+        )
+
+    formula = (
+        f'{{{escaped_field}}}="{escaped}"'
+    )
+
+    records: List[Dict[str, Any]] = []
+    offset: Optional[str] = None
+
+    while True:
+        params = {
+            "filterByFormula": formula,
+            "pageSize": "100",
+        }
+
+        if offset:
+            params["offset"] = offset
+
+        query = urllib.parse.urlencode(
+            params
+        )
+
+        result = _request(
+            "GET",
+            f"{_master_table_url(table_key)}?{query}",
+        )
+
+        page = result.get(
+            "records",
+            [],
+        )
+
+        if isinstance(page, list):
+            records.extend(
+                record
+                for record in page
+                if isinstance(record, dict)
+            )
+
+        offset = result.get(
+            "offset"
+        )
+
+        if not offset:
+            break
+
+    return records
+
+
+def create_master_record(
+    table_key: str,
+    fields: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Create one record in a configured master-tracker table.
+    """
+
+    if not isinstance(fields, dict):
+        raise ValueError(
+            "Airtable record fields must be a dictionary."
+        )
+
+    return _request(
+        "POST",
+        _master_table_url(table_key),
+        {
+            "records": [
+                {
+                    "fields": fields,
+                }
+            ]
+        },
+    )
+
+
+def update_master_record(
+    table_key: str,
+    record_id: str,
+    fields: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Update one existing Airtable record.
+
+    The return shape is normalized to contain a records list
+    so callers can use the same result contract for create
+    and update operations.
+    """
+
+    record_id = _text(record_id)
+
+    if not record_id:
+        raise ValueError(
+            "Airtable update requires a record ID."
+        )
+
+    if not isinstance(fields, dict):
+        raise ValueError(
+            "Airtable record fields must be a dictionary."
+        )
+
+    encoded_record_id = urllib.parse.quote(
+        record_id,
+        safe="",
+    )
+
+    result = _request(
+        "PATCH",
+        (
+            f"{_master_table_url(table_key)}/"
+            f"{encoded_record_id}"
+        ),
+        {
+            "fields": fields,
+        },
+    )
+
+    if "records" in result:
+        return result
+
+    return {
+        "records": [result],
+    }
 
 
 def sync_paxus_referral(
@@ -316,39 +480,63 @@ def sync_paxus_referral(
             "Referral requires a company."
         )
 
+    placement_count = 0
+
+    try:
+        placement_count = int(
+            referral.get(
+                "placement_count",
+                0,
+            )
+            or 0
+        )
+
+    except (TypeError, ValueError):
+        placement_count = 0
+
     fields = {
         "Referral": fingerprint,
         "Company": company,
+        "Opportunity": (
+            f"{fingerprint}:Paxus"
+        ),
         "Partner": "Paxus",
         "Submitted Date": (
-            referral.get("submitted_at")
-            if referral.get("referral_submitted")
+            _text(
+                referral.get(
+                    "submitted_at"
+                )
+            )[:10]
+            if referral.get(
+                "referral_submitted"
+            )
             else None
         ),
         "Partner Confirmed": bool(
             referral.get("paxus_accepted")
         ),
-        "Partner Confirmation / ID": _text(
-            referral.get("referral_id")
-        ) or None,
-        "Outcome": (
-            "Placed"
-            if int(
+        "Partner Confirmation / ID": (
+            _text(
                 referral.get(
-                    "placement_count",
-                    0,
+                    "referral_id"
                 )
-                or 0
-            ) > 0
+            )
+            or None
+        ),
+        "Outcome": (
+            "Won"
+            if placement_count > 0
             else (
                 "Accepted"
-                if referral.get("paxus_accepted")
+                if referral.get(
+                    "paxus_accepted"
+                )
                 else (
-                    "Submitted"
-                    if referral.get(
+                    "Pending"
+                    if not referral.get(
                         "referral_submitted"
                     )
-                    else "Pending"
+                    else "Accepted"
                 )
             )
         ),
@@ -366,8 +554,16 @@ def sync_paxus_referral(
             )
             else None
         ),
-        "Expected Payment Date": referral.get(
-            "expected_payment_date"
+        "Expected Payment Date": (
+            _text(
+                referral.get(
+                    "expected_payment_date"
+                )
+            )[:10]
+            if referral.get(
+                "expected_payment_date"
+            )
+            else None
         ),
         "Paid": bool(
             referral.get("paid")
@@ -375,8 +571,16 @@ def sync_paxus_referral(
         "Actual Payment": referral.get(
             "actual_payment"
         ),
-        "Payment Date": referral.get(
-            "payment_date"
+        "Payment Date": (
+            _text(
+                referral.get(
+                    "payment_date"
+                )
+            )[:10]
+            if referral.get(
+                "payment_date"
+            )
+            else None
         ),
         "Notes": _text(
             referral.get("notes")
@@ -390,7 +594,9 @@ def sync_paxus_referral(
     )
 
     if existing:
-        record_id = existing[0].get("id")
+        record_id = existing[0].get(
+            "id"
+        )
 
         if not record_id:
             raise AirtableSyncError(
@@ -400,20 +606,27 @@ def sync_paxus_referral(
         result = update_master_record(
             "referrals",
             record_id,
-            fields,
+            {
+                key: value
+                for key, value in fields.items()
+                if value is not None
+            },
         )
 
         return {
             "status": "updated",
-            "record": result.get(
-                "records",
-                [result],
-            )[0],
+            "record": result[
+                "records"
+            ][0],
         }
 
     result = create_master_record(
         "referrals",
-        fields,
+        {
+            key: value
+            for key, value in fields.items()
+            if value is not None
+        },
     )
 
     records = result.get(
@@ -435,7 +648,9 @@ def sync_paxus_referral_state(
     referral: Any,
 ) -> Dict[str, Any]:
     if referral is None:
-        raise ValueError("Referral state is required.")
+        raise ValueError(
+            "Referral state is required."
+        )
 
     return sync_paxus_referral(
         referral.__dict__
@@ -449,7 +664,10 @@ def _source_platform(
         lead.get("source")
     ).lower()
 
-    if source in {"x", "twitter"}:
+    if source in {
+        "x",
+        "twitter",
+    }:
         return "X"
 
     if source == "linkedin":
@@ -480,8 +698,12 @@ def _signal_type(
 ) -> str:
     text = " ".join(
         [
-            _text(lead.get("signal")),
-            _text(lead.get("evidence")),
+            _text(
+                lead.get("signal")
+            ),
+            _text(
+                lead.get("evidence")
+            ),
         ]
     ).lower()
 
@@ -546,27 +768,14 @@ def _signal_type(
 def _recommended_partner(
     lead: Dict[str, Any],
 ) -> str:
-    routes = lead.get("potential_routes")
+    routes = _normalize_routes(
+        lead.get("potential_routes")
+    )
 
-    if isinstance(routes, str):
-        routes = [routes]
+    has_paxus = "Paxus" in routes
+    has_shiftr = "Shiftr" in routes
+    has_thorio = "Thorio" in routes
 
-    if not isinstance(routes, list):
-        routes = []
-
-    normalized = {
-        str(route).strip().lower()
-        for route in routes
-        if route
-    }
-
-    has_paxus = "paxus" in normalized
-    has_shiftr = "shiftr" in normalized
-
-    # Thorio remains independently represented by
-    # "Applicable Routes". The legacy Recommended Partner
-    # field intentionally preserves the existing Paxus/Shiftr
-    # contract used throughout the system.
     if has_paxus and has_shiftr:
         return "Both"
 
@@ -576,7 +785,7 @@ def _recommended_partner(
     if has_paxus:
         return "Paxus"
 
-    if "thorio" in normalized:
+    if has_thorio:
         return "Thorio"
 
     return "Review"
@@ -596,7 +805,9 @@ def _priority(
     }:
         return value
 
-    score = lead.get("lead_score")
+    score = lead.get(
+        "lead_score"
+    )
 
     try:
         score = float(score)
@@ -616,7 +827,9 @@ def _priority(
 def _review_status(
     lead: Dict[str, Any],
 ) -> str:
-    qualified = lead.get("qualified")
+    qualified = lead.get(
+        "qualified"
+    )
 
     if qualified is True:
         return "Qualified"
@@ -718,7 +931,9 @@ def _thorio_plan(
     lead: Dict[str, Any],
 ) -> Optional[str]:
     value = _text(
-        lead.get("thorio_plan_recommendation")
+        lead.get(
+            "thorio_plan_recommendation"
+        )
     )
 
     allowed = {
@@ -757,25 +972,18 @@ def _work_queue(
     if value in allowed:
         return value
 
-    routes = lead.get("potential_routes")
+    routes = _normalize_routes(
+        lead.get("potential_routes")
+    )
 
-    if isinstance(routes, str):
-        routes = [routes]
+    if "Shiftr" in routes:
+        return "🟣 Shiftr Verification"
 
-    if isinstance(routes, list):
-        routes = {
-            _text(route)
-            for route in routes
-        }
+    if "Paxus" in routes:
+        return "🔵 Paxus Verification"
 
-        if "Shiftr" in routes:
-            return "🟣 Shiftr Verification"
-
-        if "Paxus" in routes:
-            return "🔵 Paxus Verification"
-
-        if "Thorio" in routes:
-            return "🟦 Thorio Sales"
+    if "Thorio" in routes:
+        return "🟦 Thorio Sales"
 
     return "🔎 Research"
 
@@ -813,7 +1021,10 @@ def _normalize_routes(
     if isinstance(value, str):
         value = [value]
 
-    if not isinstance(value, list):
+    if not isinstance(
+        value,
+        (list, tuple, set),
+    ):
         return []
 
     allowed = {
@@ -822,16 +1033,35 @@ def _normalize_routes(
         "Thorio",
     }
 
-    return [
-        _text(route)
-        for route in value
-        if _text(route) in allowed
-    ]
+    result = []
+
+    for route in value:
+        normalized = _text(route)
+
+        if (
+            normalized in allowed
+            and normalized not in result
+        ):
+            result.append(
+                normalized
+            )
+
+    return result
 
 
 def _normalize_lead(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """
+    Map local canonical lead state only to fields that
+    actually exist in the inspected Lead Radar schema.
+
+    Detailed Paxus lifecycle state remains local/canonical
+    and is synchronized to the dedicated Referrals,
+    Opportunities, and Commissions tables rather than
+    inventing Paxus fields in Lead Radar.
+    """
+
     company = _text(
         lead.get("company")
     )
@@ -884,7 +1114,22 @@ def _normalize_lead(
             lead
         ),
         "Qualified Lead?": bool(
-            lead.get("qualified", False)
+            lead.get(
+                "qualified",
+                False,
+            )
+        ),
+        "Contact Ready": bool(
+            lead.get(
+                "contact_ready",
+                False,
+            )
+        ),
+        "Referral Submitted?": bool(
+            lead.get(
+                "referral_submitted",
+                False,
+            )
         ),
         "Budget Confirmed": bool(
             lead.get(
@@ -918,18 +1163,6 @@ def _normalize_lead(
                 "reason_not_qualified"
             )
         ),
-        "Contact Ready": bool(
-            lead.get(
-                "contact_ready",
-                False,
-            )
-        ),
-        "Referral Submitted?": bool(
-            lead.get(
-                "referral_submitted",
-                False,
-            )
-        ),
         "Thorio Outreach Ready": bool(
             lead.get(
                 "thorio_outreach_ready",
@@ -948,200 +1181,37 @@ def _normalize_lead(
         "Evidence Status": _evidence_status(
             lead
         ),
-        "Work Queue": _work_queue(
-            lead
-        ),
         "Outreach Status": _outreach_status(
             lead
         ),
     }
-
-    # ---------------------------------------------------------
-    # PAXUS REFERRAL LIFECYCLE
-    # ---------------------------------------------------------
-    # These fields are persisted only as state.
-    # They do NOT qualify a lead, bypass deduplication,
-    # or authorize partner delivery.
-    # ---------------------------------------------------------
-
-    paxus_fields = {
-        "Paxus Eligible": bool(
-            lead.get(
-                "paxus_eligible",
-                False,
-            )
-        ),
-        "Paxus Outreach Ready": bool(
-            lead.get(
-                "paxus_outreach_ready",
-                False,
-            )
-        ),
-        "Paxus Contacted": bool(
-            lead.get(
-                "paxus_contacted",
-                False,
-            )
-        ),
-        "Paxus Contact Responded": bool(
-            lead.get(
-                "paxus_contact_responded",
-                False,
-            )
-        ),
-        "Paxus Referral Interest": bool(
-            lead.get(
-                "paxus_referral_interest",
-                False,
-            )
-        ),
-        "Paxus Consent Confirmed": bool(
-            lead.get(
-                "contact_consent",
-                False,
-            )
-        ),
-        "Paxus Referral Submitted": bool(
-            lead.get(
-                "referral_submitted",
-                False,
-            )
-        ),
-        "Paxus Referral Accepted": bool(
-            lead.get(
-                "paxus_accepted",
-                False,
-            )
-        ),
-        "Paxus Introduction Made": bool(
-            lead.get(
-                "introduction_made",
-                False,
-            )
-        ),
-        "Paxus Recruiting Active": (
-            _text(
-                lead.get(
-                    "recruiting_status",
-                    "not_started",
-                )
-            ).lower()
-            not in {
-                "",
-                "not_started",
-                "placed",
-            }
-        ),
-        "Paxus Placement Made": (
-            int(
-                lead.get(
-                    "placement_count",
-                    0,
-                )
-                or 0
-            )
-            > 0
-        ),
-        "Paxus Client Paid": bool(
-            lead.get(
-                "client_payment_received",
-                False,
-            )
-        ),
-        "Paxus Commission Due": bool(
-            lead.get(
-                "commission_due",
-                False,
-            )
-        ),
-                "Paxus Eligible": bool(
-            lead.get("paxus_eligible")
-        ),
-        "Paxus Outreach Ready": bool(
-            lead.get("paxus_outreach_ready")
-        ),
-        "Paxus Contacted": bool(
-            lead.get("paxus_contacted")
-        ),
-        "Paxus Referral Interest": bool(
-            lead.get("paxus_referral_interest")
-        ),
-        "Paxus Referral Ready": bool(
-            lead.get("paxus_referral_ready")
-        ),
-        "Paxus Referral Submitted": bool(
-            lead.get("referral_submitted")
-        ),
-        "Paxus Accepted": bool(
-            lead.get("paxus_accepted")
-        ),
-        "Paxus Referral ID": _text(
-            lead.get("referral_id")
-        ) or None,
-        "Paxus Referral Status": _text(
-            lead.get("referral_status")
-        ) or None,
-        "Paxus Placement Count": lead.get(
-            "placement_count"
-        ),
-        "Paxus Placement Value": lead.get(
-            "placement_value"
-        ),
-        "Paxus Expected Commission": lead.get(
-            "expected_commission"
-        ),
-        "Paxus Client Payment Received": bool(
-            lead.get("client_payment_received")
-        ),
-        "Paxus Paid": bool(
-            lead.get("paid")
-        ),
-    }
-
-    for field_name, value in paxus_fields.items():
-        fields[field_name] = value
-
-    paxus_text_fields = {
-        "Paxus Referral Status": "recruiting_status",
-        "Paxus Referral ID": "referral_id",
-        "Paxus Contact Name": "contact_name",
-        "Paxus Contact Title": "contact_title",
-        "Paxus Contact Email": "contact_email",
-        "Paxus Referral Submitted Date": "submitted_at",
-        "Paxus Acceptance Date": "accepted_at",
-        "Paxus Introduction Deadline": "introduction_deadline",
-        "Paxus Introduction Date": "introduced_at",
-        "Paxus Referral Notes": "notes",
-    }
-
-    for field_name, lead_key in paxus_text_fields.items():
-        value = _text(
-            lead.get(lead_key)
-        )
-
-        if value:
-            fields[field_name] = value
 
     discovered_at = _text(
         lead.get("discovered_at")
     )
 
     if discovered_at:
-        fields["Discovered Date"] = discovered_at
+        fields["Discovered Date"] = (
+            discovered_at[:10]
+        )
 
     contact_method = _contact_method(
         lead
     )
 
     if contact_method:
-        fields["Contact Method"] = contact_method
+        fields["Contact Method"] = (
+            contact_method
+        )
 
     thorio_fit = _thorio_fit(
         lead
     )
 
     if thorio_fit:
-        fields["Thorio Fit"] = thorio_fit
+        fields["Thorio Fit"] = (
+            thorio_fit
+        )
 
     thorio_plan = _thorio_plan(
         lead
@@ -1152,19 +1222,39 @@ def _normalize_lead(
             "Thorio Plan Recommendation"
         ] = thorio_plan
 
-    notes = _text(
-        lead.get("notes")
+    work_queue = _work_queue(
+        lead
     )
 
-    if notes:
-        fields["Notes"] = notes
+    if work_queue:
+        fields["Work Queue"] = (
+            work_queue
+        )
+
+    referral_id = _text(
+        lead.get("referral_id")
+    )
+
+    if referral_id:
+        fields[
+            "Referral / Opportunity ID"
+        ] = referral_id
 
     routes = _normalize_routes(
         lead.get("potential_routes")
     )
 
     if routes:
-        fields["Applicable Routes"] = routes
+        fields["Applicable Routes"] = (
+            routes
+        )
+
+    notes = _text(
+        lead.get("notes")
+    )
+
+    if notes:
+        fields["Notes"] = notes
 
     return {
         key: value
@@ -1199,41 +1289,37 @@ def find_by_fingerprint(
     if not fingerprint:
         return []
 
-    escaped = fingerprint.replace(
-        "\\",
-        "\\\\",
-    ).replace(
-        '"',
-        '\\"',
-    )
-
-    formula = (
-        f'{{Duplicate Key}}="{escaped}"'
-    )
-
-    params = urllib.parse.urlencode(
-        {
-            "filterByFormula": formula,
-            "pageSize": "10",
-        }
-    )
-
-    result = _request(
-        "GET",
-        f"{_table_url()}?{params}",
-    )
-
-    return result.get(
-        "records",
-        [],
+    return find_master_records(
+        "lead_radar",
+        "Duplicate Key",
+        fingerprint,
     )
 
 
 def sync_lead_if_missing(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """
+    Upsert a canonical lead into Lead Radar.
+
+    Existing records are updated rather than treated as
+    permanently immutable. This is required so later
+    qualification, approval, routing, and referral state
+    can propagate without creating duplicate Lead Radar
+    records.
+    """
+
+    if not isinstance(lead, dict):
+        raise ValueError(
+            "Lead payload must be a dictionary."
+        )
+
     fingerprint = _text(
         lead.get("fingerprint")
+    )
+
+    fields = _normalize_lead(
+        lead
     )
 
     if fingerprint:
@@ -1242,13 +1328,31 @@ def sync_lead_if_missing(
         )
 
         if existing:
+            record_id = existing[0].get(
+                "id"
+            )
+
+            if not record_id:
+                raise AirtableSyncError(
+                    "Existing Lead Radar record has no Airtable record ID."
+                )
+
+            result = update_master_record(
+                "lead_radar",
+                record_id,
+                fields,
+            )
+
             return {
                 "status": "already_exists",
-                "record": existing[0],
+                "record": result[
+                    "records"
+                ][0],
             }
 
-    result = push_lead(
-        lead
+    result = create_master_record(
+        "lead_radar",
+        fields,
     )
 
     records = result.get(
@@ -1309,4 +1413,3 @@ if __name__ == "__main__":
     print(
         "Airtable sync module loaded."
     )
-    
