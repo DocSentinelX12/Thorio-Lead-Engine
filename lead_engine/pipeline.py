@@ -749,9 +749,7 @@ class LeadPipeline:
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(
-            fingerprint
-        )
+        lead = self.db.get(fingerprint)
 
         if lead is None:
             raise ValueError(
@@ -768,12 +766,12 @@ class LeadPipeline:
 
         updated = merge_paxus_referral_into_lead(
             lead,
-            referral,
+            referral
         )
 
         stored = self.db.update_payload(
             fingerprint,
-            updated,
+            updated
         )
 
         if stored is None:
@@ -781,19 +779,13 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
-        self._sync_paxus_lifecycle(
-            stored
-        )
-
         return stored
 
     def submit_paxus_referral(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(
-            fingerprint
-        )
+        lead = self.db.get(fingerprint)
 
         if lead is None:
             raise ValueError(
@@ -810,22 +802,18 @@ class LeadPipeline:
 
         updated = merge_paxus_referral_into_lead(
             lead,
-            referral,
+            referral
         )
 
         stored = self.db.update_payload(
             fingerprint,
-            updated,
+            updated
         )
 
         if stored is None:
             raise ValueError(
                 f"Unable to update lead: {fingerprint}"
             )
-
-        self._sync_paxus_lifecycle(
-            stored
-        )
 
         return stored
 
@@ -834,9 +822,7 @@ class LeadPipeline:
         fingerprint: str,
         referral_id: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(
-            fingerprint
-        )
+        lead = self.db.get(fingerprint)
 
         if lead is None:
             raise ValueError(
@@ -849,17 +835,17 @@ class LeadPipeline:
 
         referral = accept_referral(
             referral,
-            referral_id,
+            referral_id
         )
 
         updated = merge_paxus_referral_into_lead(
             lead,
-            referral,
+            referral
         )
 
         stored = self.db.update_payload(
             fingerprint,
-            updated,
+            updated
         )
 
         if stored is None:
@@ -867,19 +853,13 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
-        self._sync_paxus_lifecycle(
-            stored
-        )
-
         return stored
 
     def mark_paxus_introduction_made(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(
-            fingerprint
-        )
+        lead = self.db.get(fingerprint)
 
         if lead is None:
             raise ValueError(
@@ -896,12 +876,12 @@ class LeadPipeline:
 
         updated = merge_paxus_referral_into_lead(
             lead,
-            referral,
+            referral
         )
 
         stored = self.db.update_payload(
             fingerprint,
-            updated,
+            updated
         )
 
         if stored is None:
@@ -909,19 +889,13 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
-        self._sync_paxus_lifecycle(
-            stored
-        )
-
         return stored
 
     def record_paxus_placement(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(
-            fingerprint
-        )
+        lead = self.db.get(fingerprint)
 
         if lead is None:
             raise ValueError(
@@ -938,22 +912,18 @@ class LeadPipeline:
 
         updated = merge_paxus_referral_into_lead(
             lead,
-            referral,
+            referral
         )
 
         stored = self.db.update_payload(
             fingerprint,
-            updated,
+            updated
         )
 
         if stored is None:
             raise ValueError(
                 f"Unable to update lead: {fingerprint}"
             )
-
-        self._sync_paxus_lifecycle(
-            stored
-        )
 
         return stored
 
