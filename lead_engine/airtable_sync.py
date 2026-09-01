@@ -5,6 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
+from .config import LeadEngineConfig
 
 
 AIRTABLE_API_URL = "https://api.airtable.com/v0"
@@ -224,11 +225,54 @@ def _table_url() -> str:
     )
 
 
-def _text(value: Any) -> str:
-    if value is None:
-        return ""
+MASTER_TRACKER_TABLE_KEYS = {
+    "lead_radar",
+    "companies",
+    "opportunities",
+    "outreach",
+    "referrals",
+    "followups",
+    "commissions",
+    "lead_sources",
+}
 
-    return str(value).strip()
+
+def _configured_tables() -> Dict[str, str]:
+    config = LeadEngineConfig.from_environment()
+    tables = config.airtable_tables
+
+    if not MASTER_TRACKER_TABLE_KEYS.issubset(tables.keys()):
+        raise AirtableSyncError(
+            "Airtable table configuration is incomplete."
+        )
+
+    return dict(tables)
+
+
+def _table_name(table_key: str) -> str:
+    if table_key not in MASTER_TRACKER_TABLE_KEYS:
+        raise AirtableSyncError(
+            f"Unknown Airtable table key: {table_key}"
+        )
+
+    table_name = _configured_tables().get(table_key)
+
+    if not table_name:
+        raise AirtableSyncError(
+            f"No Airtable table configured for: {table_key}"
+        )
+
+    return table_name
+
+
+def _master_table_url(table_key: str) -> str:
+    table_name = _table_name(table_key)
+
+    return (
+        f"{AIRTABLE_API_URL}/"
+        f"{BASE_ID}/"
+        f"{urllib.parse.quote(table_name, safe='')}"
+    )
 
 
 def _source_platform(
