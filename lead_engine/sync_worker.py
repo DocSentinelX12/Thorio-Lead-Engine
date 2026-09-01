@@ -6,8 +6,7 @@ from .airtable_sync import (
     sync_paxus_referral_state,
 )
 from .database import LeadDB
-from .paxus_referral_adapter import
-lead_to_paxus_referral
+from .paxus_referral_adapter import lead_to_paxus_referral
 
 
 def sync_one(
