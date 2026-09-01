@@ -964,7 +964,7 @@ def _normalize_lead(
     # or authorize partner delivery.
     # ---------------------------------------------------------
 
-    paxus_fields = {
+        paxus_fields = {
         "Paxus Eligible": bool(
             lead.get(
                 "paxus_eligible",
@@ -997,49 +997,60 @@ def _normalize_lead(
         ),
         "Paxus Consent Confirmed": bool(
             lead.get(
-                "paxus_consent_confirmed",
+                "contact_consent",
                 False,
             )
         ),
         "Paxus Referral Submitted": bool(
             lead.get(
-                "paxus_referral_submitted",
+                "referral_submitted",
                 False,
             )
         ),
         "Paxus Referral Accepted": bool(
             lead.get(
-                "paxus_referral_accepted",
+                "paxus_accepted",
                 False,
             )
         ),
         "Paxus Introduction Made": bool(
             lead.get(
-                "paxus_introduction_made",
+                "introduction_made",
                 False,
             )
         ),
-        "Paxus Recruiting Active": bool(
-            lead.get(
-                "paxus_recruiting_active",
-                False,
-            )
+        "Paxus Recruiting Active": (
+            _text(
+                lead.get(
+                    "recruiting_status",
+                    "not_started",
+                )
+            ).lower()
+            not in {
+                "",
+                "not_started",
+                "placed",
+            }
         ),
-        "Paxus Placement Made": bool(
-            lead.get(
-                "paxus_placement_made",
-                False,
+        "Paxus Placement Made": (
+            int(
+                lead.get(
+                    "placement_count",
+                    0,
+                )
+                or 0
             )
+            > 0
         ),
         "Paxus Client Paid": bool(
             lead.get(
-                "paxus_client_paid",
+                "client_payment_received",
                 False,
             )
         ),
         "Paxus Commission Due": bool(
             lead.get(
-                "paxus_commission_due",
+                "commission_due",
                 False,
             )
         ),
@@ -1049,19 +1060,16 @@ def _normalize_lead(
         fields[field_name] = value
 
     paxus_text_fields = {
-        "Paxus Referral Status": "paxus_referral_status",
-        "Paxus Referral ID": "paxus_referral_id",
-        "Paxus Contact Name": "paxus_contact_name",
-        "Paxus Contact Title": "paxus_contact_title",
-        "Paxus Contact Email": "paxus_contact_email",
-        "Paxus Consent Date": "paxus_consent_date",
-        "Paxus Referral Submitted Date": "paxus_referral_submitted_date",
-        "Paxus Acceptance Date": "paxus_acceptance_date",
-        "Paxus Introduction Date": "paxus_introduction_date",
-        "Paxus Placement Date": "paxus_placement_date",
-        "Paxus Client Payment Date": "paxus_client_payment_date",
-        "Paxus Commission Date": "paxus_commission_date",
-        "Paxus Referral Notes": "paxus_referral_notes",
+        "Paxus Referral Status": "recruiting_status",
+        "Paxus Referral ID": "referral_id",
+        "Paxus Contact Name": "contact_name",
+        "Paxus Contact Title": "contact_title",
+        "Paxus Contact Email": "contact_email",
+        "Paxus Referral Submitted Date": "submitted_at",
+        "Paxus Acceptance Date": "accepted_at",
+        "Paxus Introduction Deadline": "introduction_deadline",
+        "Paxus Introduction Date": "introduced_at",
+        "Paxus Referral Notes": "notes",
     }
 
     for field_name, lead_key in paxus_text_fields.items():
