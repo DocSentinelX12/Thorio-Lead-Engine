@@ -1,10 +1,12 @@
 import json
 from typing import Any, Dict, List
+
 from .airtable_sync import (
     sync_lead_if_missing,
     sync_paxus_referral_state,
 )
 from .database import LeadDB
+from .paxus_referral_adapter import lead_to_paxus_referral
 
 
 def sync_one(
@@ -29,9 +31,11 @@ def sync_one(
         referral_result = None
 
         if lead.get("referral_submitted") is True:
-            referral_result = sync_paxus_referral_state(
-                lead
-            )
+    referral = lead_to_paxus_referral(lead)
+
+    referral_result = sync_paxus_referral_state(
+        referral
+    )
 
         return {
             "status": (
