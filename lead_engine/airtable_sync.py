@@ -282,6 +282,155 @@ def _master_table_url(table_key: str) -> str:
     )
 
 
+def sync_paxus_referral(
+    referral: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Create or update a Paxus referral in the Airtable
+    Referrals table.
+
+    This function only persists referral state.
+    It does not qualify, approve, route, or submit referrals.
+    """
+
+    if not isinstance(referral, dict):
+        raise ValueError(
+            "Referral payload must be a dictionary."
+        )
+
+    fingerprint = _text(
+        referral.get("fingerprint")
+    )
+
+    company = _text(
+        referral.get("company")
+    )
+
+    if not fingerprint:
+        raise ValueError(
+            "Referral requires a fingerprint."
+        )
+
+    if not company:
+        raise ValueError(
+            "Referral requires a company."
+        )
+
+    fields = {
+        "Referral": fingerprint,
+        "Company": company,
+        "Partner": "Paxus",
+        "Submitted Date": (
+            referral.get("submitted_at")
+            if referral.get("referral_submitted")
+            else None
+        ),
+        "Partner Confirmed": bool(
+            referral.get("paxus_accepted")
+        ),
+        "Partner Confirmation / ID": _text(
+            referral.get("referral_id")
+        ) or None,
+        "Outcome": (
+            "Placed"
+            if int(
+                referral.get(
+                    "placement_count",
+                    0,
+                )
+                or 0
+            ) > 0
+            else (
+                "Accepted"
+                if referral.get("paxus_accepted")
+                else (
+                    "Submitted"
+                    if referral.get(
+                        "referral_submitted"
+                    )
+                    else "Pending"
+                )
+            )
+        ),
+        "Deal / Placement Value": referral.get(
+            "placement_value"
+        ),
+        "Commission Rate": 0.25,
+        "Expected Commission": referral.get(
+            "expected_commission"
+        ),
+        "Payment Trigger": (
+            "Client payment received"
+            if referral.get(
+                "client_payment_received"
+            )
+            else None
+        ),
+        "Expected Payment Date": referral.get(
+            "expected_payment_date"
+        ),
+        "Paid": bool(
+            referral.get("paid")
+        ),
+        "Actual Payment": referral.get(
+            "actual_payment"
+        ),
+        "Payment Date": referral.get(
+            "payment_date"
+        ),
+        "Notes": _text(
+            referral.get("notes")
+        ) or None,
+    }
+
+    existing = find_master_records(
+        "referrals",
+        "Referral",
+        fingerprint,
+    )
+
+    if existing:
+        record_id = existing[0].get("id")
+
+        if not record_id:
+            raise AirtableSyncError(
+                "Existing referral record has no Airtable record ID."
+            )
+
+        result = update_master_record(
+            "referrals",
+            record_id,
+            fields,
+        )
+
+        return {
+            "status": "updated",
+            "record": result.get(
+                "records",
+                [result],
+            )[0],
+        }
+
+    result = create_master_record(
+        "referrals",
+        fields,
+    )
+
+    records = result.get(
+        "records",
+        [],
+    )
+
+    return {
+        "status": "created",
+        "record": (
+            records[0]
+            if records
+            else None
+        ),
+    }
+
+
 def _source_platform(
     lead: Dict[str, Any],
 ) -> str:
