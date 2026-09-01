@@ -20,8 +20,9 @@ def build_partner_exports(
     1. pass the final delivery-quality gate, and
     2. have explicit human approval for the specific partner route.
 
+    A lead may be exported to multiple approved partner routes.
     Unsupported, unqualified, pending, rejected, or otherwise
-    unauthorized leads are never exported.
+    unauthorized routes are never exported.
     """
 
     exports = {
@@ -30,30 +31,70 @@ def build_partner_exports(
     }
 
     for lead in leads:
-        route = str(
-            lead.get("route", "")
-            or ""
-        ).strip()
+        approved_routes = lead.get("approved_routes")
 
-        if route not in PARTNER_ROUTES:
-            continue
+        if isinstance(approved_routes, str):
+            approved_routes = [approved_routes]
 
-        if not delivery_authorized(
-            lead,
-            route,
-        ):
-            continue
+        if isinstance(approved_routes, (list, tuple, set)):
+            candidate_routes = [
+                str(route).strip()
+                for route in approved_routes
+                if str(route).strip() in PARTNER_ROUTES
+            ]
+        else:
+            routes = lead.get("routes")
 
-        delivery_result = prepare_for_delivery(lead)
+            if isinstance(routes, str):
+                routes = [routes]
 
-        if not delivery_result["approved"]:
-            continue
+            if isinstance(routes, (list, tuple, set)):
+                candidate_routes = [
+                    str(route).strip()
+                    for route in routes
+                    if str(route).strip() in PARTNER_ROUTES
+                ]
+            else:
+                route = str(
+                    lead.get("route", "")
+                    or ""
+                ).strip()
 
-        exports[route].append(
-            prepare_partner_lead(
-                delivery_result["lead"]
+                candidate_routes = (
+                    [route]
+                    if route in PARTNER_ROUTES
+                    else []
+                )
+
+        seen_routes = set()
+
+        for route in candidate_routes:
+            if route in seen_routes:
+                continue
+
+            seen_routes.add(route)
+
+            if not delivery_authorized(
+                lead,
+                route,
+            ):
+                continue
+
+            route_lead = dict(lead)
+            route_lead["route"] = route
+
+            delivery_result = prepare_for_delivery(
+                route_lead
             )
-        )
+
+            if not delivery_result["approved"]:
+                continue
+
+            exports[route].append(
+                prepare_partner_lead(
+                    delivery_result["lead"]
+                )
+            )
 
     return exports
 
