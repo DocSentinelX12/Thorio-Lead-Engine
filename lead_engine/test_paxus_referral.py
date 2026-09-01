@@ -163,7 +163,7 @@ def test_client_payment_requires_placement():
         record_client_payment(referral)
 
 
-def test_three_placement_limit_is_enforced():
+def test_multiple_placements_are_allowed():
     referral = accept_referral(
         submit_referral(
             mark_warm_referral_ready(
@@ -178,9 +178,10 @@ def test_three_placement_limit_is_enforced():
     referral = record_placement(referral)
     referral = record_placement(referral)
     referral = record_placement(referral)
+    referral = record_placement(referral)
 
-    assert referral.placement_count == 3
-
+    assert referral.placement_count == 4
+    
     with pytest.raises(PaxusReferralError):
         record_placement(referral)
 
