@@ -1054,6 +1054,48 @@ def _normalize_lead(
                 False,
             )
         ),
+                "Paxus Eligible": bool(
+            lead.get("paxus_eligible")
+        ),
+        "Paxus Outreach Ready": bool(
+            lead.get("paxus_outreach_ready")
+        ),
+        "Paxus Contacted": bool(
+            lead.get("paxus_contacted")
+        ),
+        "Paxus Referral Interest": bool(
+            lead.get("paxus_referral_interest")
+        ),
+        "Paxus Referral Ready": bool(
+            lead.get("paxus_referral_ready")
+        ),
+        "Paxus Referral Submitted": bool(
+            lead.get("referral_submitted")
+        ),
+        "Paxus Accepted": bool(
+            lead.get("paxus_accepted")
+        ),
+        "Paxus Referral ID": _text(
+            lead.get("referral_id")
+        ) or None,
+        "Paxus Referral Status": _text(
+            lead.get("referral_status")
+        ) or None,
+        "Paxus Placement Count": lead.get(
+            "placement_count"
+        ),
+        "Paxus Placement Value": lead.get(
+            "placement_value"
+        ),
+        "Paxus Expected Commission": lead.get(
+            "expected_commission"
+        ),
+        "Paxus Client Payment Received": bool(
+            lead.get("client_payment_received")
+        ),
+        "Paxus Paid": bool(
+            lead.get("paid")
+        ),
     }
 
     for field_name, value in paxus_fields.items():
