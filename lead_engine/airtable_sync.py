@@ -431,6 +431,276 @@ def sync_paxus_referral(
     }
 
 
+def sync_paxus_referral_state(
+    referral: Any,
+) -> Dict[str, Any]:
+    """
+    Persist a PaxusReferral lifecycle state to the Airtable
+    Referrals table.
+
+    This function performs persistence only. It does not alter
+    referral state, approve referrals, submit referrals, create
+    introductions, record placements, or trigger commissions.
+    """
+    if referral is None:
+        raise ValueError(
+            "Referral state is required."
+        )
+
+    referral_payload = {
+        "fingerprint": _text(
+            getattr(
+                referral,
+                "fingerprint",
+                None,
+            )
+        ),
+        "company": _text(
+            getattr(
+                referral,
+                "company",
+                None,
+            )
+        ),
+        "contact_name": _text(
+            getattr(
+                referral,
+                "contact_name",
+                None,
+            )
+        ) or None,
+        "contact_email": _text(
+            getattr(
+                referral,
+                "contact_email",
+                None,
+            )
+        ) or None,
+        "contact_communicated": bool(
+            getattr(
+                referral,
+                "contact_communicated",
+                False,
+            )
+        ),
+        "contact_consent": bool(
+            getattr(
+                referral,
+                "contact_consent",
+                False,
+            )
+        ),
+        "warm_referral_ready": bool(
+            getattr(
+                referral,
+                "warm_referral_ready",
+                False,
+            )
+        ),
+        "referral_submitted": bool(
+            getattr(
+                referral,
+                "referral_submitted",
+                False,
+            )
+        ),
+        "paxus_accepted": bool(
+            getattr(
+                referral,
+                "paxus_accepted",
+                False,
+            )
+        ),
+        "referral_id": _text(
+            getattr(
+                referral,
+                "referral_id",
+                None,
+            )
+        ) or None,
+        "introduction_made": bool(
+            getattr(
+                referral,
+                "introduction_made",
+                False,
+            )
+        ),
+        "recruiting_status": _text(
+            getattr(
+                referral,
+                "recruiting_status",
+                None,
+            )
+        ) or "not_started",
+        "placement_count": int(
+            getattr(
+                referral,
+                "placement_count",
+                0,
+            ) or 0
+        ),
+        "client_payment_received": bool(
+            getattr(
+                referral,
+                "client_payment_received",
+                False,
+            )
+        ),
+        "commission_due": bool(
+            getattr(
+                referral,
+                "commission_due",
+                False,
+            )
+def sync_paxus_referral_state(
+    referral: Any,
+) -> Dict[str, Any]:
+    """
+    Persist a PaxusReferral lifecycle state to the Airtable
+    Referrals table.
+
+    This function performs persistence only. It does not alter
+    referral state, approve referrals, submit referrals, create
+    introductions, record placements, or trigger commissions.
+    """
+    if referral is None:
+        raise ValueError(
+            "Referral state is required."
+        )
+
+    referral_payload = {
+        "fingerprint": _text(
+            getattr(
+                referral,
+                "fingerprint",
+                None,
+            )
+        ),
+        "company": _text(
+            getattr(
+                referral,
+                "company",
+                None,
+            )
+        ),
+        "contact_name": _text(
+            getattr(
+                referral,
+                "contact_name",
+                None,
+            )
+        ) or None,
+        "contact_email": _text(
+            getattr(
+                referral,
+                "contact_email",
+                None,
+            )
+        ) or None,
+        "contact_communicated": bool(
+            getattr(
+                referral,
+                "contact_communicated",
+                False,
+            )
+        ),
+        "contact_consent": bool(
+            getattr(
+                referral,
+                "contact_consent",
+                False,
+            )
+        ),
+        "warm_referral_ready": bool(
+            getattr(
+                referral,
+                "warm_referral_ready",
+                False,
+            )
+        ),
+        "referral_submitted": bool(
+            getattr(
+                referral,
+                "referral_submitted",
+                False,
+            )
+        ),
+        "paxus_accepted": bool(
+            getattr(
+                referral,
+                "paxus_accepted",
+                False,
+            )
+        ),
+        "referral_id": _text(
+            getattr(
+                referral,
+                "referral_id",
+                None,
+            )
+        ) or None,
+        "introduction_made": bool(
+            getattr(
+                referral,
+                "introduction_made",
+                False,
+            )
+        ),
+        "recruiting_status": _text(
+            getattr(
+                referral,
+                "recruiting_status",
+                None,
+            )
+        ) or "not_started",
+        "placement_count": int(
+            getattr(
+                referral,
+                "placement_count",
+                0,
+            ) or 0
+        ),
+        "client_payment_received": bool(
+            getattr(
+                referral,
+                "client_payment_received",
+                False,
+            )
+        ),
+        "commission_due": bool(
+            getattr(
+                referral,
+                "commission_due",
+                False,
+            )
+        ),
+        "submitted_at": getattr(
+            referral,
+            "submitted_at",
+            None,
+        ),
+        "accepted_at": getattr(
+            referral,
+            "accepted_at",
+            None,
+        ),
+        "introduction_deadline": getattr(
+            referral,
+            "introduction_deadline",
+            None,
+        ),
+        "introduced_at": getattr(
+            referral,
+            "introduced_at",
+            None,
+        ),
+    }
+
+    return sync_paxus_referral(
+        referral_payload
+    )
+
+
 def _source_platform(
     lead: Dict[str, Any],
 ) -> str:
