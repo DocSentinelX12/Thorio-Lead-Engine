@@ -26,15 +26,22 @@ def sync_one(
         }
 
     try:
-        result = sync_lead_if_missing(lead)
-
         referral_result = None
 
-        if lead.get("referral_submitted") is True:
-            referral = lead_to_paxus_referral(lead)
+        referral = lead_to_paxus_referral(lead)
 
+        if (
+            referral.referral_submitted
+            or referral.contact_consent
+            or referral.warm_referral_ready
+            or referral.paxus_accepted
+            or referral.introduction_made
+            or referral.placement_count > 0
+            or referral.client_payment_received
+            or referral.commission_due
+        ):
             referral_result = sync_paxus_referral_state(
-                referral
+              referral
             )
 
         return {
