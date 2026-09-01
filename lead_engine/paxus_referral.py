@@ -8,7 +8,6 @@ from typing import Any
 PAXUS_ROUTE = "paxus"
 INTRODUCTION_DEADLINE_BUSINESS_DAYS = 10
 COMMISSION_PERIOD_MONTHS = 12
-MAX_QUALIFYING_PLACEMENTS = 3
 
 
 class PaxusReferralError(ValueError):
@@ -211,12 +210,6 @@ def record_placement(
             "Placement cannot be recorded before introduction"
         )
 
-    if referral.placement_count >= MAX_QUALIFYING_PLACEMENTS:
-        raise PaxusReferralError(
-            "Paxus commission period allows no more than "
-            f"{MAX_QUALIFYING_PLACEMENTS} qualifying placements"
-        )
-
     return PaxusReferral(
         **{
             **referral.__dict__,
@@ -273,9 +266,8 @@ def commission_status(
 ) -> dict[str, Any]:
     return {
         "placement_count": referral.placement_count,
-        "max_placements": MAX_QUALIFYING_PLACEMENTS,
         "client_payment_received": referral.client_payment_received,
         "commission_due": referral.commission_due,
         "commission_rate_percent": 25,
         "commission_period_months": COMMISSION_PERIOD_MONTHS,
-          }
+    }
