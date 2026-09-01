@@ -957,7 +957,7 @@ class LeadPipeline:
 
         return stored
 
-        def record_paxus_client_payment(
+    def record_paxus_client_payment(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
@@ -993,6 +993,7 @@ class LeadPipeline:
 
         return stored
 
+
 def process_lead(
     source: str,
     source_id: str,
@@ -1022,4 +1023,4 @@ if __name__ == "__main__":
     print(
         "Lead pipeline loaded. "
         "Use process_lead() to process discovered opportunities."
-)
+    )
