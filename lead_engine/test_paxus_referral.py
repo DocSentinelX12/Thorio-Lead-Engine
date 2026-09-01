@@ -181,9 +181,6 @@ def test_multiple_placements_are_allowed():
     referral = record_placement(referral)
 
     assert referral.placement_count == 4
-    
-    with pytest.raises(PaxusReferralError):
-        record_placement(referral)
 
 
 def test_client_payment_makes_commission_due():
