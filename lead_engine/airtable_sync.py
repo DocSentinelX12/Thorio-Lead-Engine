@@ -225,6 +225,13 @@ def _table_url() -> str:
     )
 
 
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
 MASTER_TRACKER_TABLE_KEYS = {
     "lead_radar",
     "companies",
