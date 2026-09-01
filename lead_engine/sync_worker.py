@@ -30,7 +30,7 @@ def sync_one(
 
         referral_result = None
 
-                if lead.get("referral_submitted") is True:
+        if lead.get("referral_submitted") is True:
             referral = lead_to_paxus_referral(lead)
 
             referral_result = sync_paxus_referral_state(
