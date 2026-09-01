@@ -964,7 +964,7 @@ def _normalize_lead(
     # or authorize partner delivery.
     # ---------------------------------------------------------
 
-        paxus_fields = {
+    paxus_fields = {
         "Paxus Eligible": bool(
             lead.get(
                 "paxus_eligible",
