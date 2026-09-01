@@ -431,6 +431,17 @@ def sync_paxus_referral(
     }
 
 
+def sync_paxus_referral_state(
+    referral: Any,
+) -> Dict[str, Any]:
+    if referral is None:
+        raise ValueError("Referral state is required.")
+
+    return sync_paxus_referral(
+        referral.__dict__
+    )
+
+
 def _source_platform(
     lead: Dict[str, Any],
 ) -> str:
