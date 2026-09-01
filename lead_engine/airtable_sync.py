@@ -548,11 +548,11 @@ def sync_paxus_referral(
                     "paxus_accepted"
                 )
                 else (
-                    "Pending"
-                    if not referral.get(
+                    "Submitted"
+                    if referral.get(
                         "referral_submitted"
                     )
-                    else "Accepted"
+                    else "Pending"
                 )
             )
         ),
