@@ -11,9 +11,10 @@ from .config import LeadEngineConfig
 
 AIRTABLE_API_URL = "https://api.airtable.com/v0"
 
-BASE_ID = os.getenv("AIRTABLE_BASE_ID")
-TABLE_NAME = os.getenv("AIRTABLE_LEAD_TABLE", "Lead Radar")
-API_KEY = os.getenv("AIRTABLE_API_KEY")
+TABLE_NAME = os.getenv(
+    "AIRTABLE_LEAD_TABLE",
+    "Lead Radar",
+)
 
 AIRTABLE_MAX_RETRIES = 3
 AIRTABLE_INITIAL_BACKOFF = 1.0
@@ -27,10 +28,10 @@ class AirtableSyncError(Exception):
 def _require_config() -> None:
     missing = []
 
-    if not BASE_ID:
+    if not os.getenv("AIRTABLE_BASE_ID"):
         missing.append("AIRTABLE_BASE_ID")
 
-    if not API_KEY:
+    if not os.getenv("AIRTABLE_API_KEY"):
         missing.append("AIRTABLE_API_KEY")
 
     if missing:
@@ -219,10 +220,20 @@ def _request(
 
 
 def _table_url() -> str:
+    base_id = os.getenv(
+        "AIRTABLE_BASE_ID",
+        "",
+    )
+
+    table_name = os.getenv(
+        "AIRTABLE_LEAD_TABLE",
+        "Lead Radar",
+    )
+
     return (
         f"{AIRTABLE_API_URL}/"
-        f"{BASE_ID}/"
-        f"{urllib.parse.quote(TABLE_NAME, safe='')}"
+        f"{base_id}/"
+        f"{urllib.parse.quote(table_name, safe='')}"
     )
 
 
@@ -286,9 +297,14 @@ def _master_table_url(
         table_key
     )
 
+    base_id = os.getenv(
+        "AIRTABLE_BASE_ID",
+        "",
+    )
+
     return (
         f"{AIRTABLE_API_URL}/"
-        f"{BASE_ID}/"
+        f"{base_id}/"
         f"{urllib.parse.quote(table_name, safe='')}"
     )
 
