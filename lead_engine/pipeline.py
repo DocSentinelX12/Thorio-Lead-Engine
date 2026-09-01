@@ -688,6 +688,286 @@ class LeadPipeline:
         if lead is None:
             raise ValueError(
                 f"Lead not found: {fingerprint}"
+    def _sync_paxus_lifecycle(
+        self,
+        lead: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Synchronize an already-updated canonical lead and its
+        Paxus lifecycle state to Airtable.
+
+        The local LeadDB remains the canonical state store.
+        Airtable is the operational projection of that state.
+
+        This helper does not qualify, route, approve, or deliver
+        the lead. It only propagates an already-valid lifecycle
+        transition.
+        """
+
+        if not isinstance(lead, dict):
+            raise ValueError(
+                "Lead payload must be a dictionary."
+            )
+
+        if not self.sync_enabled:
+            return {
+                "status": "disabled",
+                "airtable_record": None,
+                "referral_record": None,
+            }
+
+        sync_result = sync_one(
+            lead
+        )
+
+        status = sync_result.get(
+            "status"
+        )
+
+        if status not in {
+            "synced",
+            "already_exists",
+        }:
+            raise ValueError(
+                sync_result.get(
+                    "error"
+                )
+                or "Airtable lifecycle synchronization failed."
+            )
+
+        return {
+            "status": status,
+            "airtable_record": sync_result.get(
+                "airtable_record"
+            ),
+            "referral_record": sync_result.get(
+                "referral_record"
+            ),
+        }
+
+    def mark_paxus_warm_referral_ready(
+        self,
+        fingerprint: str,
+    ) -> Dict[str, Any]:
+        lead = self.db.get(
+            fingerprint
+        )
+
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
+            )
+
+        referral = lead_to_paxus_referral(
+            lead
+        )
+
+        referral = mark_warm_referral_ready(
+            referral
+        )
+
+        updated = merge_paxus_referral_into_lead(
+            lead,
+            referral,
+        )
+
+        stored = self.db.update_payload(
+            fingerprint,
+            updated,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to update lead: {fingerprint}"
+            )
+
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
+        return stored
+
+    def submit_paxus_referral(
+        self,
+        fingerprint: str,
+    ) -> Dict[str, Any]:
+        lead = self.db.get(
+            fingerprint
+        )
+
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
+            )
+
+        referral = lead_to_paxus_referral(
+            lead
+        )
+
+        referral = submit_referral(
+            referral
+        )
+
+        updated = merge_paxus_referral_into_lead(
+            lead,
+            referral,
+        )
+
+        stored = self.db.update_payload(
+            fingerprint,
+            updated,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to update lead: {fingerprint}"
+            )
+
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
+        return stored
+
+    def accept_paxus_referral(
+        self,
+        fingerprint: str,
+        referral_id: str,
+    ) -> Dict[str, Any]:
+        lead = self.db.get(
+            fingerprint
+        )
+
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
+            )
+
+        referral = lead_to_paxus_referral(
+            lead
+        )
+
+        referral = accept_referral(
+            referral,
+            referral_id,
+        )
+
+        updated = merge_paxus_referral_into_lead(
+            lead,
+            referral,
+        )
+
+        stored = self.db.update_payload(
+            fingerprint,
+            updated,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to update lead: {fingerprint}"
+            )
+
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
+        return stored
+
+    def mark_paxus_introduction_made(
+        self,
+        fingerprint: str,
+    ) -> Dict[str, Any]:
+        lead = self.db.get(
+            fingerprint
+        )
+
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
+            )
+
+        referral = lead_to_paxus_referral(
+            lead
+        )
+
+        referral = mark_introduction_made(
+            referral
+        )
+
+        updated = merge_paxus_referral_into_lead(
+            lead,
+            referral,
+        )
+
+        stored = self.db.update_payload(
+            fingerprint,
+            updated,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to update lead: {fingerprint}"
+            )
+
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
+        return stored
+
+    def record_paxus_placement(
+        self,
+        fingerprint: str,
+    ) -> Dict[str, Any]:
+        lead = self.db.get(
+            fingerprint
+        )
+
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
+            )
+
+        referral = lead_to_paxus_referral(
+            lead
+        )
+
+        referral = record_placement(
+            referral
+        )
+
+        updated = merge_paxus_referral_into_lead(
+            lead,
+            referral,
+        )
+
+        stored = self.db.update_payload(
+            fingerprint,
+            updated,
+        )
+
+        if stored is None:
+            raise ValueError(
+                f"Unable to update lead: {fingerprint}"
+            )
+
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
+        return stored
+
+    def record_paxus_client_payment(
+        self,
+        fingerprint: str,
+    ) -> Dict[str, Any]:
+        lead = self.db.get(
+            fingerprint
+        )
+
+        if lead is None:
+            raise ValueError(
+                f"Lead not found: {fingerprint}"
             )
 
         referral = lead_to_paxus_referral(
@@ -700,18 +980,22 @@ class LeadPipeline:
 
         updated = merge_paxus_referral_into_lead(
             lead,
-            referral
+            referral,
         )
 
         stored = self.db.update_payload(
             fingerprint,
-            updated
+            updated,
         )
 
         if stored is None:
             raise ValueError(
                 f"Unable to update lead: {fingerprint}"
             )
+
+        self._sync_paxus_lifecycle(
+            stored
+        )
 
         return stored
 
