@@ -15,10 +15,13 @@ from .paxus_referral_adapter import lead_to_paxus_referral
 def _text(value: Any) -> str:
     if value is None:
         return ""
+
     return str(value).strip()
 
 
-def _delivery_approved(lead: Dict[str, Any]) -> bool:
+def _delivery_approved(
+    lead: Dict[str, Any],
+) -> bool:
     return (
         _text(
             lead.get("delivery_status")
@@ -27,7 +30,9 @@ def _delivery_approved(lead: Dict[str, Any]) -> bool:
     )
 
 
-def _outreach_ready(lead: Dict[str, Any]) -> bool:
+def _outreach_ready(
+    lead: Dict[str, Any],
+) -> bool:
     """
     A lead is ready for Outreach only after the delivery
     approval gate has passed and a usable contact email exists.
@@ -41,7 +46,9 @@ def _outreach_ready(lead: Dict[str, Any]) -> bool:
     )
 
 
-def _followup_required(lead: Dict[str, Any]) -> bool:
+def _followup_required(
+    lead: Dict[str, Any],
+) -> bool:
     """
     A Follow-up record is created only when the lead has an
     actual follow-up action scheduled or an existing follow-up
@@ -93,9 +100,25 @@ def _followup_required(lead: Dict[str, Any]) -> bool:
 def _build_outreach_payload(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """
+    Build an Outreach payload while preserving the original
+    Lead fingerprint and explicitly carrying the route.
+
+    The route is part of the Outreach lifecycle because one
+    lead may legitimately have separate Outreach records for
+    multiple applicable partners.
+    """
+
     return {
-        "fingerprint": lead.get("fingerprint"),
-        "company": lead.get("company"),
+        "fingerprint": lead.get(
+            "fingerprint"
+        ),
+        "company": lead.get(
+            "company"
+        ),
+        "route": lead.get(
+            "route"
+        ),
         "platform": (
             lead.get("contact_method")
             or lead.get("source")
@@ -122,8 +145,15 @@ def _build_followup_payload(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
-        "fingerprint": lead.get("fingerprint"),
-        "company": lead.get("company"),
+        "fingerprint": lead.get(
+            "fingerprint"
+        ),
+        "company": lead.get(
+            "company"
+        ),
+        "route": lead.get(
+            "route"
+        ),
         "due_date": lead.get(
             "next_action_date",
         ),
@@ -154,9 +184,9 @@ def sync_one(
         ->
     approval/readiness gate
         ->
-    Outreach
+    route-specific Outreach
         ->
-    actual follow-up state when required
+    route-specific Follow-up state when required
         ->
     Paxus Referrals
         ->
@@ -167,7 +197,10 @@ def sync_one(
 
     Outreach and Follow-up synchronization are deliberately
     gated so unapproved or incomplete leads cannot create
-    actionable outreach records.
+    actionable records.
+
+    Route is explicitly carried into Outreach and Follow-up
+    payloads so separate partner lifecycles are preserved.
     """
 
     if not isinstance(lead, dict):
@@ -179,7 +212,9 @@ def sync_one(
             "followup_record": None,
             "referral_record": None,
             "master_tracker": None,
-            "error": "Lead payload must be an object.",
+            "error": (
+                "Lead payload must be an object."
+            ),
         }
 
     try:
@@ -220,12 +255,16 @@ def sync_one(
             or referral.client_payment_received
             or referral.commission_due
         ):
-            referral_result = sync_paxus_referral_state(
-                referral
+            referral_result = (
+                sync_paxus_referral_state(
+                    referral
+                )
             )
 
-        master_tracker_result = sync_master_tracker(
-            lead
+        master_tracker_result = (
+            sync_master_tracker(
+                lead
+            )
         )
 
         return {
@@ -239,12 +278,16 @@ def sync_one(
                 "record"
             ),
             "outreach_record": (
-                outreach_result.get("record")
+                outreach_result.get(
+                    "record"
+                )
                 if outreach_result
                 else None
             ),
             "followup_record": (
-                followup_result.get("record")
+                followup_result.get(
+                    "record"
+                )
                 if followup_result
                 else None
             ),
@@ -255,7 +298,9 @@ def sync_one(
                 if referral_result
                 else None
             ),
-            "master_tracker": master_tracker_result,
+            "master_tracker": (
+                master_tracker_result
+            ),
             "error": None,
         }
 
@@ -289,7 +334,11 @@ def sync_pending(
     already_exists: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
 
-    for fingerprint, payload_json, attempts in rows:
+    for (
+        fingerprint,
+        payload_json,
+        attempts,
+    ) in rows:
 
         try:
             lead = json.loads(
@@ -306,7 +355,8 @@ def sync_pending(
                 "referral_record": None,
                 "master_tracker": None,
                 "error": (
-                    f"Invalid stored lead payload: {exc}"
+                    "Invalid stored lead payload: "
+                    f"{exc}"
                 ),
             }
 
@@ -377,6 +427,10 @@ def sync_pending(
         "already_exists": already_exists,
         "failed": failed,
         "synced_count": len(synced),
-        "already_exists_count": len(already_exists),
-        "failed_count": len(failed),
-            }
+        "already_exists_count": len(
+            already_exists
+        ),
+        "failed_count": len(
+            failed
+        ),
+    }
