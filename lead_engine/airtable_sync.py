@@ -898,10 +898,119 @@ def sync_followup(
         if value is not None
     }
 
+def sync_followup(
+    followup: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Create or update a route-specific Follow-up record.
+
+    Uses Lead fingerprint + Route + Follow-up Number as
+    the idempotency key.
+    """
+
+    if not isinstance(followup, dict):
+        raise ValueError(
+            "Follow-up payload must be a dictionary."
+        )
+
+    fingerprint = _text(
+        followup.get("fingerprint")
+    )
+
+    if not fingerprint:
+        raise ValueError(
+            "Follow-up requires a fingerprint."
+        )
+
+    route = _text(
+        followup.get("route")
+    )
+
+    if not route:
+        raise ValueError(
+            "Follow-up requires a route."
+        )
+
+    follow_up_number = followup.get(
+        "follow_up_number",
+        0,
+    )
+
+    fields = {
+        "Lead": fingerprint,
+        "Route": route,
+        "Company": _text(
+            followup.get("company")
+        ),
+        "Due Date": _text(
+            followup.get("due_date")
+        ) or None,
+        "Status": (
+            _text(
+                followup.get(
+                    "status",
+                    "Pending",
+                )
+            )
+            or "Pending"
+        ),
+        "Follow-up Number": follow_up_number,
+        "Notes": _text(
+            followup.get("notes")
+        ) or None,
+    }
+
+    existing = find_master_records(
+        "followups",
+        "Lead",
+        fingerprint,
+    )
+
+    matching = []
+
+    for record in existing:
+        record_fields = record.get(
+            "fields",
+            {},
+        )
+
+        if not isinstance(
+            record_fields,
+            dict,
+        ):
+            continue
+
+        existing_route = _text(
+            record_fields.get("Route")
+        )
+
+        existing_number = record_fields.get(
+            "Follow-up Number",
+            0,
+        )
+
+        if (
+            existing_route == route
+            and str(existing_number)
+            == str(follow_up_number)
+        ):
+            matching.append(record)
+
+    clean_fields = {
+        key: value
+        for key, value in fields.items()
+        if value is not None
+    }
+
     if matching:
         record_id = matching[0].get(
             "id"
         )
+
+        if not record_id:
+            raise AirtableSyncError(
+                "Existing follow-up record has no Airtable record ID."
+            )
 
         result = update_master_record(
             "followups",
@@ -911,7 +1020,9 @@ def sync_followup(
 
         return {
             "status": "updated",
-            "record": result["records"][0],
+            "record": result[
+                "records"
+            ][0],
         }
 
     result = create_master_record(
