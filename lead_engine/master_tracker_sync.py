@@ -510,110 +510,6 @@ def sync_commission(
         3. client payment has been confirmed.
 
     The lead fingerprint is the stable idempotency key.
-    A changing Paxus Referral ID must never create a second
-    commission record for the same canonical lead.
-    """
-
-    if not isinstance(lead, dict):
-        raise ValueError(
-            "Lead payload must be a dictionary."
-        )
-
-    if not paxus_commission_tracking_enabled(
-        lead
-    ):
-        return None
-
-    referral = lead_to_paxus_referral(
-        lead
-    )
-
-    fingerprint = _text(
-        referral.fingerprint
-    )
-
-    if not fingerprint:
-        raise ValueError(
-            "Commission synchronization requires a fingerprint."
-        )
-
-    placement_count = 0
-
-    try:
-        placement_count = int(
-            referral.placement_count
-        )
-    except (
-        TypeError,
-        ValueError,
-    ):
-        raise ValueError(
-            "Commission synchronization requires a valid placement count."
-        )
-
-    if placement_count <= 0:
-        return None
-
-    if referral.client_payment_received is not True:
-        return None
-
-    commission_rate = 0.25
-
-    placement_value = lead.get(
-        "placement_value"
-    )
-
-    expected_commission = lead.get(
-        "expected_commission"
-    )
-
-    if (
-        expected_commission is None
-        and placement_value is not None
-    ):
-        try:
-            expected_commission = (
-                float(placement_value)
-                * commission_rate
-            )
-        except (
-            TypeError,
-            ValueError,
-        ):
-            expected_commission = None
-
-    commission_paid = bool(
-        lead.get(
-            "commission_paid",
-            False,
-        )
-    )
-
-    actual_commission = lead.get(
-        "actual_commission"
-    )
-
-    commission_payment_date = (
-        _text(
-            lead.get(
-                "commission_payment_date"
-            )
-        )[:10]
-        if lead.get(
-            "commission_payment_date"
-        )
-def sync_commission(
-    lead: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
-    """
-    Create or update the canonical Paxus commission record.
-
-    Commission tracking is enabled only after:
-        1. the lead is qualified for Paxus,
-        2. at least one placement has been recorded, and
-        3. client payment has been confirmed.
-
-    The lead fingerprint is the stable idempotency key.
 
     Payment fields are only written when explicitly supplied by
     the canonical lead so a routine synchronization cannot
@@ -723,7 +619,9 @@ def sync_commission(
         ),
         "Notes": (
             _text(
-                lead.get("notes")
+                lead.get(
+                    "notes"
+                )
             )
             or None
         ),
@@ -731,7 +629,9 @@ def sync_commission(
 
     if "commission_paid" in lead:
         fields["Paid"] = (
-            lead.get("commission_paid")
+            lead.get(
+                "commission_paid"
+            )
             is True
         )
 
@@ -769,6 +669,7 @@ def sync_commission(
         commission_key,
         fields,
     )
+
 
 
 def sync_master_tracker(
