@@ -673,6 +673,237 @@ def sync_paxus_referral_state(
     )
 
 
+def sync_outreach(
+    outreach: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Create or update an Outreach record.
+
+    Uses Lead fingerprint as the idempotency key.
+    """
+
+    if not isinstance(outreach, dict):
+        raise ValueError(
+            "Outreach payload must be a dictionary."
+        )
+
+    fingerprint = _text(
+        outreach.get("fingerprint")
+    )
+
+    if not fingerprint:
+        raise ValueError(
+            "Outreach requires a fingerprint."
+        )
+
+    fields = {
+        "Lead": fingerprint,
+        "Company": _text(
+            outreach.get("company")
+        ),
+        "Platform": _text(
+            outreach.get("platform")
+        ),
+        "Follow-up Number": outreach.get(
+            "follow_up_number",
+            0,
+        ),
+        "Response": _text(
+            outreach.get("response")
+        ),
+        "Outreach Status": _text(
+            outreach.get(
+                "outreach_status",
+                "Not Contacted",
+            )
+        ),
+        "Next Action Date": (
+            _text(
+                outreach.get(
+                    "next_action_date"
+                )
+            )[:10]
+            if outreach.get(
+                "next_action_date"
+            )
+            else None
+        ),
+    }
+
+    existing = find_master_records(
+        "outreach",
+        "Lead",
+        fingerprint,
+    )
+
+    clean_fields = {
+        key: value
+        for key, value in fields.items()
+        if value is not None
+    }
+
+    if existing:
+        record_id = existing[0].get(
+            "id"
+        )
+
+        if not record_id:
+            raise AirtableSyncError(
+                "Existing outreach record has no Airtable ID."
+            )
+
+        result = update_master_record(
+            "outreach",
+            record_id,
+            clean_fields,
+        )
+
+        return {
+            "status": "updated",
+            "record": result["records"][0],
+        }
+
+    result = create_master_record(
+        "outreach",
+        clean_fields,
+    )
+
+    records = result.get(
+        "records",
+        [],
+    )
+
+    return {
+        "status": "created",
+        "record": (
+            records[0]
+            if records
+            else None
+        ),
+    }
+
+
+def sync_followup(
+    followup: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Create or update a Follow-up record.
+
+    Uses Lead + Follow-up Number as the
+    idempotency key.
+    """
+
+    if not isinstance(followup, dict):
+        raise ValueError(
+            "Follow-up payload must be a dictionary."
+        )
+
+    fingerprint = _text(
+        followup.get("fingerprint")
+    )
+
+    if not fingerprint:
+        raise ValueError(
+            "Follow-up requires a fingerprint."
+        )
+
+    follow_number = followup.get(
+        "follow_up_number",
+        0,
+    )
+
+    lookup_key = (
+        f"{fingerprint}:{follow_number}"
+    )
+
+    fields = {
+        "Lead": fingerprint,
+        "Company": _text(
+            followup.get("company")
+        ),
+        "Due Date": (
+            _text(
+                followup.get("due_date")
+            )[:10]
+            if followup.get("due_date")
+            else None
+        ),
+        "Status": _text(
+            followup.get(
+                "status",
+                "Pending",
+            )
+        ),
+        "Follow-up Number": follow_number,
+        "Notes": _text(
+            followup.get("notes")
+        ),
+    }
+
+    existing = find_master_records(
+        "followups",
+        "Lead",
+        fingerprint,
+    )
+
+    matching = [
+        record
+        for record in existing
+        if str(
+            record.get(
+                "fields",
+                {}
+            ).get(
+                "Follow-up Number",
+                "",
+            )
+        ) == str(
+            follow_number
+        )
+    ]
+
+    clean_fields = {
+        key: value
+        for key, value in fields.items()
+        if value is not None
+    }
+
+    if matching:
+        record_id = matching[0].get(
+            "id"
+        )
+
+        result = update_master_record(
+            "followups",
+            record_id,
+            clean_fields,
+        )
+
+        return {
+            "status": "updated",
+            "record": result["records"][0],
+        }
+
+    result = create_master_record(
+        "followups",
+        clean_fields,
+    )
+
+    records = result.get(
+        "records",
+        [],
+    )
+
+    return {
+        "status": "created",
+        "record": (
+            records[0]
+            if records
+            else None
+        ),
+    }
+
+
 def _source_platform(
     lead: Dict[str, Any],
 ) -> str:
