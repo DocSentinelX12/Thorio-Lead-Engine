@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict
 
 
 DEFAULT_BATCH_SIZE = 50
@@ -19,23 +20,21 @@ DEFAULT_AIRTABLE_LEAD_SOURCES_TABLE = "Lead Sources"
 @dataclass
 class LeadEngineConfig:
     """
-    Central configuration for the Lead Engine.
+    Central runtime configuration for the Lead Engine.
 
     Secrets are read from environment variables only.
-    They are never stored in source code.
+    Secrets are never stored in source code or returned
+    by safe_dict().
 
-    Airtable table names describe the logical tables used by the
-    Paxus + Shiftr Master Tracker. Existing deployments that only
-    configure AIRTABLE_LEAD_TABLE continue to work unchanged.
+    Airtable table names are configurable independently so
+    the complete Master Tracker can be addressed without
+    hardcoding table names throughout the application.
     """
 
     database_dir: str = "data"
     airtable_base_id: str = ""
 
-    # Existing Lead Radar configuration.
     airtable_table: str = DEFAULT_AIRTABLE_LEAD_TABLE
-
-    # Master Tracker table configuration.
     airtable_companies_table: str = (
         DEFAULT_AIRTABLE_COMPANIES_TABLE
     )
@@ -123,13 +122,8 @@ class LeadEngineConfig:
         )
 
         try:
-            batch_size = int(
-                raw_batch_size
-            )
-        except (
-            TypeError,
-            ValueError,
-        ):
+            batch_size = int(raw_batch_size)
+        except (TypeError, ValueError):
             batch_size = DEFAULT_BATCH_SIZE
 
         if batch_size <= 0:
@@ -137,19 +131,14 @@ class LeadEngineConfig:
 
         raw_poll_interval = os.getenv(
             "LEAD_ENGINE_APPROVAL_POLL_INTERVAL",
-            str(
-                DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
-            ),
+            str(DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS),
         )
 
         try:
             approval_poll_interval_seconds = int(
                 raw_poll_interval
             )
-        except (
-            TypeError,
-            ValueError,
-        ):
+        except (TypeError, ValueError):
             approval_poll_interval_seconds = (
                 DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
             )
@@ -206,19 +195,17 @@ class LeadEngineConfig:
 
     @property
     def database_path(self) -> Path:
-        return (
-            Path(self.database_dir)
-            / "leads.sqlite3"
-        )
+        return Path(self.database_dir) / "leads.sqlite3"
 
     @property
-    def airtable_tables(self):
+    def airtable_tables(self) -> Dict[str, str]:
         """
-        Return the complete logical Airtable table mapping.
+        Return the complete Master Tracker table mapping.
 
-        This does not perform any Airtable writes. It only exposes
-        the configured table names to the rest of the application.
+        The API key is intentionally not part of this mapping.
+        Authentication remains environment-variable based.
         """
+
         return {
             "lead_radar": self.airtable_table,
             "companies": self.airtable_companies_table,
@@ -236,7 +223,83 @@ class LeadEngineConfig:
             ),
         }
 
+    def validate(self) -> None:
+        """
+        Validate the complete runtime configuration.
+
+        This validates values, not merely the presence of
+        configuration attributes.
+        """
+
+        if not isinstance(self.database_dir, str):
+            raise ValueError(
+                "database_dir must be a string."
+            )
+
+        if not self.database_dir.strip():
+            raise ValueError(
+                "database_dir must not be empty."
+            )
+
+        if not isinstance(self.airtable_base_id, str):
+            raise ValueError(
+                "airtable_base_id must be a string."
+            )
+
+        if not isinstance(self.batch_size, int) or isinstance(
+            self.batch_size,
+            bool,
+        ):
+            raise ValueError(
+                "batch_size must be an integer."
+            )
+
+        if self.batch_size <= 0:
+            raise ValueError(
+                "batch_size must be greater than zero."
+            )
+
+        if (
+            not isinstance(
+                self.approval_poll_interval_seconds,
+                int,
+            )
+            or isinstance(
+                self.approval_poll_interval_seconds,
+                bool,
+            )
+        ):
+            raise ValueError(
+                "approval_poll_interval_seconds "
+                "must be an integer."
+            )
+
+        if self.approval_poll_interval_seconds < 1:
+            raise ValueError(
+                "approval_poll_interval_seconds "
+                "must be at least 1."
+            )
+
+        required_tables = self.airtable_tables
+
+        for table_key, table_name in required_tables.items():
+            if not isinstance(table_name, str):
+                raise ValueError(
+                    f"Airtable table '{table_key}' "
+                    "must be a string."
+                )
+
+            if not table_name.strip():
+                raise ValueError(
+                    f"Airtable table '{table_key}' "
+                    "must not be empty."
+                )
+
     def safe_dict(self):
+        """
+        Return operational configuration without secrets.
+        """
+
         return {
             "database_dir": self.database_dir,
             "airtable_configured": bool(
@@ -249,4 +312,4 @@ class LeadEngineConfig:
             "approval_poll_interval_seconds": (
                 self.approval_poll_interval_seconds
             ),
-        }
+          }
