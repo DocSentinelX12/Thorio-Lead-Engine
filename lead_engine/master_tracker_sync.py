@@ -427,75 +427,33 @@ def sync_opportunities(
 def sync_lead_source(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """
+    Lead Sources is the Master Tracker source-configuration table.
+
+    It is intentionally NOT a destination for individual discovered
+    leads. Individual leads belong in Lead Radar and their downstream
+    lifecycle tables.
+
+    Source configuration is consumed by the collection layer and is
+    not mutated during normal lead synchronization.
+
+    This compatibility function remains so existing callers and
+    integrations do not break, but it performs no Airtable write.
+    """
+
     if not isinstance(lead, dict):
         raise ValueError(
             "Lead payload must be a dictionary."
         )
 
-    fingerprint = _text(
-        lead.get("fingerprint")
-    )
-
-    source_url = _text(
-        lead.get("url")
-    )
-
-    source = _text(
-        lead.get("source")
-    )
-
-    if not fingerprint:
-        raise ValueError(
-            "Lead source synchronization requires a fingerprint."
-        )
-
-    source_key = (
-        f"{fingerprint}:{source_url or source}"
-    )
-
-    fields = {
-        "Lead": source_key,
-        "Source": source or None,
-        "Source URL": source_url or None,
-        "Source Type": (
-            _text(
-                lead.get("source_type")
-            )
-            or None
-        ),
-        "Discovered Date": (
-            _text(
-                lead.get("discovered_at")
-            )[:10]
-            if lead.get("discovered_at")
-            else None
-        ),
-        "Signal": (
-            _text(
-                lead.get("signal")
-            )
-            or None
-        ),
-        "Evidence": (
-            _text(
-                lead.get("evidence")
-            )
-            or None
-        ),
-        "Status": (
-            _text(
-                lead.get("evidence_status")
-            )
-            or None
+    return {
+        "status": "skipped",
+        "reason": (
+            "Lead Sources is a source-configuration table; "
+            "discovered leads are synchronized through Lead Radar "
+            "and the downstream Master Tracker lifecycle tables."
         ),
     }
-
-    return _upsert(
-        "lead_sources",
-        "Lead",
-        source_key,
-        fields,
-    )
 
 
 def sync_commission(
@@ -713,10 +671,6 @@ def sync_master_tracker(
         lead
     )
 
-    source_result = sync_lead_source(
-        lead
-    )
-
     commission_result = sync_commission(
         lead
     )
@@ -726,6 +680,12 @@ def sync_master_tracker(
         "reason": None,
         "company": company_result,
         "opportunities": opportunity_results,
-        "lead_source": source_result,
+        "lead_source": {
+            "status": "skipped",
+            "reason": (
+                "Lead Sources is configuration-only and is not "
+                "a discovered-lead destination."
+            ),
+        },
         "commission": commission_result,
     }
