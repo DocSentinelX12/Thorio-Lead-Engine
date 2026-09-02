@@ -100,22 +100,30 @@ def sync_one(
             "error": "Lead payload must be an object.",
         }
 
-    try:
+        try:
         result = sync_lead_if_missing(
             lead
         )
 
-        outreach_result = sync_outreach(
-            _build_outreach_payload(
-                lead
-            )
-        )
+        outreach_result = None
+        followup_result = None
 
-        followup_result = sync_followup(
-            _build_followup_payload(
-                lead
+        try:
+            outreach_result = sync_outreach(
+                _build_outreach_payload(
+                    lead
+                )
             )
-        )
+
+            followup_result = sync_followup(
+                _build_followup_payload(
+                    lead
+                )
+            )
+
+        except Exception:
+            outreach_result = None
+            followup_result = None
 
         referral_result = None
 
