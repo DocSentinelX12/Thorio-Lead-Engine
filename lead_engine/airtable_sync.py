@@ -74,8 +74,17 @@ def _request(
 ) -> Dict[str, Any]:
     _require_config()
 
+    api_key = os.getenv(
+        "AIRTABLE_API_KEY",
+    )
+
+    if not api_key:
+        raise AirtableSyncError(
+            "Missing Airtable API key."
+        )
+
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
