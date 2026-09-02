@@ -47,8 +47,9 @@ class LeadScheduler:
                     )
                 )
 
-                result = self.runner.run_source(
-                    source
+                result = self.checkpoint_runner.run(
+                    source=source,
+                    checkpoint=previous_checkpoint,
                 )
 
                 result = dict(result)
@@ -65,27 +66,10 @@ class LeadScheduler:
                 except (TypeError, ValueError):
                     failed_count = 1
 
-                if failed_count == 0:
-                    checkpoint = result.get(
-                        "checkpoint"
+                if failed_count != 0:
+                    result["checkpoint"] = (
+                        previous_checkpoint
                     )
-
-                    if checkpoint is not None:
-                        self.checkpoint_runner.save_checkpoint(
-                            source,
-                            checkpoint,
-                        )
-
-                    current_checkpoint = checkpoint
-                else:
-                    current_checkpoint = previous_checkpoint
-
-                result["previous_checkpoint"] = (
-                    previous_checkpoint
-                )
-                result["checkpoint"] = (
-                    current_checkpoint
-                )
 
                 results.append(
                     {
