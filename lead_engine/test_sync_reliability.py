@@ -41,36 +41,36 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
     assert stats[1] == 0
     assert stats[2] == 1
 
-with patch(
-    "lead_engine.sync_worker.sync_lead_if_missing"
-) as mock_sync, patch(
-    "lead_engine.sync_worker.sync_outreach"
-) as mock_outreach, patch(
-    "lead_engine.sync_worker.sync_followup"
-) as mock_followup:
+    with patch(
+        "lead_engine.sync_worker.sync_lead_if_missing"
+    ) as mock_sync, patch(
+        "lead_engine.sync_worker.sync_outreach"
+    ) as mock_outreach, patch(
+        "lead_engine.sync_worker.sync_followup"
+    ) as mock_followup:
 
-    mock_sync.return_value = {
-        "status": "created",
-        "record": {
-            "id": "rec_retry_001"
-        },
-    }
+        mock_sync.return_value = {
+            "status": "created",
+            "record": {
+                "id": "rec_retry_001"
+            },
+        }
 
-    mock_outreach.return_value = {
-        "status": "created",
-        "record": {
-            "id": "outreach_retry_001"
-        },
-    }
+        mock_outreach.return_value = {
+            "status": "created",
+            "record": {
+                "id": "outreach_retry_001"
+            },
+        }
 
-    mock_followup.return_value = {
-        "status": "created",
-        "record": {
-            "id": "followup_retry_001"
-        },
-    }
+        mock_followup.return_value = {
+            "status": "created",
+            "record": {
+                "id": "followup_retry_001"
+            },
+        }
 
-    retry_result = sync_pending(db)
+        retry_result = sync_pending(db)
 
     assert retry_result["synced_count"] == 1
     assert retry_result["failed_count"] == 0
