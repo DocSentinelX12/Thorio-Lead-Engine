@@ -100,7 +100,7 @@ def sync_one(
             "error": "Lead payload must be an object.",
         }
 
-        try:
+    try:
         result = sync_lead_if_missing(
             lead
         )
@@ -126,6 +126,10 @@ def sync_one(
             followup_result = None
 
         referral_result = None
+
+        referral = lead_to_paxus_referral(
+            lead
+        )
 
         referral = lead_to_paxus_referral(
             lead
