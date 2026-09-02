@@ -54,6 +54,17 @@ class LeadPipeline:
     Discovery must never prevent a lead from reaching qualification.
 
     Final deduplication is performed only after explicit qualification.
+
+    Multi-route behavior:
+
+        A qualified lead may have more than one applicable route.
+
+        The primary route is stored in "route".
+        All applicable routes are stored in "potential_routes".
+
+        Airtable synchronization uses the complete potential_routes
+        collection so each qualified business route can have its own
+        operational Opportunity.
     """
 
     def __init__(
@@ -90,6 +101,61 @@ class LeadPipeline:
                 return True
 
         return False
+
+    def _sync_updated_lead(
+        self,
+        lead: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Synchronize an already-persisted canonical lead.
+
+        LeadDB remains the canonical state store.
+
+        Airtable receives the updated Lead Radar state and,
+        when the lead is qualified, the complete set of
+        applicable route Opportunities.
+
+        This method intentionally preserves the existing
+        sync_one() contract used by the worker and tests.
+        """
+
+        if not isinstance(lead, dict):
+            raise ValueError(
+                "Lead payload must be a dictionary."
+            )
+
+        if not self.sync_enabled:
+            return {
+                "status": "disabled",
+                "lead": lead,
+                "airtable_record": None,
+                "referral_record": None,
+                "error": None,
+            }
+
+        sync_result = sync_one(
+            lead
+        )
+
+        status = sync_result.get(
+            "status",
+            "failed",
+        )
+
+        if status not in {
+            "synced",
+            "already_exists",
+        }:
+            error = (
+                sync_result.get("error")
+                or "Synchronization failed."
+            )
+
+            raise ValueError(
+                error
+            )
+
+        return sync_result
 
     def process(
         self,
@@ -168,7 +234,9 @@ class LeadPipeline:
 
         fingerprint = lead.fingerprint
 
-        existing = self.db.get(fingerprint)
+        existing = self.db.get(
+            fingerprint
+        )
 
         # ---------------------------------------------------------
         # DISCOVERY PERSISTENCE
@@ -185,7 +253,9 @@ class LeadPipeline:
 
         if existing is not None:
 
-            if self._status_is_qualified(existing):
+            if self._status_is_qualified(
+                existing
+            ):
                 return {
                     "status": "duplicate",
                     "accepted": False,
@@ -219,10 +289,14 @@ class LeadPipeline:
             payload = stored
 
         else:
-            inserted = self.db.insert_if_new(payload)
+            inserted = self.db.insert_if_new(
+                payload
+            )
 
             if not inserted:
-                existing = self.db.get(fingerprint)
+                existing = self.db.get(
+                    fingerprint
+                )
 
                 if existing is None:
                     raise ValueError(
@@ -242,7 +316,9 @@ class LeadPipeline:
         # ---------------------------------------------------------
 
         if self.sync_enabled:
-            sync_result = sync_one(payload)
+            sync_result = sync_one(
+                payload
+            )
 
             sync_status = sync_result.get(
                 "status",
@@ -257,11 +333,14 @@ class LeadPipeline:
                 "synced",
                 "already_exists",
             }:
-                self.db.mark_synced(fingerprint)
+                self.db.mark_synced(
+                    fingerprint
+                )
             else:
                 self.db.mark_error(
                     fingerprint,
-                    sync_error or "Synchronization failed.",
+                    sync_error
+                    or "Synchronization failed.",
                 )
 
             return {
@@ -300,7 +379,9 @@ class LeadPipeline:
         reason: str = "",
     ) -> Dict[str, Any]:
 
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -315,15 +396,24 @@ class LeadPipeline:
 
         if qualified:
             company = str(
-                updated.get("company", "")
+                updated.get(
+                    "company",
+                    "",
+                )
             )
 
             signal = str(
-                updated.get("signal", "")
+                updated.get(
+                    "signal",
+                    "",
+                )
             )
 
             evidence = str(
-                updated.get("evidence", "")
+                updated.get(
+                    "evidence",
+                    "",
+                )
             )
 
             recommended_route = route(
@@ -344,14 +434,21 @@ class LeadPipeline:
                 evidence=evidence,
             )
 
-            updated["route"] = recommended_route
-            updated["potential_routes"] = possible_routes
-            updated["lead_score"] = scoring[
-                "lead_score"
-            ]
-            updated["priority"] = scoring[
-                "priority"
-            ]
+            updated["route"] = (
+                recommended_route
+            )
+
+            updated["potential_routes"] = (
+                possible_routes
+            )
+
+            updated["lead_score"] = (
+                scoring["lead_score"]
+            )
+
+            updated["priority"] = (
+                scoring["priority"]
+            )
 
         stored = self.db.update_payload(
             fingerprint,
@@ -362,6 +459,52 @@ class LeadPipeline:
             raise ValueError(
                 f"Unable to update lead: {fingerprint}"
             )
+
+        # ---------------------------------------------------------
+        # MULTI-ROUTE QUALIFICATION SYNC
+        # ---------------------------------------------------------
+        #
+        # Qualification is the boundary at which a lead becomes
+        # eligible for route-specific operational opportunities.
+        #
+        # sync_one() delegates to the Master Tracker synchronization
+        # layer, which creates one Opportunity for every valid
+        # potential route.
+        #
+        # Therefore a qualified lead with:
+        #
+        #     ["Paxus", "Shiftr", "Thorio"]
+        #
+        # produces three independent Opportunities.
+        #
+        # An unqualified lead produces none.
+        # ---------------------------------------------------------
+
+        if self.sync_enabled:
+            sync_result = sync_one(
+                stored
+            )
+
+            sync_status = sync_result.get(
+                "status",
+                "failed",
+            )
+
+            if sync_status in {
+                "synced",
+                "already_exists",
+            }:
+                self.db.mark_synced(
+                    fingerprint
+                )
+            else:
+                self.db.mark_error(
+                    fingerprint,
+                    sync_result.get(
+                        "error"
+                    )
+                    or "Synchronization failed.",
+                )
 
         return stored
 
@@ -386,7 +529,9 @@ class LeadPipeline:
         this boundary.
         """
 
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -394,7 +539,10 @@ class LeadPipeline:
             )
 
         if not bool(
-            lead.get("qualified", False)
+            lead.get(
+                "qualified",
+                False,
+            )
         ):
             return {
                 "status": "awaiting_qualification",
@@ -405,7 +553,9 @@ class LeadPipeline:
                 "reason": "lead_not_qualified",
             }
 
-        if not self._status_is_qualified(lead):
+        if not self._status_is_qualified(
+            lead
+        ):
             return {
                 "status": "awaiting_qualification",
                 "approved": False,
@@ -415,7 +565,9 @@ class LeadPipeline:
                 "reason": "qualification_status_not_confirmed",
             }
 
-        existing = self.db.get(fingerprint)
+        existing = self.db.get(
+            fingerprint
+        )
 
         if existing is None:
             raise ValueError(
@@ -434,37 +586,64 @@ class LeadPipeline:
 
         final_route = route(
             company=str(
-                lead.get("company", "")
+                lead.get(
+                    "company",
+                    "",
+                )
             ),
             signal=str(
-                lead.get("signal", "")
+                lead.get(
+                    "signal",
+                    "",
+                )
             ),
             evidence=str(
-                lead.get("evidence", "")
+                lead.get(
+                    "evidence",
+                    "",
+                )
             ),
         )
 
         final_routes = potential_routes(
             company=str(
-                lead.get("company", "")
+                lead.get(
+                    "company",
+                    "",
+                )
             ),
             signal=str(
-                lead.get("signal", "")
+                lead.get(
+                    "signal",
+                    "",
+                )
             ),
             evidence=str(
-                lead.get("evidence", "")
+                lead.get(
+                    "evidence",
+                    "",
+                )
             ),
         )
 
         scoring = score_result(
             company=str(
-                lead.get("company", "")
+                lead.get(
+                    "company",
+                    "",
+                )
             ),
             signal=str(
-                lead.get("signal", "")
+                lead.get(
+                    "signal",
+                    "",
+                )
             ),
             evidence=str(
-                lead.get("evidence", "")
+                lead.get(
+                    "evidence",
+                    "",
+                )
             ),
         )
 
@@ -487,6 +666,35 @@ class LeadPipeline:
                 f"Unable to finalize lead: {fingerprint}"
             )
 
+        # Finalization can recalculate the complete route set.
+        # Synchronize that canonical result so the Master Tracker
+        # remains aligned with LeadDB.
+        if self.sync_enabled:
+            sync_result = sync_one(
+                stored
+            )
+
+            sync_status = sync_result.get(
+                "status",
+                "failed",
+            )
+
+            if sync_status in {
+                "synced",
+                "already_exists",
+            }:
+                self.db.mark_synced(
+                    fingerprint
+                )
+            else:
+                self.db.mark_error(
+                    fingerprint,
+                    sync_result.get(
+                        "error"
+                    )
+                    or "Synchronization failed.",
+                )
+
         return {
             "status": "finalized",
             "approved": True,
@@ -496,200 +704,6 @@ class LeadPipeline:
             "lead": stored,
         }
 
-
-    def mark_paxus_warm_referral_ready(
-        self,
-        fingerprint: str,
-    ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
-
-        if lead is None:
-            raise ValueError(
-                f"Lead not found: {fingerprint}"
-            )
-
-        referral = lead_to_paxus_referral(
-            lead
-        )
-
-        referral = mark_warm_referral_ready(
-            referral
-        )
-
-        updated = merge_paxus_referral_into_lead(
-            lead,
-            referral
-        )
-
-        stored = self.db.update_payload(
-            fingerprint,
-            updated
-        )
-
-        if stored is None:
-            raise ValueError(
-                f"Unable to update lead: {fingerprint}"
-            )
-
-        return stored
-
-    def submit_paxus_referral(
-        self,
-        fingerprint: str,
-    ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
-
-        if lead is None:
-            raise ValueError(
-                f"Lead not found: {fingerprint}"
-            )
-
-        referral = lead_to_paxus_referral(
-            lead
-        )
-
-        referral = submit_referral(
-            referral
-        )
-
-        updated = merge_paxus_referral_into_lead(
-            lead,
-            referral
-        )
-
-        stored = self.db.update_payload(
-            fingerprint,
-            updated
-        )
-
-        if stored is None:
-            raise ValueError(
-                f"Unable to update lead: {fingerprint}"
-            )
-
-        return stored
-
-    def accept_paxus_referral(
-        self,
-        fingerprint: str,
-        referral_id: str,
-    ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
-
-        if lead is None:
-            raise ValueError(
-                f"Lead not found: {fingerprint}"
-            )
-
-        referral = lead_to_paxus_referral(
-            lead
-        )
-
-        referral = accept_referral(
-            referral,
-            referral_id
-        )
-
-        updated = merge_paxus_referral_into_lead(
-            lead,
-            referral
-        )
-
-        stored = self.db.update_payload(
-            fingerprint,
-            updated
-        )
-
-        if stored is None:
-            raise ValueError(
-                f"Unable to update lead: {fingerprint}"
-            )
-
-        return stored
-
-    def mark_paxus_introduction_made(
-        self,
-        fingerprint: str,
-    ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
-
-        if lead is None:
-            raise ValueError(
-                f"Lead not found: {fingerprint}"
-            )
-
-        referral = lead_to_paxus_referral(
-            lead
-        )
-
-        referral = mark_introduction_made(
-            referral
-        )
-
-        updated = merge_paxus_referral_into_lead(
-            lead,
-            referral
-        )
-
-        stored = self.db.update_payload(
-            fingerprint,
-            updated
-        )
-
-        if stored is None:
-            raise ValueError(
-                f"Unable to update lead: {fingerprint}"
-            )
-
-        return stored
-
-    def record_paxus_placement(
-        self,
-        fingerprint: str,
-    ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
-
-        if lead is None:
-            raise ValueError(
-                f"Lead not found: {fingerprint}"
-            )
-
-        referral = lead_to_paxus_referral(
-            lead
-        )
-
-        referral = record_placement(
-            referral
-        )
-
-        updated = merge_paxus_referral_into_lead(
-            lead,
-            referral
-        )
-
-        stored = self.db.update_payload(
-            fingerprint,
-            updated
-        )
-
-        if stored is None:
-            raise ValueError(
-                f"Unable to update lead: {fingerprint}"
-            )
-
-        return stored
-
-    def record_paxus_client_payment(
-        self,
-        fingerprint: str,
-    ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
-
-        if lead is None:
-            raise ValueError(
-                f"Lead not found: {fingerprint}"
-            )
-            
     def _sync_paxus_lifecycle(
         self,
         lead: Dict[str, Any],
@@ -706,7 +720,10 @@ class LeadPipeline:
         transition.
         """
 
-        if not isinstance(lead, dict):
+        if not isinstance(
+            lead,
+            dict,
+        ):
             raise ValueError(
                 "Lead payload must be a dictionary."
             )
@@ -751,7 +768,9 @@ class LeadPipeline:
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -781,13 +800,19 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
         return stored
 
     def submit_paxus_referral(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -817,6 +842,10 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
         return stored
 
     def accept_paxus_referral(
@@ -824,7 +853,9 @@ class LeadPipeline:
         fingerprint: str,
         referral_id: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -855,13 +886,19 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
         return stored
 
     def mark_paxus_introduction_made(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -891,13 +928,19 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
         return stored
 
     def record_paxus_placement(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -927,13 +970,19 @@ class LeadPipeline:
                 f"Unable to update lead: {fingerprint}"
             )
 
+        self._sync_paxus_lifecycle(
+            stored
+        )
+
         return stored
 
     def record_paxus_client_payment(
         self,
         fingerprint: str,
     ) -> Dict[str, Any]:
-        lead = self.db.get(fingerprint)
+        lead = self.db.get(
+            fingerprint
+        )
 
         if lead is None:
             raise ValueError(
@@ -962,6 +1011,10 @@ class LeadPipeline:
             raise ValueError(
                 f"Unable to update lead: {fingerprint}"
             )
+
+        self._sync_paxus_lifecycle(
+            stored
+        )
 
         return stored
 
@@ -995,4 +1048,4 @@ if __name__ == "__main__":
     print(
         "Lead pipeline loaded. "
         "Use process_lead() to process discovered opportunities."
-    )
+)
