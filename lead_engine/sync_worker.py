@@ -15,16 +15,11 @@ def _build_outreach_payload(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
-        "fingerprint": lead.get(
-            "fingerprint"
-        ),
-        "company": lead.get(
-            "company"
-        ),
-        "platform": lead.get(
-            "contact_method"
-        ) or lead.get(
-            "source"
+        "fingerprint": lead.get("fingerprint"),
+        "company": lead.get("company"),
+        "platform": (
+            lead.get("contact_method")
+            or lead.get("source")
         ),
         "follow_up_number": lead.get(
             "follow_up_number",
@@ -48,12 +43,8 @@ def _build_followup_payload(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
-        "fingerprint": lead.get(
-            "fingerprint"
-        ),
-        "company": lead.get(
-            "company"
-        ),
+        "fingerprint": lead.get("fingerprint"),
+        "company": lead.get("company"),
         "due_date": lead.get(
             "next_action_date",
         ),
@@ -105,31 +96,19 @@ def sync_one(
             lead
         )
 
-        outreach_result = None
-        followup_result = None
-
-        try:
-            outreach_result = sync_outreach(
-                _build_outreach_payload(
-                    lead
-                )
+        outreach_result = sync_outreach(
+            _build_outreach_payload(
+                lead
             )
+        )
 
-            followup_result = sync_followup(
-                _build_followup_payload(
-                    lead
-                )
+        followup_result = sync_followup(
+            _build_followup_payload(
+                lead
             )
-
-        except Exception:
-            outreach_result = None
-            followup_result = None
+        )
 
         referral_result = None
-
-        referral = lead_to_paxus_referral(
-            lead
-        )
 
         referral = lead_to_paxus_referral(
             lead
@@ -159,19 +138,11 @@ def sync_one(
             "airtable_record": result.get(
                 "record"
             ),
-            "outreach_record": (
-                outreach_result.get(
-                    "record"
-                )
-                if outreach_result
-                else None
+            "outreach_record": outreach_result.get(
+                "record"
             ),
-            "followup_record": (
-                followup_result.get(
-                    "record"
-                )
-                if followup_result
-                else None
+            "followup_record": followup_result.get(
+                "record"
             ),
             "referral_record": (
                 referral_result.get(
@@ -204,13 +175,16 @@ def sync_pending(
     synchronized.
     """
 
-    rows = db.pending(limit=limit)
+    rows = db.pending(
+        limit=limit
+    )
 
     synced: List[Dict[str, Any]] = []
     already_exists: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
 
     for fingerprint, payload_json, attempts in rows:
+
         try:
             lead = json.loads(
                 payload_json
@@ -269,12 +243,14 @@ def sync_pending(
 
         if result["status"] == "synced":
             synced.append(result)
+
             db.mark_synced(
                 fingerprint
             )
 
         elif result["status"] == "already_exists":
             already_exists.append(result)
+
             db.mark_synced(
                 fingerprint
             )
