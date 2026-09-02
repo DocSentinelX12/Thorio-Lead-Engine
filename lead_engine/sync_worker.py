@@ -12,6 +12,84 @@ from .master_tracker_sync import sync_master_tracker
 from .paxus_referral_adapter import lead_to_paxus_referral
 
 
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _delivery_approved(lead: Dict[str, Any]) -> bool:
+    return (
+        _text(
+            lead.get("delivery_status")
+        ).lower()
+        == "approved"
+    )
+
+
+def _outreach_ready(lead: Dict[str, Any]) -> bool:
+    """
+    A lead is ready for Outreach only after the delivery
+    approval gate has passed and a usable contact email exists.
+    """
+
+    return bool(
+        _delivery_approved(lead)
+        and _text(lead.get("company"))
+        and _text(lead.get("route"))
+        and _text(lead.get("contact_email"))
+    )
+
+
+def _followup_required(lead: Dict[str, Any]) -> bool:
+    """
+    A Follow-up record is created only when the lead has an
+    actual follow-up action scheduled or an existing follow-up
+    lifecycle state that needs synchronization.
+
+    A newly approved lead with no next action does not receive
+    a fabricated Pending follow-up.
+    """
+
+    next_action_date = _text(
+        lead.get("next_action_date")
+    )
+
+    follow_up_status = _text(
+        lead.get("follow_up_status")
+    ).lower()
+
+    follow_up_notes = _text(
+        lead.get("follow_up_notes")
+    )
+
+    follow_up_number = lead.get(
+        "follow_up_number"
+    )
+
+    if next_action_date:
+        return True
+
+    if follow_up_notes:
+        return True
+
+    if follow_up_status not in {
+        "",
+        "pending",
+    }:
+        return True
+
+    if follow_up_number not in {
+        None,
+        "",
+        0,
+        "0",
+    }:
+        return True
+
+    return False
+
+
 def _build_outreach_payload(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -70,23 +148,26 @@ def sync_one(
     """
     Synchronize one complete Master Tracker state.
 
-    Existing synchronization contracts are preserved:
+    Lifecycle:
 
     Lead Radar
         ->
+    approval/readiness gate
+        ->
     Outreach
         ->
-    Follow-ups
+    actual follow-up state when required
         ->
     Paxus Referrals
-
-    The complete Master Tracker synchronization layer
-    then synchronizes:
-
+        ->
     Companies
     Opportunities
     Lead Sources
     Commissions
+
+    Outreach and Follow-up synchronization are deliberately
+    gated so unapproved or incomplete leads cannot create
+    actionable outreach records.
     """
 
     if not isinstance(lead, dict):
@@ -106,17 +187,22 @@ def sync_one(
             lead
         )
 
-        outreach_result = sync_outreach(
-            _build_outreach_payload(
-                lead
-            )
-        )
+        outreach_result = None
+        followup_result = None
 
-        followup_result = sync_followup(
-            _build_followup_payload(
-                lead
+        if _outreach_ready(lead):
+            outreach_result = sync_outreach(
+                _build_outreach_payload(
+                    lead
+                )
             )
-        )
+
+            if _followup_required(lead):
+                followup_result = sync_followup(
+                    _build_followup_payload(
+                        lead
+                    )
+                )
 
         referral_result = None
 
@@ -152,11 +238,15 @@ def sync_one(
             "airtable_record": result.get(
                 "record"
             ),
-            "outreach_record": outreach_result.get(
-                "record"
+            "outreach_record": (
+                outreach_result.get("record")
+                if outreach_result
+                else None
             ),
-            "followup_record": followup_result.get(
-                "record"
+            "followup_record": (
+                followup_result.get("record")
+                if followup_result
+                else None
             ),
             "referral_record": (
                 referral_result.get(
@@ -289,4 +379,4 @@ def sync_pending(
         "synced_count": len(synced),
         "already_exists_count": len(already_exists),
         "failed_count": len(failed),
-    }
+            }
