@@ -43,16 +43,35 @@ def test_sync_worker_retries_failed_lead(tmp_path):
     assert stats[2] == 1
 
     with patch(
-        "lead_engine.sync_worker.sync_lead_if_missing"
-    ) as mock_sync:
-        mock_sync.return_value = {
-            "status": "created",
-            "record": {
-                "id": "rec_worker_001"
-            },
-        }
+    "lead_engine.sync_worker.sync_lead_if_missing"
+) as mock_sync, patch(
+    "lead_engine.sync_worker.sync_outreach"
+) as mock_outreach, patch(
+    "lead_engine.sync_worker.sync_followup"
+) as mock_followup:
 
-        second_result = sync_pending(db)
+    mock_sync.return_value = {
+        "status": "created",
+        "record": {
+            "id": "rec_worker_001"
+        },
+    }
+
+    mock_outreach.return_value = {
+        "status": "created",
+        "record": {
+            "id": "outreach_001"
+        },
+    }
+
+    mock_followup.return_value = {
+        "status": "created",
+        "record": {
+            "id": "followup_001"
+        },
+    }
+
+    second_result = sync_pending(db)
 
     assert second_result["synced_count"] == 1
     assert second_result["failed_count"] == 0
