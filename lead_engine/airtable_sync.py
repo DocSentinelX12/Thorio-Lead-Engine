@@ -686,9 +686,9 @@ def sync_outreach(
     outreach: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Create or update an Outreach record.
+    Create or update a route-specific Outreach record.
 
-    Uses Lead fingerprint as the idempotency key.
+    Uses Lead fingerprint + Route as the idempotency key.
     """
 
     if not isinstance(outreach, dict):
@@ -705,8 +705,18 @@ def sync_outreach(
             "Outreach requires a fingerprint."
         )
 
+    route = _text(
+        outreach.get("route")
+    )
+
+    if not route:
+        raise ValueError(
+            "Outreach requires a route."
+        )
+
     fields = {
         "Lead": fingerprint,
+        "Route": route,
         "Company": _text(
             outreach.get("company")
         ),
@@ -745,14 +755,25 @@ def sync_outreach(
         fingerprint,
     )
 
+    matching = [
+        record
+        for record in existing
+        if _text(
+            record.get(
+                "fields",
+                {},
+            ).get("Route")
+        ) == route
+    ]
+
     clean_fields = {
         key: value
         for key, value in fields.items()
         if value is not None
     }
 
-    if existing:
-        record_id = existing[0].get(
+    if matching:
+        record_id = matching[0].get(
             "id"
         )
 
