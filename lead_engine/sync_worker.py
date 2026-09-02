@@ -8,6 +8,7 @@ from .airtable_sync import (
     sync_paxus_referral_state,
 )
 from .database import LeadDB
+from .master_tracker_sync import sync_master_tracker
 from .paxus_referral_adapter import lead_to_paxus_referral
 
 
@@ -67,17 +68,25 @@ def sync_one(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Synchronize one lead lifecycle state.
+    Synchronize one complete Master Tracker state.
 
-    Flow:
+    Existing synchronization contracts are preserved:
 
     Lead Radar
-        ↓
+        ->
     Outreach
-        ↓
+        ->
     Follow-ups
-        ↓
-    Referrals
+        ->
+    Paxus Referrals
+
+    The complete Master Tracker synchronization layer
+    then synchronizes:
+
+    Companies
+    Opportunities
+    Lead Sources
+    Commissions
     """
 
     if not isinstance(lead, dict):
@@ -88,6 +97,7 @@ def sync_one(
             "outreach_record": None,
             "followup_record": None,
             "referral_record": None,
+            "master_tracker": None,
             "error": "Lead payload must be an object.",
         }
 
@@ -128,6 +138,10 @@ def sync_one(
                 referral
             )
 
+        master_tracker_result = sync_master_tracker(
+            lead
+        )
+
         return {
             "status": (
                 "synced"
@@ -151,6 +165,7 @@ def sync_one(
                 if referral_result
                 else None
             ),
+            "master_tracker": master_tracker_result,
             "error": None,
         }
 
@@ -162,6 +177,7 @@ def sync_one(
             "outreach_record": None,
             "followup_record": None,
             "referral_record": None,
+            "master_tracker": None,
             "error": str(exc),
         }
 
@@ -172,7 +188,7 @@ def sync_pending(
 ) -> Dict[str, Any]:
     """
     Retry locally stored leads that have not successfully
-    synchronized.
+    synchronized to the complete Master Tracker.
     """
 
     rows = db.pending(
@@ -198,6 +214,7 @@ def sync_pending(
                 "outreach_record": None,
                 "followup_record": None,
                 "referral_record": None,
+                "master_tracker": None,
                 "error": (
                     f"Invalid stored lead payload: {exc}"
                 ),
@@ -223,8 +240,10 @@ def sync_pending(
                 "outreach_record": None,
                 "followup_record": None,
                 "referral_record": None,
+                "master_tracker": None,
                 "error": (
-                    "Invalid stored lead payload: expected an object."
+                    "Invalid stored lead payload: "
+                    "expected an object."
                 ),
             }
 
