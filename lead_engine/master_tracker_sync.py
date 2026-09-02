@@ -671,7 +671,6 @@ def sync_commission(
     )
 
 
-
 def sync_master_tracker(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
