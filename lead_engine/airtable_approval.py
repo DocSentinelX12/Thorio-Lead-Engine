@@ -422,7 +422,8 @@ def build_approved_lead(
         approved_routes=routes,
     )
 
-    result["airtable_approval_state"] = "approved"
+    result["routes"] = routes
+    result["approved_routes"] = routes
 
     return result
 
