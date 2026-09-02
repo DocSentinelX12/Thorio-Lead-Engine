@@ -602,8 +602,91 @@ def sync_commission(
         if lead.get(
             "commission_payment_date"
         )
-        else None
+def sync_commission(
+    lead: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """
+    Create or update the canonical Paxus commission record.
+
+    Commission tracking is enabled only after:
+        1. the lead is qualified for Paxus,
+        2. at least one placement has been recorded, and
+        3. client payment has been confirmed.
+
+    The lead fingerprint is the stable idempotency key.
+
+    Payment fields are only written when explicitly supplied by
+    the canonical lead so a routine synchronization cannot
+    accidentally overwrite an existing paid commission state.
+    """
+
+    if not isinstance(lead, dict):
+        raise ValueError(
+            "Lead payload must be a dictionary."
+        )
+
+    if not paxus_commission_tracking_enabled(
+        lead
+    ):
+        return None
+
+    referral = lead_to_paxus_referral(
+        lead
     )
+
+    fingerprint = _text(
+        referral.fingerprint
+    )
+
+    if not fingerprint:
+        raise ValueError(
+            "Commission synchronization requires a fingerprint."
+        )
+
+    placement_count = 0
+
+    try:
+        placement_count = int(
+            referral.placement_count
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        raise ValueError(
+            "Commission synchronization requires a valid placement count."
+        )
+
+    if placement_count <= 0:
+        return None
+
+    if referral.client_payment_received is not True:
+        return None
+
+    commission_rate = 0.25
+
+    placement_value = lead.get(
+        "placement_value"
+    )
+
+    expected_commission = lead.get(
+        "expected_commission"
+    )
+
+    if (
+        expected_commission is None
+        and placement_value is not None
+    ):
+        try:
+            expected_commission = (
+                float(placement_value)
+                * commission_rate
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            expected_commission = None
 
     commission_key = fingerprint
 
@@ -638,17 +721,6 @@ def sync_commission(
             )
             else None
         ),
-        "Paid": commission_paid,
-        "Actual Amount": actual_commission,
-        "Payment Date": commission_payment_date,
-        "Payment Method": (
-            _text(
-                lead.get(
-                    "commission_payment_method"
-                )
-            )
-            or None
-        ),
         "Notes": (
             _text(
                 lead.get("notes")
@@ -656,6 +728,40 @@ def sync_commission(
             or None
         ),
     }
+
+    if "commission_paid" in lead:
+        fields["Paid"] = (
+            lead.get("commission_paid")
+            is True
+        )
+
+    if "actual_commission" in lead:
+        fields["Actual Amount"] = lead.get(
+            "actual_commission"
+        )
+
+    if "commission_payment_date" in lead:
+        fields["Payment Date"] = (
+            _text(
+                lead.get(
+                    "commission_payment_date"
+                )
+            )[:10]
+            if lead.get(
+                "commission_payment_date"
+            )
+            else None
+        )
+
+    if "commission_payment_method" in lead:
+        fields["Payment Method"] = (
+            _text(
+                lead.get(
+                    "commission_payment_method"
+                )
+            )
+            or None
+        )
 
     return _upsert(
         "commissions",
