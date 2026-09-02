@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional
 
 from .airtable_sync import (
@@ -8,6 +9,7 @@ from .airtable_sync import (
     find_master_records,
     update_master_record,
 )
+from .config import LeadEngineConfig
 from .paxus_referral_adapter import (
     lead_to_paxus_referral,
     paxus_commission_tracking_enabled,
@@ -55,6 +57,26 @@ def _first_record(
         return None
 
     return record
+
+
+def _master_tracker_available() -> bool:
+    """
+    Determine whether the Master Tracker has been configured.
+
+    The existing Lead Radar synchronization layer remains
+    responsible for the primary Airtable configuration failure.
+
+    This guard also keeps isolated worker/retry tests from
+    attempting real Airtable calls when their Airtable
+    dependencies are intentionally mocked.
+    """
+
+    config = LeadEngineConfig.from_environment()
+
+    return bool(
+        config.airtable_base_id
+        and os.getenv("AIRTABLE_API_KEY")
+    )
 
 
 def _upsert(
@@ -174,22 +196,6 @@ def _routes(
     return result
 
 
-def _opportunity_key(
-    lead: Dict[str, Any],
-    route: str,
-) -> str:
-    fingerprint = _text(
-        lead.get("fingerprint")
-    )
-
-    if not fingerprint:
-        raise ValueError(
-            "Opportunity synchronization requires a fingerprint."
-        )
-
-    return f"{fingerprint}:{route}"
-
-
 def sync_company(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -282,6 +288,22 @@ def sync_company(
     )
 
 
+def _opportunity_key(
+    lead: Dict[str, Any],
+    route: str,
+) -> str:
+    fingerprint = _text(
+        lead.get("fingerprint")
+    )
+
+    if not fingerprint:
+        raise ValueError(
+            "Opportunity synchronization requires a fingerprint."
+        )
+
+    return f"{fingerprint}:{route}"
+
+
 def _opportunity_fields(
     lead: Dict[str, Any],
     route: str,
@@ -361,11 +383,9 @@ def _opportunity_fields(
             or None
         ),
         "Notes": (
-            (
-                f"Lead fingerprint: {fingerprint}"
-                if fingerprint
-                else None
-            )
+            f"Lead fingerprint: {fingerprint}"
+            if fingerprint
+            else None
         ),
     }
 
@@ -434,7 +454,7 @@ def sync_lead_source(
     )
 
     fields = {
-        "Lead": fingerprint,
+        "Lead": source_key,
         "Source": source or None,
         "Source URL": source_url or None,
         "Source Type": (
@@ -474,10 +494,7 @@ def sync_lead_source(
         "lead_sources",
         "Lead",
         source_key,
-        {
-            **fields,
-            "Lead": source_key,
-        },
+        fields,
     )
 
 
@@ -547,7 +564,7 @@ def sync_commission(
         "Company": _text(
             referral.company
         ),
-        "Referral": referral_key,
+        "Referral": commission_key,
         "Partner": "Paxus",
         "Deal / Placement Value": placement_value,
         "Commission Rate": commission_rate,
@@ -597,10 +614,7 @@ def sync_commission(
         "commissions",
         "Referral",
         commission_key,
-        {
-            **fields,
-            "Referral": commission_key,
-        },
+        fields,
     )
 
 
@@ -611,18 +625,32 @@ def sync_master_tracker(
     Synchronize the non-Lead-Radar portions of the
     eight-table Master Tracker.
 
-    Lead Radar itself remains owned by the existing
-    sync_lead_if_missing() path.
+    The Lead Radar, Outreach, Follow-ups, and Paxus
+    Referral paths remain owned by airtable_sync.py.
 
-    Routing rules remain separate from storage.
-    Paxus commission tracking is gated by the existing
-    Paxus domain adapter.
+    The additional Master Tracker tables are synchronized
+    here.
+
+    If Airtable itself is not configured, this function
+    returns a skipped result. The existing Lead Radar
+    synchronization remains authoritative for reporting
+    an actual Airtable configuration failure.
     """
 
     if not isinstance(lead, dict):
         raise ValueError(
             "Lead payload must be a dictionary."
         )
+
+    if not _master_tracker_available():
+        return {
+            "status": "skipped",
+            "reason": "Master Tracker Airtable configuration is not available.",
+            "company": None,
+            "opportunities": [],
+            "lead_source": None,
+            "commission": None,
+        }
 
     company_result = sync_company(
         lead
@@ -641,8 +669,10 @@ def sync_master_tracker(
     )
 
     return {
+        "status": "synced",
+        "reason": None,
         "company": company_result,
         "opportunities": opportunity_results,
         "lead_source": source_result,
         "commission": commission_result,
-  }
+    }
