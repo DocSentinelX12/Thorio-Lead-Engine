@@ -662,26 +662,66 @@ def create_adapter(
     collector = collector_type.strip().lower()
 
     if collector == "json":
-        return JsonSourceAdapter(
+        adapter = JsonSourceAdapter(
             url=url,
             source=source,
             timeout=timeout,
         )
 
-    if collector in {"rss", "atom", "xml"}:
-        return RssSourceAdapter(
+    elif collector in {
+        "rss",
+        "atom",
+        "xml",
+    }:
+        adapter = RssSourceAdapter(
             url=url,
             source=source,
             timeout=timeout,
         )
 
-    if collector == "html":
-        return HtmlSourceAdapter(
+    elif collector == "html":
+        adapter = HtmlSourceAdapter(
             url=url,
             source=source,
             timeout=timeout,
         )
 
-    raise ValueError(
-        f"Unsupported collector type: {collector_type}"
-                             )
+    else:
+        raise ValueError(
+            f"Unsupported collector type: {collector_type}"
+        )
+
+    return AdapterLeadSource(
+        adapter=adapter,
+        name=source,
+    )
+
+
+class AdapterLeadSource:
+    """
+    Compatibility boundary between source adapters and the
+    existing SourceRunner interface.
+
+    The existing scheduler expects source.collect() to return
+    an iterable of normalized lead dictionaries. This wrapper
+    keeps that contract while allowing adapters to carry
+    checkpoints internally.
+    """
+
+    def __init__(
+        self,
+        adapter,
+        name: str,
+    ):
+        self.adapter = adapter
+        self.name = name
+
+    def collect(self) -> Iterable[Dict[str, Any]]:
+        result = self.adapter.collect()
+
+        if not isinstance(result, AdapterResult):
+            raise ValueError(
+                "Source adapter returned an invalid result."
+            )
+
+        return result.records
