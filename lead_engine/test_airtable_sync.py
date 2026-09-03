@@ -212,3 +212,204 @@ def test_sync_lead_if_missing_updates_existing_record_without_overwriting_human_
     assert "Notes" not in captured["fields"]
 
     mock_create.assert_not_called()
+
+def test_sync_opportunities_creates_one_opportunity_per_non_thorio_route(
+    monkeypatch,
+):
+    created = []
+
+    def fake_find_master_records(
+        table_key,
+        lookup_field,
+        lookup_value,
+    ):
+        return []
+
+    def fake_create_master_record(
+        table_key,
+        fields,
+    ):
+        created.append(
+            {
+                "table_key": table_key,
+                "fields": fields,
+            }
+        )
+
+        return {
+            "records": [
+                {
+                    "id": f"rec{len(created)}",
+                    "fields": fields,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "lead_engine.master_tracker_sync.find_master_records",
+        fake_find_master_records,
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.master_tracker_sync.create_master_record",
+        fake_create_master_record,
+    )
+
+    lead = {
+        "qualified": True,
+        "fingerprint": "fingerprint",
+        "company": "Example Company",
+        "signal": "software engineering hiring",
+        "signal_type": "hiring",
+        "potential_routes": [
+            "Paxus",
+            "Shiftr",
+            "Thorio",
+        ],
+    }
+
+    from lead_engine.master_tracker_sync import sync_opportunities
+
+    results = sync_opportunities(lead)
+
+    assert len(results) == 2
+    assert len(created) == 2
+
+    assert all(
+        item["table_key"] == "opportunities"
+        for item in created
+    )
+
+    opportunity_values = {
+        item["fields"]["Opportunity"]
+        for item in created
+    }
+
+    assert opportunity_values == {
+        "fingerprint:Paxus",
+        "fingerprint:Shiftr",
+    }
+
+
+def test_sync_opportunities_excludes_thorio_only_route(
+    monkeypatch,
+):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError(
+            "Thorio must not create an Opportunity."
+        )
+
+    monkeypatch.setattr(
+        "lead_engine.master_tracker_sync.find_master_records",
+        fail_if_called,
+    )
+
+    lead = {
+        "qualified": True,
+        "fingerprint": "fingerprint",
+        "company": "Example Company",
+        "potential_routes": [
+            "Thorio",
+        ],
+    }
+
+    from lead_engine.master_tracker_sync import sync_opportunities
+
+    results = sync_opportunities(lead)
+
+    assert results == []
+
+
+def test_sync_opportunities_is_idempotent_by_route(
+    monkeypatch,
+):
+    records = {
+        "fingerprint:Paxus": {
+            "id": "rec_paxus",
+            "fields": {
+                "Opportunity": "fingerprint:Paxus",
+            },
+        },
+        "fingerprint:Shiftr": {
+            "id": "rec_shiftr",
+            "fields": {
+                "Opportunity": "fingerprint:Shiftr",
+            },
+        },
+    }
+
+    updated = []
+
+    def fake_find_master_records(
+        table_key,
+        lookup_field,
+        lookup_value,
+    ):
+        record = records.get(lookup_value)
+
+        if record is None:
+            return []
+
+        return [record]
+
+    def fake_update_master_record(
+        table_key,
+        record_id,
+        fields,
+    ):
+        updated.append(
+            {
+                "table_key": table_key,
+                "record_id": record_id,
+                "fields": fields,
+            }
+        )
+
+        return {
+            "records": [
+                {
+                    "id": record_id,
+                    "fields": fields,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "lead_engine.master_tracker_sync.find_master_records",
+        fake_find_master_records,
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.master_tracker_sync.update_master_record",
+        fake_update_master_record,
+    )
+
+    lead = {
+        "qualified": True,
+        "fingerprint": "fingerprint",
+        "company": "Example Company",
+        "signal": "software engineering hiring",
+        "signal_type": "hiring",
+        "potential_routes": [
+            "Paxus",
+            "Shiftr",
+            "Thorio",
+        ],
+    }
+
+    from lead_engine.master_tracker_sync import sync_opportunities
+
+    results = sync_opportunities(lead)
+
+    assert len(results) == 2
+    assert len(updated) == 2
+
+    updated_ids = {
+        item["record_id"]
+        for item in updated
+    }
+
+    assert updated_ids == {
+        "rec_paxus",
+        "rec_shiftr",
+    }
