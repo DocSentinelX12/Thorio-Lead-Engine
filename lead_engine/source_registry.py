@@ -12,7 +12,7 @@ from .airtable_sync import (
 )
 from .free_sources import FreeJobSource
 from .sources import LeadSource
-from .web_source import WebLeadSource
+from .source_adapters import create_adapter
 from .web_source_config import create_web_source_from_env
 
 
@@ -25,6 +25,9 @@ DEFAULT_FREE_SOURCE_TYPE = "html"
 SUPPORTED_FREE_SOURCE_TYPES = {
     "html",
     "json",
+    "rss",
+    "atom",
+    "xml",
 }
 
 
@@ -190,8 +193,12 @@ def _load_free_source_catalog(
                 f"Duplicate free source URL: {url}"
             )
 
-        seen_names.add(normalized_name)
-        seen_urls.add(normalized_url)
+        seen_names.add(
+            normalized_name
+        )
+        seen_urls.add(
+            normalized_url
+        )
 
         if enabled:
             catalog.append(
@@ -244,23 +251,21 @@ def _free_source_instance(
 ) -> LeadSource:
     timeout = _free_source_timeout()
 
-    if source_type == "html":
-        return FreeJobSource(
-            name=name,
+    if source_type in {
+        "json",
+        "rss",
+        "atom",
+        "xml",
+        "html",
+    }:
+        adapter = create_adapter(
+            collector_type=source_type,
             url=url,
-            timeout=timeout,
-            signal_keywords=signal_keywords,
-        )   
-        
-    if source_type == "json":
-        source = WebLeadSource(
-            url=url,
+            source=name,
             timeout=timeout,
         )
 
-        source.name = name
-
-        return source
+        return adapter
 
     raise RuntimeError(
         f"Unsupported free source type: {source_type}"
@@ -269,21 +274,13 @@ def _free_source_instance(
 
 def _load_airtable_source_catalog() -> Tuple[
     Tuple[str, str, str, Tuple[str, ...]],
-    ...
+    ...,
 ]:
     """
-    Load active collector configurations from the Airtable
-    Master Tracker Lead Sources table.
+    Load active collector configurations from Airtable.
 
-    Only source configurations with:
-      - Active = true
-      - a valid Source URL
-      - a supported Collector Type
-
-    are returned.
-
-    Lead Sources is configuration data only. It is never treated
-    as discovered lead data.
+    Only active records with a source URL and supported
+    collector type are returned.
     """
 
     base_id = os.getenv(
@@ -344,9 +341,7 @@ def _load_airtable_source_catalog() -> Tuple[
             f"Unable to load Airtable Lead Sources: {exc}"
         ) from exc
 
-    catalog: List[
-        Tuple[str, str, str, Tuple[str, ...]]
-    ] = []
+    catalog = []
     seen_names = set()
     seen_urls = set()
 
@@ -359,12 +354,10 @@ def _load_airtable_source_catalog() -> Tuple[
         if not isinstance(fields, dict):
             continue
 
-        active = fields.get(
+        if fields.get(
             "Active",
             False,
-        )
-
-        if active is not True:
+        ) is not True:
             continue
 
         name = fields.get(
@@ -386,7 +379,7 @@ def _load_airtable_source_catalog() -> Tuple[
             "Signal Keywords",
             "",
         )
-        
+
         if not isinstance(name, str):
             name = ""
 
@@ -396,12 +389,12 @@ def _load_airtable_source_catalog() -> Tuple[
         if not isinstance(source_type, str):
             source_type = ""
 
+        if not isinstance(signal_keywords, str):
+            signal_keywords = ""
+
         name = name.strip()
         url = url.strip()
         source_type = source_type.strip().lower()
-
-        if not isinstance(signal_keywords, str):
-            signal_keywords = ""
 
         signal_keywords = tuple(
             keyword.strip()
@@ -476,14 +469,12 @@ def configured_sources() -> List[LeadSource]:
             web_source
         )
 
-    airtable_catalog = _load_airtable_source_catalog()
-
     for (
         name,
         url,
         source_type,
         signal_keywords,
-    ) in airtable_catalog:
+    ) in _load_airtable_source_catalog():
         sources.append(
             _free_source_instance(
                 name=name,
@@ -494,9 +485,11 @@ def configured_sources() -> List[LeadSource]:
         )
 
     if _free_sources_enabled():
-        catalog = _load_free_source_catalog()
-
-        for name, url, source_type in catalog:
+        for (
+            name,
+            url,
+            source_type,
+        ) in _load_free_source_catalog():
             sources.append(
                 _free_source_instance(
                     name=name,
@@ -509,11 +502,10 @@ def configured_sources() -> List[LeadSource]:
 
 
 def available_free_sources() -> List[str]:
-    catalog = _load_free_source_catalog()
-
     return [
         name
-        for name, _url, _source_type in catalog
+        for name, _url, _source_type
+        in _load_free_source_catalog()
     ]
 
 
@@ -525,16 +517,13 @@ if __name__ == "__main__":
     )
 
     print(
-        f"Free source catalog: "
-        f"{len(catalog)} sources"
+        f"Free source catalog: {len(catalog)} sources"
     )
 
     print(
-        f"Free sources enabled: "
-        f"{_free_sources_enabled()}"
+        f"Free sources enabled: {_free_sources_enabled()}"
     )
 
     print(
-        f"Configured source count: "
-        f"{len(configured_sources())}"
-)
+        f"Configured source count: {len(configured_sources())}"
+            )
