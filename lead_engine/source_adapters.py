@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from html import unescape
+from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 from urllib.request import Request
@@ -33,6 +35,21 @@ def _first_text(
 
         if value is None:
             continue
+
+        if isinstance(value, (list, tuple)):
+            value = ", ".join(
+                _text(item)
+                for item in value
+                if _text(item)
+            )
+
+        if isinstance(value, dict):
+            value = (
+                value.get("name")
+                or value.get("value")
+                or value.get("text")
+                or value.get("title")
+            )
 
         text = _text(value)
 
@@ -117,6 +134,41 @@ def _json_records(
     raise ValueError(
         "JSON source did not contain a supported record list."
     )
+
+
+def _next_checkpoint(
+    payload: Any,
+) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+
+    for key in (
+        "nextCursor",
+        "next_cursor",
+        "nextPage",
+        "next_page",
+        "next",
+        "next_page_token",
+        "nextPageToken",
+    ):
+        value = payload.get(key)
+
+        if value is None:
+            continue
+
+        if isinstance(value, dict):
+            value = (
+                value.get("cursor")
+                or value.get("token")
+                or value.get("url")
+            )
+
+        text = _text(value)
+
+        if text:
+            return text
+
+    return None
 
 
 def normalize_job_record(
@@ -265,9 +317,27 @@ class JsonSourceAdapter:
         self.source = self.name
         self.timeout = timeout
 
-    def collect(self) -> AdapterResult:
+    def collect(
+        self,
+        checkpoint: Optional[str] = None,
+    ) -> AdapterResult:
+        request_url = self.url
+
+        if checkpoint:
+            separator = (
+                "&"
+                if "?" in request_url
+                else "?"
+            )
+
+            request_url = (
+                f"{request_url}"
+                f"{separator}cursor="
+                f"{checkpoint}"
+            )
+
         request = Request(
-            self.url,
+            request_url,
             headers={
                 "User-Agent":
                     "Thorio-Lead-Engine/1.0",
@@ -314,21 +384,11 @@ class JsonSourceAdapter:
             if record is not None:
                 normalized.append(record)
 
-        checkpoint = None
-
-        if isinstance(payload, dict):
-            checkpoint = _first_text(
-                payload,
-                "nextCursor",
-                "next_cursor",
-                "nextPage",
-                "next_page",
-                "cursor",
-            )
-
         return AdapterResult(
             records=normalized,
-            checkpoint=checkpoint or None,
+            checkpoint=_next_checkpoint(
+                payload
+            ),
         )
 
 
@@ -359,7 +419,10 @@ class RssSourceAdapter:
         self.source = self.name
         self.timeout = timeout
 
-    def collect(self) -> AdapterResult:
+    def collect(
+        self,
+        checkpoint: Optional[str] = None,
+    ) -> AdapterResult:
         request = Request(
             self.url,
             headers={
@@ -427,6 +490,7 @@ class RssSourceAdapter:
                             self.url,
                             href,
                         )
+
                     elif child.text:
                         values["link"] = urljoin(
                             self.url,
@@ -460,6 +524,15 @@ class RssSourceAdapter:
                 or ""
             )
 
+            company = (
+                values.get("company")
+                or values.get("employer")
+                or ""
+            )
+
+            if not company:
+                continue
+
             source_id = (
                 values.get("guid")
                 or values.get("id")
@@ -471,14 +544,11 @@ class RssSourceAdapter:
                     "source": self.source,
                     "source_id": source_id,
                     "url": link,
-                    "company": (
-                        values.get("company")
-                        or values.get("author")
-                        or self.source
-                    ),
+                    "company": company,
                     "signal": title,
                     "evidence": (
                         f"Title: {title}\n"
+                        f"Company: {company}\n"
                         "Description: "
                         f"{description[:4000]}"
                     ),
@@ -490,30 +560,129 @@ class RssSourceAdapter:
 
         return AdapterResult(
             records=records,
+            checkpoint=None,
         )
 
 
-class HtmlSourceAdapter:
-    JOB_HINTS = (
-        "software",
-        "engineer",
-        "developer",
-        "engineering",
-        "data",
-        "machine learning",
-        "artificial intelligence",
-        "cybersecurity",
-        "devops",
-        "cloud",
-        "product manager",
-        "technical",
-        "technology",
-        "mobile",
-        "frontend",
-        "backend",
-        "full stack",
-    )
+class _JobPostingParser(HTMLParser):
+    """
+    Extract JSON-LD JobPosting objects from HTML.
 
+    We intentionally do not manufacture a company name from
+    the source website. A job must contain structured employer
+    information to enter the normalized lead pipeline.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        self._script_depth = 0
+        self._script_parts: List[str] = []
+        self.job_postings: List[Dict[str, Any]] = []
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs,
+    ) -> None:
+        if tag.lower() != "script":
+            return
+
+        attributes = dict(attrs)
+
+        if (
+            attributes.get("type", "")
+            .lower()
+            == "application/ld+json"
+        ):
+            self._script_depth += 1
+            self._script_parts = []
+
+    def handle_data(
+        self,
+        data: str,
+    ) -> None:
+        if self._script_depth:
+            self._script_parts.append(
+                data
+            )
+
+    def handle_endtag(
+        self,
+        tag: str,
+    ) -> None:
+        if (
+            tag.lower() != "script"
+            or not self._script_depth
+        ):
+            return
+
+        self._script_depth -= 1
+
+        if self._script_depth:
+            return
+
+        raw = "".join(
+            self._script_parts
+        ).strip()
+
+        self._script_parts = []
+
+        if not raw:
+            return
+
+        try:
+            payload = json.loads(
+                unescape(raw)
+            )
+        except json.JSONDecodeError:
+            return
+
+        self._extract(
+            payload
+        )
+
+    def _extract(
+        self,
+        payload: Any,
+    ) -> None:
+        if isinstance(payload, list):
+            for item in payload:
+                self._extract(item)
+
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        graph = payload.get("@graph")
+
+        if isinstance(graph, list):
+            for item in graph:
+                self._extract(item)
+
+        schema_type = payload.get(
+            "@type"
+        )
+
+        if isinstance(schema_type, list):
+            is_job = (
+                "JobPosting"
+                in schema_type
+            )
+        else:
+            is_job = (
+                schema_type
+                == "JobPosting"
+            )
+
+        if is_job:
+            self.job_postings.append(
+                payload
+            )
+
+
+class HtmlSourceAdapter:
     def __init__(
         self,
         url: str,
@@ -540,7 +709,10 @@ class HtmlSourceAdapter:
         self.source = self.name
         self.timeout = timeout
 
-    def collect(self) -> AdapterResult:
+    def collect(
+        self,
+        checkpoint: Optional[str] = None,
+    ) -> AdapterResult:
         request = Request(
             self.url,
             headers={
@@ -565,66 +737,161 @@ class HtmlSourceAdapter:
             errors="replace",
         )
 
-        links = re.findall(
-            r'href=["\']([^"\']+)["\']',
-            html,
-            flags=re.IGNORECASE,
-        )
+        parser = _JobPostingParser()
+
+        parser.feed(html)
 
         records = []
 
-        for link in links:
-            absolute_url = urljoin(
-                self.url,
-                link,
+        for item in parser.job_postings:
+            employer = item.get(
+                "hiringOrganization"
             )
 
-            lowered = (
-                absolute_url.lower()
-            )
-
-            if not any(
-                hint in lowered
-                for hint in (
-                    "/job",
-                    "/jobs/",
-                    "/position",
-                    "/career",
-                    "/careers",
-                    "/opening",
-                    "/vacanc",
+            if isinstance(
+                employer,
+                dict,
+            ):
+                company = _text(
+                    employer.get("name")
                 )
-            ):
-                continue
+            else:
+                company = _text(
+                    employer
+                )
 
-            title = (
-                link
-                .rsplit("/", 1)[-1]
-                .replace("-", " ")
-                .replace("_", " ")
-                .strip()
+            title = _text(
+                item.get("title")
             )
 
-            if not title:
+            job_url = _first_url(
+                item,
+                "url",
+            )
+
+            if not job_url:
+                job_url = self.url
+
+            if not title or not company:
                 continue
 
-            if not any(
-                hint in title.lower()
-                for hint in self.JOB_HINTS
+            source_id = (
+                _text(
+                    item.get("identifier")
+                )
+                or job_url
+            )
+
+            if isinstance(
+                item.get("identifier"),
+                dict,
             ):
-                continue
+                source_id = (
+                    _text(
+                        item["identifier"].get(
+                            "value"
+                        )
+                    )
+                    or job_url
+                )
+
+            description = _text(
+                item.get("description")
+            )
+
+            location = item.get(
+                "jobLocation"
+            )
+
+            location_text = ""
+
+            if isinstance(
+                location,
+                list,
+            ):
+                locations = []
+
+                for entry in location:
+                    if not isinstance(
+                        entry,
+                        dict,
+                    ):
+                        continue
+
+                    address = entry.get(
+                        "address"
+                    )
+
+                    if isinstance(
+                        address,
+                        dict,
+                    ):
+                        address_text = ", ".join(
+                            _text(
+                                address.get(key)
+                            )
+                            for key in (
+                                "addressLocality",
+                                "addressRegion",
+                                "addressCountry",
+                            )
+                            if _text(
+                                address.get(key)
+                            )
+                        )
+
+                        if address_text:
+                            locations.append(
+                                address_text
+                            )
+
+                location_text = "; ".join(
+                    locations
+                )
+
+            elif isinstance(
+                location,
+                dict,
+            ):
+                address = location.get(
+                    "address"
+                )
+
+                if isinstance(
+                    address,
+                    dict,
+                ):
+                    location_text = ", ".join(
+                        _text(
+                            address.get(key)
+                        )
+                        for key in (
+                            "addressLocality",
+                            "addressRegion",
+                            "addressCountry",
+                        )
+                        if _text(
+                            address.get(key)
+                        )
+                    )
 
             records.append(
                 {
                     "source": self.source,
-                    "source_id": absolute_url,
-                    "url": absolute_url,
-                    "company": self.source,
-                    "signal": title,
+                    "source_id": source_id,
+                    "url": job_url,
+                    "company": company,
+                    "signal": (
+                        f"{title} | "
+                        f"{company}"
+                    ),
                     "evidence": (
-                        "Public job URL discovered "
-                        f"from {self.url}: "
-                        f"{absolute_url}"
+                        f"Title: {title}\n"
+                        f"Company: {company}\n"
+                        f"Source: {self.url}\n"
+                        f"Location: {location_text}\n"
+                        "Description: "
+                        f"{description[:4000]}"
                     ),
                     "signal_type": "hiring",
                     "source_url": self.url,
@@ -634,13 +901,15 @@ class HtmlSourceAdapter:
 
         return AdapterResult(
             records=records,
+            checkpoint=None,
         )
 
 
 class AdapterLeadSource:
     """
-    Compatibility wrapper implementing the source
-    interface expected by the existing scheduler.
+    Compatibility wrapper implementing the source interface
+    expected by the existing scheduler while preserving
+    collection checkpoint metadata.
     """
 
     def __init__(
@@ -663,17 +932,20 @@ class AdapterLeadSource:
 
         self.adapter = adapter
         self.name = name.strip()
-
-        if hasattr(
+        self.url = getattr(
             adapter,
             "url",
-        ):
-            self.url = adapter.url
+            "",
+        )
+        self.last_checkpoint = None
 
     def collect(
         self,
+        checkpoint: Optional[str] = None,
     ) -> Iterable[Dict[str, Any]]:
-        result = self.adapter.collect()
+        result = self.adapter.collect(
+            checkpoint=checkpoint
+        )
 
         if not isinstance(
             result,
@@ -682,6 +954,10 @@ class AdapterLeadSource:
             raise ValueError(
                 "Source adapter returned an invalid result."
             )
+
+        self.last_checkpoint = (
+            result.checkpoint
+        )
 
         return result.records
 
@@ -733,4 +1009,4 @@ def create_adapter(
     return AdapterLeadSource(
         adapter=adapter,
         name=source,
-    )
+)
