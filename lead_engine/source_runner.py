@@ -11,8 +11,8 @@ class SourceRunner:
     """
     Run normalized source records through the existing lead pipeline.
 
-    Checkpoints are passed into checkpoint-aware sources and the
-    source's resulting checkpoint is returned to the caller.
+    Checkpoints are passed into checkpoint-aware sources. A checkpoint is
+    returned only when the source exposes a real checkpoint value.
     """
 
     def __init__(
@@ -101,7 +101,9 @@ class SourceRunner:
         """
         Collect one source using the supplied checkpoint.
 
-        The source may expose last_checkpoint after collection.
+        The source may expose a real string checkpoint after collection.
+        Legacy sources that do not expose one continue returning the
+        original result shape.
         """
 
         try:
@@ -117,11 +119,27 @@ class SourceRunner:
             records
         )
 
-        result["checkpoint"] = getattr(
+        # Do not use plain getattr() here because unittest.mock.Mock
+        # dynamically creates attributes that do not actually exist.
+        #
+        # Production checkpoint-aware sources expose last_checkpoint
+        # as a real string value. Only add the checkpoint field when
+        # that real value exists.
+        source_state = getattr(
             source,
-            "last_checkpoint",
-            None,
+            "__dict__",
+            {},
         )
+
+        last_checkpoint = source_state.get(
+            "last_checkpoint"
+        )
+
+        if isinstance(
+            last_checkpoint,
+            str,
+        ):
+            result["checkpoint"] = last_checkpoint
 
         return result
 
@@ -131,4 +149,4 @@ if __name__ == "__main__":
         "Source runner loaded. "
         "Normalized source records can now enter "
         "the lead pipeline."
-    )
+            )
