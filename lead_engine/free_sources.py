@@ -571,7 +571,7 @@ class FreeJobSource:
 
         return ""
 
-        @classmethod
+    @classmethod
     def _candidate_is_useful(
         cls,
         title: str,
