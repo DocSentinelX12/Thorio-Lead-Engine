@@ -1,5 +1,6 @@
 import json
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
