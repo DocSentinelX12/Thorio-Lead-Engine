@@ -240,14 +240,16 @@ def _free_source_instance(
     name: str,
     url: str,
     source_type: str = DEFAULT_FREE_SOURCE_TYPE,
+    signal_keywords: Tuple[str, ...] = (),
 ) -> LeadSource:
     timeout = _free_source_timeout()
 
     if source_type == "html":
         return FreeJobSource(
-            name=name,
-            url=url,
-            timeout=timeout,
+    name=name,
+    url=url,
+    timeout=timeout,
+    signal_keywords=signal_keywords,
         )
 
     if source_type == "json":
@@ -339,7 +341,9 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str], ...]:
             f"Unable to load Airtable Lead Sources: {exc}"
         ) from exc
 
-    catalog: List[Tuple[str, str, str]] = []
+    catalog: List[
+    Tuple[str, str, str, Tuple[str, ...]]
+] = []
     seen_names = set()
     seen_urls = set()
 
@@ -375,6 +379,11 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str], ...]:
             "",
         )
 
+        signal_keywords = fields.get(
+            "Signal Keywords",
+            "",
+        )
+        
         if not isinstance(name, str):
             name = ""
 
@@ -387,6 +396,15 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str], ...]:
         name = name.strip()
         url = url.strip()
         source_type = source_type.strip().lower()
+
+        if not isinstance(signal_keywords, str):
+            signal_keywords = ""
+
+        signal_keywords = tuple(
+            keyword.strip()
+            for keyword in signal_keywords.split(";")
+            if keyword.strip()
+        )
 
         if not name:
             raise RuntimeError(
@@ -433,13 +451,14 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str], ...]:
             normalized_url
         )
 
-        catalog.append(
-            (
-                name,
-                url,
-                source_type,
-            )
-        )
+    catalog.append(
+      (
+        name,
+        url,
+        source_type,
+        signal_keywords,
+      )
+    )
 
     return tuple(catalog)
 
@@ -456,12 +475,18 @@ def configured_sources() -> List[LeadSource]:
 
     airtable_catalog = _load_airtable_source_catalog()
 
-    for name, url, source_type in airtable_catalog:
+    for (
+      name,
+      url,
+      source_type,
+      signal_keywords,
+   ) in airtable_catalog:
         sources.append(
             _free_source_instance(
                 name=name,
                 url=url,
                 source_type=source_type,
+                signal_keywords=signal_keywords,
             )
         )
 
