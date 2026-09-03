@@ -106,6 +106,54 @@ JOB_TEXT_TERMS = (
     "join our team",
 )
 
+B2B_SIGNAL_TERMS = (
+    "need help",
+    "looking for",
+    "looking to build",
+    "looking to hire",
+    "seeking",
+    "seeking help",
+    "need a developer",
+    "need developers",
+    "need an engineer",
+    "need engineers",
+    "need software",
+    "need technology",
+    "need technical",
+    "build an app",
+    "build a website",
+    "build software",
+    "build a platform",
+    "build an ai",
+    "build ai",
+    "automation",
+    "automate",
+    "integration",
+    "integrate",
+    "api development",
+    "software development",
+    "web development",
+    "mobile development",
+    "technical team",
+    "development team",
+    "engineering team",
+    "technology partner",
+    "development partner",
+    "software partner",
+    "agency",
+    "developer",
+    "developers",
+    "engineer",
+    "engineers",
+    "software",
+    "technology",
+    "technical",
+    "saas",
+    "startup",
+    "founder",
+    "cofounder",
+)
+
 MAX_RECORDS_PER_PAGE = 500
 MAX_TEXT_LENGTH = 5000
 MAX_TITLE_LENGTH = 300
@@ -344,6 +392,16 @@ class FreeJobSource:
         )
 
     @classmethod
+    def _has_b2b_signal(
+        cls,
+        text: str,
+    ) -> bool:
+        return cls._contains_any(
+            text,
+            B2B_SIGNAL_TERMS,
+        )
+    
+    @classmethod
     def _looks_like_job_url(
         cls,
         url: str,
@@ -513,7 +571,7 @@ class FreeJobSource:
 
         return ""
 
-    @classmethod
+        @classmethod
     def _candidate_is_useful(
         cls,
         title: str,
@@ -546,6 +604,9 @@ class FreeJobSource:
             cls._has_remote_signal(combined)
             and cls._has_technology_signal(combined)
         ):
+            return True
+
+        if cls._has_b2b_signal(combined):
             return True
 
         return False
@@ -601,8 +662,8 @@ class FreeJobSource:
         )
 
         if not title:
-            title = "Remote technology job listing"
-
+            title = "Technology business signal"
+            
         return {
             "source": "",
             "source_id": url,
@@ -972,10 +1033,16 @@ class FreeJobSource:
                 surrounding,
             )
 
-            evidence = (
-                "Job listing link discovered from "
-                f"{source_name}."
-            )
+                        if cls._looks_like_job_url(url):
+                evidence = (
+                    "Job listing link discovered from "
+                    f"{source_name}."
+                )
+            else:
+                evidence = (
+                    "B2B technology signal discovered from "
+                    f"{source_name}."
+                )
 
             record = cls._make_record(
                 url=url,
