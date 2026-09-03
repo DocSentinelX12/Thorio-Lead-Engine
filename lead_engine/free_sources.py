@@ -736,9 +736,6 @@ class FreeJobSource:
                         == "jobposting"
                     )
 
-                if not is_job:
-                    continue
-
                 title = cls._first_nonempty(
                     item.get("title"),
                     item.get("name"),
@@ -890,12 +887,23 @@ class FreeJobSource:
                     if value
                 )
 
-                if not cls._has_technology_signal(
+                if is_job:
+                    if not cls._has_technology_signal(
+                        context
+                    ):
+                        continue
+
+                    if not cls._has_remote_signal(
+                        context
+                    ):
+                        continue
+
+                elif not cls._has_b2b_signal(
                     context
                 ):
                     continue
 
-                if not cls._has_remote_signal(
+                elif not cls._has_b2b_signal(
                     context
                 ):
                     continue
@@ -906,16 +914,28 @@ class FreeJobSource:
                     else ""
                 )
 
-                if source_label:
-                    evidence = (
-                        "JobPosting structured data "
-                        f"discovered from {source_label}."
-                    )
+                if is_job:
+                    if source_label:
+                        evidence = (
+                            "JobPosting structured data "
+                            f"discovered from {source_label}."
+                        )
+                    else:
+                        evidence = (
+                            "JobPosting structured data "
+                            "discovered from the configured source."
+                        )
                 else:
-                    evidence = (
-                        "JobPosting structured data "
-                        "discovered from the configured source."
-                    )
+                    if source_label:
+                        evidence = (
+                            "B2B technology structured data "
+                            f"discovered from {source_label}."
+                        )
+                    else:
+                        evidence = (
+                            "B2B technology structured data "
+                            "discovered from the configured source."
+                        )
 
                 record = cls._make_record(
                     url=url,
