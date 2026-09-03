@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 import logging
 
 from .pipeline import LeadPipeline
@@ -11,26 +11,20 @@ class SourceRunner:
     """
     Run normalized source records through the existing lead pipeline.
 
-    The runner also reports how many records were discovered by the
-    source before downstream processing. This allows production
-    monitoring to distinguish an empty source from a source whose
-    records failed downstream.
+    Checkpoints are passed into checkpoint-aware sources and the
+    source's resulting checkpoint is returned to the caller.
     """
 
-    def __init__(self, pipeline: LeadPipeline):
+    def __init__(
+        self,
+        pipeline: LeadPipeline,
+    ):
         self.pipeline = pipeline
 
     def process(
         self,
         records: Iterable[Dict[str, Any]],
     ) -> Dict[str, int]:
-        """
-        Process every source record independently.
-
-        A malformed record or pipeline failure must never stop
-        subsequent records from being processed.
-        """
-
         accepted = 0
         duplicates = 0
         failed = 0
@@ -39,12 +33,15 @@ class SourceRunner:
         for record in records:
             discovered += 1
 
-            if not isinstance(record, dict):
+            if not isinstance(
+                record,
+                dict,
+            ):
                 failed += 1
 
                 logger.error(
-                    "Lead pipeline rejected non-object source record: "
-                    "type=%s",
+                    "Lead pipeline rejected non-object "
+                    "source record: type=%s",
                     type(record).__name__,
                 )
                 continue
@@ -58,10 +55,17 @@ class SourceRunner:
                 failed += 1
 
                 source = str(
-                    record.get("source", "unknown")
+                    record.get(
+                        "source",
+                        "unknown",
+                    )
                 )
+
                 source_id = str(
-                    record.get("source_id", "unknown")
+                    record.get(
+                        "source_id",
+                        "unknown",
+                    )
                 )
 
                 logger.exception(
@@ -72,10 +76,14 @@ class SourceRunner:
                 )
                 continue
 
-            if result.get("status") == "duplicate":
+            if result.get(
+                "status"
+            ) == "duplicate":
                 duplicates += 1
 
-            elif result.get("accepted") is True:
+            elif result.get(
+                "accepted"
+            ) is True:
                 accepted += 1
 
         return {
@@ -88,24 +96,39 @@ class SourceRunner:
     def run_source(
         self,
         source,
+        checkpoint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Collect records from one source and process them.
+        Collect one source using the supplied checkpoint.
 
-        Source collection failures are allowed to propagate to the
-        service boundary so the source itself is recorded as failed
-        without terminating processing of other configured sources.
+        The source may expose last_checkpoint after collection.
         """
 
-        records = source.collect()
+        try:
+            records = source.collect(
+                checkpoint=checkpoint
+            )
+        except TypeError:
+            # Preserve compatibility with older custom sources
+            # whose collect() method has no checkpoint argument.
+            records = source.collect()
 
-        return self.process(
+        result = self.process(
             records
         )
+
+        result["checkpoint"] = getattr(
+            source,
+            "last_checkpoint",
+            None,
+        )
+
+        return result
 
 
 if __name__ == "__main__":
     print(
         "Source runner loaded. "
-        "Normalized source records can now enter the lead pipeline."
+        "Normalized source records can now enter "
+        "the lead pipeline."
     )
