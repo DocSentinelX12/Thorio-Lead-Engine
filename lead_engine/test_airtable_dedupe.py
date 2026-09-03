@@ -3,7 +3,7 @@ from unittest.mock import patch
 from lead_engine.airtable_sync import sync_lead_if_missing
 
 
-def test_existing_fingerprint_prevents_duplicate_creation():
+def test_existing_fingerprint_updates_existing_record_without_duplicate_creation():
     lead = {
         "company": "Duplicate Prevention Corp",
         "source": "company website",
@@ -30,11 +30,20 @@ def test_existing_fingerprint_prevents_duplicate_creation():
         "lead_engine.airtable_sync.find_by_fingerprint",
         return_value=[existing_record],
     ), patch(
-        "lead_engine.airtable_sync._request"
-    ) as mock_request:
+        "lead_engine.airtable_sync.update_master_record",
+        return_value={
+            "records": [
+                existing_record
+            ]
+        },
+    ) as mock_update, patch(
+        "lead_engine.airtable_sync.create_master_record"
+    ) as mock_create:
+
         result = sync_lead_if_missing(lead)
 
-    assert result["status"] == "already_exists"
+    assert result["status"] == "updated"
     assert result["record"] == existing_record
 
-    mock_request.assert_not_called()
+    mock_update.assert_called_once()
+    mock_create.assert_not_called()
