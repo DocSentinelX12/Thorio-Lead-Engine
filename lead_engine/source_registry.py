@@ -246,12 +246,12 @@ def _free_source_instance(
 
     if source_type == "html":
         return FreeJobSource(
-    name=name,
-    url=url,
-    timeout=timeout,
-    signal_keywords=signal_keywords,
-        )
-
+            name=name,
+            url=url,
+            timeout=timeout,
+            signal_keywords=signal_keywords,
+        )   
+        
     if source_type == "json":
         source = WebLeadSource(
             url=url,
@@ -267,7 +267,10 @@ def _free_source_instance(
     )
 
 
-def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str], ...]:
+def _load_airtable_source_catalog() -> Tuple[
+    Tuple[str, str, str, Tuple[str, ...]],
+    ...
+]:
     """
     Load active collector configurations from the Airtable
     Master Tracker Lead Sources table.
@@ -342,8 +345,8 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str], ...]:
         ) from exc
 
     catalog: List[
-    Tuple[str, str, str, Tuple[str, ...]]
-] = []
+        Tuple[str, str, str, Tuple[str, ...]]
+    ] = []
     seen_names = set()
     seen_urls = set()
 
@@ -451,14 +454,14 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str], ...]:
             normalized_url
         )
 
-    catalog.append(
-      (
-        name,
-        url,
-        source_type,
-        signal_keywords,
-      )
-    )
+        catalog.append(
+            (
+                name,
+                url,
+                source_type,
+                signal_keywords,
+            )
+        )
 
     return tuple(catalog)
 
@@ -476,11 +479,11 @@ def configured_sources() -> List[LeadSource]:
     airtable_catalog = _load_airtable_source_catalog()
 
     for (
-      name,
-      url,
-      source_type,
-      signal_keywords,
-   ) in airtable_catalog:
+        name,
+        url,
+        source_type,
+        signal_keywords,
+    ) in airtable_catalog:
         sources.append(
             _free_source_instance(
                 name=name,
