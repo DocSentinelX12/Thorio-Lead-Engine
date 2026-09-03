@@ -196,6 +196,47 @@ def _routes(
     return result
 
 
+def _company_source(
+    lead: Dict[str, Any],
+) -> str:
+    """Map a lead source to an allowed Companies.Source choice."""
+
+    source = _text(
+        lead.get("source")
+    ).lower()
+
+    if source in {
+        "x",
+        "twitter",
+    }:
+        return "X"
+
+    if source in {
+        "linkedin",
+    }:
+        return "LinkedIn"
+
+    if source in {
+        "facebook",
+    }:
+        return "Facebook"
+
+    if source in {
+        "google",
+        "google search",
+        "google news",
+    }:
+        return "Google"
+
+    if source in {
+        "referral",
+        "partner referral",
+    }:
+        return "Referral"
+
+    return "Other"
+
+
 def sync_company(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -266,12 +307,7 @@ def sync_company(
             )
             or None
         ),
-        "Source": (
-            _text(
-                lead.get("source")
-            )
-            or None
-        ),
+        "Source": _company_source(lead),
         "Notes": (
             _text(
                 lead.get("notes")
@@ -304,6 +340,89 @@ def _opportunity_key(
     return f"{fingerprint}:{route}"
 
 
+def _opportunity_need(
+    lead: Dict[str, Any],
+) -> str:
+    """Map lead intent to an allowed Opportunities.Need choice."""
+
+    signal_type = _text(
+        lead.get("signal_type")
+    ).lower()
+
+    signal = _text(
+        lead.get("signal")
+    ).lower()
+
+    combined = (
+        f"{signal_type} {signal}"
+    )
+
+    if any(
+        term in combined
+        for term in (
+            "hiring",
+            "talent",
+            "recruit",
+            "engineer",
+            "developer",
+        )
+    ):
+        return "Tech Talent"
+
+    if any(
+        term in combined
+        for term in (
+            "ai",
+            "automation",
+            "agent",
+            "llm",
+        )
+    ):
+        return "AI / Automation"
+
+    if any(
+        term in combined
+        for term in (
+            "mobile",
+            "ios",
+            "android",
+            "app",
+        )
+    ):
+        return "Mobile App"
+
+    if any(
+        term in combined
+        for term in (
+            "saas",
+            "product",
+        )
+    ):
+        return "SaaS / Product"
+
+    if any(
+        term in combined
+        for term in (
+            "staff augmentation",
+            "augmentation",
+        )
+    ):
+        return "Staff Augmentation"
+
+    if any(
+        term in combined
+        for term in (
+            "software",
+            "development",
+            "build",
+            "custom",
+        )
+    ):
+        return "Software Development"
+
+    return "Other"
+
+
 def _opportunity_fields(
     lead: Dict[str, Any],
     route: str,
@@ -325,25 +444,13 @@ def _opportunity_fields(
         "Opportunity": opportunity_key,
         "Company": company,
         "Partner": route,
-        "Need": (
-            _text(
-                lead.get("signal")
-            )
-            or _text(
-                lead.get("evidence")
-            )
-            or None
-        ),
+        "Need": _opportunity_need(lead),
         "Stage": (
-            _text(
-                lead.get("opportunity_stage")
-            )
-            or (
-                "Qualified"
-                if lead.get("qualified") is True
-                else "Review"
-            )
-        ),
+    _text(
+        lead.get("opportunity_stage")
+    )
+    or "Qualified"
+),
         "Priority": (
             _text(
                 lead.get("priority")
@@ -404,22 +511,25 @@ def sync_opportunities(
     results: List[Dict[str, Any]] = []
 
     for route in _routes(lead):
-        opportunity_key = _opportunity_key(
-            lead,
-            route,
-        )
+      if route == "Thorio":
+         continue
 
-        results.append(
-            _upsert(
-                "opportunities",
-                "Opportunity",
-                opportunity_key,
-                _opportunity_fields(
-                    lead,
-                    route,
-                ),
-            )
+    opportunity_key = _opportunity_key(
+        lead,
+        route,
+    )
+
+    results.append(
+        _upsert(
+            "opportunities",
+            "Opportunity",
+            opportunity_key,
+            _opportunity_fields(
+                lead,
+                route,
+            ),
         )
+    )
 
     return results
 
