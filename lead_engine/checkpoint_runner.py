@@ -7,6 +7,19 @@ class CheckpointRunner:
 
     A checkpoint advances only after the source completes without
     downstream processing failures.
+
+    If the database already has a checkpoint, it takes precedence over
+    any checkpoint supplied by the caller.
+
+    If the database has no checkpoint and the caller supplies one, that
+    checkpoint is used as the effective starting checkpoint.
+
+    After a successful run, a checkpoint returned by the runner is
+    persisted. If the runner does not return a new checkpoint, the
+    effective checkpoint is persisted instead.
+
+    After a failed run, the previously persisted database checkpoint is
+    retained and no new checkpoint is saved.
     """
 
     def __init__(
@@ -53,8 +66,9 @@ class CheckpointRunner:
             )
         )
 
-        # If the caller supplied an explicit checkpoint and the
-        # database has no checkpoint yet, use the supplied value.
+        # An already persisted database checkpoint always wins.
+        # Otherwise, use the checkpoint explicitly supplied by the
+        # caller as the starting checkpoint.
         effective_checkpoint = (
             previous_checkpoint
             or (
@@ -100,18 +114,24 @@ class CheckpointRunner:
         )
 
         if failed_count == 0:
-            if next_checkpoint:
-                self.save_checkpoint(
-                    source,
-                    next_checkpoint,
-                )
-
+            # A newly returned checkpoint takes priority.
+            # Otherwise, retain the effective checkpoint.
             current_checkpoint = (
                 next_checkpoint
                 or effective_checkpoint
             )
 
+            # Successful processing is the only point at which the
+            # checkpoint may advance or be initially persisted.
+            if current_checkpoint:
+                self.save_checkpoint(
+                    source,
+                    current_checkpoint,
+                )
+
         else:
+            # Never advance the persisted checkpoint after a failed
+            # downstream processing run.
             current_checkpoint = (
                 previous_checkpoint
             )
