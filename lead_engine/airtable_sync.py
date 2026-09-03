@@ -1690,9 +1690,11 @@ def sync_lead_if_missing(
     """
     Upsert a canonical lead into Lead Radar.
 
-    Existing records are preserved as the deduplication
-    result. New records are created when no matching
-    fingerprint exists.
+    Existing records are updated only with machine-controlled
+    discovery/evidence fields. Human-controlled lifecycle
+    fields are never overwritten.
+
+    A matching fingerprint always remains one Airtable record.
     """
 
     if not isinstance(lead, dict):
@@ -1710,9 +1712,64 @@ def sync_lead_if_missing(
         )
 
         if existing:
+            record_id = existing[0].get(
+                "id"
+            )
+
+            if not record_id:
+                raise AirtableSyncError(
+                    "Existing Lead Radar record has no Airtable record ID."
+                )
+
+            normalized = _normalize_lead(
+                lead
+            )
+
+            human_controlled_fields = {
+                "Review Status",
+                "Qualified Lead?",
+                "Contact Ready",
+                "Referral Submitted?",
+                "Budget Confirmed",
+                "Need Confirmed",
+                "Decision Maker Confirmed",
+                "Timeline Confirmed",
+                "Qualification Score",
+                "Reason Not Qualified",
+                "Thorio Outreach Ready",
+                "Outreach Status",
+                "Contact Method",
+                "Referral / Opportunity ID",
+                "Work Queue",
+                "Notes",
+                "Thorio Fit",
+                "Thorio Plan Recommendation",
+            }
+
+            machine_fields = {
+                key: value
+                for key, value in normalized.items()
+                if key not in human_controlled_fields
+            }
+
+            result = update_master_record(
+                "lead_radar",
+                record_id,
+                machine_fields,
+            )
+
+            records = result.get(
+                "records",
+                [],
+            )
+
             return {
-                "status": "already_exists",
-                "record": existing[0],
+                "status": "updated",
+                "record": (
+                    records[0]
+                    if records
+                    else existing[0]
+                ),
             }
 
     fields = _normalize_lead(
