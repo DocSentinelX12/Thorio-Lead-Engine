@@ -94,9 +94,4 @@
     "url": "https://wellfound.com/remote",
     "enabled": true
   },
-  {
-  "name": "B6 Test Source",
-  "url": "https://example.com/jobs",
-  "enabled": true
-  }
 ]
