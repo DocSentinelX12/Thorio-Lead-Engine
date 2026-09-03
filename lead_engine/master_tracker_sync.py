@@ -511,25 +511,25 @@ def sync_opportunities(
     results: List[Dict[str, Any]] = []
 
     for route in _routes(lead):
-      if route == "Thorio":
-         continue
+        if route == "Thorio":
+            continue
 
-    opportunity_key = _opportunity_key(
-        lead,
-        route,
-    )
-
-    results.append(
-        _upsert(
-            "opportunities",
-            "Opportunity",
-            opportunity_key,
-            _opportunity_fields(
-                lead,
-                route,
-            ),
+        opportunity_key = _opportunity_key(
+            lead,
+            route,
         )
-    )
+
+        results.append(
+            _upsert(
+                "opportunities",
+                "Opportunity",
+                opportunity_key,
+                _opportunity_fields(
+                    lead,
+                    route,
+                ),
+            )
+        )
 
     return results
 
