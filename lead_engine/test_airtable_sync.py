@@ -5,6 +5,7 @@ import pytest
 from lead_engine.airtable_sync import (
     _normalize_lead,
     _normalize_routes,
+    sync_lead_if_missing,
 )
 
 
