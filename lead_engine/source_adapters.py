@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from email.utils import parsedate_to_datetime
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 from urllib.request import Request
@@ -32,11 +31,13 @@ def _first_text(
     for key in keys:
         value = item.get(key)
 
-        if value is not None:
-            text = _text(value)
+        if value is None:
+            continue
 
-            if text:
-                return text
+        text = _text(value)
+
+        if text:
+            return text
 
     return ""
 
@@ -49,11 +50,16 @@ def _first_url(
         value = item.get(key)
 
         if isinstance(value, dict):
-            value = value.get("url") or value.get("href")
+            value = (
+                value.get("url")
+                or value.get("href")
+            )
 
         url = _text(value)
 
-        if url.startswith(("http://", "https://")):
+        if url.startswith(
+            ("http://", "https://")
+        ):
             return url
 
     return ""
@@ -78,7 +84,6 @@ def _json_records(
         "leads",
         "jobs",
         "results",
-        "data",
         "items",
         "postings",
     ):
@@ -112,22 +117,6 @@ def _json_records(
     raise ValueError(
         "JSON source did not contain a supported record list."
     )
-
-
-def _json_value(
-    item: Dict[str, Any],
-    *keys: str,
-) -> Any:
-    for key in keys:
-        if key in item and item[key] not in (
-            None,
-            "",
-            [],
-            {},
-        ):
-            return item[key]
-
-    return None
 
 
 def normalize_job_record(
@@ -212,13 +201,9 @@ def normalize_job_record(
         signal_parts.append(location)
 
     if employment_type:
-        signal_parts.append(employment_type)
-
-    signal = " | ".join(
-        part
-        for part in signal_parts
-        if part
-    )
+        signal_parts.append(
+            employment_type
+        )
 
     evidence_parts = [
         f"Title: {title}",
@@ -227,7 +212,8 @@ def normalize_job_record(
 
     if description:
         evidence_parts.append(
-            f"Description: {description[:4000]}"
+            "Description: "
+            f"{description[:4000]}"
         )
 
     if location:
@@ -240,8 +226,12 @@ def normalize_job_record(
         "source_id": source_id,
         "url": url,
         "company": company,
-        "signal": signal,
-        "evidence": "\n".join(evidence_parts),
+        "signal": " | ".join(
+            signal_parts
+        ),
+        "evidence": "\n".join(
+            evidence_parts
+        ),
         "signal_type": "hiring",
         "source_url": source_url,
         "job_title": title,
@@ -249,14 +239,6 @@ def normalize_job_record(
 
 
 class JsonSourceAdapter:
-    """
-    Generic public JSON collector.
-
-    The adapter intentionally accepts several common public
-    job-feed shapes, then converts them into the repository's
-    discovery schema.
-    """
-
     def __init__(
         self,
         url: str,
@@ -279,22 +261,18 @@ class JsonSourceAdapter:
             )
 
         self.url = url.strip()
-        self.source = source.strip()
+        self.name = source.strip()
+        self.source = self.name
         self.timeout = timeout
 
     def collect(self) -> AdapterResult:
         request = Request(
             self.url,
             headers={
-                "User-Agent": (
-                    "Thorio-Lead-Engine/1.0"
-                ),
-                "Accept": (
-                    "application/json, "
-                    "application/rss+xml, "
-                    "application/xml, "
-                    "text/xml"
-                ),
+                "User-Agent":
+                    "Thorio-Lead-Engine/1.0",
+                "Accept":
+                    "application/json",
             },
         )
 
@@ -320,7 +298,9 @@ class JsonSourceAdapter:
                 "JSON source returned invalid UTF-8 JSON."
             ) from exc
 
-        records = _json_records(payload)
+        records = _json_records(
+            payload
+        )
 
         normalized = []
 
@@ -334,16 +314,17 @@ class JsonSourceAdapter:
             if record is not None:
                 normalized.append(record)
 
-        checkpoint = _first_text(
-            payload
-            if isinstance(payload, dict)
-            else {},
-            "nextCursor",
-            "next_cursor",
-            "nextPage",
-            "next_page",
-            "cursor",
-        )
+        checkpoint = None
+
+        if isinstance(payload, dict):
+            checkpoint = _first_text(
+                payload,
+                "nextCursor",
+                "next_cursor",
+                "nextPage",
+                "next_page",
+                "cursor",
+            )
 
         return AdapterResult(
             records=normalized,
@@ -352,13 +333,6 @@ class JsonSourceAdapter:
 
 
 class RssSourceAdapter:
-    """
-    Public RSS/Atom feed collector.
-
-    RSS and Atom feeds are converted into the same discovery
-    schema used by API sources.
-    """
-
     def __init__(
         self,
         url: str,
@@ -381,16 +355,16 @@ class RssSourceAdapter:
             )
 
         self.url = url.strip()
-        self.source = source.strip()
+        self.name = source.strip()
+        self.source = self.name
         self.timeout = timeout
 
     def collect(self) -> AdapterResult:
         request = Request(
             self.url,
             headers={
-                "User-Agent": (
-                    "Thorio-Lead-Engine/1.0"
-                ),
+                "User-Agent":
+                    "Thorio-Lead-Engine/1.0",
                 "Accept": (
                     "application/rss+xml, "
                     "application/atom+xml, "
@@ -411,7 +385,9 @@ class RssSourceAdapter:
             ) from exc
 
         try:
-            root = ElementTree.fromstring(raw)
+            root = ElementTree.fromstring(
+                raw
+            )
         except ElementTree.ParseError as exc:
             raise ValueError(
                 "RSS source returned invalid XML."
@@ -420,20 +396,31 @@ class RssSourceAdapter:
         records = []
 
         for item in root.iter():
-            tag = item.tag.split("}")[-1].lower()
+            tag = (
+                item.tag
+                .split("}")[-1]
+                .lower()
+            )
 
-            if tag not in {"item", "entry"}:
+            if tag not in {
+                "item",
+                "entry",
+            }:
                 continue
 
             values: Dict[str, str] = {}
 
             for child in item:
                 child_tag = (
-                    child.tag.split("}")[-1].lower()
+                    child.tag
+                    .split("}")[-1]
+                    .lower()
                 )
 
                 if child_tag == "link":
-                    href = child.attrib.get("href")
+                    href = child.attrib.get(
+                        "href"
+                    )
 
                     if href:
                         values["link"] = urljoin(
@@ -445,6 +432,7 @@ class RssSourceAdapter:
                             self.url,
                             child.text.strip(),
                         )
+
                     continue
 
                 if child.text:
@@ -452,8 +440,15 @@ class RssSourceAdapter:
                         child.text.strip()
                     )
 
-            title = values.get("title", "")
-            link = values.get("link", "")
+            title = values.get(
+                "title",
+                "",
+            )
+
+            link = values.get(
+                "link",
+                "",
+            )
 
             if not title or not link:
                 continue
@@ -479,12 +474,12 @@ class RssSourceAdapter:
                     "company": (
                         values.get("company")
                         or values.get("author")
-                        or "Unknown"
+                        or self.source
                     ),
                     "signal": title,
                     "evidence": (
                         f"Title: {title}\n"
-                        f"Description: "
+                        "Description: "
                         f"{description[:4000]}"
                     ),
                     "signal_type": "hiring",
@@ -499,24 +494,14 @@ class RssSourceAdapter:
 
 
 class HtmlSourceAdapter:
-    """
-    Conservative public HTML collector.
-
-    This adapter extracts job-like links and surrounding visible
-    text without pretending that arbitrary HTML has a universal
-    structured schema.
-    """
-
     JOB_HINTS = (
         "software",
         "engineer",
         "developer",
         "engineering",
-        "developer",
         "data",
         "machine learning",
         "artificial intelligence",
-        "ai",
         "cybersecurity",
         "devops",
         "cloud",
@@ -551,16 +536,16 @@ class HtmlSourceAdapter:
             )
 
         self.url = url.strip()
-        self.source = source.strip()
+        self.name = source.strip()
+        self.source = self.name
         self.timeout = timeout
 
     def collect(self) -> AdapterResult:
         request = Request(
             self.url,
             headers={
-                "User-Agent": (
-                    "Thorio-Lead-Engine/1.0"
-                ),
+                "User-Agent":
+                    "Thorio-Lead-Engine/1.0",
                 "Accept": "text/html",
             },
         )
@@ -575,13 +560,10 @@ class HtmlSourceAdapter:
                 f"HTML source request failed: {exc}"
             ) from exc
 
-        try:
-            html = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            html = raw.decode(
-                "utf-8",
-                errors="replace",
-            )
+        html = raw.decode(
+            "utf-8",
+            errors="replace",
+        )
 
         links = re.findall(
             r'href=["\']([^"\']+)["\']',
@@ -597,7 +579,9 @@ class HtmlSourceAdapter:
                 link,
             )
 
-            lowered = absolute_url.lower()
+            lowered = (
+                absolute_url.lower()
+            )
 
             if not any(
                 hint in lowered
@@ -638,8 +622,9 @@ class HtmlSourceAdapter:
                     "company": self.source,
                     "signal": title,
                     "evidence": (
-                        f"Public job URL discovered from "
-                        f"{self.url}: {absolute_url}"
+                        "Public job URL discovered "
+                        f"from {self.url}: "
+                        f"{absolute_url}"
                     ),
                     "signal_type": "hiring",
                     "source_url": self.url,
@@ -652,14 +637,67 @@ class HtmlSourceAdapter:
         )
 
 
+class AdapterLeadSource:
+    """
+    Compatibility wrapper implementing the source
+    interface expected by the existing scheduler.
+    """
+
+    def __init__(
+        self,
+        adapter: Any,
+        name: str,
+    ):
+        if adapter is None:
+            raise ValueError(
+                "Adapter is required."
+            )
+
+        if not isinstance(
+            name,
+            str,
+        ) or not name.strip():
+            raise ValueError(
+                "Source name is required."
+            )
+
+        self.adapter = adapter
+        self.name = name.strip()
+
+        if hasattr(
+            adapter,
+            "url",
+        ):
+            self.url = adapter.url
+
+    def collect(
+        self,
+    ) -> Iterable[Dict[str, Any]]:
+        result = self.adapter.collect()
+
+        if not isinstance(
+            result,
+            AdapterResult,
+        ):
+            raise ValueError(
+                "Source adapter returned an invalid result."
+            )
+
+        return result.records
+
+
 def create_adapter(
     *,
     collector_type: str,
     url: str,
     source: str,
     timeout: int = 20,
-):
-    collector = collector_type.strip().lower()
+) -> AdapterLeadSource:
+    collector = (
+        collector_type
+        .strip()
+        .lower()
+    )
 
     if collector == "json":
         adapter = JsonSourceAdapter(
@@ -688,40 +726,11 @@ def create_adapter(
 
     else:
         raise ValueError(
-            f"Unsupported collector type: {collector_type}"
+            "Unsupported collector type: "
+            f"{collector_type}"
         )
 
     return AdapterLeadSource(
         adapter=adapter,
         name=source,
     )
-
-
-class AdapterLeadSource:
-    """
-    Compatibility boundary between source adapters and the
-    existing SourceRunner interface.
-
-    The existing scheduler expects source.collect() to return
-    an iterable of normalized lead dictionaries. This wrapper
-    keeps that contract while allowing adapters to carry
-    checkpoints internally.
-    """
-
-    def __init__(
-        self,
-        adapter,
-        name: str,
-    ):
-        self.adapter = adapter
-        self.name = name
-
-    def collect(self) -> Iterable[Dict[str, Any]]:
-        result = self.adapter.collect()
-
-        if not isinstance(result, AdapterResult):
-            raise ValueError(
-                "Source adapter returned an invalid result."
-            )
-
-        return result.records
