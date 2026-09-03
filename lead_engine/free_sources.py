@@ -1033,7 +1033,7 @@ class FreeJobSource:
                 surrounding,
             )
 
-                        if cls._looks_like_job_url(url):
+            if cls._looks_like_job_url(url):
                 evidence = (
                     "Job listing link discovered from "
                     f"{source_name}."
