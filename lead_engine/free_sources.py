@@ -224,6 +224,7 @@ class FreeJobSource:
             self._extract_json_ld(
                 html,
                 self.name,
+                self.signal_keywords,
             )
         )
 
@@ -708,6 +709,7 @@ class FreeJobSource:
         cls,
         html: str,
         source_name: str = "",
+        signal_keywords: Optional[Iterable[str]] = None,
     ) -> List[Dict[str, Any]]:
         records: List[Dict[str, Any]] = []
 
@@ -928,15 +930,22 @@ class FreeJobSource:
                     ):
                         continue
 
-                elif not cls._has_b2b_signal(
-                    context
-                ):
-                    continue
+                else:
+                    configured_signal = False
 
-                elif not cls._has_b2b_signal(
-                    context
-                ):
-                    continue
+                    if signal_keywords:
+                        configured_signal = (
+                            cls._contains_any(
+                                context,
+                                signal_keywords,
+                            )
+                        )
+
+                    if not (
+                        cls._has_b2b_signal(context)
+                        or configured_signal
+                    ):
+                        continue
 
                 source_label = (
                     source_name.strip()
