@@ -174,46 +174,46 @@ class FreeJobSource:
     """
 
     def __init__(
-    self,
-    name: str,
-    url: str,
-    timeout: int = 20,
-    signal_keywords: Optional[Iterable[str]] = None,
-):
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError("Source name is required.")
+        self,
+        name: str,
+        url: str,
+        timeout: int = 20,
+        signal_keywords: Optional[Iterable[str]] = None,
+    ):
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Source name is required.")
 
-    if not isinstance(url, str) or not url.strip():
-        raise ValueError("Source URL is required.")
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("Source URL is required.")
 
-    if not isinstance(timeout, int) or isinstance(timeout, bool):
-        raise ValueError(
-            "Source timeout must be an integer."
+        if not isinstance(timeout, int) or isinstance(timeout, bool):
+            raise ValueError(
+                "Source timeout must be an integer."
+            )
+
+        if timeout <= 0:
+            raise ValueError(
+                "Source timeout must be positive."
+            )
+
+        self.name = name.strip()
+        self.url = url.strip()
+        self.timeout = timeout
+
+        if signal_keywords is None:
+            signal_keywords = ()
+
+        if isinstance(signal_keywords, str):
+            signal_keywords = (
+                signal_keywords,
+            )
+
+        self.signal_keywords = tuple(
+            keyword.strip()
+            for keyword in signal_keywords
+            if isinstance(keyword, str)
+            and keyword.strip()
         )
-
-    if timeout <= 0:
-        raise ValueError(
-            "Source timeout must be positive."
-        )
-
-    self.name = name.strip()
-    self.url = url.strip()
-    self.timeout = timeout
-
-    if signal_keywords is None:
-        signal_keywords = ()
-
-    if isinstance(signal_keywords, str):
-        signal_keywords = (
-            signal_keywords,
-        )
-
-    self.signal_keywords = tuple(
-        keyword.strip()
-        for keyword in signal_keywords
-        if isinstance(keyword, str)
-        and keyword.strip()
-    )
 
     def collect(self) -> List[Dict[str, Any]]:
         html = self._fetch()
@@ -418,15 +418,15 @@ class FreeJobSource:
         )
 
     def _has_configured_signal(
-    self,
-    text: str,
-) -> bool:
-    if not self.signal_keywords:
-        return False
+        self,
+        text: str,
+    ) -> bool:
+        if not self.signal_keywords:
+            return False
 
-    return self._contains_any(
-        text,
-        self.signal_keywords,
+        return self._contains_any(
+            text,
+            self.signal_keywords,
     )
     
     @classmethod
@@ -600,46 +600,46 @@ class FreeJobSource:
         return ""
 
     def _candidate_is_useful(
-    self,
-    title: str,
-    context: str,
-    url: str,
-) -> bool:
+        self,
+        title: str,
+        context: str,
+        url: str,
+    ) -> bool:
         combined = " ".join(
-    value
-    for value in (
-        title,
-        context,
-        url,
-    )
-    if value
-)
+            value
+            for value in (
+                title,
+                context,
+                url,
+            )
+            if value
+        )
 
-if not combined.strip():
-    return False
+        if not combined.strip():
+            return False
 
-if self._looks_like_job_url(url):
-    return True
+        if self._looks_like_job_url(url):
+            return True
 
-if (
-    self._looks_like_job_text(title)
-    and self._has_technology_signal(combined)
-):
-    return True
+        if (
+            self._looks_like_job_text(title)
+            and self._has_technology_signal(combined)
+        ):
+            return True
 
-if (
-    self._has_remote_signal(combined)
-    and self._has_technology_signal(combined)
-):
-    return True
+        if (
+            self._has_remote_signal(combined)
+            and self._has_technology_signal(combined)
+        ):
+            return True
 
-if self._has_b2b_signal(combined):
-    return True
+        if self._has_b2b_signal(combined):
+            return True
 
-if self._has_configured_signal(combined):
-    return True
+        if self._has_configured_signal(combined):
+            return True
 
-return False
+        return False
 
     @staticmethod
     def _record_key(
