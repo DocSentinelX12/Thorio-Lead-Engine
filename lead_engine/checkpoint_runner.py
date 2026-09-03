@@ -53,9 +53,20 @@ class CheckpointRunner:
             )
         )
 
+        # If the caller supplied an explicit checkpoint and the
+        # database has no checkpoint yet, use the supplied value.
+        effective_checkpoint = (
+            previous_checkpoint
+            or (
+                str(checkpoint)
+                if checkpoint is not None
+                else ""
+            )
+        )
+
         result = self.runner.run_source(
             source,
-            checkpoint=previous_checkpoint,
+            checkpoint=effective_checkpoint,
         )
 
         if not isinstance(
@@ -66,7 +77,7 @@ class CheckpointRunner:
                 "processed_count": 0,
                 "failed_count": 1,
                 "total": 0,
-                "checkpoint": previous_checkpoint,
+                "checkpoint": effective_checkpoint,
             }
 
         failed_count = result.get(
@@ -97,7 +108,7 @@ class CheckpointRunner:
 
             current_checkpoint = (
                 next_checkpoint
-                or previous_checkpoint
+                or effective_checkpoint
             )
 
         else:
