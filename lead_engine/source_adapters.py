@@ -479,6 +479,17 @@ def normalize_job_record(
             "org",
         )
 
+                if not company:
+            default_company = (
+                definition.metadata.get(
+                    "default_company"
+                )
+            )
+
+            company = _text(
+                default_company
+            )
+
         url = _first_url(
             item,
             "url",
