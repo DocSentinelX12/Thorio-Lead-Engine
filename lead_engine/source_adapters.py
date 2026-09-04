@@ -662,82 +662,454 @@ class JsonSourceAdapter:
         self,
         checkpoint: Optional[str] = None,
     ) -> AdapterResult:
-        request_url = self._request_url(
-            checkpoint
-        )
-
-        request = Request(
-            request_url,
-            headers={
-                "User-Agent":
-                    "Thorio-Lead-Engine/1.0",
-                "Accept":
-                    "application/json",
-            },
-        )
-
-        try:
-            raw = fetch_url(
-                request,
-                timeout=self.timeout,
-            )
-        except HTTPRetryError as exc:
-            raise ValueError(
-                f"JSON source request failed: {exc}"
-            ) from exc
-
-        try:
-            payload = json.loads(
-                raw.decode("utf-8")
-            )
-        except (
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-        ) as exc:
-            raise ValueError(
-                "JSON source returned invalid "
-                "UTF-8 JSON."
-            ) from exc
-
+        # Preserve the original one-request behavior for legacy
+        # JsonSourceAdapter callers that do not provide a definition.
         if self.definition is None:
+            request_url = self._request_url(
+                checkpoint
+            )
+
+            request = Request(
+                request_url,
+                headers={
+                    "User-Agent":
+                        "Thorio-Lead-Engine/1.0",
+                    "Accept":
+                        "application/json",
+                },
+            )
+
+            try:
+                raw = fetch_url(
+                    request,
+                    timeout=self.timeout,
+                )
+            except HTTPRetryError as exc:
+                raise ValueError(
+                    f"JSON source request failed: {exc}"
+                ) from exc
+
+            try:
+                payload = json.loads(
+                    raw.decode("utf-8")
+                )
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise ValueError(
+                    "JSON source returned invalid "
+                    "UTF-8 JSON."
+                ) from exc
+
             records = _json_records(
                 payload
             )
-        else:
+
+            normalized = []
+
+            for item in records:
+                record = normalize_job_record(
+                    item,
+                    source=self.source,
+                    source_url=self.url,
+                )
+
+                if record is not None:
+                    normalized.append(record)
+
+            return AdapterResult(
+                records=normalized,
+                checkpoint=_next_checkpoint(
+                    payload
+                ),
+            )
+
+        definition = self.definition
+
+        max_pages = definition.max_pages
+        max_requests = definition.max_requests
+        max_records = definition.max_records
+
+        pagination_type = (
+            definition.pagination_type
+        )
+
+        # Pagination "none" remains exactly one request.
+        if pagination_type == "none":
+            request_url = self.url
+
+            request = Request(
+                request_url,
+                headers={
+                    "User-Agent":
+                        "Thorio-Lead-Engine/1.0",
+                    "Accept":
+                        "application/json",
+                },
+            )
+
+            try:
+                raw = fetch_url(
+                    request,
+                    timeout=self.timeout,
+                )
+            except HTTPRetryError as exc:
+                raise ValueError(
+                    f"JSON source request failed: {exc}"
+                ) from exc
+
+            try:
+                payload = json.loads(
+                    raw.decode("utf-8")
+                )
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise ValueError(
+                    "JSON source returned invalid "
+                    "UTF-8 JSON."
+                ) from exc
+
             records = _json_records_from_definition(
                 payload,
-                self.definition,
+                definition,
             )
 
-        normalized = []
+            normalized = []
 
-        for item in records:
-            record = normalize_job_record(
-                item,
-                source=self.source,
-                source_url=self.url,
-                definition=self.definition,
+            for item in records:
+                record = normalize_job_record(
+                    item,
+                    source=self.source,
+                    source_url=self.url,
+                    definition=definition,
+                )
+
+                if record is not None:
+                    normalized.append(record)
+
+                if len(normalized) >= max_records:
+                    break
+
+            return AdapterResult(
+                records=normalized,
+                checkpoint=None,
             )
 
-            if record is not None:
-                normalized.append(record)
+        collected = []
 
-        checkpoint_value = None
+        requests_made = 0
+        pages_seen = 0
 
-        if self.definition is not None:
-            checkpoint_value = _configured_checkpoint(
-                payload,
-                self.definition,
+        current_checkpoint = checkpoint
+
+        if pagination_type == "page":
+            if current_checkpoint is None:
+                current_page = (
+                    definition.page_start
+                )
+            else:
+                try:
+                    current_page = int(
+                        current_checkpoint
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    current_page = (
+                        definition.page_start
+                    )
+
+            request_url = self.url
+
+            parameter = (
+                definition.page_parameter
             )
+
+            if "?" in request_url:
+                separator = "&"
+            else:
+                separator = "?"
+
+            request_url = (
+                f"{request_url}"
+                f"{separator}"
+                f"{parameter}="
+                f"{current_page}"
+            )
+
+        elif pagination_type == "offset":
+            if current_checkpoint is None:
+                current_offset = (
+                    definition.offset_start
+                )
+            else:
+                try:
+                    current_offset = int(
+                        current_checkpoint
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    current_offset = (
+                        definition.offset_start
+                    )
+
+            request_url = self.url
+
+            parameter = (
+                definition.offset_parameter
+            )
+
+            if "?" in request_url:
+                separator = "&"
+            else:
+                separator = "?"
+
+            request_url = (
+                f"{request_url}"
+                f"{separator}"
+                f"{parameter}="
+                f"{current_offset}"
+            )
+
+        elif pagination_type == "next_url":
+            request_url = (
+                checkpoint
+                or self.url
+            )
+
+        elif pagination_type == "cursor":
+            request_url = self._request_url(
+                checkpoint
+            )
+
         else:
-            checkpoint_value = _next_checkpoint(
-                payload
+            request_url = self.url
+
+        visited_urls = set()
+        final_checkpoint = checkpoint
+
+        while request_url:
+            if pages_seen >= max_pages:
+                break
+
+            if requests_made >= max_requests:
+                break
+
+            if request_url in visited_urls:
+                raise ValueError(
+                    "JSON source pagination "
+                    "returned a previously "
+                    "visited URL."
+                )
+
+            visited_urls.add(
+                request_url
             )
+
+            request = Request(
+                request_url,
+                headers={
+                    "User-Agent":
+                        "Thorio-Lead-Engine/1.0",
+                    "Accept":
+                        "application/json",
+                },
+            )
+
+            try:
+                raw = fetch_url(
+                    request,
+                    timeout=self.timeout,
+                )
+            except HTTPRetryError as exc:
+                raise ValueError(
+                    f"JSON source request failed: {exc}"
+                ) from exc
+
+            requests_made += 1
+            pages_seen += 1
+
+            try:
+                payload = json.loads(
+                    raw.decode("utf-8")
+                )
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+            ) as exc:
+                raise ValueError(
+                    "JSON source returned invalid "
+                    "UTF-8 JSON."
+                ) from exc
+
+            records = _json_records_from_definition(
+                payload,
+                definition,
+            )
+
+            for item in records:
+                record = normalize_job_record(
+                    item,
+                    source=self.source,
+                    source_url=self.url,
+                    definition=definition,
+                )
+
+                if record is not None:
+                    collected.append(record)
+
+                if len(collected) >= max_records:
+                    collected = collected[
+                        :max_records
+                    ]
+                    return AdapterResult(
+                        records=collected,
+                        checkpoint=final_checkpoint,
+                    )
+
+            if pagination_type == "cursor":
+                next_checkpoint = (
+                    _configured_checkpoint(
+                        payload,
+                        definition,
+                    )
+                )
+
+                if not next_checkpoint:
+                    final_checkpoint = None
+                    break
+
+                if (
+                    next_checkpoint
+                    == current_checkpoint
+                ):
+                    raise ValueError(
+                        "JSON source cursor "
+                        "did not advance."
+                    )
+
+                final_checkpoint = (
+                    next_checkpoint
+                )
+
+                current_checkpoint = (
+                    next_checkpoint
+                )
+
+                request_url = (
+                    self._request_url(
+                        next_checkpoint
+                    )
+                )
+
+                continue
+
+            if pagination_type == "page":
+                current_page += 1
+
+                final_checkpoint = str(
+                    current_page
+                )
+
+                parameter = (
+                    definition.page_parameter
+                )
+
+                if "?" in self.url:
+                    separator = "&"
+                else:
+                    separator = "?"
+
+                request_url = (
+                    f"{self.url}"
+                    f"{separator}"
+                    f"{parameter}="
+                    f"{current_page}"
+                )
+
+                continue
+
+            if pagination_type == "offset":
+                step = (
+                    definition.offset_step
+                    or definition.page_limit
+                )
+
+                if not step:
+                    step = len(records)
+
+                if not step:
+                    step = 1
+
+                current_offset += step
+
+                final_checkpoint = str(
+                    current_offset
+                )
+
+                parameter = (
+                    definition.offset_parameter
+                )
+
+                if "?" in self.url:
+                    separator = "&"
+                else:
+                    separator = "?"
+
+                request_url = (
+                    f"{self.url}"
+                    f"{separator}"
+                    f"{parameter}="
+                    f"{current_offset}"
+                )
+
+                continue
+
+            if pagination_type == "next_url":
+                next_url = (
+                    _configured_checkpoint(
+                        payload,
+                        definition,
+                    )
+                )
+
+                if not next_url:
+                    final_checkpoint = None
+                    break
+
+                if (
+                    next_url
+                    == request_url
+                ):
+                    raise ValueError(
+                        "JSON source pagination "
+                        "returned the current URL."
+                    )
+
+                final_checkpoint = (
+                    next_url
+                )
+
+                current_checkpoint = (
+                    next_url
+                )
+
+                request_url = next_url
+
+                continue
+
+            break
 
         return AdapterResult(
-            records=normalized,
-            checkpoint=checkpoint_value,
-        )
+            records=collected,
+            checkpoint=final_checkpoint,
+            )
 
 
 class RssSourceAdapter:
