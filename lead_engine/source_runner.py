@@ -131,15 +131,10 @@ class SourceRunner:
             {},
         )
 
-        last_checkpoint = source_state.get(
-            "last_checkpoint"
-        )
-
-        if isinstance(
-            last_checkpoint,
-            str,
-        ):
-            result["checkpoint"] = last_checkpoint
+        if "last_checkpoint" in source_state:
+            result["checkpoint"] = (
+                source_state["last_checkpoint"]
+            )
 
         return result
 
