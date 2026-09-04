@@ -189,3 +189,117 @@ def test_scheduler_static_source_runs_without_poll_interval():
     )
 
     assert runner.run_source.call_count == 2
+
+
+def test_scheduler_persists_source_poll_interval():
+    runner = MagicMock()
+
+    runner.run_source.return_value = {
+        "processed_count": 1,
+        "failed_count": 0,
+        "total": 1,
+    }
+
+    definition = SourceDefinition(
+        name="Persistent Poll API",
+        provider="Example",
+        collector_type="json",
+        url="https://example.com/api",
+        pagination_type="none",
+        poll_interval_seconds=3600,
+    )
+
+    source = create_adapter(
+        definition=definition
+    )
+
+    scheduler = LeadScheduler(
+        runner=runner
+    )
+
+    with patch(
+        "lead_engine.scheduler.time.time",
+        return_value=1000.0,
+    ):
+        first = scheduler.run(
+            [source]
+        )
+
+    assert first["successful_source_count"] == 1
+
+    runner.run_source.reset_mock()
+
+    second_scheduler = LeadScheduler(
+        runner=runner
+    )
+
+    with patch(
+        "lead_engine.scheduler.time.time",
+        return_value=1001.0,
+    ):
+        second = second_scheduler.run(
+            [source]
+        )
+
+    assert second["successful_source_count"] == 0
+    assert second["skipped_count"] == 1
+    assert (
+        second["skipped"][0]["reason"]
+        == "not_due"
+    )
+    assert runner.run_source.call_count == 0
+
+
+def test_scheduler_persisted_poll_interval_expires():
+    runner = MagicMock()
+
+    runner.run_source.return_value = {
+        "processed_count": 1,
+        "failed_count": 0,
+        "total": 1,
+    }
+
+    definition = SourceDefinition(
+        name="Expiring Persistent Poll API",
+        provider="Example",
+        collector_type="json",
+        url="https://example.com/api",
+        pagination_type="none",
+        poll_interval_seconds=60,
+    )
+
+    source = create_adapter(
+        definition=definition
+    )
+
+    scheduler = LeadScheduler(
+        runner=runner
+    )
+
+    with patch(
+        "lead_engine.scheduler.time.time",
+        return_value=1000.0,
+    ):
+        first = scheduler.run(
+            [source]
+        )
+
+    assert first["successful_source_count"] == 1
+
+    runner.run_source.reset_mock()
+
+    second_scheduler = LeadScheduler(
+        runner=runner
+    )
+
+    with patch(
+        "lead_engine.scheduler.time.time",
+        return_value=1061.0,
+    ):
+        second = second_scheduler.run(
+            [source]
+        )
+
+    assert second["successful_source_count"] == 1
+    assert second["skipped_count"] == 0
+    assert runner.run_source.call_count == 1
