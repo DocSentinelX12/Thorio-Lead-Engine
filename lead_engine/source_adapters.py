@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request
 from xml.etree import ElementTree
 
@@ -25,6 +25,47 @@ def _text(value: Any) -> str:
         return ""
 
     return str(value).strip()
+
+
+def _with_query_parameter(
+    url: str,
+    parameter: str,
+    value: Any,
+) -> str:
+    """
+    Add or replace one query parameter while preserving
+    the existing URL query string and correctly encoding
+    the parameter value.
+    """
+    parts = urlsplit(url)
+
+    query = parse_qsl(
+        parts.query,
+        keep_blank_values=True,
+    )
+
+    query = [
+        (key, existing_value)
+        for key, existing_value in query
+        if key != parameter
+    ]
+
+    query.append(
+        (
+            parameter,
+            _text(value),
+        )
+    )
+
+    return urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            urlencode(query),
+            parts.fragment,
+        )
+    )
 
 
 def _first_text(
@@ -617,17 +658,10 @@ class JsonSourceAdapter:
         # that construct JsonSourceAdapter directly without a
         # SourceDefinition.
         if self.definition is None:
-            separator = (
-                "&"
-                if "?" in self.url
-                else "?"
-            )
-
-            return (
-                f"{self.url}"
-                f"{separator}"
-                f"cursor="
-                f"{checkpoint}"
+            return _with_query_parameter(
+              self.url,
+              "cursor",
+              checkpoint,
             )
 
         # Definition-driven collection only sends a checkpoint when
@@ -645,17 +679,10 @@ class JsonSourceAdapter:
         if not parameter:
             return self.url
 
-        separator = (
-            "&"
-            if "?" in self.url
-            else "?"
-        )
-
-        return (
-            f"{self.url}"
-            f"{separator}"
-            f"{parameter}="
-            f"{checkpoint}"
+        return _with_query_parameter(
+          self.url,
+          parameter,
+          checkpoint,
         )
 
     def collect(
@@ -829,16 +856,10 @@ class JsonSourceAdapter:
                 definition.page_parameter
             )
 
-            if "?" in request_url:
-                separator = "&"
-            else:
-                separator = "?"
-
-            request_url = (
-                f"{request_url}"
-                f"{separator}"
-                f"{parameter}="
-                f"{current_page}"
+            request_url = _with_query_parameter(
+              request_url,
+              parameter,
+              current_page,
             )
 
         elif pagination_type == "offset":
@@ -865,16 +886,10 @@ class JsonSourceAdapter:
                 definition.offset_parameter
             )
 
-            if "?" in request_url:
-                separator = "&"
-            else:
-                separator = "?"
-
-            request_url = (
-                f"{request_url}"
-                f"{separator}"
-                f"{parameter}="
-                f"{current_offset}"
+            request_url = _with_query_parameter(
+              self.url,
+              parameter,
+              current_page,
             )
 
         elif pagination_type == "next_url":
@@ -1024,16 +1039,10 @@ class JsonSourceAdapter:
                     definition.page_parameter
                 )
 
-                if "?" in self.url:
-                    separator = "&"
-                else:
-                    separator = "?"
-
-                request_url = (
-                    f"{self.url}"
-                    f"{separator}"
-                    f"{parameter}="
-                    f"{current_page}"
+                request_url = _with_query_parameter(
+                  self.url,
+                  parameter,
+                  current_page,
                 )
 
                 continue
@@ -1060,16 +1069,10 @@ class JsonSourceAdapter:
                     definition.offset_parameter
                 )
 
-                if "?" in self.url:
-                    separator = "&"
-                else:
-                    separator = "?"
-
-                request_url = (
-                    f"{self.url}"
-                    f"{separator}"
-                    f"{parameter}="
-                    f"{current_offset}"
+                request_url = _with_query_parameter(
+                  request_url,
+                  parameter,
+                  current_offset,
                 )
 
                 continue
