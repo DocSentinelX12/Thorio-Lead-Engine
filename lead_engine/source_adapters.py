@@ -998,6 +998,9 @@ class JsonSourceAdapter:
                     next_checkpoint
                 )
 
+                if checkpoint is not None:
+                    break
+
                 current_checkpoint = (
                     next_checkpoint
                 )
