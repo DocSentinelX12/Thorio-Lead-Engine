@@ -109,21 +109,37 @@ class CheckpointRunner:
         ):
             failed_count = 1
 
+        checkpoint_returned = (
+            "checkpoint" in result
+        )
+
         next_checkpoint = result.get(
             "checkpoint"
         )
 
         if failed_count == 0:
-            # A newly returned checkpoint takes priority.
-            # Otherwise, retain the effective checkpoint.
-            current_checkpoint = (
-                next_checkpoint
-                or effective_checkpoint
-            )
+            # An explicitly returned checkpoint, including None,
+            # represents the source's current pagination state.
+            # A missing checkpoint means the source did not provide
+            # checkpoint information, so retain the effective value.
+            if checkpoint_returned:
+                current_checkpoint = (
+                    next_checkpoint
+                )
+            else:
+                current_checkpoint = (
+                    effective_checkpoint
+                )
 
-            # Successful processing is the only point at which the
-            # checkpoint may advance or be initially persisted.
-            if current_checkpoint:
+            # An empty checkpoint clears the persisted pagination
+            # state. This allows exhausted paginated sources to start
+            # a fresh cycle on their next scheduled run.
+            if current_checkpoint is None:
+                self.save_checkpoint(
+                    source,
+                    "",
+                )
+            else:
                 self.save_checkpoint(
                     source,
                     current_checkpoint,
