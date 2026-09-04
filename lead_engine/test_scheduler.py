@@ -148,8 +148,6 @@ def test_scheduler_runs_source_again_when_poll_interval_expires():
     with patch(
         "lead_engine.scheduler.time.monotonic",
         side_effect=[
-            1000.0,
-            1000.0,
             1061.0,
             1061.0,
         ],
