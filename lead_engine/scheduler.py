@@ -21,7 +21,12 @@ class LeadScheduler:
     Checkpoints are integrated into the actual production source
     execution path. A source checkpoint advances only after that
     source completes without processing failures.
+
+    Source polling deadlines are persisted in the SQLite state store
+    so that source-specific polling intervals survive process restarts.
     """
+
+    _POLLING_STATE_KEY = "lead_scheduler_polling"
 
     def __init__(self, runner: LeadEngineRunner):
         self.runner = runner
@@ -31,6 +36,9 @@ class LeadScheduler:
         )
 
         self._next_run_at: Dict[str, float] = {}
+        self._persisted_next_run_at: Dict[str, float] = {}
+
+        self._load_polling_state()
 
     def _source_key(
         self,
@@ -86,39 +94,124 @@ class LeadScheduler:
 
         return interval
 
+    def _load_polling_state(self) -> None:
+        try:
+            state = self.runner.pipeline.db.get_state(
+                self._POLLING_STATE_KEY
+            )
+        except Exception:
+            return
+
+        if not isinstance(
+            state,
+            dict,
+        ):
+            return
+
+        persisted = state.get(
+            "next_run_at"
+        )
+
+        if not isinstance(
+            persisted,
+            dict,
+        ):
+            return
+
+        for source_key, deadline in persisted.items():
+            try:
+                self._persisted_next_run_at[
+                    str(source_key)
+                ] = float(deadline)
+            except (
+                TypeError,
+                ValueError,
+            ):
+                continue
+
+    def _save_polling_state(self) -> None:
+        try:
+            self.runner.pipeline.db.set_state(
+                self._POLLING_STATE_KEY,
+                {
+                    "next_run_at": dict(
+                        self._persisted_next_run_at
+                    )
+                },
+            )
+        except Exception:
+            return
+
     def _is_due(
         self,
         source: LeadSource,
         now: float,
     ) -> bool:
+        interval = self._poll_interval(
+            source
+        )
+
+        if interval <= 0:
+            return True
+
         key = self._source_key(source)
 
         next_run_at = self._next_run_at.get(
             key
         )
 
-        if next_run_at is None:
+        if next_run_at is not None:
+            return now >= next_run_at
+
+        persisted_next_run_at = (
+            self._persisted_next_run_at.get(
+                key
+            )
+        )
+
+        if persisted_next_run_at is None:
             return True
 
-        return now >= next_run_at
+        return (
+            time.time()
+            >= persisted_next_run_at
+        )
 
     def _schedule_next_run(
         self,
         source: LeadSource,
         started_at: float,
+        started_wall: float,
     ) -> None:
         interval = self._poll_interval(
             source
         )
 
-        if interval <= 0:
-            return
-
         key = self._source_key(source)
+
+        if interval <= 0:
+            self._next_run_at.pop(
+                key,
+                None,
+            )
+
+            self._persisted_next_run_at.pop(
+                key,
+                None,
+            )
+
+            self._save_polling_state()
+            return
 
         self._next_run_at[key] = (
             started_at + interval
         )
+
+        self._persisted_next_run_at[key] = (
+            started_wall + interval
+        )
+
+        self._save_polling_state()
 
     def run(
         self,
@@ -149,6 +242,7 @@ class LeadScheduler:
                 continue
 
             started_at = time.monotonic()
+            started_wall = time.time()
 
             try:
                 previous_checkpoint = (
@@ -194,6 +288,7 @@ class LeadScheduler:
                 self._schedule_next_run(
                     source,
                     started_at,
+                    started_wall,
                 )
 
             except Exception as exc:
@@ -207,6 +302,7 @@ class LeadScheduler:
                 self._schedule_next_run(
                     source,
                     started_at,
+                    started_wall,
                 )
 
         sync_result = sync_pending(
@@ -403,436 +499,35 @@ class LeadScheduler:
                 total_results
             ),
             "failed_count": len(
-class LeadScheduler:
-    _POLLING_STATE_KEY = "lead_scheduler_polling"
-
-    def __init__(
-        self,
-        runner: Optional[LeadEngineRunner] = None,
-    ):
-        self.runner = runner or LeadEngineRunner()
-        self._next_run_at: Dict[str, float] = {}
-        self._persisted_next_run_at: Dict[str, float] = {}
-        self._load_polling_state()
-
-    def _source_key(self, source: Any) -> str:
-        definition = getattr(
-            source,
-            "definition",
-            None,
-        )
-
-        if definition is not None:
-            source_key = getattr(
-                definition,
-                "source_key",
-                None,
-            )
-
-            if source_key:
-                return str(source_key)
-
-        return str(
-            getattr(
-                source,
-                "name",
-                source.__class__.__name__,
-            )
-        )
-
-    def _poll_interval(self, source: Any) -> float:
-        definition = getattr(
-            source,
-            "definition",
-            None,
-        )
-
-        if definition is None:
-            return 0.0
-
-        interval = getattr(
-            definition,
-            "poll_interval_seconds",
-            0,
-        )
-
-        try:
-            return max(
-                0.0,
-                float(interval),
-            )
-        except (
-            TypeError,
-            ValueError,
-        ):
-            return 0.0
-
-    def _database(self) -> Any:
-        pipeline = getattr(
-            self.runner,
-            "pipeline",
-            None,
-        )
-
-        if pipeline is None:
-            return None
-
-        return getattr(
-            pipeline,
-            "db",
-            None,
-        )
-
-    def _load_polling_state(self) -> None:
-        db = self._database()
-
-        if db is None:
-            return
-
-        try:
-            state = db.get_state(
-                self._POLLING_STATE_KEY
-            )
-        except Exception:
-            return
-
-        if not state:
-            return
-
-        if not isinstance(
-            state,
-            dict,
-        ):
-            return
-
-        persisted = state.get(
-            "next_run_at"
-        )
-
-        if not isinstance(
-            persisted,
-            dict,
-        ):
-            return
-
-        cleaned: Dict[str, float] = {}
-
-        for source_key, deadline in persisted.items():
-            try:
-                cleaned[str(source_key)] = float(
-                    deadline
-                )
-            except (
-                TypeError,
-                ValueError,
-            ):
-                continue
-
-        self._persisted_next_run_at = cleaned
-
-    def _save_polling_state(self) -> None:
-        db = self._database()
-
-        if db is None:
-            return
-
-        state = {
-            "next_run_at": dict(
-                self._persisted_next_run_at
-            )
-        }
-
-        try:
-            db.set_state(
-                self._POLLING_STATE_KEY,
-                state,
-            )
-        except Exception:
-            return
-
-    def _is_due(
-        self,
-        source: Any,
-        now: float,
-    ) -> bool:
-        interval = self._poll_interval(
-            source
-        )
-
-        if interval <= 0:
-            return True
-
-        source_key = self._source_key(
-            source
-        )
-
-        in_memory_deadline = (
-            self._next_run_at.get(
-                source_key
-            )
-        )
-
-        if in_memory_deadline is not None:
-            return now >= in_memory_deadline
-
-        persisted_deadline = (
-            self._persisted_next_run_at.get(
-                source_key
-            )
-        )
-
-        if persisted_deadline is None:
-            return True
-
-        return (
-            time.time()
-            >= persisted_deadline
-        )
-
-    def _schedule_next_run(
-        self,
-        source: Any,
-        started_at: float,
-        started_wall: float,
-    ) -> None:
-        interval = self._poll_interval(
-            source
-        )
-
-        source_key = self._source_key(
-            source
-        )
-
-        if interval <= 0:
-            self._next_run_at.pop(
-                source_key,
-                None,
-            )
-
-            self._persisted_next_run_at.pop(
-                source_key,
-                None,
-            )
-
-            self._save_polling_state()
-            return
-
-        self._next_run_at[source_key] = (
-            started_at + interval
-        )
-
-        self._persisted_next_run_at[
-            source_key
-        ] = started_wall + interval
-
-        self._save_polling_state()
-
-    def run(
-        self,
-        sources: Optional[
-            Iterable[Any]
-        ] = None,
-    ) -> Dict[str, Any]:
-        source_list = list(
-            sources
-            if sources is not None
-            else configured_sources()
-        )
-
-        results: List[Dict[str, Any]] = []
-        failures: List[Dict[str, Any]] = []
-
-        discovered_count = 0
-        accepted_count = 0
-        duplicate_count = 0
-        processing_failed_count = 0
-
-        now = time.monotonic()
-
-        for source in source_list:
-            if not self._is_due(
-                source,
-                now,
-            ):
-                continue
-
-            started_at = time.monotonic()
-            started_wall = time.time()
-
-            try:
-                result = self.runner.run_source(
-                    source
-                )
-
-                if not isinstance(
-                    result,
-                    dict,
-                ):
-                    result = {
-                        "source": self._source_key(
-                            source
-                        ),
-                        "processed_count": 0,
-                        "failed_count": 1,
-                        "error": (
-                            "Source runner returned "
-                            "a non-dictionary result."
-                        ),
-                    }
-
-                failed_count = int(
-                    result.get(
-                        "failed_count",
-                        0,
-                    )
-                    or 0
-                )
-
-                if failed_count > 0:
-                    processing_failed_count += (
-                        failed_count
-                    )
-
-                    failures.append(
-                        result
-                    )
-                else:
-                    results.append(
-                        result
-                    )
-
-                discovered_count += int(
-                    result.get(
-                        "discovered_count",
-                        result.get(
-                            "total",
-                            0,
-                        ),
-                    )
-                    or 0
-                )
-
-                accepted_count += int(
-                    result.get(
-                        "accepted_count",
-                        result.get(
-                            "processed_count",
-                            0,
-                        ),
-                    )
-                    or 0
-                )
-
-                duplicate_count += int(
-                    result.get(
-                        "duplicate_count",
-                        0,
-                    )
-                    or 0
-                )
-
-                self._schedule_next_run(
-                    source,
-                    started_at,
-                    started_wall,
-                )
-
-            except Exception as exc:
-                failure = {
-                    "source": self._source_key(
-                        source
-                    ),
-                    "processed_count": 0,
-                    "failed_count": 1,
-                    "error": str(exc),
-                }
-
-                failures.append(
-                    failure
-                )
-
-                processing_failed_count += 1
-
-                self._schedule_next_run(
-                    source,
-                    started_at,
-                    started_wall,
-                )
-
-        try:
-            sync_result = self.runner.sync_pending()
-        except Exception as exc:
-            sync_result = {
-                "synced_count": 0,
-                "failed_count": 1,
-                "error": str(exc),
-            }
-
-        return {
-            "source_count": len(
-                source_list
+                total_failed
             ),
-            "successful_source_count": len(
-                results
+            "skipped_count": len(
+                total_skipped
             ),
-            "failed_source_count": len(
-                failures
-            ),
-            "discovered_count": discovered_count,
-            "accepted_count": accepted_count,
-            "duplicate_count": duplicate_count,
+            "discovered_count": total_discovered,
+            "accepted_count": total_accepted,
+            "duplicate_count": total_duplicates,
             "processing_failed_count": (
-                processing_failed_count
+                total_processing_failed
             ),
-            "results": results,
-            "failures": failures,
-            "sync": sync_result,
+            "status": "completed",
         }
-
-    def run_forever(
-        self,
-        sources: Optional[
-            Iterable[Any]
-        ] = None,
-        interval_seconds: float = 60.0,
-    ) -> None:
-        while True:
-            self.run(sources)
-
-            time.sleep(
-                max(
-                    0.0,
-                    float(interval_seconds),
-                )
-            )
 
     def run_bounded(
         self,
-        sources: Optional[
-            Iterable[Any]
-        ] = None,
+        sources: Iterable[LeadSource],
         interval_seconds: float = 60.0,
-        cycles: int = 1,
-    ) -> List[Dict[str, Any]]:
-        results: List[
-            Dict[str, Any]
-        ] = []
+        max_cycles: int = 10,
+    ) -> Dict[str, Any]:
+        return self.run_forever(
+            sources=sources,
+            interval_seconds=interval_seconds,
+            max_cycles=max_cycles,
+        )
 
-        for _ in range(
-            max(0, int(cycles))
-        ):
-            results.append(
-                self.run(sources)
-            )
 
-            if cycles > 1:
-                time.sleep(
-                    max(
-                        0.0,
-                        float(
-                            interval_seconds
-                        ),
-                    )
-                )
-
-        return results
+if __name__ == "__main__":
+    print(
+        "Lead scheduler loaded. "
+        "Configured sources are isolated during execution."
+    )
