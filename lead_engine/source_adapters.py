@@ -598,9 +598,27 @@ class JsonSourceAdapter:
         if not checkpoint:
             return self.url
 
+        # Preserve the original adapter behavior for legacy callers
+        # that construct JsonSourceAdapter directly without a
+        # SourceDefinition.
+        if self.definition is None:
+            separator = (
+                "&"
+                if "?" in self.url
+                else "?"
+            )
+
+            return (
+                f"{self.url}"
+                f"{separator}"
+                f"cursor="
+                f"{checkpoint}"
+            )
+
+        # Definition-driven collection only sends a checkpoint when
+        # the source explicitly declares cursor pagination.
         if (
-            self.definition is None
-            or self.definition.pagination_type
+            self.definition.pagination_type
             != "cursor"
         ):
             return self.url
