@@ -11,6 +11,7 @@ from urllib.request import Request
 from xml.etree import ElementTree
 
 from .http_retry import HTTPRetryError, fetch_url
+from .source_definition import SourceDefinition
 
 
 @dataclass(frozen=True)
@@ -908,14 +909,17 @@ class HtmlSourceAdapter:
 class AdapterLeadSource:
     """
     Compatibility wrapper implementing the source interface
-    expected by the existing scheduler while preserving
-    collection checkpoint metadata.
+    expected by the existing scheduler.
+
+    The wrapper now carries the complete SourceDefinition so
+    collection configuration remains available to the adapter
+    layer without changing the existing LeadSource boundary.
     """
 
     def __init__(
         self,
         adapter: Any,
-        name: str,
+        definition: SourceDefinition,
     ):
         if adapter is None:
             raise ValueError(
@@ -923,20 +927,17 @@ class AdapterLeadSource:
             )
 
         if not isinstance(
-            name,
-            str,
-        ) or not name.strip():
+            definition,
+            SourceDefinition,
+        ):
             raise ValueError(
-                "Source name is required."
+                "Source definition is required."
             )
 
         self.adapter = adapter
-        self.name = name.strip()
-        self.url = getattr(
-            adapter,
-            "url",
-            "",
-        )
+        self.definition = definition
+        self.name = definition.name
+        self.url = definition.url
         self.last_checkpoint = None
 
     def collect(
@@ -964,21 +965,58 @@ class AdapterLeadSource:
 
 def create_adapter(
     *,
-    collector_type: str,
-    url: str,
-    source: str,
+    collector_type: Optional[str] = None,
+    url: Optional[str] = None,
+    source: Optional[str] = None,
     timeout: int = 20,
+    definition: Optional[SourceDefinition] = None,
 ) -> AdapterLeadSource:
+    """
+    Create a source adapter from a SourceDefinition.
+
+    The legacy collector_type/url/source arguments remain supported
+    so existing callers and tests continue to work.
+
+    New production code should provide a SourceDefinition.
+    """
+
+    if definition is None:
+        if (
+            collector_type is None
+            or url is None
+            or source is None
+        ):
+            raise ValueError(
+                "SourceDefinition or "
+                "collector_type, url, and source "
+                "are required."
+            )
+
+        definition = SourceDefinition(
+            name=source,
+            provider=source,
+            collector_type=collector_type,
+            url=url,
+        )
+
+    if not isinstance(
+        definition,
+        SourceDefinition,
+    ):
+        raise ValueError(
+            "definition must be a SourceDefinition."
+        )
+
     collector = (
-        collector_type
+        definition.collector_type
         .strip()
         .lower()
     )
 
     if collector == "json":
         adapter = JsonSourceAdapter(
-            url=url,
-            source=source,
+            url=definition.url,
+            source=definition.name,
             timeout=timeout,
         )
 
@@ -988,25 +1026,25 @@ def create_adapter(
         "xml",
     }:
         adapter = RssSourceAdapter(
-            url=url,
-            source=source,
+            url=definition.url,
+            source=definition.name,
             timeout=timeout,
         )
 
     elif collector == "html":
         adapter = HtmlSourceAdapter(
-            url=url,
-            source=source,
+            url=definition.url,
+            source=definition.name,
             timeout=timeout,
         )
 
     else:
         raise ValueError(
             "Unsupported collector type: "
-            f"{collector_type}"
+            f"{definition.collector_type}"
         )
 
     return AdapterLeadSource(
         adapter=adapter,
-        name=source,
-)
+        definition=definition,
+        )
