@@ -337,3 +337,196 @@ def test_json_adapter_does_not_send_cursor_when_pagination_is_none():
         request.full_url
         == "https://example.com/api"
     )
+
+
+def test_json_adapter_definition_page_pagination():
+    from .source_definition import SourceDefinition
+
+    responses = {
+        "https://example.com/api?page=1": (
+            b'{'
+            b'"jobs": ['
+            b'{'
+            b'"id": "1",'
+            b'"title": "Engineer One",'
+            b'"company": "Company One",'
+            b'"url": "https://example.com/1"'
+            b'}'
+            b']}'
+        ),
+        "https://example.com/api?page=2": (
+            b'{'
+            b'"jobs": ['
+            b'{'
+            b'"id": "2",'
+            b'"title": "Engineer Two",'
+            b'"company": "Company Two",'
+            b'"url": "https://example.com/2"'
+            b'}'
+            b']}'
+        ),
+    }
+
+    definition = SourceDefinition(
+        name="Page API",
+        provider="Example",
+        collector_type="json",
+        url="https://example.com/api",
+        pagination_type="page",
+        page_parameter="page",
+        page_start=1,
+        max_pages=2,
+        max_requests=2,
+    )
+
+
+    def fake_fetch(request, timeout):
+      return responses[request.full_url]
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        side_effect=fake_fetch,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect()
+
+    assert len(result.records) == 2
+
+    assert fetch.call_count == 2
+
+    assert result.records[0]["source_id"] == "1"
+    assert result.records[1]["source_id"] == "2"
+
+    assert result.checkpoint == "3"
+
+
+def test_json_adapter_definition_offset_pagination():
+    from .source_definition import SourceDefinition
+
+    payload = (
+        b'{'
+        b'"jobs": ['
+        b'{'
+        b'"id": "1",'
+        b'"title": "Engineer",'
+        b'"company": "Offset Corp",'
+        b'"url": "https://example.com/1"'
+        b'}'
+        b']}'
+    )
+
+    definition = SourceDefinition(
+        name="Offset API",
+        provider="Example",
+        collector_type="json",
+        url="https://example.com/api",
+        pagination_type="offset",
+        offset_parameter="offset",
+        offset_start=0,
+        offset_step=50,
+        max_pages=2,
+        max_requests=2,
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        return_value=payload,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect()
+
+    assert fetch.call_count == 2
+
+    first_request = (
+        fetch.call_args_list[0].args[0]
+    )
+
+    second_request = (
+        fetch.call_args_list[1].args[0]
+    )
+
+    assert (
+        "offset=0"
+        in first_request.full_url
+    )
+
+    assert (
+        "offset=50"
+        in second_request.full_url
+    )
+
+    assert result.checkpoint == "100"
+
+
+def test_json_adapter_definition_next_url_pagination():
+    from .source_definition import SourceDefinition
+
+    first_payload = (
+        b'{'
+        b'"jobs": ['
+        b'{'
+        b'"id": "1",'
+        b'"title": "Engineer One",'
+        b'"company": "Next Corp",'
+        b'"url": "https://example.com/1"'
+        b'}'
+        b'],'
+        b'"pagination": {'
+        b'"next": "https://example.com/api?page=2"'
+        b'}'
+        b'}'
+    )
+
+    second_payload = (
+        b'{'
+        b'"jobs": ['
+        b'{'
+        b'"id": "2",'
+        b'"title": "Engineer Two",'
+        b'"company": "Next Corp",'
+        b'"url": "https://example.com/2"'
+        b'}'
+        b']'
+        b'}'
+    )
+
+    responses = {
+        "https://example.com/api":
+            first_payload,
+        "https://example.com/api?page=2":
+            second_payload,
+    }
+
+    definition = SourceDefinition(
+        name="Next URL API",
+        provider="Example",
+        collector_type="json",
+        url="https://example.com/api",
+        pagination_type="next_url",
+        next_url_field="pagination.next",
+        max_pages=2,
+        max_requests=2,
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        side_effect=lambda request, timeout:
+            responses[request.full_url],
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect()
+
+    assert fetch.call_count == 2
+
+    assert len(result.records) == 2
+
+    assert result.checkpoint is None
