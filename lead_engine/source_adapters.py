@@ -83,6 +83,212 @@ def _first_url(
     return ""
 
 
+def _get_path(
+    payload: Any,
+    path: Optional[str],
+) -> Any:
+    """
+    Read a dotted path from a JSON-compatible object.
+
+    Example:
+        data.jobs
+        data.results
+        pagination.next_cursor
+    """
+    if not path:
+        return payload
+
+    current = payload
+
+    for part in path.split("."):
+        part = part.strip()
+
+        if not part:
+            continue
+
+        if isinstance(current, dict):
+            current = current.get(part)
+            continue
+
+        return None
+
+    return current
+
+
+def _field_value(
+    item: Dict[str, Any],
+    field_name: Optional[str],
+) -> Any:
+    """
+    Read a potentially nested field from one source record.
+    """
+    if not field_name:
+        return None
+
+    current: Any = item
+
+    for part in field_name.split("."):
+        part = part.strip()
+
+        if not part:
+            continue
+
+        if isinstance(current, dict):
+            current = current.get(part)
+            continue
+
+        return None
+
+    return current
+
+
+def _configured_text(
+    item: Dict[str, Any],
+    configured_field: Optional[str],
+    *fallback_fields: str,
+) -> str:
+    """
+    Read the configured field first, then legacy fallbacks.
+    """
+    if configured_field:
+        value = _field_value(
+            item,
+            configured_field,
+        )
+
+        text = _text(value)
+
+        if text:
+            return text
+
+    return _first_text(
+        item,
+        *fallback_fields,
+    )
+
+
+def _configured_url(
+    item: Dict[str, Any],
+    configured_field: Optional[str],
+    *fallback_fields: str,
+) -> str:
+    """
+    Read the configured URL field first, then legacy fallbacks.
+    """
+    if configured_field:
+        value = _field_value(
+            item,
+            configured_field,
+        )
+
+        if isinstance(value, dict):
+            value = (
+                value.get("url")
+                or value.get("href")
+            )
+
+        url = _text(value)
+
+        if url.startswith(
+            ("http://", "https://")
+        ):
+            return url
+
+    return _first_url(
+        item,
+        *fallback_fields,
+    )
+
+
+def _json_records_from_definition(
+    payload: Any,
+    definition: SourceDefinition,
+) -> List[Dict[str, Any]]:
+    """
+    Extract records using the source definition first.
+
+    Legacy automatic detection remains available when no
+    record_path is configured.
+    """
+    if definition.record_path:
+        value = _get_path(
+            payload,
+            definition.record_path,
+        )
+
+        if isinstance(value, list):
+            return [
+                item
+                for item in value
+                if isinstance(item, dict)
+            ]
+
+        raise ValueError(
+            "JSON source record_path did not "
+            "resolve to a record list."
+        )
+
+    return _json_records(
+        payload
+    )
+
+
+def _configured_checkpoint(
+    payload: Any,
+    definition: SourceDefinition,
+) -> Optional[str]:
+    """
+    Read the configured cursor/next-page value.
+
+    The configured response field takes precedence over
+    generic legacy detection.
+    """
+    if (
+        definition.cursor_response_field
+        and definition.pagination_type
+        == "cursor"
+    ):
+        value = _get_path(
+            payload,
+            definition.cursor_response_field,
+        )
+
+        if isinstance(value, dict):
+            value = (
+                value.get("cursor")
+                or value.get("token")
+                or value.get("url")
+            )
+
+        text = _text(value)
+
+        if text:
+            return text
+
+        return None
+
+    if (
+        definition.next_url_field
+        and definition.pagination_type
+        == "next_url"
+    ):
+        value = _get_path(
+            payload,
+            definition.next_url_field,
+        )
+
+        text = _text(value)
+
+        if text:
+            return text
+
+        return None
+
+    return _next_checkpoint(
+        payload
+)
+
+
 def _json_records(
     payload: Any,
 ) -> List[Dict[str, Any]]:
@@ -177,66 +383,129 @@ def normalize_job_record(
     *,
     source: str,
     source_url: str,
+    definition: Optional[SourceDefinition] = None,
 ) -> Optional[Dict[str, Any]]:
-    title = _first_text(
-        item,
-        "title",
-        "name",
-        "job_title",
-        "position",
-        "role",
-    )
+    if definition is None:
+        title = _first_text(
+            item,
+            "title",
+            "name",
+            "job_title",
+            "position",
+            "role",
+        )
 
-    company = _first_text(
-        item,
-        "company",
-        "company_name",
-        "employer",
-        "organization",
-        "org",
-    )
+        company = _first_text(
+            item,
+            "company",
+            "company_name",
+            "employer",
+            "organization",
+            "org",
+        )
 
-    url = _first_url(
-        item,
-        "url",
-        "job_url",
-        "apply_url",
-        "link",
-        "absolute_url",
-        "jobUrl",
-    )
+        url = _first_url(
+            item,
+            "url",
+            "job_url",
+            "apply_url",
+            "link",
+            "absolute_url",
+            "jobUrl",
+        )
+
+        source_id = _first_text(
+            item,
+            "id",
+            "job_id",
+            "uuid",
+            "slug",
+            "requisition_id",
+            "jobId",
+        )
+
+        description = _first_text(
+            item,
+            "description",
+            "content",
+            "summary",
+            "excerpt",
+        )
+
+        location = _first_text(
+            item,
+            "location",
+            "locations",
+            "candidate_required_location",
+            "geo",
+        )
+
+    else:
+        title = _configured_text(
+            item,
+            definition.title_field,
+            "title",
+            "name",
+            "job_title",
+            "position",
+            "role",
+        )
+
+        company = _configured_text(
+            item,
+            definition.company_field,
+            "company",
+            "company_name",
+            "employer",
+            "organization",
+            "org",
+        )
+
+        url = _configured_url(
+            item,
+            definition.url_field,
+            "url",
+            "job_url",
+            "apply_url",
+            "link",
+            "absolute_url",
+            "jobUrl",
+        )
+
+        source_id = _configured_text(
+            item,
+            definition.source_id_field,
+            "id",
+            "job_id",
+            "uuid",
+            "slug",
+            "requisition_id",
+            "jobId",
+        )
+
+        description = _configured_text(
+            item,
+            definition.description_field,
+            "description",
+            "content",
+            "summary",
+            "excerpt",
+        )
+
+        location = _configured_text(
+            item,
+            definition.location_field,
+            "location",
+            "locations",
+            "candidate_required_location",
+            "geo",
+        )
 
     if not title or not company or not url:
         return None
 
-    source_id = _first_text(
-        item,
-        "id",
-        "job_id",
-        "uuid",
-        "slug",
-        "requisition_id",
-        "jobId",
-    )
-
     if not source_id:
         source_id = url
-
-    description = _first_text(
-        item,
-        "description",
-        "content",
-        "summary",
-        "excerpt",
-    )
-
-    location = _first_text(
-        item,
-        "location",
-        "locations",
-        "candidate_required_location",
-        "geo",
-    )
 
     employment_type = _first_text(
         item,
@@ -251,7 +520,9 @@ def normalize_job_record(
     ]
 
     if location:
-        signal_parts.append(location)
+        signal_parts.append(
+            location
+        )
 
     if employment_type:
         signal_parts.append(
