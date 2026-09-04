@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import urljoin
+from urllib.parse import (
+    parse_qsl,
+    urlencode,
+    urljoin,
+    urlparse,
+    urlunparse,
+)
 from urllib.request import Request
 from xml.etree import ElementTree
 
@@ -577,6 +583,44 @@ def normalize_job_record(
     }
 
 
+def _set_query_parameter(
+    url: str,
+    parameter: str,
+    value: Any,
+) -> str:
+    """
+    Return a URL with one query parameter replaced.
+
+    Existing query parameters are preserved.
+    """
+    if not parameter or not parameter.strip():
+        raise ValueError(
+            "Pagination parameter is required."
+        )
+
+    parsed = urlparse(url)
+
+    query = dict(
+        parse_qsl(
+            parsed.query,
+            keep_blank_values=True,
+        )
+    )
+
+    query[parameter.strip()] = str(value)
+
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            urlencode(query),
+            parsed.fragment,
+        )
+    )
+
+
 class JsonSourceAdapter:
     def __init__(
         self,
@@ -680,6 +724,383 @@ class JsonSourceAdapter:
             raw = fetch_url(
                 request,
                 timeout=self.timeout,
+class JsonSourceAdapter:
+    def __init__(
+        self,
+        url: str,
+        source: str,
+        timeout: int = 20,
+        definition: Optional[SourceDefinition] = None,
+    ):
+        if not url.strip():
+            raise ValueError(
+                "JSON source URL is required."
+            )
+
+        if not source.strip():
+            raise ValueError(
+                "JSON source name is required."
+            )
+
+        if timeout <= 0:
+            raise ValueError(
+                "JSON source timeout must be positive."
+            )
+
+        self.url = url.strip()
+        self.name = source.strip()
+        self.source = self.name
+        self.timeout = timeout
+        self.definition = definition
+
+    def _request_url(
+        self,
+        checkpoint: Optional[str],
+    ) -> str:
+        if not checkpoint:
+            return self.url
+
+        # Preserve the original adapter behavior for legacy callers
+        # that construct JsonSourceAdapter directly without a
+        # SourceDefinition.
+        if self.definition is None:
+            separator = (
+                "&"
+                if "?" in self.url
+                else "?"
+            )
+
+            return (
+                f"{self.url}"
+                f"{separator}"
+                f"cursor="
+                f"{checkpoint}"
+            )
+
+        pagination_type = (
+            self.definition.pagination_type
+        )
+
+        if pagination_type == "cursor":
+            parameter = (
+                self.definition.cursor_parameter
+            )
+
+            if not parameter:
+                return self.url
+
+            return _set_query_parameter(
+                self.url,
+                parameter,
+                checkpoint,
+            )
+
+        if pagination_type == "page":
+            parameter = (
+                self.definition.page_parameter
+            )
+
+            if not parameter:
+                return self.url
+
+            try:
+                page = int(checkpoint)
+            except (
+                TypeError,
+                ValueError,
+            ):
+                page = (
+                    self.definition.page_start
+                )
+
+            return _set_query_parameter(
+                self.url,
+                parameter,
+                page,
+            )
+
+        if pagination_type == "offset":
+            parameter = (
+                self.definition.offset_parameter
+            )
+
+            if not parameter:
+                return self.url
+
+            try:
+                offset = int(checkpoint)
+            except (
+                TypeError,
+                ValueError,
+            ):
+                offset = (
+                    self.definition.offset_start
+                )
+
+            return _set_query_parameter(
+                self.url,
+                parameter,
+                offset,
+            )
+
+        if pagination_type == "next_url":
+            return checkpoint
+
+        return self.url
+
+    def _page_limit_url(
+        self,
+        url: str,
+    ) -> str:
+        if self.definition is None:
+            return url
+
+        if (
+            self.definition.pagination_type
+            not in {
+                "page",
+                "offset",
+            }
+        ):
+            return url
+
+        if (
+            self.definition.page_limit
+            is None
+        ):
+            return url
+
+        parameter = (
+            self.definition.metadata.get(
+                "limit_parameter"
+            )
+        )
+
+        if not parameter:
+            return url
+
+        return _set_query_parameter(
+            url,
+            str(parameter),
+            self.definition.page_limit,
+        )
+
+    def _next_request(
+        self,
+        current_url: str,
+        checkpoint: Optional[str],
+        payload: Any,
+    ) -> Optional[str]:
+        if self.definition is None:
+            return None
+
+        pagination_type = (
+            self.definition.pagination_type
+        )
+
+        if pagination_type == "none":
+            return None
+
+        if pagination_type == "cursor":
+            next_checkpoint = (
+                _configured_checkpoint(
+                    payload,
+                    self.definition,
+                )
+            )
+
+            if not next_checkpoint:
+                return None
+
+            if (
+                next_checkpoint
+                == checkpoint
+            ):
+                raise ValueError(
+                    "JSON source cursor did not advance."
+                )
+
+            return self._request_url(
+                next_checkpoint
+            )
+
+        if pagination_type == "page":
+            parameter = (
+                self.definition.page_parameter
+            )
+
+            if not parameter:
+                return None
+
+            if checkpoint is None:
+                current_page = (
+                    self.definition.page_start
+                )
+            else:
+                try:
+                    current_page = int(
+                        checkpoint
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    current_page = (
+                        self.definition.page_start
+                    )
+
+            next_page = (
+                current_page + 1
+            )
+
+            return _set_query_parameter(
+                self.url,
+                parameter,
+                next_page,
+            )
+
+        if pagination_type == "offset":
+            parameter = (
+                self.definition.offset_parameter
+            )
+
+            if not parameter:
+                return None
+
+            if checkpoint is None:
+                current_offset = (
+                    self.definition.offset_start
+                )
+            else:
+                try:
+                    current_offset = int(
+                        checkpoint
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    current_offset = (
+                        self.definition.offset_start
+                    )
+
+            step = (
+                self.definition.offset_step
+                or self.definition.page_limit
+                or 1
+            )
+
+            next_offset = (
+                current_offset + step
+            )
+
+            return _set_query_parameter(
+                self.url,
+                parameter,
+                next_offset,
+            )
+
+        if pagination_type == "next_url":
+            return _configured_checkpoint(
+                payload,
+                self.definition,
+            )
+
+        return None
+
+    def _checkpoint_for_request(
+        self,
+        request_url: str,
+    ) -> Optional[str]:
+        if self.definition is None:
+            return None
+
+        pagination_type = (
+            self.definition.pagination_type
+        )
+
+        if pagination_type == "page":
+            parameter = (
+                self.definition.page_parameter
+            )
+
+            if not parameter:
+                return None
+
+            parsed = urlparse(
+                request_url
+            )
+
+            values = dict(
+                parse_qsl(
+                    parsed.query,
+                    keep_blank_values=True,
+                )
+            )
+
+            value = values.get(
+                parameter
+            )
+
+            return (
+                str(value)
+                if value is not None
+                else str(
+                    self.definition.page_start
+                )
+            )
+
+        if pagination_type == "offset":
+            parameter = (
+                self.definition.offset_parameter
+            )
+
+            if not parameter:
+                return None
+
+            parsed = urlparse(
+                request_url
+            )
+
+            values = dict(
+                parse_qsl(
+                    parsed.query,
+                    keep_blank_values=True,
+                )
+            )
+
+            value = values.get(
+                parameter
+            )
+
+            return (
+                str(value)
+                if value is not None
+                else str(
+                    self.definition.offset_start
+                )
+            )
+
+        return None
+
+    def _fetch_payload(
+        self,
+        request_url: str,
+    ) -> Any:
+        request = Request(
+            request_url,
+            headers={
+                "User-Agent":
+                    "Thorio-Lead-Engine/1.0",
+                "Accept":
+                    "application/json",
+            },
+        )
+
+        try:
+            raw = fetch_url(
+                request,
+                timeout=self.timeout,
             )
         except HTTPRetryError as exc:
             raise ValueError(
@@ -687,7 +1108,7 @@ class JsonSourceAdapter:
             ) from exc
 
         try:
-            payload = json.loads(
+            return json.loads(
                 raw.decode("utf-8")
             )
         except (
@@ -699,14 +1120,20 @@ class JsonSourceAdapter:
                 "UTF-8 JSON."
             ) from exc
 
+    def _normalize_records(
+        self,
+        payload: Any,
+    ) -> List[Dict[str, Any]]:
         if self.definition is None:
             records = _json_records(
                 payload
             )
         else:
-            records = _json_records_from_definition(
-                payload,
-                self.definition,
+            records = (
+                _json_records_from_definition(
+                    payload,
+                    self.definition,
+                )
             )
 
         normalized = []
@@ -722,21 +1149,338 @@ class JsonSourceAdapter:
             if record is not None:
                 normalized.append(record)
 
-        checkpoint_value = None
+        return normalized
 
-        if self.definition is not None:
-            checkpoint_value = _configured_checkpoint(
-                payload,
-                self.definition,
+    def collect(
+        self,
+        checkpoint: Optional[str] = None,
+    ) -> AdapterResult:
+        # Legacy callers retain the original one-request behavior.
+        if self.definition is None:
+            request_url = self._request_url(
+                checkpoint
             )
-        else:
-            checkpoint_value = _next_checkpoint(
+
+            payload = self._fetch_payload(
+                request_url
+            )
+
+            normalized = self._normalize_records(
                 payload
             )
 
+            return AdapterResult(
+                records=normalized,
+                checkpoint=_next_checkpoint(
+                    payload
+                ),
+            )
+
+        definition = self.definition
+
+        max_pages = definition.max_pages
+        max_requests = definition.max_requests
+        max_records = definition.max_records
+
+        records: List[Dict[str, Any]] = []
+
+        current_checkpoint = (
+            checkpoint
+        )
+
+        if (
+            definition.pagination_type
+            == "page"
+            and current_checkpoint is None
+        ):
+            current_checkpoint = str(
+                definition.page_start
+            )
+
+        if (
+            definition.pagination_type
+            == "offset"
+            and current_checkpoint is None
+        ):
+            current_checkpoint = str(
+                definition.offset_start
+            )
+
+        if (
+            definition.pagination_type
+            == "next_url"
+            and current_checkpoint
+        ):
+            request_url = (
+                self._request_url(
+                    current_checkpoint
+                )
+            )
+        else:
+            request_url = (
+                self._request_url(
+                    current_checkpoint
+                )
+            )
+
+        pages = 0
+        requests = 0
+        visited_urls = set()
+
+        final_checkpoint = (
+            current_checkpoint
+        )
+
+        while request_url:
+            if pages >= max_pages:
+                break
+
+            if requests >= max_requests:
+                break
+
+            normalized_url = request_url.strip()
+
+            if not normalized_url:
+                break
+
+            if normalized_url in visited_urls:
+                raise ValueError(
+                    "JSON source pagination "
+                    "returned a previously "
+                    "visited URL."
+                )
+
+            visited_urls.add(
+                normalized_url
+            )
+
+            request_url = (
+                self._page_limit_url(
+                    normalized_url
+                )
+            )
+
+            if request_url in visited_urls:
+                raise ValueError(
+                    "JSON source pagination "
+                    "returned a previously "
+                    "visited URL."
+                )
+
+            visited_urls.add(
+                request_url
+            )
+
+            requests += 1
+            pages += 1
+
+            payload = self._fetch_payload(
+                request_url
+            )
+
+            page_records = (
+                self._normalize_records(
+                    payload
+                )
+            )
+
+            remaining = (
+                max_records - len(records)
+            )
+
+            if remaining <= 0:
+                break
+
+            records.extend(
+                page_records[:remaining]
+            )
+
+            if len(records) >= max_records:
+                break
+
+            pagination_type = (
+                definition.pagination_type
+            )
+
+            if pagination_type == "none":
+                final_checkpoint = None
+                break
+
+            if pagination_type == "cursor":
+                next_checkpoint = (
+                    _configured_checkpoint(
+                        payload,
+                        definition,
+                    )
+                )
+
+                if not next_checkpoint:
+                    final_checkpoint = None
+                    break
+
+                if (
+                    next_checkpoint
+                    == current_checkpoint
+                ):
+                    raise ValueError(
+                        "JSON source cursor "
+                        "did not advance."
+                    )
+
+                final_checkpoint = (
+                    next_checkpoint
+                )
+
+                current_checkpoint = (
+                    next_checkpoint
+                )
+
+                request_url = (
+                    self._request_url(
+                        next_checkpoint
+                    )
+                )
+
+                continue
+
+            if pagination_type == "page":
+                parameter = (
+                    definition.page_parameter
+                )
+
+                if not parameter:
+                    break
+
+                if current_checkpoint is None:
+                    current_page = (
+                        definition.page_start
+                    )
+                else:
+                    try:
+                        current_page = int(
+                            current_checkpoint
+                        )
+                    except (
+                        TypeError,
+                        ValueError,
+                    ):
+                        current_page = (
+                            definition.page_start
+                        )
+
+                next_page = (
+                    current_page + 1
+                )
+
+                final_checkpoint = str(
+                    next_page
+                )
+
+                current_checkpoint = str(
+                    next_page
+                )
+
+                request_url = (
+                    _set_query_parameter(
+                        self.url,
+                        parameter,
+                        next_page,
+                    )
+                )
+
+                continue
+
+            if pagination_type == "offset":
+                parameter = (
+                    definition.offset_parameter
+                )
+
+                if not parameter:
+                    break
+
+                if current_checkpoint is None:
+                    current_offset = (
+                        definition.offset_start
+                    )
+                else:
+                    try:
+                        current_offset = int(
+                            current_checkpoint
+                        )
+                    except (
+                        TypeError,
+                        ValueError,
+                    ):
+                        current_offset = (
+                            definition.offset_start
+                        )
+
+                step = (
+                    definition.offset_step
+                    or definition.page_limit
+                    or len(page_records)
+                    or 1
+                )
+
+                next_offset = (
+                    current_offset + step
+                )
+
+                final_checkpoint = str(
+                    next_offset
+                )
+
+                current_checkpoint = str(
+                    next_offset
+                )
+
+                request_url = (
+                    _set_query_parameter(
+                        self.url,
+                        parameter,
+                        next_offset,
+                    )
+                )
+
+                continue
+
+            if pagination_type == "next_url":
+                next_url = (
+                    _configured_checkpoint(
+                        payload,
+                        definition,
+                    )
+                )
+
+                if not next_url:
+                    final_checkpoint = None
+                    break
+
+                if (
+                    next_url
+                    == normalized_url
+                ):
+                    raise ValueError(
+                        "JSON source pagination "
+                        "returned the current URL."
+                    )
+
+                final_checkpoint = (
+                    next_url
+                )
+
+                current_checkpoint = (
+                    next_url
+                )
+
+                request_url = next_url
+                continue
+
+            break
+
         return AdapterResult(
-            records=normalized,
-            checkpoint=checkpoint_value,
+            records=records,
+            checkpoint=final_checkpoint,
         )
 
 
