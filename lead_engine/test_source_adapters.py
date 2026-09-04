@@ -176,3 +176,164 @@ def test_create_adapter_exposes_source_name():
         source.url
         == "https://example.com/api"
     )
+
+
+def test_json_adapter_uses_source_definition_record_path_and_fields():
+    from .source_definition import SourceDefinition
+
+    payload = (
+        b'{'
+        b'"data": {'
+        b'"jobs": ['
+        b'{'
+        b'"job_id": "job-123",'
+        b'"position": "Senior Engineer",'
+        b'"company": {'
+        b'"name": "Configured Corp"'
+        b'},'
+        b'"apply": {'
+        b'"url": "https://example.com/apply/123"'
+        b'},'
+        b'"details": "Build important software."'
+        b'}'
+        b']'
+        b'}'
+        b'}'
+    )
+
+    definition = SourceDefinition(
+        name="Configured API",
+        provider="Configured",
+        collector_type="json",
+        url="https://example.com/api",
+        record_path="data.jobs",
+        title_field="position",
+        company_field="company.name",
+        description_field="details",
+        url_field="apply.url",
+        source_id_field="job_id",
+        pagination_type="none",
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        return_value=payload,
+    ):
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect()
+
+    assert len(result.records) == 1
+
+    record = result.records[0]
+
+    assert (
+        record["source_id"]
+        == "job-123"
+    )
+
+    assert (
+        record["job_title"]
+        == "Senior Engineer"
+    )
+
+    assert (
+        record["company"]
+        == "Configured Corp"
+    )
+
+    assert (
+        record["url"]
+        == "https://example.com/apply/123"
+    )
+
+    assert (
+        "Build important software."
+        in record["evidence"]
+    )
+
+
+def test_json_adapter_uses_configured_cursor_parameter():
+    from .source_definition import SourceDefinition
+
+    payload = (
+        b'{'
+        b'"jobs": [],'
+        b'"pagination": {'
+        b'"next": "next-token"'
+        b'}'
+        b'}'
+    )
+
+    definition = SourceDefinition(
+        name="Cursor API",
+        provider="Cursor",
+        collector_type="json",
+        url="https://example.com/api",
+        pagination_type="cursor",
+        cursor_parameter="page_token",
+        cursor_response_field="pagination.next",
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        return_value=payload,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect(
+            checkpoint="previous-token"
+        )
+
+    request = fetch.call_args.args[0]
+
+    assert (
+        "page_token=previous-token"
+        in request.full_url
+    )
+
+    assert (
+        result.checkpoint
+        == "next-token"
+    )
+
+
+def test_json_adapter_does_not_send_cursor_when_pagination_is_none():
+    from .source_definition import SourceDefinition
+
+    payload = (
+        b'{'
+        b'"jobs": []'
+        b'}'
+    )
+
+    definition = SourceDefinition(
+        name="Non Cursor API",
+        provider="Non Cursor",
+        collector_type="json",
+        url="https://example.com/api",
+        pagination_type="none",
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        return_value=payload,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        adapter.adapter.collect(
+            checkpoint="old-token"
+        )
+
+    request = fetch.call_args.args[0]
+
+    assert (
+        request.full_url
+        == "https://example.com/api"
+    )
