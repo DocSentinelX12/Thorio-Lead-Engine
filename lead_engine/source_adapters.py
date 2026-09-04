@@ -44,18 +44,37 @@ def _with_query_parameter(
         keep_blank_values=True,
     )
 
-    query = [
-        (key, existing_value)
-        for key, existing_value in query
-        if key != parameter
-    ]
+new_query = []
+replaced = False
 
-    query.append(
+for key, existing_value in query:
+    if key == parameter:
+        if not replaced:
+            new_query.append(
+                (
+                    parameter,
+                    _text(value),
+                )
+            )
+            replaced = True
+        continue
+
+    new_query.append(
+        (
+            key,
+            existing_value,
+        )
+    )
+
+if not replaced:
+    new_query.append(
         (
             parameter,
             _text(value),
         )
     )
+
+query = new_query
 
     return urlunsplit(
         (
