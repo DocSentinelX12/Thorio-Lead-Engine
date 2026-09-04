@@ -148,13 +148,29 @@ def _configured_text(
     *fallback_fields: str,
 ) -> str:
     """
-    Read the configured field first, then legacy fallbacks.
+    Read the configured field first, using the same structured-value
+    handling as the legacy field resolver, then use legacy fallbacks.
     """
     if configured_field:
         value = _field_value(
             item,
             configured_field,
         )
+
+        if isinstance(value, (list, tuple)):
+            value = ", ".join(
+                _text(entry)
+                for entry in value
+                if _text(entry)
+            )
+
+        if isinstance(value, dict):
+            value = (
+                value.get("name")
+                or value.get("value")
+                or value.get("text")
+                or value.get("title")
+            )
 
         text = _text(value)
 
@@ -165,7 +181,6 @@ def _configured_text(
         item,
         *fallback_fields,
     )
-
 
 def _configured_url(
     item: Dict[str, Any],
