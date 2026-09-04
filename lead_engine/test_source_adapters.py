@@ -616,3 +616,68 @@ def test_json_adapter_replaces_existing_pagination_parameter():
         request.full_url
         == "https://example.com/api?page=1&existing=value"
     )
+
+
+def test_json_adapter_uses_default_company_metadata():
+    from .source_definition import SourceDefinition
+
+    payload = (
+        b'{'
+        b'"jobs": ['
+        b'{'
+        b'"id": "stripe-123",'
+        b'"title": "Senior Software Engineer",'
+        b'"content": "Build distributed systems.",'
+        b'"absolute_url": "https://example.com/jobs/stripe-123"'
+        b'}'
+        b']'
+        b'}'
+    )
+
+    definition = SourceDefinition(
+        name="Stripe",
+        provider="Greenhouse",
+        collector_type="json",
+        url="https://example.com/stripe/jobs",
+        record_path="jobs",
+        title_field="title",
+        company_field="company_name",
+        description_field="content",
+        url_field="absolute_url",
+        source_id_field="id",
+        pagination_type="none",
+        metadata={
+            "default_company": "Stripe",
+        },
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        return_value=payload,
+    ):
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect()
+
+    assert len(
+        result.records
+    ) == 1
+
+    record = result.records[0]
+
+    assert (
+        record["company"]
+        == "Stripe"
+    )
+
+    assert (
+        record["job_title"]
+        == "Senior Software Engineer"
+    )
+
+    assert (
+        record["source_id"]
+        == "stripe-123"
+    )
