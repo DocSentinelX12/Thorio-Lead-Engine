@@ -530,3 +530,89 @@ def test_json_adapter_definition_next_url_pagination():
     assert len(result.records) == 2
 
     assert result.checkpoint is None
+
+
+def test_json_adapter_encodes_cursor_checkpoint():
+    from .source_definition import SourceDefinition
+
+    payload = (
+        b'{'
+        b'"jobs": [],'
+        b'"pagination": {'
+        b'"next": "next-token"'
+        b'}'
+        b'}'
+    )
+
+    definition = SourceDefinition(
+        name="Encoded Cursor API",
+        provider="Example",
+        collector_type="json",
+        url="https://example.com/api?existing=value",
+        pagination_type="cursor",
+        cursor_parameter="page_token",
+        cursor_response_field="pagination.next",
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        return_value=payload,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        adapter.adapter.collect(
+            checkpoint="abc+123&next=value"
+        )
+
+    request = fetch.call_args.args[0]
+
+    assert (
+        "page_token=abc%2B123%26next%3Dvalue"
+        in request.full_url
+    )
+
+    assert (
+        "existing=value"
+        in request.full_url
+    )
+
+
+def test_json_adapter_replaces_existing_pagination_parameter():
+    from .source_definition import SourceDefinition
+
+    payload = (
+        b'{'
+        b'"jobs": []'
+        b'}'
+    )
+
+    definition = SourceDefinition(
+        name="Existing Page API",
+        provider="Example",
+        collector_type="json",
+        url="https://example.com/api?page=99&existing=value",
+        pagination_type="page",
+        page_parameter="page",
+        page_start=1,
+        max_pages=1,
+        max_requests=1,
+    )
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        return_value=payload,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        adapter.adapter.collect()
+
+    request = fetch.call_args.args[0]
+
+    assert (
+        request.full_url
+        == "https://example.com/api?page=1&existing=value"
+    )
