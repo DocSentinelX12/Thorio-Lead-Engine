@@ -174,3 +174,46 @@ def test_checkpoint_does_not_advance_after_processing_failure():
         result["checkpoint"]
         == "previous-cursor"
     )
+
+
+def test_checkpoint_runner_clears_checkpoint_when_source_reaches_end(
+    tmp_path,
+):
+    db = LeadDB(
+        data_dir=str(tmp_path)
+    )
+
+    db.set_checkpoint(
+        "finished-source",
+        "old-cursor",
+    )
+
+    runner = MagicMock()
+
+    runner.run_source.return_value = {
+        "discovered_count": 2,
+        "accepted_count": 2,
+        "duplicate_count": 0,
+        "failed_count": 0,
+        "checkpoint": None,
+    }
+
+    source = StaticLeadSource([])
+    source.name = "finished-source"
+
+    checkpoint_runner = CheckpointRunner(
+        db=db,
+        runner=runner,
+    )
+
+    result = checkpoint_runner.run(
+        source=source,
+        checkpoint="ignored",
+    )
+
+    assert result["previous_checkpoint"] == "old-cursor"
+    assert result["checkpoint"] is None
+
+    assert db.get_checkpoint(
+        source.name
+    ) == ""
