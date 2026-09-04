@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+from .database import LeadDB
+from .pipeline import LeadPipeline
 from .scheduler import LeadScheduler
 from .source_definition import SourceDefinition
 from .source_adapters import create_adapter
@@ -191,8 +193,18 @@ def test_scheduler_static_source_runs_without_poll_interval():
     assert runner.run_source.call_count == 2
 
 
-def test_scheduler_persists_source_poll_interval():
+def test_scheduler_persists_source_poll_interval(tmp_path):
     runner = MagicMock()
+
+    db = LeadDB(
+        data_dir=str(tmp_path)
+    )
+
+    pipeline = LeadPipeline(
+        db=db
+    )
+
+    runner.pipeline = pipeline
 
     runner.run_source.return_value = {
         "processed_count": 1,
@@ -248,6 +260,8 @@ def test_scheduler_persists_source_poll_interval():
         == "not_due"
     )
     assert runner.run_source.call_count == 0
+
+    db.close()
 
 
 def test_scheduler_persisted_poll_interval_expires():
