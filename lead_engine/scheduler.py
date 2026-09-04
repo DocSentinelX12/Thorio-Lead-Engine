@@ -15,6 +15,9 @@ class LeadScheduler:
     A source failure is recorded without preventing subsequent
     sources from running.
 
+    Each source may define its own polling interval through its
+    SourceDefinition. Sources are only executed when they are due.
+
     Checkpoints are integrated into the actual production source
     execution path. A source checkpoint advances only after that
     source completes without processing failures.
@@ -27,18 +30,125 @@ class LeadScheduler:
             runner=runner,
         )
 
+        self._next_run_at: Dict[str, float] = {}
+
+    def _source_key(
+        self,
+        source: LeadSource,
+    ) -> str:
+        definition = getattr(
+            source,
+            "definition",
+            None,
+        )
+
+        if definition is not None:
+            source_key = getattr(
+                definition,
+                "source_key",
+                None,
+            )
+
+            if source_key:
+                return str(source_key)
+
+        return str(source.name)
+
+    def _poll_interval(
+        self,
+        source: LeadSource,
+    ) -> float:
+        definition = getattr(
+            source,
+            "definition",
+            None,
+        )
+
+        if definition is None:
+            return 0.0
+
+        value = getattr(
+            definition,
+            "poll_interval_seconds",
+            0,
+        )
+
+        try:
+            interval = float(value)
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return 0.0
+
+        if interval <= 0:
+            return 0.0
+
+        return interval
+
+    def _is_due(
+        self,
+        source: LeadSource,
+        now: float,
+    ) -> bool:
+        key = self._source_key(source)
+
+        next_run_at = self._next_run_at.get(
+            key
+        )
+
+        if next_run_at is None:
+            return True
+
+        return now >= next_run_at
+
+    def _schedule_next_run(
+        self,
+        source: LeadSource,
+        started_at: float,
+    ) -> None:
+        interval = self._poll_interval(
+            source
+        )
+
+        if interval <= 0:
+            return
+
+        key = self._source_key(source)
+
+        self._next_run_at[key] = (
+            started_at + interval
+        )
+
     def run(
         self,
         sources: Iterable[LeadSource],
     ) -> Dict[str, Any]:
         results = []
         failed = []
+        skipped = []
 
         source_list = list(sources)
         source_count = len(source_list)
 
+        now = time.monotonic()
+
         for source in source_list:
             source_name = source.name
+
+            if not self._is_due(
+                source,
+                now,
+            ):
+                skipped.append(
+                    {
+                        "source": source_name,
+                        "reason": "not_due",
+                    }
+                )
+                continue
+
+            started_at = time.monotonic()
 
             try:
                 previous_checkpoint = (
@@ -63,7 +173,10 @@ class LeadScheduler:
                     failed_count = int(
                         failed_count or 0
                     )
-                except (TypeError, ValueError):
+                except (
+                    TypeError,
+                    ValueError,
+                ):
                     failed_count = 1
 
                 if failed_count != 0:
@@ -78,12 +191,22 @@ class LeadScheduler:
                     }
                 )
 
+                self._schedule_next_run(
+                    source,
+                    started_at,
+                )
+
             except Exception as exc:
                 failed.append(
                     {
                         "source": source_name,
                         "error": str(exc),
                     }
+                )
+
+                self._schedule_next_run(
+                    source,
+                    started_at,
                 )
 
         sync_result = sync_pending(
@@ -140,9 +263,13 @@ class LeadScheduler:
         return {
             "results": results,
             "failed": failed,
+            "skipped": skipped,
             "source_count": source_count,
-            "successful_source_count": len(results),
+            "successful_source_count": len(
+                results
+            ),
             "failed_count": len(failed),
+            "skipped_count": len(skipped),
             "discovered_count": discovered_total,
             "accepted_count": accepted_total,
             "duplicate_count": duplicate_total,
@@ -175,11 +302,13 @@ class LeadScheduler:
                 "cycles": 0,
                 "results": [],
                 "failed": [],
+                "skipped": [],
                 "sync": [],
                 "source_count": 0,
                 "successful_source_count": 0,
                 "result_count": 0,
                 "failed_count": 0,
+                "skipped_count": 0,
                 "discovered_count": 0,
                 "accepted_count": 0,
                 "duplicate_count": 0,
@@ -190,6 +319,7 @@ class LeadScheduler:
         cycles = 0
         total_results = []
         total_failed = []
+        total_skipped = []
         total_sync = []
 
         total_discovered = 0
@@ -197,7 +327,10 @@ class LeadScheduler:
         total_duplicates = 0
         total_processing_failed = 0
 
-        while max_cycles is None or cycles < max_cycles:
+        while (
+            max_cycles is None
+            or cycles < max_cycles
+        ):
             result = self.run(
                 source_list
             )
@@ -208,6 +341,13 @@ class LeadScheduler:
 
             total_failed.extend(
                 result["failed"]
+            )
+
+            total_skipped.extend(
+                result.get(
+                    "skipped",
+                    [],
+                )
             )
 
             total_sync.append(
@@ -251,13 +391,23 @@ class LeadScheduler:
             "cycles": cycles,
             "results": total_results,
             "failed": total_failed,
+            "skipped": total_skipped,
             "sync": total_sync,
-            "source_count": len(source_list),
-            "successful_source_count": (
-                len(total_results)
+            "source_count": len(
+                source_list
             ),
-            "result_count": len(total_results),
-            "failed_count": len(total_failed),
+            "successful_source_count": len(
+                total_results
+            ),
+            "result_count": len(
+                total_results
+            ),
+            "failed_count": len(
+                total_failed
+            ),
+            "skipped_count": len(
+                total_skipped
+            ),
             "discovered_count": total_discovered,
             "accepted_count": total_accepted,
             "duplicate_count": total_duplicates,
