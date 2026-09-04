@@ -568,6 +568,7 @@ class JsonSourceAdapter:
         url: str,
         source: str,
         timeout: int = 20,
+        definition: Optional[SourceDefinition] = None,
     ):
         if not url.strip():
             raise ValueError(
@@ -588,25 +589,49 @@ class JsonSourceAdapter:
         self.name = source.strip()
         self.source = self.name
         self.timeout = timeout
+        self.definition = definition
+
+    def _request_url(
+        self,
+        checkpoint: Optional[str],
+    ) -> str:
+        if not checkpoint:
+            return self.url
+
+        if (
+            self.definition is None
+            or self.definition.pagination_type
+            != "cursor"
+        ):
+            return self.url
+
+        parameter = (
+            self.definition.cursor_parameter
+        )
+
+        if not parameter:
+            return self.url
+
+        separator = (
+            "&"
+            if "?" in self.url
+            else "?"
+        )
+
+        return (
+            f"{self.url}"
+            f"{separator}"
+            f"{parameter}="
+            f"{checkpoint}"
+        )
 
     def collect(
         self,
         checkpoint: Optional[str] = None,
     ) -> AdapterResult:
-        request_url = self.url
-
-        if checkpoint:
-            separator = (
-                "&"
-                if "?" in request_url
-                else "?"
-            )
-
-            request_url = (
-                f"{request_url}"
-                f"{separator}cursor="
-                f"{checkpoint}"
-            )
+        request_url = self._request_url(
+            checkpoint
+        )
 
         request = Request(
             request_url,
@@ -637,12 +662,19 @@ class JsonSourceAdapter:
             json.JSONDecodeError,
         ) as exc:
             raise ValueError(
-                "JSON source returned invalid UTF-8 JSON."
+                "JSON source returned invalid "
+                "UTF-8 JSON."
             ) from exc
 
-        records = _json_records(
-            payload
-        )
+        if self.definition is None:
+            records = _json_records(
+                payload
+            )
+        else:
+            records = _json_records_from_definition(
+                payload,
+                self.definition,
+            )
 
         normalized = []
 
@@ -651,16 +683,27 @@ class JsonSourceAdapter:
                 item,
                 source=self.source,
                 source_url=self.url,
+                definition=self.definition,
             )
 
             if record is not None:
                 normalized.append(record)
 
+        checkpoint_value = None
+
+        if self.definition is not None:
+            checkpoint_value = _configured_checkpoint(
+                payload,
+                self.definition,
+            )
+        else:
+            checkpoint_value = _next_checkpoint(
+                payload
+            )
+
         return AdapterResult(
             records=normalized,
-            checkpoint=_next_checkpoint(
-                payload
-            ),
+            checkpoint=checkpoint_value,
         )
 
 
@@ -1289,6 +1332,7 @@ def create_adapter(
             url=definition.url,
             source=definition.name,
             timeout=timeout,
+            definition=definition,
         )
 
     elif collector in {
