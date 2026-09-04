@@ -627,16 +627,28 @@ def configured_sources() -> List[LeadSource]:
         source_type,
         signal_keywords,
     ) in _load_airtable_source_catalog():
+
+        definition = SourceDefinition(
+            name=name,
+            provider="Airtable",
+            collector_type=source_type,
+            url=url,
+            enabled=True,
+            pagination_type="none",
+            metadata={
+                "signal_keywords": ";".join(
+                    signal_keywords
+                ),
+            },
+        )
+
         sources.append(
             _free_source_instance(
-                name=name,
-                url=url,
-                source_type=source_type,
-                signal_keywords=signal_keywords,
+                definition=definition,
             )
         )
 
-        if _free_sources_enabled():
+    if _free_sources_enabled():
         for definition in _load_free_source_catalog():
             sources.append(
                 _free_source_instance(
