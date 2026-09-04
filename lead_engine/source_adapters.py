@@ -889,7 +889,7 @@ class JsonSourceAdapter:
             request_url = _with_query_parameter(
               self.url,
               parameter,
-              current_page,
+              current_offset,
             )
 
         elif pagination_type == "next_url":
