@@ -99,7 +99,7 @@ def _normalize_source_type(
 
 
 def _load_free_source_catalog(
-) -> Tuple[Tuple[str, str, str], ...]:
+) -> Tuple[SourceDefinition, ...]:
     path = _free_source_catalog_path()
 
     try:
@@ -124,7 +124,7 @@ def _load_free_source_catalog(
             "Free source catalog must contain a JSON array."
         )
 
-    catalog: List[Tuple[str, str, str]] = []
+    catalog: List[SourceDefinition] = []
     seen_names = set()
     seen_urls = set()
 
@@ -155,19 +155,28 @@ def _load_free_source_catalog(
             index,
         )
 
-        if not isinstance(name, str) or not name.strip():
+        if not isinstance(
+            name,
+            str,
+        ) or not name.strip():
             raise RuntimeError(
                 "Free source catalog entry "
                 f"{index + 1} is missing 'name'."
             )
 
-        if not isinstance(url, str) or not url.strip():
+        if not isinstance(
+            url,
+            str,
+        ) or not url.strip():
             raise RuntimeError(
                 "Free source catalog entry "
                 f"{index + 1} is missing 'url'."
             )
 
-        if not isinstance(enabled, bool):
+        if not isinstance(
+            enabled,
+            bool,
+        ):
             raise RuntimeError(
                 "Free source catalog entry "
                 f"{index + 1} has invalid 'enabled'."
@@ -197,18 +206,178 @@ def _load_free_source_catalog(
         seen_names.add(
             normalized_name
         )
+
         seen_urls.add(
             normalized_url
         )
 
-        if enabled:
-            catalog.append(
-                (
-                    name,
-                    url,
-                    source_type,
-                )
+        if not enabled:
+            continue
+
+        provider = entry.get(
+            "provider",
+            name,
+        )
+
+        if not isinstance(
+            provider,
+            str,
+        ) or not provider.strip():
+            provider = name
+
+        restrictions = entry.get(
+            "restrictions",
+            (),
+        )
+
+        if isinstance(
+            restrictions,
+            list,
+        ):
+            restrictions = tuple(
+                str(value).strip()
+                for value in restrictions
+                if str(value).strip()
             )
+
+        elif isinstance(
+            restrictions,
+            tuple,
+        ):
+            restrictions = tuple(
+                str(value).strip()
+                for value in restrictions
+                if str(value).strip()
+            )
+
+        else:
+            raise RuntimeError(
+                "Free source catalog entry "
+                f"{index + 1} has invalid 'restrictions'."
+            )
+
+        metadata = entry.get(
+            "metadata",
+            {},
+        )
+
+        if not isinstance(
+            metadata,
+            dict,
+        ):
+            raise RuntimeError(
+                "Free source catalog entry "
+                f"{index + 1} has invalid 'metadata'."
+            )
+
+        try:
+            definition = SourceDefinition(
+                name=name,
+                provider=provider.strip(),
+                collector_type=source_type,
+                url=url,
+                enabled=True,
+                record_path=entry.get(
+                    "record_path"
+                ),
+                title_field=entry.get(
+                    "title_field",
+                    "title",
+                ),
+                company_field=entry.get(
+                    "company_field",
+                    "company",
+                ),
+                description_field=entry.get(
+                    "description_field",
+                    "description",
+                ),
+                url_field=entry.get(
+                    "url_field",
+                    "url",
+                ),
+                source_id_field=entry.get(
+                    "source_id_field"
+                ),
+                location_field=entry.get(
+                    "location_field"
+                ),
+                pagination_type=entry.get(
+                    "pagination_type",
+                    "none",
+                ),
+                cursor_parameter=entry.get(
+                    "cursor_parameter"
+                ),
+                cursor_response_field=entry.get(
+                    "cursor_response_field"
+                ),
+                page_parameter=entry.get(
+                    "page_parameter"
+                ),
+                page_start=entry.get(
+                    "page_start",
+                    1,
+                ),
+                page_limit=entry.get(
+                    "page_limit"
+                ),
+                offset_parameter=entry.get(
+                    "offset_parameter"
+                ),
+                offset_start=entry.get(
+                    "offset_start",
+                    0,
+                ),
+                offset_step=entry.get(
+                    "offset_step"
+                ),
+                next_url_field=entry.get(
+                    "next_url_field"
+                ),
+                max_pages=entry.get(
+                    "max_pages",
+                    10,
+                ),
+                max_requests=entry.get(
+                    "max_requests",
+                    10,
+                ),
+                max_records=entry.get(
+                    "max_records",
+                    5000,
+                ),
+                poll_interval_seconds=entry.get(
+                    "poll_interval_seconds",
+                    3600,
+                ),
+                attribution_required=entry.get(
+                    "attribution_required",
+                    False,
+                ),
+                attribution_url=entry.get(
+                    "attribution_url"
+                ),
+                allowed_for_thorio=entry.get(
+                    "allowed_for_thorio",
+                    True,
+                ),
+                restrictions=restrictions,
+                metadata=metadata,
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise RuntimeError(
+                "Invalid free source catalog entry "
+                f"{index + 1} ({name}): {exc}"
+            ) from exc
+
+        catalog.append(
+            definition
+        )
 
     return tuple(catalog)
 
@@ -245,26 +414,9 @@ def _free_source_timeout() -> int:
 
 
 def _free_source_instance(
-    name: str,
-    url: str,
-    source_type: str = DEFAULT_FREE_SOURCE_TYPE,
-    signal_keywords: Tuple[str, ...] = (),
+    definition: SourceDefinition,
 ) -> LeadSource:
     timeout = _free_source_timeout()
-
-    definition = SourceDefinition(
-        name=name,
-        provider=name,
-        collector_type=source_type,
-        url=url,
-        enabled=True,
-        pagination_type="none",
-        metadata={
-            "signal_keywords": ";".join(
-                signal_keywords
-            ),
-        },
-    )
 
     return create_adapter(
         definition=definition,
@@ -484,17 +636,11 @@ def configured_sources() -> List[LeadSource]:
             )
         )
 
-    if _free_sources_enabled():
-        for (
-            name,
-            url,
-            source_type,
-        ) in _load_free_source_catalog():
+        if _free_sources_enabled():
+        for definition in _load_free_source_catalog():
             sources.append(
                 _free_source_instance(
-                    name=name,
-                    url=url,
-                    source_type=source_type,
+                    definition=definition,
                 )
             )
 
@@ -503,8 +649,8 @@ def configured_sources() -> List[LeadSource]:
 
 def available_free_sources() -> List[str]:
     return [
-        name
-        for name, _url, _source_type
+        definition.name
+        for definition
         in _load_free_source_catalog()
     ]
 
