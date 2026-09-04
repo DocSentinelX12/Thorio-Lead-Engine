@@ -13,6 +13,7 @@ from .airtable_sync import (
 from .free_sources import FreeJobSource
 from .sources import LeadSource
 from .source_adapters import create_adapter
+from .source_definition import SourceDefinition
 from .web_source_config import create_web_source_from_env
 
 
@@ -251,24 +252,23 @@ def _free_source_instance(
 ) -> LeadSource:
     timeout = _free_source_timeout()
 
-    if source_type in {
-        "json",
-        "rss",
-        "atom",
-        "xml",
-        "html",
-    }:
-        adapter = create_adapter(
-            collector_type=source_type,
-            url=url,
-            source=name,
-            timeout=timeout,
-        )
+    definition = SourceDefinition(
+        name=name,
+        provider=name,
+        collector_type=source_type,
+        url=url,
+        enabled=True,
+        pagination_type="none",
+        metadata={
+            "signal_keywords": ";".join(
+                signal_keywords
+            ),
+        },
+    )
 
-        return adapter
-
-    raise RuntimeError(
-        f"Unsupported free source type: {source_type}"
+    return create_adapter(
+        definition=definition,
+        timeout=timeout,
     )
 
 
