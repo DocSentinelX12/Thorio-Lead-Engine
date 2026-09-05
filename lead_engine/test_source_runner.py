@@ -133,3 +133,31 @@ def test_source_runner_run_source_collects_and_processes_records():
     source.collect.assert_called_once()
 
     assert pipeline.process.call_count == 2
+
+
+def test_source_runner_does_not_hide_internal_type_error():
+    pipeline = Mock()
+
+    source = Mock()
+
+    source.collect.side_effect = TypeError(
+        "checkpoint data has invalid type"
+    )
+
+    runner = SourceRunner(pipeline)
+
+    try:
+        runner.run_source(
+            source,
+            checkpoint="123",
+        )
+    except TypeError as exc:
+        assert str(exc) == (
+            "checkpoint data has invalid type"
+        )
+    else:
+        raise AssertionError(
+            "Internal TypeError was incorrectly swallowed."
+        )
+
+    assert source.collect.call_count == 1
