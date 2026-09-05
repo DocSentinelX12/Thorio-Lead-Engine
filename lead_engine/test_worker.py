@@ -84,3 +84,74 @@ def test_sync_worker_retries_failed_lead(tmp_path):
     assert stats[0] == 1
     assert stats[1] == 1
     assert stats[2] == 0
+
+
+def test_sync_one_requires_successful_lead_radar_record(
+    monkeypatch,
+):
+    lead = {
+        "fingerprint": "lead-001",
+        "company": "Example Corp",
+        "route": "Thorio",
+    }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_lead_if_missing",
+        lambda lead: {
+            "status": "created",
+            "record": None,
+        },
+    )
+
+    result = sync_one(
+        lead
+    )
+
+    assert result["status"] == "failed"
+
+    assert (
+        result["error"]
+        == (
+            "Lead Radar synchronization succeeded without "
+            "returning an Airtable record."
+        )
+    )
+
+
+def test_sync_one_requires_valid_master_tracker_result(
+    monkeypatch,
+):
+    lead = {
+        "fingerprint": "lead-002",
+        "company": "Example Corp",
+        "route": "Thorio",
+    }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_lead_if_missing",
+        lambda lead: {
+            "status": "created",
+            "record": {
+                "id": "rec_lead_002",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_master_tracker",
+        lambda lead: {
+            "status": "failed",
+            "error": "downstream failure",
+        },
+    )
+
+    result = sync_one(
+        lead
+    )
+
+    assert result["status"] == "failed"
+
+    assert (
+        result["error"]
+        == "downstream failure"
+    )
