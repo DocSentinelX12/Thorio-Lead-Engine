@@ -192,7 +192,7 @@
     "record_path": "data",
     "title_field": "title",
     "company_field": "companyName",
-    "description_field": "title",
+    "description_field": "description",
     "url_field": "url",
     "source_id_field": "slug",
     "location_field": "location",
