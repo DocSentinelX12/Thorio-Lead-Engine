@@ -151,3 +151,18 @@ def test_configured_sources_loads_all_free_sources():
     assert "RemoteJobs.org" in names
     assert "Stripe" in names
     assert "GitLab" in names
+
+
+def test_free_source_catalog_nomado24_uses_description_field():
+    catalog = _load_free_source_catalog()
+
+    nomado24 = next(
+        definition
+        for definition in catalog
+        if definition.name == "Nomado24"
+    )
+
+    assert (
+        nomado24.description_field
+        == "description"
+    )
