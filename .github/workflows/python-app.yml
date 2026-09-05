@@ -54,7 +54,7 @@ jobs:
     env:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
-      AIRTABLE_LEAD_TABLE: ${{ secrets.AIRTABLE_LEAD_TABLE }}
+      AIRTABLE_LEAD_TABLE: ${{ secrets.AIRTABLE_LEAD_TABLE || 'Lead Radar' }}
 
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "20"
@@ -159,6 +159,115 @@ jobs:
             --interval 60 \
             --cycles 10 \
             2>&1 | tee data/scheduled-run-output.txt
+
+      - name: Verify production Airtable delivery
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path(
+              "data/scheduled-run-output.txt"
+          )
+
+          if not path.exists():
+              print(
+                  "PRODUCTION DELIVERY FAILURE: "
+                  "scheduled run output was not created."
+              )
+              sys.exit(1)
+
+          text = path.read_text(
+              encoding="utf-8"
+          )
+
+          decoder = json.JSONDecoder()
+          result = None
+
+          for match in re.finditer(
+              r"(?m)^\{",
+              text,
+          ):
+              try:
+                  candidate, end = decoder.raw_decode(
+                      text[match.start():]
+                  )
+              except json.JSONDecodeError:
+                  continue
+
+              if isinstance(candidate, dict):
+                  result = candidate
+
+          if result is None:
+              print(
+                  "PRODUCTION DELIVERY FAILURE: "
+                  "no valid Lead Engine result was found."
+              )
+              sys.exit(1)
+
+          sync_values = []
+
+          sync_result = result.get(
+              "sync"
+          )
+
+          if isinstance(
+              sync_result,
+              dict,
+          ):
+              sync_values.append(
+                  sync_result
+              )
+
+          elif isinstance(
+              sync_result,
+              list,
+          ):
+              sync_values.extend(
+                  item
+                  for item in sync_result
+                  if isinstance(item, dict)
+              )
+
+          if not sync_values:
+              print(
+                  "PRODUCTION DELIVERY FAILURE: "
+                  "the scheduled run did not return an Airtable "
+                  "synchronization result."
+              )
+              sys.exit(1)
+
+          failed_count = 0
+
+          for item in sync_values:
+              try:
+                  failed_count += int(
+                      item.get(
+                          "failed_count",
+                          0,
+                      )
+                      or 0
+                  )
+              except (
+                  TypeError,
+                  ValueError,
+              ):
+                  failed_count += 1
+
+          if failed_count > 0:
+              print(
+                  "PRODUCTION DELIVERY FAILURE: "
+                  f"{failed_count} Airtable synchronization "
+                  "operation(s) failed."
+              )
+              sys.exit(1)
+
+          print(
+              "PRODUCTION AIRTABLE DELIVERY VERIFIED: "
+              "no synchronization failures reported."
+          )
 
       - name: Report actual Lead Engine result
         if: always()
