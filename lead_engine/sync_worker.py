@@ -171,12 +171,22 @@ def _build_followup_payload(
         ),
     }
 
-
+                    
 def sync_one(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
     Synchronize one complete Master Tracker state.
+
+    Synchronization order:
+
+        Lead Radar
+            ->
+        downstream operational tables
+
+    Lead Radar is the authoritative Airtable persistence boundary.
+    Downstream synchronization is only considered part of a
+    successful synchronization after Lead Radar itself succeeds.
 
     Lifecycle:
 
@@ -218,9 +228,59 @@ def sync_one(
         }
 
     try:
+        # ---------------------------------------------------------
+        # LEAD RADAR IS THE PRIMARY AIRTABLE BOUNDARY
+        # ---------------------------------------------------------
+        #
+        # A lead must successfully exist in Lead Radar before
+        # downstream Master Tracker synchronization can be
+        # considered successful.
+        #
+        # This preserves Lead Radar as the canonical Airtable
+        # intake and approval queue.
+        # ---------------------------------------------------------
+
         result = sync_lead_if_missing(
             lead
         )
+
+        if not isinstance(
+            result,
+            dict,
+        ):
+            raise ValueError(
+                "Lead Radar synchronization returned an invalid result."
+            )
+
+        lead_status = result.get(
+            "status"
+        )
+
+        if lead_status not in {
+            "created",
+            "already_exists",
+            "updated",
+            "synced",
+        }:
+            raise ValueError(
+                result.get(
+                    "error"
+                )
+                or (
+                    "Lead Radar synchronization did not "
+                    "confirm a successful write."
+                )
+            )
+
+        airtable_record = result.get(
+            "record"
+        )
+
+        if airtable_record is None:
+            raise ValueError(
+                "Lead Radar synchronization succeeded without "
+                "returning an Airtable record."
+            )
 
         outreach_result = None
         followup_result = None
@@ -267,16 +327,41 @@ def sync_one(
             )
         )
 
+        if not isinstance(
+            master_tracker_result,
+            dict,
+        ):
+            raise ValueError(
+                "Master Tracker synchronization returned "
+                "an invalid result."
+            )
+
+        master_status = master_tracker_result.get(
+            "status"
+        )
+
+        if master_status not in {
+            "synced",
+            "skipped",
+        }:
+            raise ValueError(
+                master_tracker_result.get(
+                    "error"
+                )
+                or (
+                    "Master Tracker synchronization did not "
+                    "confirm a successful result."
+                )
+            )
+
         return {
             "status": (
                 "synced"
-                if result["status"] == "created"
+                if lead_status != "already_exists"
                 else "already_exists"
             ),
             "lead": lead,
-            "airtable_record": result.get(
-                "record"
-            ),
+            "airtable_record": airtable_record,
             "outreach_record": (
                 outreach_result.get(
                     "record"
