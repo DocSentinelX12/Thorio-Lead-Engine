@@ -178,39 +178,8 @@ def sync_one(
     """
     Synchronize one complete Master Tracker state.
 
-    Synchronization order:
-
-        Lead Radar
-            ->
-        downstream operational tables
-
-    Lead Radar is the authoritative Airtable persistence boundary.
-    Downstream synchronization is only considered part of a
-    successful synchronization after Lead Radar itself succeeds.
-
-    Lifecycle:
-
-    Lead Radar
-        ->
-    approval/readiness gate
-        ->
-    route-specific Outreach
-        ->
-    route-specific Follow-up state when required
-        ->
-    Paxus Referrals
-        ->
-    Companies
-    Opportunities
-    Lead Sources
-    Commissions
-
-    Outreach and Follow-up synchronization are deliberately
-    gated so unapproved or incomplete leads cannot create
-    actionable records.
-
-    Route is explicitly carried into Outreach and Follow-up
-    payloads so separate partner lifecycles are preserved.
+    Lead Radar must succeed first. Every downstream synchronization
+    that is actually attempted must also explicitly confirm success.
     """
 
     if not isinstance(lead, dict):
@@ -222,24 +191,10 @@ def sync_one(
             "followup_record": None,
             "referral_record": None,
             "master_tracker": None,
-            "error": (
-                "Lead payload must be an object."
-            ),
+            "error": "Lead payload must be an object.",
         }
 
     try:
-        # ---------------------------------------------------------
-        # LEAD RADAR IS THE PRIMARY AIRTABLE BOUNDARY
-        # ---------------------------------------------------------
-        #
-        # A lead must successfully exist in Lead Radar before
-        # downstream Master Tracker synchronization can be
-        # considered successful.
-        #
-        # This preserves Lead Radar as the canonical Airtable
-        # intake and approval queue.
-        # ---------------------------------------------------------
-
         result = sync_lead_if_missing(
             lead
         )
@@ -263,9 +218,7 @@ def sync_one(
             "synced",
         }:
             raise ValueError(
-                result.get(
-                    "error"
-                )
+                result.get("error")
                 or (
                     "Lead Radar synchronization did not "
                     "confirm a successful write."
@@ -292,12 +245,76 @@ def sync_one(
                 )
             )
 
+            if not isinstance(
+                outreach_result,
+                dict,
+            ):
+                raise ValueError(
+                    "Outreach synchronization returned an invalid result."
+                )
+
+            if outreach_result.get(
+                "status"
+            ) not in {
+                "created",
+                "updated",
+                "synced",
+                "already_exists",
+            }:
+                raise ValueError(
+                    outreach_result.get("error")
+                    or (
+                        "Outreach synchronization did not "
+                        "confirm a successful result."
+                    )
+                )
+
+            if outreach_result.get(
+                "record"
+            ) is None:
+                raise ValueError(
+                    "Outreach synchronization succeeded without "
+                    "returning an Airtable record."
+                )
+
             if _followup_required(lead):
                 followup_result = sync_followup(
                     _build_followup_payload(
                         lead
                     )
                 )
+
+                if not isinstance(
+                    followup_result,
+                    dict,
+                ):
+                    raise ValueError(
+                        "Follow-up synchronization returned an invalid result."
+                    )
+
+                if followup_result.get(
+                    "status"
+                ) not in {
+                    "created",
+                    "updated",
+                    "synced",
+                    "already_exists",
+                }:
+                    raise ValueError(
+                        followup_result.get("error")
+                        or (
+                            "Follow-up synchronization did not "
+                            "confirm a successful result."
+                        )
+                    )
+
+                if followup_result.get(
+                    "record"
+                ) is None:
+                    raise ValueError(
+                        "Follow-up synchronization succeeded without "
+                        "returning an Airtable record."
+                    )
 
         referral_result = None
 
@@ -315,16 +332,44 @@ def sync_one(
             or referral.client_payment_received
             or referral.commission_due
         ):
-            referral_result = (
-                sync_paxus_referral_state(
-                    referral
-                )
+            referral_result = sync_paxus_referral_state(
+                referral
             )
 
-        master_tracker_result = (
-            sync_master_tracker(
-                lead
-            )
+            if not isinstance(
+                referral_result,
+                dict,
+            ):
+                raise ValueError(
+                    "Referral synchronization returned an invalid result."
+                )
+
+            if referral_result.get(
+                "status"
+            ) not in {
+                "created",
+                "updated",
+                "synced",
+                "already_exists",
+            }:
+                raise ValueError(
+                    referral_result.get("error")
+                    or (
+                        "Referral synchronization did not "
+                        "confirm a successful result."
+                    )
+                )
+
+            if referral_result.get(
+                "record"
+            ) is None:
+                raise ValueError(
+                    "Referral synchronization succeeded without "
+                    "returning an Airtable record."
+                )
+
+        master_tracker_result = sync_master_tracker(
+            lead
         )
 
         if not isinstance(
@@ -332,8 +377,7 @@ def sync_one(
             dict,
         ):
             raise ValueError(
-                "Master Tracker synchronization returned "
-                "an invalid result."
+                "Master Tracker synchronization returned an invalid result."
             )
 
         master_status = master_tracker_result.get(
@@ -345,9 +389,7 @@ def sync_one(
             "skipped",
         }:
             raise ValueError(
-                master_tracker_result.get(
-                    "error"
-                )
+                master_tracker_result.get("error")
                 or (
                     "Master Tracker synchronization did not "
                     "confirm a successful result."
@@ -363,29 +405,21 @@ def sync_one(
             "lead": lead,
             "airtable_record": airtable_record,
             "outreach_record": (
-                outreach_result.get(
-                    "record"
-                )
+                outreach_result.get("record")
                 if outreach_result
                 else None
             ),
             "followup_record": (
-                followup_result.get(
-                    "record"
-                )
+                followup_result.get("record")
                 if followup_result
                 else None
             ),
             "referral_record": (
-                referral_result.get(
-                    "record"
-                )
+                referral_result.get("record")
                 if referral_result
                 else None
             ),
-            "master_tracker": (
-                master_tracker_result
-            ),
+            "master_tracker": master_tracker_result,
             "error": None,
         }
 
