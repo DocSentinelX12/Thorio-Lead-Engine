@@ -908,7 +908,7 @@ class JsonSourceAdapter:
                     collected.append(record)
 
                 if len(collected) >= max_records:
-                                     collected = collected[:max_records]
+                    collected = collected[:max_records]
 
                     return AdapterResult(
                         records=collected,
