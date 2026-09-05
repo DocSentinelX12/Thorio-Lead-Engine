@@ -413,3 +413,179 @@ def test_sync_opportunities_is_idempotent_by_route(
         "rec_paxus",
         "rec_shiftr",
     }
+
+
+def test_sync_outreach_uses_actual_airtable_schema(
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_find_master_records(
+        table_key,
+        lookup_field,
+        lookup_value,
+    ):
+        assert table_key == "outreach"
+        assert lookup_field == "Outreach"
+        assert (
+            lookup_value
+            == "fingerprint-001:Paxus"
+        )
+        return []
+
+    def fake_create_master_record(
+        table_key,
+        fields,
+    ):
+        captured["table_key"] = table_key
+        captured["fields"] = fields
+
+        return {
+            "records": [
+                {
+                    "id": "rec_outreach_001",
+                    "fields": fields,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "lead_engine.airtable_sync.find_master_records",
+        fake_find_master_records,
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.airtable_sync.create_master_record",
+        fake_create_master_record,
+    )
+
+    from lead_engine.airtable_sync import sync_outreach
+
+    result = sync_outreach(
+        {
+            "fingerprint": "fingerprint-001",
+            "company": "Example Corp",
+            "route": "Paxus",
+            "platform": "Himalayas",
+            "follow_up_number": 0,
+            "response": "",
+            "next_action_date": "2026-09-10",
+        }
+    )
+
+    assert result["status"] == "created"
+
+    fields = captured["fields"]
+
+    assert fields["Outreach"] == (
+        "fingerprint-001:Paxus"
+    )
+
+    assert fields["Company"] == "Example Corp"
+
+    assert fields["Opportunity"] == (
+        "fingerprint-001:Paxus"
+    )
+
+    assert fields["Platform"] == "Other"
+
+    assert fields["Follow-up Number"] == 0
+
+    assert fields["Next Follow-up"] == (
+        "2026-09-10"
+    )
+
+    assert "Lead" not in fields
+    assert "Route" not in fields
+    assert "Outreach Status" not in fields
+    assert "Next Action Date" not in fields
+    assert "Date Sent" not in fields
+
+
+def test_sync_followup_uses_actual_airtable_schema(
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_find_master_records(
+        table_key,
+        lookup_field,
+        lookup_value,
+    ):
+        assert table_key == "followups"
+        assert lookup_field == "Follow-up"
+        assert (
+            lookup_value
+            == "fingerprint-002:Shiftr:1"
+        )
+        return []
+
+    def fake_create_master_record(
+        table_key,
+        fields,
+    ):
+        captured["table_key"] = table_key
+        captured["fields"] = fields
+
+        return {
+            "records": [
+                {
+                    "id": "rec_followup_001",
+                    "fields": fields,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "lead_engine.airtable_sync.find_master_records",
+        fake_find_master_records,
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.airtable_sync.create_master_record",
+        fake_create_master_record,
+    )
+
+    from lead_engine.airtable_sync import sync_followup
+
+    result = sync_followup(
+        {
+            "fingerprint": "fingerprint-002",
+            "company": "Example Corp",
+            "route": "Shiftr",
+            "due_date": "2026-09-12",
+            "status": "pending",
+            "follow_up_number": 1,
+            "notes": "Verify project budget.",
+        }
+    )
+
+    assert result["status"] == "created"
+
+    fields = captured["fields"]
+
+    assert fields["Follow-up"] == (
+        "fingerprint-002:Shiftr:1"
+    )
+
+    assert fields["Company"] == "Example Corp"
+
+    assert fields["Opportunity"] == (
+        "fingerprint-002:Shiftr"
+    )
+
+    assert fields["Due Date"] == (
+        "2026-09-12"
+    )
+
+    assert fields["Type"] == "Follow-up #1"
+
+    assert fields["Status"] == "Open"
+
+    assert fields["Notes"] == (
+        "Verify project budget."
+    )
+
+    assert "Lead" not in fields
+    assert "Route" not in fields
+    assert "Follow-up Number" not in fields
