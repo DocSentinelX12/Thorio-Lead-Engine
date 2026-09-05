@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import (
+    parse_qsl,
+    urlencode,
+    urljoin,
+    urlsplit,
+    urlunsplit,
+)
 from urllib.request import Request
 from xml.etree import ElementTree
 
@@ -74,14 +80,12 @@ def _with_query_parameter(
             )
         )
 
-    query = new_query
-
     return urlunsplit(
         (
             parts.scheme,
             parts.netloc,
             parts.path,
-            urlencode(query),
+            urlencode(new_query),
             parts.fragment,
         )
     )
@@ -99,9 +103,9 @@ def _first_text(
 
         if isinstance(value, (list, tuple)):
             value = ", ".join(
-                _text(item)
-                for item in value
-                if _text(item)
+                _text(entry)
+                for entry in value
+                if _text(entry)
             )
 
         if isinstance(value, dict):
@@ -149,11 +153,6 @@ def _get_path(
 ) -> Any:
     """
     Read a dotted path from a JSON-compatible object.
-
-    Example:
-        data.jobs
-        data.results
-        pagination.next_cursor
     """
     if not path:
         return payload
@@ -208,8 +207,7 @@ def _configured_text(
     *fallback_fields: str,
 ) -> str:
     """
-    Read the configured field first, using the same structured-value
-    handling as the legacy field resolver, then use legacy fallbacks.
+    Read the configured field first, then use legacy fallbacks.
     """
     if configured_field:
         value = _field_value(
@@ -241,6 +239,7 @@ def _configured_text(
         item,
         *fallback_fields,
     )
+
 
 def _configured_url(
     item: Dict[str, Any],
@@ -303,9 +302,7 @@ def _json_records_from_definition(
             "resolve to a record list."
         )
 
-    return _json_records(
-        payload
-    )
+    return _json_records(payload)
 
 
 def _configured_checkpoint(
@@ -313,15 +310,11 @@ def _configured_checkpoint(
     definition: SourceDefinition,
 ) -> Optional[str]:
     """
-    Read the configured cursor/next-page value.
-
-    The configured response field takes precedence over
-    generic legacy detection.
+    Read the configured cursor or next-page value.
     """
     if (
         definition.cursor_response_field
-        and definition.pagination_type
-        == "cursor"
+        and definition.pagination_type == "cursor"
     ):
         value = _get_path(
             payload,
@@ -344,8 +337,7 @@ def _configured_checkpoint(
 
     if (
         definition.next_url_field
-        and definition.pagination_type
-        == "next_url"
+        and definition.pagination_type == "next_url"
     ):
         value = _get_path(
             payload,
@@ -359,9 +351,7 @@ def _configured_checkpoint(
 
         return None
 
-    return _next_checkpoint(
-        payload
-)
+    return _next_checkpoint(payload)
 
 
 def _json_records(
@@ -479,17 +469,6 @@ def normalize_job_record(
             "org",
         )
 
-                if not company:
-            default_company = (
-                definition.metadata.get(
-                    "default_company"
-                )
-            )
-
-            company = _text(
-                default_company
-            )
-
         url = _first_url(
             item,
             "url",
@@ -546,6 +525,15 @@ def normalize_job_record(
             "organization",
             "org",
         )
+
+        if not company:
+            default_company = definition.metadata.get(
+                "default_company"
+            )
+
+            company = _text(
+                default_company
+            )
 
         url = _configured_url(
             item,
@@ -606,14 +594,10 @@ def normalize_job_record(
     ]
 
     if location:
-        signal_parts.append(
-            location
-        )
+        signal_parts.append(location)
 
     if employment_type:
-        signal_parts.append(
-            employment_type
-        )
+        signal_parts.append(employment_type)
 
     evidence_parts = [
         f"Title: {title}",
@@ -636,12 +620,8 @@ def normalize_job_record(
         "source_id": source_id,
         "url": url,
         "company": company,
-        "signal": " | ".join(
-            signal_parts
-        ),
-        "evidence": "\n".join(
-            evidence_parts
-        ),
+        "signal": " | ".join(signal_parts),
+        "evidence": "\n".join(evidence_parts),
         "signal_type": "hiring",
         "source_url": source_url,
         "job_title": title,
@@ -684,84 +664,77 @@ class JsonSourceAdapter:
         if not checkpoint:
             return self.url
 
-        # Preserve the original adapter behavior for legacy callers
-        # that construct JsonSourceAdapter directly without a
-        # SourceDefinition.
         if self.definition is None:
             return _with_query_parameter(
-              self.url,
-              "cursor",
-              checkpoint,
+                self.url,
+                "cursor",
+                checkpoint,
             )
 
-        # Definition-driven collection only sends a checkpoint when
-        # the source explicitly declares cursor pagination.
-        if (
-            self.definition.pagination_type
-            != "cursor"
-        ):
+        if self.definition.pagination_type != "cursor":
             return self.url
 
-        parameter = (
-            self.definition.cursor_parameter
-        )
+        parameter = self.definition.cursor_parameter
 
         if not parameter:
             return self.url
 
         return _with_query_parameter(
-          self.url,
-          parameter,
-          checkpoint,
+            self.url,
+            parameter,
+            checkpoint,
         )
+
+    def _fetch_json(
+        self,
+        request_url: str,
+    ) -> Any:
+        request = Request(
+            request_url,
+            headers={
+                "User-Agent":
+                    "Thorio-Lead-Engine/1.0",
+                "Accept":
+                    "application/json",
+            },
+        )
+
+        try:
+            raw = fetch_url(
+                request,
+                timeout=self.timeout,
+            )
+        except HTTPRetryError as exc:
+            raise ValueError(
+                f"JSON source request failed: {exc}"
+            ) from exc
+
+        try:
+            return json.loads(
+                raw.decode("utf-8")
+            )
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise ValueError(
+                "JSON source returned invalid UTF-8 JSON."
+            ) from exc
 
     def collect(
         self,
         checkpoint: Optional[str] = None,
     ) -> AdapterResult:
-        # Preserve the original one-request behavior for legacy
-        # JsonSourceAdapter callers that do not provide a definition.
         if self.definition is None:
             request_url = self._request_url(
                 checkpoint
             )
 
-            request = Request(
-                request_url,
-                headers={
-                    "User-Agent":
-                        "Thorio-Lead-Engine/1.0",
-                    "Accept":
-                        "application/json",
-                },
+            payload = self._fetch_json(
+                request_url
             )
 
-            try:
-                raw = fetch_url(
-                    request,
-                    timeout=self.timeout,
-                )
-            except HTTPRetryError as exc:
-                raise ValueError(
-                    f"JSON source request failed: {exc}"
-                ) from exc
-
-            try:
-                payload = json.loads(
-                    raw.decode("utf-8")
-                )
-            except (
-                UnicodeDecodeError,
-                json.JSONDecodeError,
-            ) as exc:
-                raise ValueError(
-                    "JSON source returned invalid "
-                    "UTF-8 JSON."
-                ) from exc
-
-            records = _json_records(
-                payload
-            )
+            records = _json_records(payload)
 
             normalized = []
 
@@ -788,46 +761,12 @@ class JsonSourceAdapter:
         max_requests = definition.max_requests
         max_records = definition.max_records
 
-        pagination_type = (
-            definition.pagination_type
-        )
+        pagination_type = definition.pagination_type
 
-        # Pagination "none" remains exactly one request.
         if pagination_type == "none":
-            request_url = self.url
-
-            request = Request(
-                request_url,
-                headers={
-                    "User-Agent":
-                        "Thorio-Lead-Engine/1.0",
-                    "Accept":
-                        "application/json",
-                },
+            payload = self._fetch_json(
+                self.url
             )
-
-            try:
-                raw = fetch_url(
-                    request,
-                    timeout=self.timeout,
-                )
-            except HTTPRetryError as exc:
-                raise ValueError(
-                    f"JSON source request failed: {exc}"
-                ) from exc
-
-            try:
-                payload = json.loads(
-                    raw.decode("utf-8")
-                )
-            except (
-                UnicodeDecodeError,
-                json.JSONDecodeError,
-            ) as exc:
-                raise ValueError(
-                    "JSON source returned invalid "
-                    "UTF-8 JSON."
-                ) from exc
 
             records = _json_records_from_definition(
                 payload,
@@ -855,7 +794,7 @@ class JsonSourceAdapter:
                 checkpoint=None,
             )
 
-        collected = []
+        collected: List[Dict[str, Any]] = []
 
         requests_made = 0
         pages_seen = 0
@@ -864,9 +803,7 @@ class JsonSourceAdapter:
 
         if pagination_type == "page":
             if current_checkpoint is None:
-                current_page = (
-                    definition.page_start
-                )
+                current_page = definition.page_start
             else:
                 try:
                     current_page = int(
@@ -876,27 +813,24 @@ class JsonSourceAdapter:
                     TypeError,
                     ValueError,
                 ):
-                    current_page = (
-                        definition.page_start
-                    )
+                    current_page = definition.page_start
 
-            request_url = self.url
+            parameter = definition.page_parameter
 
-            parameter = (
-                definition.page_parameter
-            )
+            if not parameter:
+                raise ValueError(
+                    "Page pagination requires page_parameter."
+                )
 
             request_url = _with_query_parameter(
-              request_url,
-              parameter,
-              current_page,
+                self.url,
+                parameter,
+                current_page,
             )
 
         elif pagination_type == "offset":
             if current_checkpoint is None:
-                current_offset = (
-                    definition.offset_start
-                )
+                current_offset = definition.offset_start
             else:
                 try:
                     current_offset = int(
@@ -906,27 +840,23 @@ class JsonSourceAdapter:
                     TypeError,
                     ValueError,
                 ):
-                    current_offset = (
-                        definition.offset_start
-                    )
+                    current_offset = definition.offset_start
 
-            request_url = self.url
+            parameter = definition.offset_parameter
 
-            parameter = (
-                definition.offset_parameter
-            )
+            if not parameter:
+                raise ValueError(
+                    "Offset pagination requires offset_parameter."
+                )
 
             request_url = _with_query_parameter(
-              self.url,
-              parameter,
-              current_offset,
+                self.url,
+                parameter,
+                current_offset,
             )
 
         elif pagination_type == "next_url":
-            request_url = (
-                checkpoint
-                or self.url
-            )
+            request_url = checkpoint or self.url
 
         elif pagination_type == "cursor":
             request_url = self._request_url(
@@ -948,50 +878,18 @@ class JsonSourceAdapter:
 
             if request_url in visited_urls:
                 raise ValueError(
-                    "JSON source pagination "
-                    "returned a previously "
-                    "visited URL."
+                    "JSON source pagination returned "
+                    "a previously visited URL."
                 )
 
-            visited_urls.add(
+            visited_urls.add(request_url)
+
+            payload = self._fetch_json(
                 request_url
             )
 
-            request = Request(
-                request_url,
-                headers={
-                    "User-Agent":
-                        "Thorio-Lead-Engine/1.0",
-                    "Accept":
-                        "application/json",
-                },
-            )
-
-            try:
-                raw = fetch_url(
-                    request,
-                    timeout=self.timeout,
-                )
-            except HTTPRetryError as exc:
-                raise ValueError(
-                    f"JSON source request failed: {exc}"
-                ) from exc
-
             requests_made += 1
             pages_seen += 1
-
-            try:
-                payload = json.loads(
-                    raw.decode("utf-8")
-                )
-            except (
-                UnicodeDecodeError,
-                json.JSONDecodeError,
-            ) as exc:
-                raise ValueError(
-                    "JSON source returned invalid "
-                    "UTF-8 JSON."
-                ) from exc
 
             records = _json_records_from_definition(
                 payload,
@@ -1010,50 +908,37 @@ class JsonSourceAdapter:
                     collected.append(record)
 
                 if len(collected) >= max_records:
-                    collected = collected[
-                        :max_records
-                    ]
+                                     collected = collected[:max_records]
+
                     return AdapterResult(
                         records=collected,
                         checkpoint=final_checkpoint,
                     )
 
             if pagination_type == "cursor":
-                next_checkpoint = (
-                    _configured_checkpoint(
-                        payload,
-                        definition,
-                    )
+                next_checkpoint = _configured_checkpoint(
+                    payload,
+                    definition,
                 )
 
                 if not next_checkpoint:
                     final_checkpoint = None
                     break
 
-                if (
-                    next_checkpoint
-                    == current_checkpoint
-                ):
+                if next_checkpoint == current_checkpoint:
                     raise ValueError(
-                        "JSON source cursor "
-                        "did not advance."
+                        "JSON source cursor did not advance."
                     )
 
-                final_checkpoint = (
-                    next_checkpoint
-                )
+                final_checkpoint = next_checkpoint
 
                 if checkpoint is not None:
                     break
 
-                current_checkpoint = (
-                    next_checkpoint
-                )
+                current_checkpoint = next_checkpoint
 
-                request_url = (
-                    self._request_url(
-                        next_checkpoint
-                    )
+                request_url = self._request_url(
+                    next_checkpoint
                 )
 
                 continue
@@ -1065,14 +950,12 @@ class JsonSourceAdapter:
                     current_page
                 )
 
-                parameter = (
-                    definition.page_parameter
-                )
+                parameter = definition.page_parameter
 
                 request_url = _with_query_parameter(
-                  self.url,
-                  parameter,
-                  current_page,
+                    self.url,
+                    parameter,
+                    current_page,
                 )
 
                 continue
@@ -1095,47 +978,34 @@ class JsonSourceAdapter:
                     current_offset
                 )
 
-                parameter = (
-                    definition.offset_parameter
-                )
+                parameter = definition.offset_parameter
 
                 request_url = _with_query_parameter(
-                  request_url,
-                  parameter,
-                  current_offset,
+                    request_url,
+                    parameter,
+                    current_offset,
                 )
 
                 continue
 
             if pagination_type == "next_url":
-                next_url = (
-                    _configured_checkpoint(
-                        payload,
-                        definition,
-                    )
+                next_url = _configured_checkpoint(
+                    payload,
+                    definition,
                 )
 
                 if not next_url:
                     final_checkpoint = None
                     break
 
-                if (
-                    next_url
-                    == request_url
-                ):
+                if next_url == request_url:
                     raise ValueError(
-                        "JSON source pagination "
-                        "returned the current URL."
+                        "JSON source pagination returned "
+                        "the current URL."
                     )
 
-                final_checkpoint = (
-                    next_url
-                )
-
-                current_checkpoint = (
-                    next_url
-                )
-
+                final_checkpoint = next_url
+                current_checkpoint = next_url
                 request_url = next_url
 
                 continue
@@ -1145,7 +1015,7 @@ class JsonSourceAdapter:
         return AdapterResult(
             records=collected,
             checkpoint=final_checkpoint,
-            )
+        )
 
 
 class RssSourceAdapter:
@@ -1204,9 +1074,7 @@ class RssSourceAdapter:
             ) from exc
 
         try:
-            root = ElementTree.fromstring(
-                raw
-            )
+            root = ElementTree.fromstring(raw)
         except ElementTree.ParseError as exc:
             raise ValueError(
                 "RSS source returned invalid XML."
@@ -1237,16 +1105,13 @@ class RssSourceAdapter:
                 )
 
                 if child_tag == "link":
-                    href = child.attrib.get(
-                        "href"
-                    )
+                    href = child.attrib.get("href")
 
                     if href:
                         values["link"] = urljoin(
                             self.url,
                             href,
                         )
-
                     elif child.text:
                         values["link"] = urljoin(
                             self.url,
@@ -1256,9 +1121,7 @@ class RssSourceAdapter:
                     continue
 
                 if child.text:
-                    values[child_tag] = (
-                        child.text.strip()
-                    )
+                    values[child_tag] = child.text.strip()
 
             title = values.get(
                 "title",
@@ -1347,8 +1210,7 @@ class _JobPostingParser(HTMLParser):
         attributes = dict(attrs)
 
         if (
-            attributes.get("type", "")
-            .lower()
+            attributes.get("type", "").lower()
             == "application/ld+json"
         ):
             self._script_depth += 1
@@ -1359,9 +1221,7 @@ class _JobPostingParser(HTMLParser):
         data: str,
     ) -> None:
         if self._script_depth:
-            self._script_parts.append(
-                data
-            )
+            self._script_parts.append(data)
 
     def handle_endtag(
         self,
@@ -1394,9 +1254,7 @@ class _JobPostingParser(HTMLParser):
         except json.JSONDecodeError:
             return
 
-        self._extract(
-            payload
-        )
+        self._extract(payload)
 
     def _extract(
         self,
@@ -1417,25 +1275,15 @@ class _JobPostingParser(HTMLParser):
             for item in graph:
                 self._extract(item)
 
-        schema_type = payload.get(
-            "@type"
-        )
+        schema_type = payload.get("@type")
 
         if isinstance(schema_type, list):
-            is_job = (
-                "JobPosting"
-                in schema_type
-            )
+            is_job = "JobPosting" in schema_type
         else:
-            is_job = (
-                schema_type
-                == "JobPosting"
-            )
+            is_job = schema_type == "JobPosting"
 
         if is_job:
-            self.job_postings.append(
-                payload
-            )
+            self.job_postings.append(payload)
 
 
 class HtmlSourceAdapter:
@@ -1494,7 +1342,6 @@ class HtmlSourceAdapter:
         )
 
         parser = _JobPostingParser()
-
         parser.feed(html)
 
         records = []
@@ -1504,17 +1351,12 @@ class HtmlSourceAdapter:
                 "hiringOrganization"
             )
 
-            if isinstance(
-                employer,
-                dict,
-            ):
+            if isinstance(employer, dict):
                 company = _text(
                     employer.get("name")
                 )
             else:
-                company = _text(
-                    employer
-                )
+                company = _text(employer)
 
             title = _text(
                 item.get("title")
@@ -1561,10 +1403,7 @@ class HtmlSourceAdapter:
 
             location_text = ""
 
-            if isinstance(
-                location,
-                list,
-            ):
+            if isinstance(location, list):
                 locations = []
 
                 for entry in location:
@@ -1578,10 +1417,7 @@ class HtmlSourceAdapter:
                         "address"
                     )
 
-                    if isinstance(
-                        address,
-                        dict,
-                    ):
+                    if isinstance(address, dict):
                         address_text = ", ".join(
                             _text(
                                 address.get(key)
@@ -1605,18 +1441,12 @@ class HtmlSourceAdapter:
                     locations
                 )
 
-            elif isinstance(
-                location,
-                dict,
-            ):
+            elif isinstance(location, dict):
                 address = location.get(
                     "address"
                 )
 
-                if isinstance(
-                    address,
-                    dict,
-                ):
+                if isinstance(address, dict):
                     location_text = ", ".join(
                         _text(
                             address.get(key)
@@ -1665,10 +1495,6 @@ class AdapterLeadSource:
     """
     Compatibility wrapper implementing the source interface
     expected by the existing scheduler.
-
-    The wrapper now carries the complete SourceDefinition so
-    collection configuration remains available to the adapter
-    layer without changing the existing LeadSource boundary.
     """
 
     def __init__(
@@ -1711,9 +1537,7 @@ class AdapterLeadSource:
                 "Source adapter returned an invalid result."
             )
 
-        self.last_checkpoint = (
-            result.checkpoint
-        )
+        self.last_checkpoint = result.checkpoint
 
         return result.records
 
@@ -1729,10 +1553,8 @@ def create_adapter(
     """
     Create a source adapter from a SourceDefinition.
 
-    The legacy collector_type/url/source arguments remain supported
-    so existing callers and tests continue to work.
-
-    New production code should provide a SourceDefinition.
+    The legacy collector_type/url/source arguments remain
+    supported so existing callers and tests continue to work.
     """
 
     if definition is None:
@@ -1803,4 +1625,4 @@ def create_adapter(
     return AdapterLeadSource(
         adapter=adapter,
         definition=definition,
-        )
+    )
