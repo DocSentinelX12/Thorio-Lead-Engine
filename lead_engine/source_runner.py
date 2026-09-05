@@ -110,9 +110,21 @@ class SourceRunner:
             records = source.collect(
                 checkpoint=checkpoint
             )
-        except TypeError:
-            # Preserve compatibility with older custom sources
-            # whose collect() method has no checkpoint argument.
+        except TypeError as exc:
+            # Only fall back for legacy sources whose collect()
+            # method genuinely does not accept a checkpoint argument.
+            #
+            # Do not catch TypeError raised inside the source's
+            # actual collection logic, because that is a real
+            # production source failure.
+            message = str(exc)
+
+            if (
+                "checkpoint" not in message
+                or "unexpected keyword argument" not in message
+            ):
+                raise
+
             records = source.collect()
 
         result = self.process(
