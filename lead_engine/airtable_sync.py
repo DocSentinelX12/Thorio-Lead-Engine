@@ -688,7 +688,16 @@ def sync_outreach(
     """
     Create or update a route-specific Outreach record.
 
-    Uses Lead fingerprint + Route as the idempotency key.
+    Airtable's actual Outreach schema does not contain separate
+    Lead, Route, Outreach Status, or Next Action Date fields.
+
+    The stable route-specific identity is therefore stored in
+    the primary Outreach field, while the route-specific
+    Opportunity value preserves the relationship to the
+    operational opportunity.
+
+    Date Sent is only written when explicitly supplied. The sync
+    layer never marks an outreach as sent automatically.
     """
 
     if not isinstance(outreach, dict):
@@ -714,29 +723,75 @@ def sync_outreach(
             "Outreach requires a route."
         )
 
+    outreach_key = (
+        f"{fingerprint}:{route}"
+    )
+
+    opportunity_key = (
+        f"{fingerprint}:{route}"
+    )
+
+    platform = _text(
+        outreach.get("platform")
+    )
+
+    allowed_platforms = {
+        "X",
+        "LinkedIn",
+        "Email",
+        "Facebook",
+        "Phone",
+        "Other",
+    }
+
+    if platform not in allowed_platforms:
+        platform = (
+            "Other"
+            if platform
+            else None
+        )
+
+    response = _text(
+        outreach.get("response")
+    )
+
+    allowed_responses = {
+        "No Response",
+        "Positive",
+        "Maybe",
+        "Not Interested",
+        "Referred",
+        "Other",
+    }
+
+    if response not in allowed_responses:
+        response = (
+            "Other"
+            if response
+            else None
+        )
+
     fields = {
-        "Lead": fingerprint,
-        "Route": route,
+        "Outreach": outreach_key,
         "Company": _text(
             outreach.get("company")
         ),
-        "Platform": _text(
-            outreach.get("platform")
-        ),
+        "Opportunity": opportunity_key,
+        "Platform": platform,
         "Follow-up Number": outreach.get(
             "follow_up_number",
             0,
         ),
-        "Response": _text(
-            outreach.get("response")
-        ),
-        "Outreach Status": _text(
-            outreach.get(
-                "outreach_status",
-                "Not Contacted",
+        "Response": response,
+        "Message / Notes": (
+            _text(
+                outreach.get(
+                    "message",
+                )
             )
+            or None
         ),
-        "Next Action Date": (
+        "Next Follow-up": (
             _text(
                 outreach.get(
                     "next_action_date"
@@ -749,22 +804,12 @@ def sync_outreach(
         ),
     }
 
-    existing = find_master_records(
-        "outreach",
-        "Lead",
-        fingerprint,
+    date_sent = _text(
+        outreach.get("date_sent")
     )
 
-    matching = [
-        record
-        for record in existing
-        if _text(
-            record.get(
-                "fields",
-                {},
-            ).get("Route")
-        ) == route
-    ]
+    if date_sent:
+        fields["Date Sent"] = date_sent[:10]
 
     clean_fields = {
         key: value
@@ -772,8 +817,14 @@ def sync_outreach(
         if value is not None
     }
 
-    if matching:
-        record_id = matching[0].get(
+    existing = find_master_records(
+        "outreach",
+        "Outreach",
+        outreach_key,
+    )
+
+    if existing:
+        record_id = existing[0].get(
             "id"
         )
 
@@ -788,9 +839,25 @@ def sync_outreach(
             clean_fields,
         )
 
+        records = result.get(
+            "records",
+            [],
+        )
+
+        record = (
+            records[0]
+            if records
+            else None
+        )
+
+        if record is None:
+            raise AirtableSyncError(
+                "Airtable returned no updated outreach record."
+            )
+
         return {
             "status": "updated",
-            "record": result["records"][0],
+            "record": record,
         }
 
     result = create_master_record(
@@ -803,13 +870,20 @@ def sync_outreach(
         [],
     )
 
+    record = (
+        records[0]
+        if records
+        else None
+    )
+
+    if record is None:
+        raise AirtableSyncError(
+            "Airtable returned no created outreach record."
+        )
+
     return {
         "status": "created",
-        "record": (
-            records[0]
-            if records
-            else None
-        ),
+        "record": record,
     }
 
 
@@ -819,8 +893,12 @@ def sync_followup(
     """
     Create or update a route-specific Follow-up record.
 
-    Uses Lead fingerprint + Route + Follow-up Number as
-    the idempotency key.
+    Airtable's actual Follow-ups schema does not contain separate
+    Lead, Route, or Follow-up Number fields.
+
+    The stable identity is therefore stored in the primary
+    Follow-up field, while Opportunity preserves the route-specific
+    operational relationship.
     """
 
     if not isinstance(followup, dict):
@@ -851,65 +929,72 @@ def sync_followup(
         0,
     )
 
+    try:
+        follow_up_number = int(
+            follow_up_number
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        follow_up_number = 0
+
+    if follow_up_number < 0:
+        follow_up_number = 0
+
+    if follow_up_number == 0:
+        follow_up_type = "Initial Outreach"
+    elif follow_up_number == 1:
+        follow_up_type = "Follow-up #1"
+    elif follow_up_number == 2:
+        follow_up_type = "Follow-up #2"
+    else:
+        follow_up_type = "Final Follow-up"
+
+    status = _text(
+        followup.get("status")
+    ).lower()
+
+    if status in {
+        "done",
+        "completed",
+    }:
+        airtable_status = "Done"
+    elif status == "skipped":
+        airtable_status = "Skipped"
+    else:
+        airtable_status = "Open"
+
+    followup_key = (
+        f"{fingerprint}:{route}:{follow_up_number}"
+    )
+
+    opportunity_key = (
+        f"{fingerprint}:{route}"
+    )
+
     fields = {
-        "Lead": fingerprint,
-        "Route": route,
+        "Follow-up": followup_key,
         "Company": _text(
             followup.get("company")
         ),
-        "Due Date": _text(
-            followup.get("due_date")
-        ) or None,
-        "Status": (
+        "Opportunity": opportunity_key,
+        "Due Date": (
             _text(
-                followup.get(
-                    "status",
-                    "Pending",
-                )
-            )
-            or "Pending"
+                followup.get("due_date")
+            )[:10]
+            if followup.get("due_date")
+            else None
         ),
-        "Follow-up Number": follow_up_number,
-        "Notes": _text(
-            followup.get("notes")
-        ) or None,
+        "Type": follow_up_type,
+        "Status": airtable_status,
+        "Notes": (
+            _text(
+                followup.get("notes")
+            )
+            or None
+        ),
     }
-
-    existing = find_master_records(
-        "followups",
-        "Lead",
-        fingerprint,
-    )
-
-    matching = []
-
-    for record in existing:
-        record_fields = record.get(
-            "fields",
-            {},
-        )
-
-        if not isinstance(
-            record_fields,
-            dict,
-        ):
-            continue
-
-        existing_route = _text(
-            record_fields.get("Route")
-        )
-
-        existing_number = record_fields.get(
-            "Follow-up Number",
-            0,
-        )
-
-        if (
-            existing_route == route
-            and str(existing_number)
-            == str(follow_up_number)
-        ):
-            matching.append(record)
 
     clean_fields = {
         key: value
@@ -917,8 +1002,14 @@ def sync_followup(
         if value is not None
     }
 
-    if matching:
-        record_id = matching[0].get(
+    existing = find_master_records(
+        "followups",
+        "Follow-up",
+        followup_key,
+    )
+
+    if existing:
+        record_id = existing[0].get(
             "id"
         )
 
@@ -933,11 +1024,25 @@ def sync_followup(
             clean_fields,
         )
 
+        records = result.get(
+            "records",
+            [],
+        )
+
+        record = (
+            records[0]
+            if records
+            else None
+        )
+
+        if record is None:
+            raise AirtableSyncError(
+                "Airtable returned no updated follow-up record."
+            )
+
         return {
             "status": "updated",
-            "record": result[
-                "records"
-            ][0],
+            "record": record,
         }
 
     result = create_master_record(
@@ -950,13 +1055,20 @@ def sync_followup(
         [],
     )
 
+    record = (
+        records[0]
+        if records
+        else None
+    )
+
+    if record is None:
+        raise AirtableSyncError(
+            "Airtable returned no created follow-up record."
+        )
+
     return {
         "status": "created",
-        "record": (
-            records[0]
-            if records
-            else None
-        ),
+        "record": record,
     }
 
 
