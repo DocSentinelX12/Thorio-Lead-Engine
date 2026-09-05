@@ -1,7 +1,10 @@
 from unittest.mock import patch
 
 from .database import LeadDB
-from .sync_worker import sync_pending
+from .sync_worker import (
+    sync_one,
+    sync_pending,
+)
 
 
 def test_sync_worker_retries_failed_lead(tmp_path):
