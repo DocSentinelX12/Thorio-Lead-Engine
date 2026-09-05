@@ -158,3 +158,124 @@ def test_sync_one_requires_valid_master_tracker_result(
         result["error"]
         == "downstream failure"
     )
+
+
+def test_sync_one_fails_when_outreach_sync_fails(
+    monkeypatch,
+):
+    lead = {
+        "fingerprint": "lead-outreach-failure",
+        "company": "Example Corp",
+        "route": "Paxus",
+        "delivery_status": "approved",
+        "contact_email": "test@example.com",
+    }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_lead_if_missing",
+        lambda lead: {
+            "status": "created",
+            "record": {
+                "id": "rec_lead_003",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_outreach",
+        lambda outreach: {
+            "status": "failed",
+            "error": "outreach failure",
+        },
+    )
+
+    result = sync_one(
+        lead
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "outreach failure"
+
+
+def test_sync_one_fails_when_followup_sync_fails(
+    monkeypatch,
+):
+    lead = {
+        "fingerprint": "lead-followup-failure",
+        "company": "Example Corp",
+        "route": "Paxus",
+        "delivery_status": "approved",
+        "contact_email": "test@example.com",
+        "next_action_date": "2026-09-10",
+    }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_lead_if_missing",
+        lambda lead: {
+            "status": "created",
+            "record": {
+                "id": "rec_lead_004",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_outreach",
+        lambda outreach: {
+            "status": "created",
+            "record": {
+                "id": "rec_outreach_004",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_followup",
+        lambda followup: {
+            "status": "failed",
+            "error": "followup failure",
+        },
+    )
+
+    result = sync_one(
+        lead
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "followup failure"
+
+
+def test_sync_one_fails_when_referral_sync_fails(
+    monkeypatch,
+):
+    lead = {
+        "fingerprint": "lead-referral-failure",
+        "company": "Example Corp",
+        "route": "Paxus",
+        "referral_submitted": True,
+    }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_lead_if_missing",
+        lambda lead: {
+            "status": "created",
+            "record": {
+                "id": "rec_lead_005",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_paxus_referral_state",
+        lambda referral: {
+            "status": "failed",
+            "error": "referral failure",
+        },
+    )
+
+    result = sync_one(
+        lead
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "referral failure"
