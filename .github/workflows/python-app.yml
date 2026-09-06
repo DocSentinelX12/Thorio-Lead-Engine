@@ -51,10 +51,14 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
 
-    env:
+  env:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
-      AIRTABLE_BASE_ID: ${{ vars.AIRTABLE_BASE_ID || secrets.AIRTABLE_BASE_ID }}
-      AIRTABLE_LEAD_TABLE: ${{ vars.AIRTABLE_LEAD_TABLE || secrets.AIRTABLE_LEAD_TABLE || 'Lead Radar' }}
+
+      # Production Master Tracker.
+      # One unified Airtable system contains Paxus, Shiftr,
+      # and Thorio routes.
+      AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
+      AIRTABLE_LEAD_TABLE: Lead Radar
 
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "20"
