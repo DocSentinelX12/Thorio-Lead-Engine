@@ -51,7 +51,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
 
-  env:
+    env:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
 
       # Production Master Tracker.
@@ -159,6 +159,7 @@ jobs:
       - name: Run Lead Engine continuously for bounded window
         run: |
           set -o pipefail
+
           python -m lead_engine run-scheduled \
             --interval 60 \
             --cycles 10 \
@@ -169,12 +170,9 @@ jobs:
           python - <<'PY'
           import json
           import pathlib
-          import re
           import sys
 
-          path = pathlib.Path(
-              "data/scheduled-run-output.txt"
-          )
+          path = pathlib.Path("data/scheduled-run-output.txt")
 
           if not path.exists():
               print(
@@ -183,57 +181,56 @@ jobs:
               )
               sys.exit(1)
 
-          text = path.read_text(
-              encoding="utf-8"
-          )
+          text = path.read_text(encoding="utf-8")
+
+          results = []
 
           decoder = json.JSONDecoder()
-          result = None
+          position = 0
 
-          for match in re.finditer(
-              r"(?m)^\{",
-              text,
-          ):
+          while position < len(text):
+              start = text.find("{", position)
+
+              if start == -1:
+                  break
+
               try:
                   candidate, end = decoder.raw_decode(
-                      text[match.start():]
+                      text[start:]
                   )
               except json.JSONDecodeError:
+                  position = start + 1
                   continue
 
               if isinstance(candidate, dict):
-                  result = candidate
+                  results.append(candidate)
 
-          if result is None:
+              position = start + end
+
+          if not results:
               print(
                   "PRODUCTION DELIVERY FAILURE: "
                   "no valid Lead Engine result was found."
               )
+              print("")
+              print("RAW SCHEDULED RUN OUTPUT:")
+              print(text)
               sys.exit(1)
 
           sync_values = []
 
-          sync_result = result.get(
-              "sync"
-          )
+          for result in results:
+              sync_result = result.get("sync")
 
-          if isinstance(
-              sync_result,
-              dict,
-          ):
-              sync_values.append(
-                  sync_result
-              )
+              if isinstance(sync_result, dict):
+                  sync_values.append(sync_result)
 
-          elif isinstance(
-              sync_result,
-              list,
-          ):
-              sync_values.extend(
-                  item
-                  for item in sync_result
-                  if isinstance(item, dict)
-              )
+              elif isinstance(sync_result, list):
+                  sync_values.extend(
+                      item
+                      for item in sync_result
+                      if isinstance(item, dict)
+                  )
 
           if not sync_values:
               print(
@@ -241,24 +238,39 @@ jobs:
                   "the scheduled run did not return an Airtable "
                   "synchronization result."
               )
+              print("")
+              print("VALID LEAD ENGINE RESULTS:")
+
+              for result in results:
+                  print(
+                      json.dumps(
+                          result,
+                          indent=2,
+                          sort_keys=True,
+                      )
+                  )
+
               sys.exit(1)
 
           failed_count = 0
 
           for item in sync_values:
+              value = item.get("failed_count", 0)
+
               try:
-                  failed_count += int(
-                      item.get(
-                          "failed_count",
-                          0,
-                      )
-                      or 0
-                  )
-              except (
-                  TypeError,
-                  ValueError,
-              ):
+                  failed_count += int(value or 0)
+              except (TypeError, ValueError):
                   failed_count += 1
+
+          print(
+              "Airtable synchronization results detected: "
+              f"{len(sync_values)}"
+          )
+
+          print(
+              "Total Airtable synchronization failures: "
+              f"{failed_count}"
+          )
 
           if failed_count > 0:
               print(
@@ -266,12 +278,27 @@ jobs:
                   f"{failed_count} Airtable synchronization "
                   "operation(s) failed."
               )
+
+              print("")
+              print("FAILED SYNCHRONIZATION DETAILS:")
+
+              for item in sync_values:
+                  if item.get("failed_count", 0):
+                      print(
+                          json.dumps(
+                              item,
+                              indent=2,
+                              sort_keys=True,
+                          )
+                      )
+
               sys.exit(1)
 
           print(
               "PRODUCTION AIRTABLE DELIVERY VERIFIED: "
               "no synchronization failures reported."
           )
+          PY
 
       - name: Report actual Lead Engine result
         if: always()
@@ -302,3 +329,4 @@ jobs:
           retention-days: 90
           overwrite: true
           if-no-files-found: warn
+
