@@ -33,6 +33,8 @@ class LeadEngineApplication:
             or LeadEngineConfig.from_environment()
         )
 
+        self.config.validate()
+
         self.db = LeadDB(
             data_dir=self.config.database_dir
         )
