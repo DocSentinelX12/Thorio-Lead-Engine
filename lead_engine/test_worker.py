@@ -54,7 +54,9 @@ def test_sync_worker_retries_failed_lead(tmp_path):
         "lead_engine.sync_worker.sync_outreach"
     ) as mock_outreach, patch(
         "lead_engine.sync_worker.sync_followup"
-    ) as mock_followup:
+    ) as mock_followup, patch(
+        "lead_engine.sync_worker.sync_master_tracker"
+    ) as mock_master_tracker:
 
         mock_sync.return_value = {
             "status": "created",
@@ -75,6 +77,10 @@ def test_sync_worker_retries_failed_lead(tmp_path):
             "record": {
                 "id": "followup_001"
             },
+        }
+
+        mock_master_tracker.return_value = {
+            "status": "synced",
         }
 
         second_result = sync_pending(db)
