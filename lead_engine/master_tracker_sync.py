@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, List, Optional
 
 from .airtable_sync import (
@@ -57,26 +56,6 @@ def _first_record(
         return None
 
     return record
-
-
-def _master_tracker_available() -> bool:
-    """
-    Determine whether the Master Tracker has been configured.
-
-    The existing Lead Radar synchronization layer remains
-    responsible for the primary Airtable configuration failure.
-
-    This guard also keeps isolated worker/retry tests from
-    attempting real Airtable calls when their Airtable
-    dependencies are intentionally mocked.
-    """
-
-    config = LeadEngineConfig.from_environment()
-
-    return bool(
-        config.airtable_base_id
-        and os.getenv("AIRTABLE_API_KEY")
-    )
 
 
 def _upsert(
@@ -762,16 +741,6 @@ def sync_master_tracker(
         raise ValueError(
             "Lead payload must be a dictionary."
         )
-
-    if not _master_tracker_available():
-        return {
-            "status": "skipped",
-            "reason": "Master Tracker Airtable configuration is not available.",
-            "company": None,
-            "opportunities": [],
-            "lead_source": None,
-            "commission": None,
-        }
 
     company_result = sync_company(
         lead
