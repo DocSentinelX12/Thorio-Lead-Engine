@@ -47,7 +47,9 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
         "lead_engine.sync_worker.sync_outreach"
     ) as mock_outreach, patch(
         "lead_engine.sync_worker.sync_followup"
-    ) as mock_followup:
+    ) as mock_followup, patch(
+        "lead_engine.sync_worker.sync_master_tracker"
+    ) as mock_master_tracker:
 
         mock_sync.return_value = {
             "status": "created",
@@ -68,6 +70,10 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
             "record": {
                 "id": "followup_retry_001"
             },
+        }
+
+        mock_master_tracker.return_value = {
+            "status": "synced",
         }
 
         retry_result = sync_pending(db)
