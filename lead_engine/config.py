@@ -227,8 +227,11 @@ class LeadEngineConfig:
         """
         Validate the complete runtime configuration.
 
-        This validates values, not merely the presence of
-        configuration attributes.
+        Production configuration must fail closed. Invalid or
+        incomplete Airtable configuration must be rejected before
+        the application starts processing leads.
+
+        Secrets are never logged or returned by this method.
         """
 
         if not isinstance(self.database_dir, str):
@@ -246,6 +249,11 @@ class LeadEngineConfig:
                 "airtable_base_id must be a string."
             )
 
+        if not self.airtable_base_id.strip():
+            raise ValueError(
+                "AIRTABLE_BASE_ID must be configured."
+            )
+
         if not isinstance(self.batch_size, int) or isinstance(
             self.batch_size,
             bool,
@@ -259,40 +267,59 @@ class LeadEngineConfig:
                 "batch_size must be greater than zero."
             )
 
-        if (
-            not isinstance(
-                self.approval_poll_interval_seconds,
-                int,
-            )
-            or isinstance(
-                self.approval_poll_interval_seconds,
-                bool,
-            )
+        if not isinstance(
+            self.approval_poll_interval_seconds,
+            int,
+        ) or isinstance(
+            self.approval_poll_interval_seconds,
+            bool,
         ):
             raise ValueError(
-                "approval_poll_interval_seconds "
-                "must be an integer."
+                "approval_poll_interval_seconds must be an integer."
             )
 
         if self.approval_poll_interval_seconds < 1:
             raise ValueError(
-                "approval_poll_interval_seconds "
-                "must be at least 1."
+                "approval_poll_interval_seconds must be at least 1."
+            )
+
+        if not isinstance(self.sync_enabled, bool):
+            raise ValueError(
+                "sync_enabled must be a boolean."
             )
 
         required_tables = self.airtable_tables
 
+        if set(required_tables.keys()) != {
+            "lead_radar",
+            "companies",
+            "opportunities",
+            "outreach",
+            "referrals",
+            "followups",
+            "commissions",
+            "lead_sources",
+        }:
+            raise ValueError(
+                "Airtable table configuration does not match "
+                "the required Master Tracker tables."
+            )
+
         for table_key, table_name in required_tables.items():
             if not isinstance(table_name, str):
                 raise ValueError(
-                    f"Airtable table '{table_key}' "
-                    "must be a string."
+                    f"Airtable table '{table_key}' must be a string."
                 )
 
             if not table_name.strip():
                 raise ValueError(
-                    f"Airtable table '{table_key}' "
-                    "must not be empty."
+                    f"Airtable table '{table_key}' must not be empty."
+                )
+
+            if table_name != table_name.strip():
+                raise ValueError(
+                    f"Airtable table '{table_key}' contains "
+                    "leading or trailing whitespace."
                 )
 
     def safe_dict(self):
