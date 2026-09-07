@@ -394,6 +394,7 @@ def sync_one(
             )
 
         return {
+
             "status": (
                 "synced"
                 if lead_status != "already_exists"
