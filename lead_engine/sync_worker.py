@@ -380,18 +380,18 @@ def sync_one(
                 "Master Tracker synchronization returned an invalid result."
             )
 
-master_status = master_tracker_result.get(
-    "status"
-)
-
-if master_status != "synced":
-    raise ValueError(
-        master_tracker_result.get("error")
-        or (
-            "Master Tracker synchronization did not "
-            "confirm a successful result."
+        master_status = master_tracker_result.get(
+            "status"
         )
-    )
+
+        if master_status != "synced":
+            raise ValueError(
+                master_tracker_result.get("error")
+                or (
+                    "Master Tracker synchronization did not "
+                    "confirm a successful result."
+                )
+            )
 
         return {
             "status": (
