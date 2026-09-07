@@ -519,7 +519,11 @@ def sync_pending(
             lead
         )
 
-        if result["status"] == "synced":
+        if result["status"] in {
+            "created",
+            "updated",
+            "synced",
+        }:
             synced.append(result)
 
             db.mark_synced(
