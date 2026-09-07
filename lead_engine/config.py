@@ -193,10 +193,8 @@ class LeadEngineConfig:
             ),
         )
 
-        config.validate()
-
         return config
-
+        
     @property
     def database_path(self) -> Path:
         return Path(self.database_dir) / "leads.sqlite3"
