@@ -158,7 +158,7 @@ class LeadEngineConfig:
             "on",
         }
 
-        return cls(
+        config = cls(
             database_dir=database_dir,
             airtable_base_id=os.getenv(
                 "AIRTABLE_BASE_ID",
@@ -192,6 +192,10 @@ class LeadEngineConfig:
                 approval_poll_interval_seconds
             ),
         )
+
+        config.validate()
+
+        return config
 
     @property
     def database_path(self) -> Path:
