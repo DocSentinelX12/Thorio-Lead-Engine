@@ -27,12 +27,22 @@ class Lead:
     job_title: str = ""
     discovered_at: str = ""
 
+    # Explicit business-intent timestamps used by the qualification engine.
+    # Discovery/update timestamps are deliberately separate from intent.
+    need_at: str = ""
+    current_need_at: str = ""
+    hiring_need_at: str = ""
+    inquiry_at: str = ""
+    inquired_at: str = ""
+    last_inquiry_at: str = ""
+    last_contact_at: str = ""
+    intent_at: str = ""
+
     route: str = "Review"
     potential_routes: List[str] = None
 
     # Company-specific qualification is authoritative for the three
-    # businesses. The legacy `qualified`/`route` fields remain for
-    # backward compatibility with existing pipeline consumers.
+    # businesses. The legacy fields remain for backward compatibility.
     qualification_results: Dict[str, Any] = None
     research_status: str = "not_started"
 
@@ -44,6 +54,7 @@ class Lead:
 
     qualified: bool = False
     review_status: str = "Review"
+    qualification_status: str = "unverified"
     reason_not_qualified: str = ""
 
     contact_name: str = ""
@@ -53,6 +64,24 @@ class Lead:
     linkedin_url: str = ""
     company_website: str = ""
     enrichment_status: str = "pending"
+
+    # Paxus referral lifecycle state. These fields mirror the existing
+    # PaxusReferral workflow so Lead records can carry the state durably.
+    contact_communicated: bool = False
+    contact_consent: bool = False
+    warm_referral_ready: bool = False
+    referral_submitted: bool = False
+    paxus_accepted: bool = False
+    referral_id: str = ""
+    introduction_made: bool = False
+    recruiting_status: str = "not_started"
+    placement_count: int = 0
+    client_payment_received: bool = False
+    commission_due: bool = False
+    submitted_at: str = ""
+    accepted_at: str = ""
+    introduction_deadline: str = ""
+    introduced_at: str = ""
 
     def __post_init__(self):
         if self.potential_routes is None:
