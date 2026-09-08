@@ -19,10 +19,6 @@ VALID_STATUSES = {
     NOT_QUALIFIED,
 }
 
-# These windows are deliberately centralized and auditable. The repository
-# previously had no explicit current-need/recent-inquiry window. They are
-# therefore now part of the qualification contract rather than hidden in a
-# scoring function.
 CURRENT_NEED_DAYS = 30
 RECENT_INQUIRY_DAYS = 30
 
@@ -34,7 +30,6 @@ INQUIRY_CONTEXT = re.compile(
     r"seeking|evaluating|considering|exploring)\b",
     re.IGNORECASE,
 )
-
 
 
 def validate_status(status: str) -> bool:
@@ -70,14 +65,21 @@ def _parse_datetime(value: Any) -> datetime | None:
 def _recent_timestamp(lead: Dict[str, Any], *, days: int) -> str | None:
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
+
+    # These fields describe an observed business/inquiry event. Discovery,
+    # record-update, and ingestion timestamps are intentionally excluded:
+    # finding an old webpage today must not manufacture current intent.
     candidates = (
+        "need_at",
+        "current_need_at",
+        "hiring_need_at",
         "inquiry_at",
         "inquired_at",
         "last_inquiry_at",
         "last_contact_at",
-        "updated_at",
-        "discovered_at",
+        "intent_at",
     )
+
     for key in candidates:
         parsed = _parse_datetime(lead.get(key))
         if parsed and cutoff <= parsed <= now:
@@ -90,9 +92,6 @@ def _current_need(lead: Dict[str, Any], route_scores: Dict[str, int]) -> Dict[st
     active_route = any(route_scores.get(route, 0) > 0 for route in ROUTES)
     observed_at = _recent_timestamp(lead, days=CURRENT_NEED_DAYS)
 
-    # A currently observed qualifying hiring/service signal is evidence of
-    # need. We intentionally require a recent observation so stale webpages
-    # or historical jobs cannot qualify a lead indefinitely.
     qualified = active_route and observed_at is not None
     return {
         "qualified": qualified,
@@ -152,17 +151,13 @@ def _paxus_referral_checks(lead: Dict[str, Any], paxus_qualified: bool) -> Dict[
 
     failures = [name for name, result in checks.items() if not result["passed"]]
     research_items = [
-        name for name in (
-            "company_verified",
-            "named_hiring_contact",
-        )
+        name
+        for name in ("company_verified", "named_hiring_contact")
         if not checks[name]["passed"]
     ]
     verification_items = [
-        name for name in (
-            "contact_communication",
-            "contact_consent",
-        )
+        name
+        for name in ("contact_communication", "contact_consent")
         if not checks[name]["passed"]
     ]
 
@@ -181,15 +176,7 @@ def _paxus_referral_checks(lead: Dict[str, Any], paxus_qualified: bool) -> Dict[
 
 
 def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Evaluate Shiftr, Thorio and Paxus independently.
-
-    A lead is never consumed by the first matching company. Every company
-    gets its own category/intent decision and evidence record.
-
-    Insufficient research is represented as research_required rather than
-    silently converting a potentially valuable lead into a hard rejection.
-    """
+    """Evaluate all three companies independently without consuming the lead."""
     if not isinstance(lead, dict):
         raise ValueError("lead must be a dictionary")
 
@@ -238,20 +225,12 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "companies": results,
         "qualified_companies": [
-            company
-            for company in ROUTES
-            if results[company]["qualified"]
+            company for company in ROUTES if results[company]["qualified"]
         ],
         "paxus_true_referral": paxus_referral["passed"],
         "research_status": (
             "research_required"
-            if any(
-                results[company]["qualified"]
-                and (
-                    results[company].get("referral_status") == "research_required"
-                )
-                for company in ROUTES
-            )
+            if paxus["qualified"] and paxus.get("referral_status") == "research_required"
             else "complete"
         ),
     }
@@ -265,8 +244,6 @@ def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     updated["research_status"] = evaluation["research_status"]
     updated["potential_routes"] = evaluation["qualified_companies"]
 
-    # Preserve legacy fields for existing consumers. They no longer act as
-    # the sole source of truth for company qualification.
     updated["qualified"] = bool(evaluation["qualified_companies"])
     if evaluation["qualified_companies"]:
         updated["status"] = QUALIFIED
