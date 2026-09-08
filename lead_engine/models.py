@@ -1,9 +1,8 @@
 from .lead_identity import lead_identity
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-import hashlib
 import re
-from typing import List
+from typing import Any, Dict, List
 
 
 def normalize(value: str) -> str:
@@ -31,6 +30,12 @@ class Lead:
     route: str = "Review"
     potential_routes: List[str] = None
 
+    # Company-specific qualification is authoritative for the three
+    # businesses. The legacy `qualified`/`route` fields remain for
+    # backward compatibility with existing pipeline consumers.
+    qualification_results: Dict[str, Any] = None
+    research_status: str = "not_started"
+
     status: str = "Unverified"
     evidence: str = ""
 
@@ -52,6 +57,8 @@ class Lead:
     def __post_init__(self):
         if self.potential_routes is None:
             self.potential_routes = []
+        if self.qualification_results is None:
+            self.qualification_results = {}
 
     def ensure_timestamp(self):
         if not self.discovered_at:
