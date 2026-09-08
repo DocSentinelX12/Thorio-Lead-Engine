@@ -23,6 +23,9 @@ class Lead:
     company: str = ""
     person: str = ""
     signal: str = ""
+    signal_type: str = ""
+    source_url: str = ""
+    job_title: str = ""
     discovered_at: str = ""
 
     route: str = "Review"
