@@ -167,14 +167,6 @@ def score_routes(company: str, signal: str, evidence: str) -> Dict[str, int]:
     scores["Shiftr"] = _matches(text, SHIFTR_RULES)
     scores["Paxus"] = _matches(text, PAXUS_RULES)
 
-    # A concrete technology job being hired for is a legitimate
-    # Paxus recruitment/staffing lead even when the source does not
-    # explicitly use words such as "recruitment" or "staffing".
-    # The later Paxus referral workflow still requires its own
-    # warm-contact and acceptance gates before commission rights exist.
-    if _has_hiring_context(text) and _has_job_role_context(text):
-        scores["Paxus"] = max(scores["Paxus"], 1)
-
     # Thorio remains strictly remote. Hybrid/on-site roles are excluded.
     # Part-time remote roles are intentionally NOT excluded because
     # remote-only is the location requirement, not a full-time-only rule.
