@@ -52,7 +52,10 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+      # Airtable Personal Access Token. The existing HTTP client sends
+      # this credential as a bearer token. No legacy Airtable API key
+      # is used as the stored GitHub secret.
+      AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT }}
 
       # Production Master Tracker.
       # One unified Airtable system contains Paxus, Shiftr,
@@ -329,4 +332,3 @@ jobs:
           retention-days: 90
           overwrite: true
           if-no-files-found: warn
-
