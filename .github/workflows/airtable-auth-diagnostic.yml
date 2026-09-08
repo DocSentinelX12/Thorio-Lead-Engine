@@ -1,0 +1,147 @@
+name: Airtable Auth Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Diagnose Airtable PAT
+    runs-on: ubuntu-latest
+    env:
+      AIRTABLE_PAT: ${{ secrets.AIRTABLE_PAT }}
+      AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
+
+    steps:
+      - name: Validate GitHub secret injection and Airtable authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${AIRTABLE_PAT:-}" ]; then
+            echo "RESULT: AIRTABLE_PAT is empty inside the GitHub Actions runner."
+            echo "This means the workflow is not receiving the repository secret."
+            exit 1
+          fi
+
+          token_length="${#AIRTABLE_PAT}"
+          token_has_period="false"
+          token_starts_pat="false"
+
+          if [[ "$AIRTABLE_PAT" == *.* ]]; then
+            token_has_period="true"
+          fi
+
+          if [[ "$AIRTABLE_PAT" == pat* ]]; then
+            token_starts_pat="true"
+          fi
+
+          echo "GitHub secret injection: PRESENT"
+          echo "Token length: ${token_length}"
+          echo "Token starts with 'pat': ${token_starts_pat}"
+          echo "Token contains PAT separator '.': ${token_has_period}"
+          echo "Token value: [REDACTED]"
+
+          whoami_file="$(mktemp)"
+          whoami_code="$(
+            curl -sS \
+              -o "$whoami_file" \
+              -w '%{http_code}' \
+              -H "Authorization: Bearer ${AIRTABLE_PAT}" \
+              -H 'Content-Type: application/json' \
+              'https://api.airtable.com/v0/meta/whoami'
+          )"
+
+          echo ""
+          echo "Airtable whoami HTTP status: ${whoami_code}"
+
+          python - "$whoami_file" <<'PY'
+          import json
+          import sys
+
+          path = sys.argv[1]
+          text = open(path, encoding="utf-8").read()
+
+          try:
+              payload = json.loads(text)
+          except json.JSONDecodeError:
+              print("Airtable whoami response: non-JSON response")
+              print("Response body length:", len(text))
+              sys.exit(0)
+
+          if isinstance(payload, dict):
+              safe = {
+                  key: value
+                  for key, value in payload.items()
+                  if key not in {"id", "email"}
+              }
+              print("Airtable whoami response:", json.dumps(safe, sort_keys=True))
+          else:
+              print("Airtable whoami response type:", type(payload).__name__)
+          PY
+
+          if [ "$whoami_code" != "200" ]; then
+            echo ""
+            echo "RESULT: Airtable rejected authentication before any base/table request."
+            echo "The next investigation must focus on the exact PAT value stored in GitHub, including whether the complete PAT secret was copied."
+            exit 1
+          fi
+
+          lead_sources_file="$(mktemp)"
+          encoded_table="$(python - <<'PY'
+          import urllib.parse
+          print(urllib.parse.quote("Lead Sources", safe=""))
+          PY
+          )"
+
+          lead_sources_url="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encoded_table}?maxRecords=1"
+
+          lead_sources_code="$(
+            curl -sS \
+              -o "$lead_sources_file" \
+              -w '%{http_code}' \
+              -H "Authorization: Bearer ${AIRTABLE_PAT}" \
+              -H 'Content-Type: application/json' \
+              "$lead_sources_url"
+          )"
+
+          echo ""
+          echo "Airtable Lead Sources HTTP status: ${lead_sources_code}"
+
+          python - "$lead_sources_file" <<'PY'
+          import json
+          import sys
+
+          path = sys.argv[1]
+          text = open(path, encoding="utf-8").read()
+
+          try:
+              payload = json.loads(text)
+          except json.JSONDecodeError:
+              print("Lead Sources response: non-JSON response")
+              print("Response body length:", len(text))
+              sys.exit(0)
+
+          if isinstance(payload, dict):
+              safe = dict(payload)
+              if "records" in safe:
+                  records = safe["records"]
+                  safe["records"] = {
+                      "count": len(records) if isinstance(records, list) else None
+                  }
+              print("Lead Sources response:", json.dumps(safe, sort_keys=True))
+          else:
+              print("Lead Sources response type:", type(payload).__name__)
+          PY
+
+          if [ "$lead_sources_code" != "200" ]; then
+            echo ""
+            echo "RESULT: Airtable authentication succeeded at /v0/meta/whoami, but the Lead Sources base/table request failed."
+            echo "This points away from the PAT itself and toward base/table access or the exact API request."
+            exit 1
+          fi
+
+          echo ""
+          echo "RESULT: GitHub injected the PAT, Airtable accepted the credential, and the Lead Sources table is reachable."
