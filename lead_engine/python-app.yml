@@ -17,7 +17,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+      # Airtable Personal Access Token. The application uses this as
+      # the bearer credential. No legacy Airtable API key is required.
+      AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT }}
       AIRTABLE_BASE_ID: ${{ vars.AIRTABLE_BASE_ID }}
       AIRTABLE_LEAD_TABLE: ${{ vars.AIRTABLE_LEAD_TABLE }}
 
