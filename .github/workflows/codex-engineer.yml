@@ -1,0 +1,216 @@
+name: Thorio Codex Engineering
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  codex-engineer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout complete repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install project dependencies
+        shell: bash
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+
+          if [ -f pyproject.toml ]; then
+            pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          fi
+
+      - name: Run Codex engineering agent
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          prompt: |
+            You are the senior engineering agent responsible for the
+            Thorio-Lead-Engine repository.
+
+            This is a production system. Work carefully and methodically.
+
+            PRIMARY OBJECTIVE
+
+            Thoroughly inspect the entire repository and establish an accurate
+            understanding of the complete system before making application-code
+            changes.
+
+            Do not guess.
+
+            Do not assume that a previous proposed fix was correct.
+
+            Do not rewrite large portions of the system unnecessarily.
+
+            Do not remove working functionality merely to make tests pass.
+
+            REPOSITORY AUDIT
+
+            Inspect the complete repository, including where applicable:
+
+            - Python application code
+            - frontend code
+            - tests
+            - fixtures
+            - database/storage code
+            - Airtable integration
+            - synchronization logic
+            - lead qualification
+            - deduplication
+            - configuration
+            - CLI
+            - schemas
+            - API integrations
+            - GitHub Actions
+            - dependency configuration
+            - deployment/production workflows
+            - logging and error handling
+            - retry behavior
+            - migrations
+            - documentation relevant to system behavior
+
+            Establish how the components interact.
+
+            DATA MINIMIZATION AND SECURITY
+
+            Inspect the system specifically for unnecessary collection,
+            processing, logging, or storage of lead information.
+
+            Identify:
+
+            - unnecessary personal data
+            - sensitive information
+            - credentials or secrets accidentally handled by application code
+            - secrets appearing in logs
+            - insecure persistence
+            - excessive Airtable fields
+            - unnecessary copies of lead information
+            - unsafe synchronization behavior
+            - missing validation
+            - missing access controls
+            - unsafe error handling
+            - insecure configuration
+
+            The system should retain only information necessary for the
+            legitimate operation of the lead engine.
+
+            Never expose or print API keys, tokens, passwords, or secrets.
+
+            TESTING
+
+            Inspect the complete existing test suite.
+
+            Run the appropriate tests and diagnostics.
+
+            Start with targeted tests where necessary to understand failures,
+            then run the broadest practical test suite.
+
+            Record actual failures and their root causes.
+
+            Do not manufacture passing results.
+
+            CODE CHANGES
+
+            After establishing the actual problems, make only justified,
+            minimal, production-quality changes.
+
+            Preserve existing architecture and functionality unless there is
+            a demonstrated reason to change them.
+
+            When fixing a defect:
+
+            1. Reproduce it.
+            2. Identify the root cause.
+            3. Implement the smallest correct fix.
+            4. Add or improve regression coverage when appropriate.
+            5. Run the relevant tests.
+            6. Run the full test suite.
+            7. Inspect any new failures.
+            8. Correct regressions.
+            9. Repeat until verification is satisfactory.
+
+            AIRTABLE
+
+            Pay particular attention to synchronization correctness.
+
+            Qualified leads must not be silently lost, duplicated, corrupted,
+            partially synchronized, or incorrectly classified.
+
+            Verify validation, deduplication, retry behavior, failure handling,
+            idempotency, and data integrity.
+
+            PRODUCTION SAFETY
+
+            Never:
+
+            - delete the repository
+            - expose secrets
+            - hard-code credentials
+            - disable security controls merely to make tests pass
+            - remove tests simply because they fail
+            - weaken validation without justification
+            - bypass Airtable error handling
+            - make unrelated cosmetic changes
+            - perform destructive database operations without clear evidence
+            - claim success when verification has not actually passed
+
+            Before declaring the work complete, verify the resulting system
+            with the strongest practical test and validation suite available.
+
+            GIT
+
+            Work only within this repository checkout.
+
+            Make changes directly in the working tree.
+
+            Do not push changes yourself.
+
+            The workflow will handle committing changes after verification.
+
+      - name: Show changed files
+        shell: bash
+        run: |
+          git status --short
+          git diff --stat
+
+      - name: Commit verified Codex changes
+        shell: bash
+        run: |
+          set -e
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes were made."
+            exit 0
+          fi
+
+          git config user.name "Thorio Codex Engineer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "Codex engineering: verified repository changes"
+          git push
