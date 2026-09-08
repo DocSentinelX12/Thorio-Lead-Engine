@@ -12,6 +12,7 @@ def _lead(signal, evidence, **extra):
         "signal": signal,
         "evidence": evidence,
         "discovered_at": NOW,
+        "need_at": NOW,
     }
     lead.update(extra)
     return lead
@@ -119,7 +120,19 @@ def test_stale_signal_does_not_qualify():
         _lead(
             "software developer hiring",
             "Old hiring announcement.",
-            discovered_at="2025-01-01T00:00:00+00:00",
+            need_at="2025-01-01T00:00:00+00:00",
+            discovered_at=NOW,
+        )
+    )
+    assert result["qualified_companies"] == []
+
+
+def test_discovery_timestamp_alone_does_not_create_current_need():
+    result = evaluate_company_qualification(
+        _lead(
+            "software developer hiring",
+            "Potential hiring signal found during discovery.",
+            need_at="",
         )
     )
     assert result["qualified_companies"] == []
