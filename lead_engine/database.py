@@ -115,11 +115,17 @@ class LeadDB:
         if current is None:
             return None
 
+        before = dict(current)
         current.update(updates)
+        if current == before:
+            return current
+
         self.conn.execute(
             """
             UPDATE leads
             SET payload = ?,
+                synced = 0,
+                last_error = '',
                 updated_at = CURRENT_TIMESTAMP
             WHERE fingerprint = ?
             """,
