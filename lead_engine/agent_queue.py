@@ -33,7 +33,14 @@ def _save(db, state: Dict[str, Any]) -> None:
     db.set_state(STATE_KEY, state)
 
 
-def enqueue(db, agent: str, payload: Dict[str, Any], *, priority: int = 0) -> Dict[str, Any]:
+def enqueue(
+    db,
+    agent: str,
+    payload: Dict[str, Any],
+    *,
+    priority: int = 0,
+    dedupe_key: str | None = None,
+) -> Dict[str, Any]:
     registry = agent_registry()
     if agent not in registry:
         raise ValueError(f"Unknown agent role: {agent}")
@@ -41,6 +48,15 @@ def enqueue(db, agent: str, payload: Dict[str, Any], *, priority: int = 0) -> Di
         raise ValueError("payload must be a dictionary")
 
     state = _load(db)
+    if dedupe_key:
+        for existing in state["items"].values():
+            if (
+                existing.get("agent") == agent
+                and existing.get("dedupe_key") == dedupe_key
+                and existing.get("status") in {QUEUED, RUNNING}
+            ):
+                return dict(existing)
+
     task_id = uuid4().hex
     now = _iso(_now())
     task = {
@@ -50,6 +66,7 @@ def enqueue(db, agent: str, payload: Dict[str, Any], *, priority: int = 0) -> Di
         "status": QUEUED,
         "priority": int(priority),
         "payload": dict(payload),
+        "dedupe_key": dedupe_key,
         "created_at": now,
         "updated_at": now,
         "attempts": 0,
@@ -98,8 +115,7 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
     active = sum(
         1
         for task in state["items"].values()
-        if task.get("agent") == agent
-        and task.get("status") == RUNNING
+        if task.get("agent") == agent and task.get("status") == RUNNING
     )
     available = max(0, capacity - active)
 
@@ -148,6 +164,23 @@ def complete(db, task_id: str, *, worker_id: str, result: Dict[str, Any] | None 
 
 def fail(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]:
     return _finish(db, task_id, worker_id=worker_id, status=FAILED, result=None, error=error)
+
+
+def retry(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]:
+    """Return a leased task to the queue without losing its failure history."""
+    state = _load(db)
+    task = state["items"].get(task_id)
+    if task is None:
+        raise ValueError(f"Task not found: {task_id}")
+    if task.get("status") != RUNNING or task.get("worker_id") != worker_id:
+        raise ValueError("Task is not leased to this worker")
+    task["status"] = QUEUED
+    task["last_error"] = error
+    task["worker_id"] = None
+    task["lease_until"] = None
+    task["updated_at"] = _iso(_now())
+    _save(db, state)
+    return dict(task)
 
 
 def _finish(db, task_id: str, *, worker_id: str, status: str, result: Dict[str, Any] | None, error: str | None) -> Dict[str, Any]:
