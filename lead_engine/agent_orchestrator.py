@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
 from .agent_queue import enqueue, pending
-from .agent_registry import ALL_AGENT_ROLES
+from .agent_registry import ALL_AGENT_ROLES, agent_registry
 from .agent_specializations import get_specialization
 from .agent_workers import run_worker_once
 
@@ -12,8 +12,9 @@ from .agent_workers import run_worker_once
 class AgentOrchestrator:
     """Durable coordinator for the specialist workforce.
 
-    The orchestrator owns dispatch and handoff. Specialist workers own their
-    domain logic. A worker is never selected to execute another role's task.
+    Execution capacity is shared dynamically. The orchestrator validates the
+    declared role family before dispatch so a specialist cannot silently run a
+    different class of work.
     """
 
     def __init__(self, db, *, worker_prefix: str = "lead-engine"):
@@ -25,16 +26,24 @@ class AgentOrchestrator:
         return enqueue(self.db, agent, dict(payload), priority=priority)
 
     def dispatch_discovery(self, agent: str, record: Mapping[str, Any], *, priority: int = 0) -> Dict[str, Any]:
-        specialization = get_specialization(agent)
-        if not agent.endswith("_signal"):
+        role = agent_registry().get(agent)
+        if role is None or role.kind != "discovery":
             raise ValueError("dispatch_discovery requires a discovery specialist")
         if not isinstance(record, Mapping):
             raise ValueError("record must be a mapping")
-        task = self.dispatch(agent, {"record": dict(record), "specialization": specialization.agent}, priority=priority)
-        return task
+        return self.dispatch(agent, {"record": dict(record), "lead": dict(record.get("lead", {})) if isinstance(record.get("lead"), Mapping) else {}, "evidence_events": list(record.get("evidence_events", [])) if isinstance(record.get("evidence_events"), list) else [], "specialization": role.name}, priority=priority)
+
+    def dispatch_social_research(self, agent: str, payload: Mapping[str, Any], *, priority: int = 0) -> Dict[str, Any]:
+        role = agent_registry().get(agent)
+        if role is None or role.kind != "social_research":
+            raise ValueError("dispatch_social_research requires a social research specialist")
+        if not isinstance(payload, Mapping):
+            raise ValueError("payload must be a mapping")
+        return self.dispatch(agent, payload, priority=priority)
 
     def dispatch_processing(self, agent: str, payload: Mapping[str, Any], *, priority: int = 0) -> Dict[str, Any]:
-        if agent.endswith("_signal"):
+        role = agent_registry().get(agent)
+        if role is None or role.kind != "processing":
             raise ValueError("dispatch_processing requires a processing specialist")
         return self.dispatch(agent, payload, priority=priority)
 
@@ -65,9 +74,4 @@ class AgentOrchestrator:
                 by_agent[agent] += 1
                 if task.get("status") == "running":
                     running_by_agent[agent] += 1
-        return {
-            "agent_count": len(ALL_AGENT_ROLES),
-            "pending_count": len(tasks),
-            "queued_by_agent": by_agent,
-            "running_by_agent": running_by_agent,
-        }
+        return {"agent_count": len(ALL_AGENT_ROLES), "pending_count": len(tasks), "queued_by_agent": by_agent, "running_by_agent": running_by_agent}
