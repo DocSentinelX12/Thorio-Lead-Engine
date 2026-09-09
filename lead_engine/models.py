@@ -49,6 +49,13 @@ class Lead:
     status: str = "Unverified"
     evidence: str = ""
 
+    # Opportunity-level identity. A company/person can have many
+    # opportunities and must never be deduplicated merely because the
+    # company or person has appeared before.
+    opportunity_id: str = ""
+    review_state: str = "awaiting_review"
+    evidence_events: List[Dict[str, Any]] = None
+
     possible_duplicate: bool = False
     fingerprint: str = ""
 
@@ -88,6 +95,8 @@ class Lead:
             self.potential_routes = []
         if self.qualification_results is None:
             self.qualification_results = {}
+        if self.evidence_events is None:
+            self.evidence_events = []
 
     def ensure_timestamp(self):
         if not self.discovered_at:
@@ -105,9 +114,12 @@ class Lead:
             "company": self.company,
             "person": self.person,
             "signal": self.signal,
+            "job_title": self.job_title,
+            "signal_type": self.signal_type,
         }
 
         self.fingerprint = lead_identity(identity_payload)
+        self.opportunity_id = self.fingerprint
 
         return self.fingerprint
 
