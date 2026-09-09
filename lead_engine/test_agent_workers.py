@@ -42,23 +42,20 @@ def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
 
 def test_qualification_worker_applies_independent_company_routes(tmp_path):
     db = _db(tmp_path)
-    task = enqueue(
-        db,
-        "qualification_a",
-        {
-            "lead": {
-                "company": "Acme",
-                "signal": "Acme is hiring a remote software engineer",
-                "job_title": "Software Engineer",
-                "need_at": _recent(),
-            }
-        },
-    )
+    lead = {
+        "fingerprint": "qualification-worker-test",
+        "company": "Acme",
+        "signal": "Acme is hiring a remote software engineer",
+        "job_title": "Software Engineer",
+        "need_at": _recent(),
+    }
+    db.insert_if_new(lead)
+    task = enqueue(db, "qualification_a", {"lead": lead})
     result = run_worker_once(db, "qualification_a", worker_id="qualification-a")
     assert result["completed_count"] == 1
-    lead = result["results"][0]["lead"]
-    assert "Thorio" in lead["potential_routes"]
-    assert lead["qualification_results"]["Shiftr"]["qualified"] is True
+    stored = db.get(lead["fingerprint"])
+    assert "Thorio" in stored["potential_routes"]
+    assert stored["qualification_results"]["Shiftr"]["qualified"] is True
     assert task["agent"] == "qualification_a"
 
 
