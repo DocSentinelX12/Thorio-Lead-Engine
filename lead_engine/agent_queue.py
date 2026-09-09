@@ -42,6 +42,7 @@ def enqueue(db, agent: str, payload: Dict[str, Any], *, priority: int = 0) -> Di
 
     state = _load(db)
     task_id = uuid4().hex
+    now = _iso(_now())
     task = {
         "task_id": task_id,
         "agent": agent,
@@ -49,20 +50,22 @@ def enqueue(db, agent: str, payload: Dict[str, Any], *, priority: int = 0) -> Di
         "status": QUEUED,
         "priority": int(priority),
         "payload": dict(payload),
-        "created_at": _iso(_now()),
-        "updated_at": _iso(_now()),
+        "created_at": now,
+        "updated_at": now,
         "attempts": 0,
         "lease_until": None,
         "worker_id": None,
         "last_error": None,
+        "result": None,
     }
     state["items"][task_id] = task
     _save(db, state)
     return task
 
 
-def _recover_stale(state: Dict[str, Any]) -> None:
+def _recover_stale(state: Dict[str, Any]) -> bool:
     now = _now()
+    changed = False
     for task in state["items"].values():
         if task.get("status") != RUNNING:
             continue
@@ -76,6 +79,8 @@ def _recover_stale(state: Dict[str, Any]) -> None:
             task["worker_id"] = None
             task["lease_until"] = None
             task["updated_at"] = _iso(now)
+            changed = True
+    return changed
 
 
 def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int = 300) -> List[Dict[str, Any]]:
@@ -88,14 +93,13 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
         raise ValueError("limit and lease_seconds must be positive")
 
     state = _load(db)
-    _recover_stale(state)
+    changed = _recover_stale(state)
     capacity = min(int(limit), registry[agent].max_concurrency)
     active = sum(
         1
         for task in state["items"].values()
         if task.get("agent") == agent
         and task.get("status") == RUNNING
-        and task.get("worker_id") != worker_id
     )
     available = max(0, capacity - active)
 
@@ -115,8 +119,10 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
         task["attempts"] = int(task.get("attempts", 0)) + 1
         task["updated_at"] = _iso(now)
         claimed.append(dict(task))
+        changed = True
 
-    _save(db, state)
+    if changed:
+        _save(db, state)
     return claimed
 
 
@@ -129,8 +135,9 @@ def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) -> 
         raise ValueError(f"Task not found: {task_id}")
     if task.get("status") != RUNNING or task.get("worker_id") != worker_id:
         raise ValueError("Task is not leased to this worker")
-    task["lease_until"] = _iso(_now() + timedelta(seconds=lease_seconds))
-    task["updated_at"] = _iso(_now())
+    now = _now()
+    task["lease_until"] = _iso(now + timedelta(seconds=lease_seconds))
+    task["updated_at"] = _iso(now)
     _save(db, state)
     return dict(task)
 
@@ -162,7 +169,9 @@ def _finish(db, task_id: str, *, worker_id: str, status: str, result: Dict[str, 
 
 def pending(db, agent: str | None = None) -> List[Dict[str, Any]]:
     state = _load(db)
-    _recover_stale(state)
+    changed = _recover_stale(state)
+    if changed:
+        _save(db, state)
     tasks = list(state["items"].values())
     if agent is not None:
         tasks = [task for task in tasks if task.get("agent") == agent]
