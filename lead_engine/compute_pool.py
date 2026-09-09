@@ -28,7 +28,6 @@ class ComputeCapacity:
         """Return a conservative CPU/memory-aware worker budget."""
         if self.cpu_count <= 0 or self.memory_mb <= 0:
             return 1
-        # Keep roughly 2 GB per active worker and leave one CPU for the host.
         cpu_budget = max(1, self.cpu_count - 1)
         memory_budget = max(1, self.memory_mb // 2048)
         return max(1, min(cpu_budget, memory_budget))
@@ -46,7 +45,6 @@ def _memory_mb() -> int:
         match = re.search(r"^MemTotal:\s+(\d+)\s+kB", meminfo.read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
         if match:
             return max(1, int(match.group(1)) // 1024)
-    # macOS/Windows and constrained test environments may not expose meminfo.
     return max(1, int(os.environ.get("THORIO_COMPUTE_MEMORY_MB", "2048")))
 
 
@@ -67,6 +65,8 @@ def local_capacity(*, node_id: str | None = None, persistent: bool = False) -> C
 
 def worker_budget(capacity: ComputeCapacity, *, requested: int | None = None) -> int:
     """Bound requested concurrency by actual free capacity and safe limits."""
+    if not isinstance(capacity, ComputeCapacity):
+        raise ValueError("capacity must be a ComputeCapacity instance")
     if requested is not None and (isinstance(requested, bool) or requested <= 0):
         raise ValueError("requested worker count must be positive")
     configured = int(os.environ.get("THORIO_MAX_LOCAL_WORKERS", "0"))
@@ -84,9 +84,9 @@ def pool_snapshot(capacities: Mapping[str, ComputeCapacity]) -> Dict[str, Any]:
     """Return an auditable snapshot of all known free compute nodes."""
     if not isinstance(capacities, Mapping):
         raise ValueError("capacities must be a mapping")
-    nodes = {str(key): value.to_dict() for key, value in capacities.items()}
     if any(not isinstance(value, ComputeCapacity) for value in capacities.values()):
         raise ValueError("all pool entries must be ComputeCapacity instances")
+    nodes = {str(key): value.to_dict() for key, value in capacities.items()}
     return {
         "free_only": True,
         "node_count": len(nodes),
