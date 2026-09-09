@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Mapping
 
+from .advanced_agent_logic import advanced_handler_registry
 from .agent_queue import claim, complete, enqueue, fail, heartbeat
 from .agent_specializations import AgentSpecialization, get_specialization
 from .qualification import apply_company_qualification
@@ -49,12 +50,8 @@ def _persist_lead(db: Any, lead: Dict[str, Any]) -> Dict[str, Any]:
 
 
 _DISCOVERY_SOURCE_ALIASES = {
-    "x_signal": ("x", "twitter"),
-    "threads_signal": ("threads",),
-    "reddit_signal": ("reddit",),
-    "linkedin_signal": ("linkedin",),
-    "facebook_signal": ("facebook",),
-    "instagram_signal": ("instagram",),
+    "x_signal": ("x", "twitter"), "threads_signal": ("threads",), "reddit_signal": ("reddit",),
+    "linkedin_signal": ("linkedin",), "facebook_signal": ("facebook",), "instagram_signal": ("instagram",),
     "hacker_news_signal": ("hacker news", "hacker_news", "news.ycombinator.com", "hn"),
     "indie_hackers_signal": ("indie hackers", "indie_hackers", "indiehackers"),
     "product_hunt_signal": ("product hunt", "product_hunt", "producthunt"),
@@ -62,40 +59,30 @@ _DISCOVERY_SOURCE_ALIASES = {
 
 
 def _source_text(record: Mapping[str, Any]) -> str:
-    return " ".join(
-        str(record.get(key) or "").strip().lower()
-        for key in ("source", "provider", "source_url", "url")
-        if str(record.get(key) or "").strip()
-    )
+    return " ".join(str(record.get(key) or "").strip().lower() for key in ("source", "provider", "source_url", "url") if str(record.get(key) or "").strip())
 
 
 def _discovery_handler_for(agent: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
-    """Run one permanent source specialist without qualification."""
     record = _require_mapping(payload.get("record", payload), "record")
     source = _source_text(record)
     signal = str(record.get("signal") or record.get("evidence") or "").strip()
     if not signal:
         raise AgentContractError(f"{agent} requires observed signal/evidence")
-
-    if agent != "web_job_signal":
-        aliases = _DISCOVERY_SOURCE_ALIASES[agent]
-        if not any(alias in source for alias in aliases):
+    if agent in _DISCOVERY_SOURCE_ALIASES:
+        if not any(alias in source for alias in _DISCOVERY_SOURCE_ALIASES[agent]):
             raise AgentContractError(f"{agent} received evidence outside its permanent source lane: {record.get('source')!r}")
-    else:
-        job_markers = ("job", "jobs", "career", "careers", "hiring", "greenhouse", "lever", "workable", "ashby", "remote", "jobicy", "himalayas", "remote ok", "remotejobs", "arbeitnow", "muse")
-        if not any(marker in source for marker in job_markers) and not any(key in record for key in ("job_title", "application_url", "apply_url")):
+    elif agent == "web_job_signal":
+        markers = ("job", "jobs", "career", "careers", "hiring", "greenhouse", "lever", "workable", "ashby", "remote", "jobicy", "himalayas", "remote ok", "remotejobs", "arbeitnow", "muse")
+        if not any(marker in source for marker in markers) and not any(key in record for key in ("job_title", "application_url", "apply_url")):
             raise AgentContractError(f"web_job_signal received evidence that is not identifiable as a job source: {record.get('source')!r}")
-
     fingerprint = str(record.get("fingerprint") or payload.get("fingerprint") or "").strip()
     lead = ctx.db.get(fingerprint) if fingerprint else None
     provenance = dict(record.get("provenance") or {}) if isinstance(record.get("provenance"), Mapping) else {}
     provenance.update({"collector_agent": agent, "source_lane": agent, "collected_at": datetime.now(timezone.utc).isoformat()})
     normalized = dict(record)
     normalized.update({"source_lane": agent, "observed": True, "qualification_performed": False, "provenance": provenance})
-
     if fingerprint and lead is not None:
         enqueue(ctx.db, "qualification_a", {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=1, dedupe_key=f"qualification_a:{fingerprint}")
-
     return {"agent": agent, "role": "discovery", "source": record.get("source") or agent, "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoff": "qualification_a" if fingerprint and lead is not None else "awaiting_persistence", "provenance": provenance}
 
 
@@ -220,13 +207,13 @@ def _audit(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dic
     return {"role": "audit", "lead": lead, "violations": violations, "passed": not violations}
 
 
-_DISCOVERY_AGENTS = ("x_signal", "threads_signal", "reddit_signal", "linkedin_signal", "facebook_signal", "instagram_signal", "hacker_news_signal", "indie_hackers_signal", "product_hunt_signal", "web_job_signal")
+_DISCOVERY_AGENTS = tuple(_DISCOVERY_SOURCE_ALIASES) + ("web_job_signal",)
 _DISCOVERY = {name: _make_discovery_handler(name) for name in _DISCOVERY_AGENTS}
 _PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {"qualification_a": _qualification_a, "qualification_b": _qualification_b, "company_research": _company_research, "paxus_research": _paxus_research, "duplicate_resolution": _duplicate_resolution, "priority": _priority, "outreach_closer": _outreach_closer, "follow_up": _follow_up, "monitoring": _monitoring, "audit": _audit}
 
 
 def handler_registry() -> Dict[str, Callable[..., Dict[str, Any]]]:
-    return {**_DISCOVERY, **_PROCESSORS}
+    return {**_DISCOVERY, **_PROCESSORS, **advanced_handler_registry()}
 
 
 def _validate_specialization(agent: str, handler: Callable[..., Dict[str, Any]]) -> AgentSpecialization:
@@ -262,7 +249,6 @@ def execute_task(db, task: Mapping[str, Any], *, worker_id: str, heartbeat_befor
 
 
 def run_worker_once(db, agent: str, *, worker_id: str, limit: int = 1) -> Dict[str, Any]:
-    """Claim and execute only this specialist's tasks."""
     get_specialization(agent)
     tasks = claim(db, agent, worker_id=worker_id, limit=limit)
     results = [execute_task(db, task, worker_id=worker_id) for task in tasks]
