@@ -1,4 +1,8 @@
-"""Professional capability contracts for every lead-engine agent."""
+"""Professional capability contracts for every lead-engine agent.
+
+These contracts are executable guardrails. They describe what each specialist
+must produce and what it is forbidden to invent or perform.
+"""
 
 from dataclasses import dataclass
 from typing import Dict, Tuple
@@ -14,28 +18,80 @@ class AgentSpecialization:
     forbidden_actions: Tuple[str, ...]
 
 
-SPECIALIZATIONS: Tuple[AgentSpecialization, ...] = (
-    AgentSpecialization("x_signal", "Discover high-value hiring and business-intent signals available through authorized X access.", ("detect hiring intent", "identify companies and people", "capture source evidence", "normalize signal metadata"), ("source evidence",), ("normalized signals", "evidence references"), ("unauthorized scraping", "credential automation", "qualification decisions")),
-    AgentSpecialization("threads_signal", "Discover relevant hiring and business-intent signals through authorized Threads access.", ("detect intent", "identify entities", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("unauthorized access", "qualification decisions")),
-    AgentSpecialization("reddit_signal", "Discover relevant hiring, technology, and business-intent discussions from permitted Reddit access.", ("find relevant discussions", "identify entities", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("unauthorized scraping", "qualification decisions")),
-    AgentSpecialization("linkedin_signal", "Discover professional hiring, founder, recruiter, and decision-maker signals through authorized LinkedIn access.", ("detect hiring signals", "identify decision makers", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("unauthorized scraping", "qualification decisions")),
-    AgentSpecialization("facebook_signal", "Discover permitted hiring and business-intent signals from Facebook.", ("detect intent", "identify entities", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("unauthorized access", "qualification decisions")),
-    AgentSpecialization("instagram_signal", "Discover permitted hiring and business-intent signals from Instagram.", ("detect intent", "identify entities", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("unauthorized access", "qualification decisions")),
-    AgentSpecialization("hacker_news_signal", "Discover technology-company and hiring intent from permitted Hacker News data.", ("detect relevant posts", "identify companies", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("qualification decisions", "invented evidence")),
-    AgentSpecialization("indie_hackers_signal", "Discover founder, startup, hiring, and business-intent signals from permitted Indie Hackers access.", ("detect relevant discussions", "identify companies", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("qualification decisions", "invented evidence")),
-    AgentSpecialization("product_hunt_signal", "Discover product-company and founder signals from permitted Product Hunt access.", ("detect relevant launches", "identify companies", "capture evidence", "normalize signals"), ("source evidence",), ("normalized signals", "evidence references"), ("qualification decisions", "invented evidence")),
-    AgentSpecialization("web_job_signal", "Find and validate live technology job opportunities from permitted web and job sources.", ("discover roles", "validate job freshness", "capture application source", "normalize job evidence"), ("source evidence",), ("normalized job opportunities", "evidence references"), ("invented jobs", "unauthorized scraping", "qualification decisions")),
-    AgentSpecialization("qualification_a", "Perform the primary independent evidence-based qualification review for Shiftr, Thorio, and Paxus.", ("current need", "evaluate current need evidence", "evaluate recent inquiry", "evaluate company-specific categories", "preserve multi-route qualification", "identify research gaps"), ("lead", "evidence_events"), ("qualification_results", "research requirements", "qualification decision"), ("inventing evidence", "collapsing company routes", "treating unknown as no")),
-    AgentSpecialization("qualification_b", "Independently validate qualification decisions and challenge unsupported conclusions.", ("recheck evidence", "challenge stale evidence", "verify route logic", "flag disagreement"), ("lead", "qualification_results", "evidence_events"), ("validation result", "disagreement flags"), ("silently overriding evidence", "inventing evidence")),
-    AgentSpecialization("company_research", "Resolve company identity, context, people, products, hiring activity, and evidence from permitted sources.", ("verify company", "research decision makers", "enrich context", "record source evidence"), ("lead",), ("company research", "evidence_events", "research status"), ("fabricating contacts", "fabricating consent")),
-    AgentSpecialization("paxus_research", "Resolve unknown Paxus referral requirements without falsely converting unknowns into failures or passes.", ("verify company", "find named hiring contact", "verify communication evidence", "consent evidence", "update research state"), ("lead", "paxus qualification"), ("Paxus research result", "true-referral readiness", "research status"), ("fabricating communication", "fabricating consent", "unauthorized contact")),
-    AgentSpecialization("duplicate_resolution", "Resolve opportunity identity while preserving distinct positions, people, and needs.", ("compare identity keys", "consolidate duplicate evidence", "preserve distinct opportunities", "record resolution"), ("lead", "candidate evidence"), ("dedupe decision", "evidence merge"), ("merging distinct opportunities", "deleting evidence without provenance")),
-    AgentSpecialization("priority", "Rank opportunities using verified evidence, qualification, freshness, value, and urgency.", ("score opportunity", "explain priority", "respect qualification state", "surface urgent work"), ("lead", "qualification_results", "evidence_events"), ("priority score", "priority rationale"), ("inventing urgency", "overriding qualification")),
-    AgentSpecialization("outreach_closer", "Prepare and progress authorized revenue outreach for ready opportunities.", ("verify readiness", "prepare personalized outreach", "track engagement", "advance sales state"), ("lead", "authorization", "priority"), ("outreach action", "engagement state"), ("unauthorized outreach", "impersonation", "fabricated consent")),
-    AgentSpecialization("follow_up", "Manage authorized follow-up and engagement lifecycle without spamming or bypassing controls.", ("review engagement", "schedule eligible follow-up", "record outcomes", "stop when appropriate"), ("lead", "outreach history", "authorization"), ("follow-up action", "engagement outcome"), ("unauthorized contact", "duplicate outreach", "ignoring opt-outs")),
-    AgentSpecialization("monitoring", "Continuously detect worker, queue, scheduler, persistence, and delivery anomalies.", ("inspect leases", "detect stalled work", "detect queue growth", "detect repeated failures", "surface health alerts"), ("queue state", "worker state", "delivery metrics"), ("health findings", "recovery tasks", "alerts"), ("changing business qualification", "hiding failures")),
-    AgentSpecialization("audit", "Independently audit agent decisions, evidence provenance, and protected business invariants.", ("audit qualification", "audit dedupe", "audit Paxus gates", "audit state transitions", "audit evidence provenance"), ("lead", "agent outputs", "evidence_events", "state history"), ("audit findings", "violations", "remediation tasks"), ("rewriting provenance", "silently masking violations")),
-)
+_SOURCE_ROLES = {
+    "x_signal": "X", "threads_signal": "Threads", "reddit_signal": "Reddit",
+    "linkedin_signal": "LinkedIn", "facebook_signal": "Facebook", "instagram_signal": "Instagram",
+    "hacker_news_signal": "Hacker News", "indie_hackers_signal": "Indie Hackers",
+    "product_hunt_signal": "Product Hunt", "web_job_signal": "web and job sources",
+}
+
+_DISCOVERY_INTELLIGENCE = {
+    "engineering_demand_discovery": "engineering demand",
+    "ai_demand_discovery": "AI, ML, data, and automation demand",
+    "product_design_demand_discovery": "product, design, and UX demand",
+    "contract_team_demand_discovery": "contractor, staff augmentation, outsourcing, and team demand",
+    "recent_inquiry_discovery": "recent explicit inquiries and current buying or hiring need",
+}
+
+_SOCIAL_ROLES = {
+    "social_intelligence": "correlate permitted social evidence across sources",
+    "social_hiring_research": "verify current hiring intent and recency from social evidence",
+    "social_decision_maker_research": "resolve decision-maker identity and role from social evidence",
+    "social_inquiry_research": "investigate recent inquiries and explicit need statements",
+    "social_company_context": "build verified company context from social evidence",
+}
+
+_SPECIALIZATIONS = []
+
+for agent, source in _SOURCE_ROLES.items():
+    _SPECIALIZATIONS.append(AgentSpecialization(
+        agent, f"Discover high-value hiring and business-intent signals available through authorized {source} access.",
+        ("detect relevant intent", "identify entities", "capture source evidence", "normalize signal metadata"),
+        ("source evidence",), ("normalized signals", "evidence references"),
+        ("unauthorized access", "credential automation", "qualification decisions", "invented evidence"),
+    ))
+
+for agent, target in _DISCOVERY_INTELLIGENCE.items():
+    _SPECIALIZATIONS.append(AgentSpecialization(
+        agent, f"Discover and consolidate {target} from already collected evidence without fabricating facts.",
+        ("scan evidence", "detect target signal", "group related observations", "preserve provenance", "emit research gaps"),
+        ("lead or evidence_events",), ("discovery findings", "evidence references", "research requirements"),
+        ("invented evidence", "premature qualification", "silent evidence deletion"),
+    ))
+
+for agent, mission in _SOCIAL_ROLES.items():
+    _SPECIALIZATIONS.append(AgentSpecialization(
+        agent, f"Deeply {mission} using only permitted evidence.",
+        ("correlate observations", "check recency", "resolve identities", "preserve source provenance", "flag uncertainty"),
+        ("lead", "evidence_events"), ("social research", "evidence_events", "research status", "research gaps"),
+        ("unauthorized access", "fabricated identity", "fabricated contact", "fabricated consent", "qualification without evidence"),
+    ))
+
+_PROCESSING = {
+    "qualification_a": ("Perform the primary independent evidence-based qualification review for Thorio, Shiftr, and Paxus.", ("current need", "recent inquiry", "destination categories", "multi-route qualification")),
+    "qualification_b": ("Independently validate qualification decisions and challenge unsupported conclusions.", ("recheck evidence", "challenge stale evidence", "verify route logic", "flag disagreement")),
+    "company_research": ("Resolve company identity, context, people, products, hiring activity, and evidence.", ("verify company", "research decision makers", "enrich context", "record evidence")),
+    "paxus_research": ("Resolve unknown Paxus referral requirements without turning unknown into failure or pass.", ("verify company", "find hiring contact", "verify communication evidence", "verify consent evidence")),
+    "identity_resolution": ("Resolve company, person, and opportunity identity before semantic duplicate analysis.", ("compare identity keys", "resolve aliases", "preserve distinct opportunities", "record provenance")),
+    "duplicate_resolution": ("Distinguish duplicate evidence from related but distinct opportunities.", ("compare identity", "compare opportunity context", "merge duplicate evidence", "preserve separate needs")),
+    "verification": ("Independently verify final evidence and routing prerequisites.", ("recheck critical claims", "check freshness", "check destination gates", "reject unsupported claims")),
+    "priority": ("Rank opportunities using verified evidence, qualification, freshness, value, and urgency.", ("score evidence", "explain priority", "respect qualification state", "surface urgent work")),
+    "routing": ("Route each verified opportunity to every valid destination without collapsing multi-route matches.", ("evaluate routes", "preserve route evidence", "emit destination set", "block unverified routing")),
+    "airtable_integrity": ("Verify durable Airtable synchronization and consistency.", ("check writes", "check identifiers", "detect partial sync", "produce recovery work")),
+    "monitoring": ("Continuously detect worker, queue, scheduler, persistence, and delivery anomalies.", ("inspect leases", "detect stalled work", "detect queue growth", "surface failures")),
+    "audit": ("Independently audit decisions, provenance, Paxus gates, and protected business invariants.", ("audit qualification", "audit dedupe", "audit routing", "audit provenance")),
+    "outreach_closer": ("Prepare human-approved outreach without autonomous sending.", ("verify readiness", "prepare draft", "record authorization state")),
+    "follow_up": ("Track human-entered outreach outcomes without autonomous contact.", ("review engagement", "record outcomes", "respect stop states")),
+}
+
+for agent, (mission, responsibilities) in _PROCESSING.items():
+    _SPECIALIZATIONS.append(AgentSpecialization(
+        agent, mission, responsibilities, ("lead", "evidence_events"),
+        ("structured result", "provenance", "research or verification state"),
+        ("invented evidence", "silent overrides", "unauthorized contact", "provenance deletion"),
+    ))
+
+SPECIALIZATIONS: Tuple[AgentSpecialization, ...] = tuple(_SPECIALIZATIONS)
 
 
 def specialization_registry() -> Dict[str, AgentSpecialization]:
