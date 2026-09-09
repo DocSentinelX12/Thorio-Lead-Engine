@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import sqlite3
+import ssl
 import threading
 import time
 import uuid
@@ -244,6 +245,15 @@ def serve_from_environment() -> None:
     host = os.environ.get("THORIO_COMPUTE_BIND_HOST", "127.0.0.1")
     port = int(os.environ.get("THORIO_COMPUTE_PORT", "8787"))
     server = ComputeCoordinatorServer(coordinator, host, port)
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        cert = os.environ.get("THORIO_COMPUTE_TLS_CERT", "")
+        key = os.environ.get("THORIO_COMPUTE_TLS_KEY", "")
+        if not cert or not key:
+            server.server_close()
+            raise RuntimeError("non-local coordinator binding requires THORIO_COMPUTE_TLS_CERT and THORIO_COMPUTE_TLS_KEY")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=cert, keyfile=key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     try:
         server.serve_forever(poll_interval=1.0)
     finally:
