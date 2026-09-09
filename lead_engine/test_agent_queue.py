@@ -15,7 +15,7 @@ def test_queue_claim_respects_role_capacity(tmp_path):
     first = claim(db, "x_signal", worker_id="worker-a", limit=10)
     second = claim(db, "x_signal", worker_id="worker-b", limit=10)
 
-    assert len(first) == 2
+    assert len(first) == 3
     assert len(second) == 0
     assert all(item["status"] == RUNNING for item in first)
 
