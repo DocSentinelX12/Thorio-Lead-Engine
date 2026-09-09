@@ -7,8 +7,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: free-social-discovery
-  cancel-in-progress: false
+  group: free-social-discovery-manual
+  cancel-in-progress: true
 
 jobs:
   free-social-discovery:
