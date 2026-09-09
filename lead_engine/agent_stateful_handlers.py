@@ -88,7 +88,15 @@ def airtable_integrity(_: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str
     stored = ctx.db.get(lead["fingerprint"])
     if stored is None:
         raise StatefulAgentError("lead is not present in LeadDB")
-    record_id = str(stored.get("airtable_record_id") or "").strip()
-    sync_status = str(stored.get("airtable_sync_status") or "").strip().casefold()
-    sync_error = str(stored.get("last_sync_error") or "").strip()
-    return {"role": "airtable_integrity", "fingerprint": lead["fingerprint"], "lead_db_present": True, "airtable_record_id_present": bool(record_id), "sync_status": sync_status or "unknown", "sync_error_present": bool(sync_error), "airtable_verified": bool(record_id) and not sync_error}
+    sync_state = ctx.db.get_sync_state(lead["fingerprint"])
+    return {
+        "role": "airtable_integrity",
+        "fingerprint": lead["fingerprint"],
+        "lead_db_present": True,
+        "sync_status": "synced" if sync_state["synced"] else "pending",
+        "sync_attempts": sync_state["attempts"],
+        "sync_error_present": bool(sync_state["last_error"]),
+        "sync_error": sync_state["last_error"],
+        "airtable_verified": bool(sync_state["synced"] and not sync_state["last_error"]),
+        "verification_basis": "LeadDB durable synchronization state",
+    }
