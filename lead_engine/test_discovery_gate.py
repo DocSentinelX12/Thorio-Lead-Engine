@@ -26,7 +26,7 @@ def test_discovery_gate_qualifies_matching_company_without_destroying_other_rout
         need_at=_now(),
     )
 
-    gated = apply_discovery_gate(pipeline, result)
+    gated = apply_discovery_gate(pipeline, result, qualify=True)
     lead = gated["lead"]
 
     assert gated["qualification_status"] == "qualified"
@@ -47,7 +47,7 @@ def test_discovery_gate_does_not_mark_old_or_undated_discovery_as_not_qualified(
         job_title="Software Engineer",
     )
 
-    gated = apply_discovery_gate(pipeline, result)
+    gated = apply_discovery_gate(pipeline, result, qualify=True)
 
     assert gated["qualification_status"] == "unverified"
     assert gated["review_state"] == "review"
@@ -67,7 +67,7 @@ def test_discovery_gate_queues_paxus_research_when_base_qualification_passes():
         need_at=_now(),
     )
 
-    gated = apply_discovery_gate(pipeline, result)
+    gated = apply_discovery_gate(pipeline, result, qualify=True)
     lead = gated["lead"]
     paxus = lead["qualification_results"]["Paxus"]
 
