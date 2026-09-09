@@ -1,6 +1,7 @@
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
+from .agent_orchestrator import AgentOrchestrator
 from .checkpoint_runner import CheckpointRunner
 from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
@@ -9,16 +10,14 @@ from .sync_worker import sync_pending
 
 
 class LeadScheduler:
-    """Continuous execution layer for lead sources and retained Paxus research."""
+    """Continuous execution layer for lead sources, agents, and Paxus research."""
 
     _POLLING_STATE_KEY = "lead_scheduler_polling"
 
     def __init__(self, runner: LeadEngineRunner):
         self.runner = runner
-        self.checkpoint_runner = CheckpointRunner(
-            db=runner.pipeline.db,
-            runner=runner,
-        )
+        self.checkpoint_runner = CheckpointRunner(db=runner.pipeline.db, runner=runner)
+        self.agent_orchestrator = AgentOrchestrator(runner.pipeline.db)
         self._next_run_at: Dict[str, float] = {}
         self._persisted_next_run_at: Dict[str, float] = {}
         self._load_polling_state()
@@ -59,10 +58,7 @@ class LeadScheduler:
 
     def _save_polling_state(self) -> None:
         try:
-            self.runner.pipeline.db.set_state(
-                self._POLLING_STATE_KEY,
-                {"next_run_at": dict(self._persisted_next_run_at)},
-            )
+            self.runner.pipeline.db.set_state(self._POLLING_STATE_KEY, {"next_run_at": dict(self._persisted_next_run_at)})
         except Exception:
             return
 
@@ -126,9 +122,17 @@ class LeadScheduler:
         db = self.runner.pipeline.db
         sync_result = sync_pending(db)
 
-        # Paxus-qualified leads are retained until the additional referral
-        # gates are researched or verified. This runs every scheduler cycle,
-        # after discovery and synchronization, without fabricating evidence.
+        try:
+            agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=1)
+        except Exception as exc:
+            agent_result = {
+                "agent_count": 0,
+                "claimed_count": 0,
+                "completed_count": 0,
+                "failed_count": 1,
+                "error": str(exc),
+            }
+
         try:
             paxus_research = process_paxus_research_queue(db)
         except Exception as exc:
@@ -159,6 +163,7 @@ class LeadScheduler:
             "duplicate_count": duplicate_total,
             "processing_failed_count": processing_failed_total,
             "sync": sync_result,
+            "agents": agent_result,
             "paxus_research": paxus_research,
         }
 
@@ -169,21 +174,14 @@ class LeadScheduler:
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be greater than or equal to 1.")
         if not source_list:
-            return {
-                "cycles": 0, "results": [], "failed": [], "skipped": [],
-                "sync": [], "paxus_research": [], "source_count": 0,
-                "successful_source_count": 0, "result_count": 0,
-                "failed_count": 0, "skipped_count": 0,
-                "discovered_count": 0, "accepted_count": 0,
-                "duplicate_count": 0, "processing_failed_count": 0,
-                "status": "no_sources_configured",
-            }
+            return {"cycles": 0, "results": [], "failed": [], "skipped": [], "sync": [], "agents": [], "paxus_research": [], "source_count": 0, "successful_source_count": 0, "result_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0, "status": "no_sources_configured"}
 
         cycles = 0
         total_results = []
         total_failed = []
         total_skipped = []
         total_sync = []
+        total_agents = []
         total_paxus_research = []
         total_discovered = total_accepted = total_duplicates = total_processing_failed = 0
 
@@ -193,6 +191,7 @@ class LeadScheduler:
             total_failed.extend(result["failed"])
             total_skipped.extend(result.get("skipped", []))
             total_sync.append(result["sync"])
+            total_agents.append(result["agents"])
             total_paxus_research.append(result["paxus_research"])
             total_discovered += result.get("discovered_count", 0)
             total_accepted += result.get("accepted_count", 0)
@@ -204,24 +203,7 @@ class LeadScheduler:
             if interval_seconds:
                 time.sleep(interval_seconds)
 
-        return {
-            "cycles": cycles,
-            "results": total_results,
-            "failed": total_failed,
-            "skipped": total_skipped,
-            "sync": total_sync,
-            "paxus_research": total_paxus_research,
-            "source_count": len(source_list),
-            "successful_source_count": len(total_results),
-            "result_count": len(total_results),
-            "failed_count": len(total_failed),
-            "skipped_count": len(total_skipped),
-            "discovered_count": total_discovered,
-            "accepted_count": total_accepted,
-            "duplicate_count": total_duplicates,
-            "processing_failed_count": total_processing_failed,
-            "status": "completed",
-        }
+        return {"cycles": cycles, "results": total_results, "failed": total_failed, "skipped": total_skipped, "sync": total_sync, "agents": total_agents, "paxus_research": total_paxus_research, "source_count": len(source_list), "successful_source_count": len(total_results), "result_count": len(total_results), "failed_count": len(total_failed), "skipped_count": len(total_skipped), "discovered_count": total_discovered, "accepted_count": total_accepted, "duplicate_count": total_duplicates, "processing_failed_count": total_processing_failed, "status": "completed"}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 10) -> Dict[str, Any]:
         if max_cycles < 1:
