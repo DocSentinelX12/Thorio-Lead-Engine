@@ -19,9 +19,9 @@ jobs:
     timeout-minutes: 9
     strategy:
       fail-fast: false
-      max-parallel: 10
+      max-parallel: 20
       matrix:
-        worker: [01, 02, 03, 04, 05, 06, 07, 08, 09, 10]
+        worker: [01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
     env:
       THORIO_FREE_ONLY: "1"
