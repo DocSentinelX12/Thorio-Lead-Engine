@@ -9,6 +9,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
+from .advanced_agent_logic import advanced_handler_registry
+from .agent_registry import ALL_AGENT_ROLES
 from .compute_pool import local_worker_identity
 from .lead_pipeline import process_leads
 
@@ -26,7 +28,7 @@ class ComputeWorkerClient:
 
     def __post_init__(self) -> None:
         self.coordinator_url = self.coordinator_url.rstrip("/")
-        if not self.coordinator_url.startswith("http://") and not self.coordinator_url.startswith("https://"):
+        if not self.coordinator_url.startswith(("http://", "https://")):
             raise ValueError("coordinator_url must use HTTP or HTTPS")
         if not self.auth_token:
             raise ValueError("auth_token is required")
@@ -37,12 +39,7 @@ class ComputeWorkerClient:
 
     def request(self, path: str, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         body = None if payload is None else json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            self.coordinator_url + path,
-            data=body,
-            method="GET" if body is None else "POST",
-            headers={"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"},
-        )
+        request = urllib.request.Request(self.coordinator_url + path, data=body, method="GET" if body is None else "POST", headers={"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -53,13 +50,14 @@ class ComputeWorkerClient:
 
     def register(self) -> Dict[str, Any]:
         identity = local_worker_identity(self.worker_id)
+        advanced = list(advanced_handler_registry())
         return self.request("/workers/register", {
             "worker_id": identity.worker_id,
             "hostname": identity.hostname,
             "architecture": identity.architecture,
             "cpu_count": identity.cpu_count,
             "memory_mb": identity.memory_mb,
-            "capabilities": list(identity.capabilities) + ["lead_prepare"],
+            "capabilities": list(identity.capabilities) + ["lead_prepare", "advanced_agent_task"] + advanced,
         })
 
     def heartbeat(self, current_load: int = 0) -> Dict[str, Any]:
@@ -87,6 +85,18 @@ def execute_compute_task(payload: Mapping[str, Any]) -> Dict[str, Any]:
         minimum_score = payload.get("minimum_score", 0)
         result = process_leads(leads, minimum_score=minimum_score)
         return {"kind": kind, "leads": result, "count": len(result)}
+    if kind == "agent_task":
+        agent = str(payload.get("agent") or "").strip()
+        if not agent:
+            raise ComputeWorkerError("agent_task requires agent")
+        handler = advanced_handler_registry().get(agent)
+        if handler is None:
+            raise ComputeWorkerError(f"agent_task is not supported for stateless distributed agent: {agent}")
+        task_payload = payload.get("payload", {})
+        if not isinstance(task_payload, Mapping):
+            raise ComputeWorkerError("agent_task payload must be an object")
+        result = handler(agent, task_payload, None)
+        return {"kind": kind, "agent": agent, "result": result}
     raise ComputeWorkerError(f"unsupported compute task kind: {kind or '<missing>'}")
 
 
