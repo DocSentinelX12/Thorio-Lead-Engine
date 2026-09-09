@@ -73,6 +73,54 @@ def test_coordinator_register_claim_complete_round_trip(tmp_path):
         _stop_server(server, thread)
 
 
+def test_remote_enqueue_claim_complete_round_trip(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    server, thread = _start_server(coordinator)
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        _register(base_url)
+        status, queued = _request(base_url, "/work/enqueue", "POST", {
+            "task_id": "remote-task-1",
+            "payload": {"kind": "agent_task", "role": "social_intelligence", "lead_id": "lead-1"},
+        })
+        assert status == 201
+        assert queued["task_id"] == "remote-task-1"
+
+        status, claimed = _request(base_url, "/work/claim", "POST", {"worker_id": "worker-1"})
+        assert status == 200
+        assert claimed["task_id"] == "remote-task-1"
+        assert claimed["payload"]["role"] == "social_intelligence"
+
+        status, completed = _request(base_url, "/work/complete", "POST", {
+            "worker_id": "worker-1",
+            "task_id": "remote-task-1",
+            "lease_token": claimed["lease_token"],
+            "result": {"status": "processed", "lead_id": "lead-1"},
+        })
+        assert status == 200
+        assert completed["completed"] is True
+        assert coordinator.task("remote-task-1")["result"]["lead_id"] == "lead-1"
+    finally:
+        _stop_server(server, thread)
+
+
+def test_remote_enqueue_requires_object_payload(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token")
+    server, thread = _start_server(coordinator)
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        try:
+            _request(base_url, "/work/enqueue", "POST", {"payload": []})
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+            body = json.loads(error.read().decode("utf-8"))
+            assert "payload must be an object" in body["error"]
+        else:
+            raise AssertionError("invalid coordinator task payload was accepted")
+    finally:
+        _stop_server(server, thread)
+
+
 def test_expired_lease_is_requeued_and_claimable(tmp_path):
     coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
     coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity("worker-1", "host", "x86_64", 2, 4096))
