@@ -26,6 +26,7 @@ def build_parser():
     scheduled_parser = subparsers.add_parser("run-scheduled", help="Run configured sources continuously for a bounded execution window.")
     scheduled_parser.add_argument("--interval", type=float, default=DEFAULT_SCHEDULE_INTERVAL, help="Seconds between source cycles.")
     scheduled_parser.add_argument("--cycles", type=int, default=DEFAULT_SCHEDULE_CYCLES, help="Number of source cycles to complete.")
+    scheduled_parser.add_argument("--forever", action="store_true", help="Continue until the process is externally stopped.")
     import_parser = subparsers.add_parser("import-json", help="Import leads from a JSON file.")
     import_parser.add_argument("path", help="Path to the JSON lead file.")
     run_parser = subparsers.add_parser("run-json", help="Run a JSON lead source through the complete pipeline.")
@@ -59,13 +60,15 @@ def _configured_runtime_sources():
     return sources
 
 
-def _run_scheduled_with_lock(application, sources, interval_seconds, max_cycles):
+def _run_scheduled_with_lock(application, sources, interval_seconds, max_cycles, forever=False):
     lock_path = application.config.database_dir
     lock = RuntimeLock(str(__import__("pathlib").Path(lock_path) / "engine.lock"))
     if not lock.acquire():
         raise RuntimeError("Lead Engine is already running.")
     try:
         scheduler = LeadScheduler(application.service.runner)
+        if forever:
+            return scheduler.run_forever(sources=sources, interval_seconds=interval_seconds, max_cycles=None)
         return scheduler.run_bounded(sources=sources, interval_seconds=interval_seconds, max_cycles=max_cycles)
     finally:
         lock.release()
@@ -90,7 +93,7 @@ def main(argv=None):
         if sync_result is not None:
             result["sync"] = sync_result
     elif args.command == "run-scheduled":
-        result = _run_scheduled_with_lock(application, _configured_runtime_sources(), args.interval, args.cycles)
+        result = _run_scheduled_with_lock(application, _configured_runtime_sources(), args.interval, args.cycles, args.forever)
     elif args.command in {"import-json", "run-json"}:
         result = application.run_sources([JsonLeadSource(args.path)])
         sync_result = _sync_pending_if_enabled(application)
