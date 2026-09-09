@@ -21,7 +21,7 @@ def test_every_specialist_has_an_executable_handler():
     specializations = specialization_registry()
     handlers = handler_registry()
     assert set(specializations) == set(handlers)
-    assert len(handlers) == 20
+    assert len(handlers) == 34
 
 
 def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
@@ -40,15 +40,33 @@ def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
     assert task["agent"] == "x_signal"
 
 
+def test_advanced_discovery_specialist_extracts_evidence_without_qualifying(tmp_path):
+    db = _db(tmp_path)
+    orchestrator = AgentOrchestrator(db)
+    task = orchestrator.dispatch_discovery("engineering_demand_discovery", {"lead": {"fingerprint": "d1", "company": "Acme"}, "evidence_events": [{"source": "linkedin", "signal": "Acme is hiring a backend engineer", "observed_at": _recent()}]})
+    result = run_worker_once(db, "engineering_demand_discovery", worker_id="engineering-worker")
+    assert result["completed_count"] == 1
+    finding = result["results"][0]
+    assert finding["matched_event_count"] == 1
+    assert finding["requires_verification"] is True
+    assert task["agent"] == "engineering_demand_discovery"
+
+
+def test_social_research_requires_no_fabricated_identity(tmp_path):
+    db = _db(tmp_path)
+    orchestrator = AgentOrchestrator(db)
+    orchestrator.dispatch_social_research("social_decision_maker_research", {"lead": {"fingerprint": "s1"}, "evidence_events": [{"source": "linkedin", "signal": "Taylor is CTO at Acme", "observed_at": _recent()}]})
+    result = run_worker_once(db, "social_decision_maker_research", worker_id="social-worker")
+    assert result["completed_count"] == 1
+    output = result["results"][0]
+    assert output["matched_event_count"] == 1
+    assert output["fabricated_fields"] == []
+    assert output["verification_required"] is True
+
+
 def test_qualification_worker_applies_independent_company_routes(tmp_path):
     db = _db(tmp_path)
-    lead = {
-        "fingerprint": "qualification-worker-test",
-        "company": "Acme",
-        "signal": "Acme is hiring a remote software engineer",
-        "job_title": "Software Engineer",
-        "need_at": _recent(),
-    }
+    lead = {"fingerprint": "qualification-worker-test", "company": "Acme", "signal": "Acme is hiring a remote software engineer", "job_title": "Software Engineer", "need_at": _recent()}
     db.insert_if_new(lead)
     task = enqueue(db, "qualification_a", {"lead": lead})
     result = run_worker_once(db, "qualification_a", worker_id="qualification-a")
@@ -74,6 +92,8 @@ def test_orchestrator_rejects_cross_workforce_dispatch(tmp_path):
         orchestrator.dispatch_processing("x_signal", {"record": {}})
     with pytest.raises(ValueError):
         orchestrator.dispatch_discovery("qualification_a", {})
+    with pytest.raises(ValueError):
+        orchestrator.dispatch_social_research("qualification_a", {})
 
 
 def test_unknown_worker_role_is_rejected(tmp_path):
