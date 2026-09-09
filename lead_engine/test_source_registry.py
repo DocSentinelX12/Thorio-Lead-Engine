@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from .source_registry import (
+    _load_airtable_source_catalog,
     _load_free_source_catalog,
     available_free_sources,
     configured_sources,
@@ -166,3 +167,33 @@ def test_free_source_catalog_nomado24_uses_description_field():
         nomado24.description_field
         == "description"
     )
+
+
+def test_active_airtable_source_without_url_fails_loudly():
+    records = {
+        "records": [
+            {
+                "id": "rec-invalid",
+                "fields": {
+                    "Active": True,
+                    "Source / Search": "LinkedIn hiring",
+                    "Source URL": "",
+                    "Collector Type": "json",
+                },
+            }
+        ]
+    }
+    with patch.dict(
+        "os.environ",
+        {
+            "AIRTABLE_BASE_ID": "app-test",
+            "AIRTABLE_API_KEY": "pat-test",
+        },
+        clear=True,
+    ), patch("lead_engine.source_registry._request", return_value=records):
+        try:
+            _load_airtable_source_catalog()
+        except RuntimeError as exc:
+            assert "missing 'Source URL'" in str(exc)
+        else:
+            raise AssertionError("active Airtable source without URL was silently ignored")
