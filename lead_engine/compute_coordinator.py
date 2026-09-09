@@ -58,6 +58,8 @@ class ComputeCoordinator:
         if not isinstance(payload, dict):
             raise ValueError("task payload must be an object")
         resolved_id = task_id or str(uuid.uuid4())
+        if not isinstance(resolved_id, str) or not resolved_id.strip():
+            raise ValueError("task_id must be a non-empty string")
         now = time.time()
         with self._connect() as connection:
             connection.execute(
@@ -201,6 +203,15 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, self.server.coordinator.register_worker(identity))
             elif self.path == "/workers/heartbeat":
                 self._send(200, {"ok": self.server.coordinator.heartbeat(str(body["worker_id"]), int(body.get("current_load", 0)))})
+            elif self.path == "/work/enqueue":
+                payload = body.get("payload")
+                if not isinstance(payload, dict):
+                    raise ValueError("payload must be an object")
+                task_id = body.get("task_id")
+                if task_id is not None and not isinstance(task_id, str):
+                    raise ValueError("task_id must be a string")
+                created_id = self.server.coordinator.enqueue(payload, task_id=task_id)
+                self._send(201, {"task_id": created_id})
             elif self.path == "/work/claim":
                 item = self.server.coordinator.claim(str(body["worker_id"]))
                 self._send(200, item or {"task": None})
@@ -214,6 +225,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(404, {"error": "not found"})
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             self._send(400, {"error": str(error)})
+        except sqlite3.IntegrityError as error:
+            self._send(409, {"error": str(error)})
         except Exception as error:
             self._send(500, {"error": str(error)})
 
