@@ -7,6 +7,7 @@ from .agent_registry import ALL_AGENT_ROLES
 from .checkpoint_runner import CheckpointRunner
 from .compute_bridge import bridge_once
 from .compute_worker import ComputeWorkerClient
+from .database import LeadDB
 from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
 from .sources import LeadSource
@@ -57,7 +58,10 @@ class LeadScheduler:
         return interval if interval > 0 else 0.0
 
     def _load_polling_state(self) -> None:
-        state = self.runner.pipeline.db.get_state(self._POLLING_STATE_KEY)
+        db = getattr(getattr(self.runner, "pipeline", None), "db", None)
+        if not isinstance(db, LeadDB):
+            return
+        state = db.get_state(self._POLLING_STATE_KEY)
         if state is None:
             return
         if not isinstance(state, dict):
@@ -72,7 +76,10 @@ class LeadScheduler:
                 raise RuntimeError(f"invalid persisted scheduler deadline for {source_key!r}") from exc
 
     def _save_polling_state(self) -> None:
-        self.runner.pipeline.db.set_state(self._POLLING_STATE_KEY, {"next_run_at": dict(self._persisted_next_run_at)})
+        db = getattr(getattr(self.runner, "pipeline", None), "db", None)
+        if not isinstance(db, LeadDB):
+            return
+        db.set_state(self._POLLING_STATE_KEY, {"next_run_at": dict(self._persisted_next_run_at)})
 
     def _is_due(self, source: LeadSource, now: float) -> bool:
         interval = self._poll_interval(source)
@@ -113,7 +120,6 @@ class LeadScheduler:
         source_list = list(sources)
         source_count = len(source_list)
         now = time.monotonic()
-
         for source in source_list:
             source_name = source.name
             if not self._is_due(source, now):
@@ -132,15 +138,12 @@ class LeadScheduler:
             except Exception as exc:
                 failed.append({"source": source_name, "error": str(exc)})
                 self._schedule_next_run(source, started_at, started_wall)
-
         db = self.runner.pipeline.db
         sync_result = sync_pending(db)
-
         remote_before = self._bridge_remote()
         agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
         remote_after = self._bridge_remote()
         paxus_research = process_paxus_research_queue(db)
-
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
