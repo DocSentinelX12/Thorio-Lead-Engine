@@ -4,7 +4,6 @@ import urllib.error
 import urllib.request
 
 from lead_engine.compute_coordinator import ComputeCoordinator, ComputeCoordinatorServer
-from lead_engine.compute_pool import WorkerIdentity
 
 
 def _request(base_url, path, method="GET", body=None, token="test-token"):
@@ -19,29 +18,47 @@ def _request(base_url, path, method="GET", body=None, token="test-token"):
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
-def test_coordinator_register_claim_complete_round_trip(tmp_path):
-    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+def _start_server(coordinator):
     server = ComputeCoordinatorServer(coordinator, "127.0.0.1", 0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    return server, thread
+
+
+def _stop_server(server, thread):
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=2)
+
+
+def _register(base_url, worker_id="worker-1"):
+    status, registered = _request(base_url, "/workers/register", "POST", {
+        "worker_id": worker_id,
+        "hostname": "host",
+        "architecture": "x86_64",
+        "cpu_count": 2,
+        "memory_mb": 4096,
+        "capabilities": ["lead-processing"],
+    })
+    assert status == 200
+    assert registered["worker_id"] == worker_id
+
+
+def test_coordinator_register_claim_complete_round_trip(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    server, thread = _start_server(coordinator)
     base_url = f"http://127.0.0.1:{server.server_port}"
     try:
-        status, registered = _request(base_url, "/workers/register", "POST", {
-            "worker_id": "worker-1",
-            "hostname": "host",
-            "architecture": "x86_64",
-            "cpu_count": 2,
-            "memory_mb": 4096,
-            "capabilities": ["lead-processing"],
-        })
-        assert status == 200
-        assert registered["worker_id"] == "worker-1"
-
+        _register(base_url)
         task_id = coordinator.enqueue({"fingerprint": "abc", "payload": {"company": "Example"}})
         status, claimed = _request(base_url, "/work/claim", "POST", {"worker_id": "worker-1"})
         assert status == 200
         assert claimed["task_id"] == task_id
         assert claimed["payload"]["fingerprint"] == "abc"
+
+        status, second_claim = _request(base_url, "/work/claim", "POST", {"worker_id": "worker-1"})
+        assert status == 200
+        assert second_claim == {"task": None}
 
         status, completed = _request(base_url, "/work/complete", "POST", {
             "worker_id": "worker-1",
@@ -53,16 +70,26 @@ def test_coordinator_register_claim_complete_round_trip(tmp_path):
         assert completed["completed"] is True
         assert coordinator.task(task_id)["status"] == "completed"
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        _stop_server(server, thread)
+
+
+def test_expired_lease_is_requeued_and_claimable(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity("worker-1", "host", "x86_64", 2, 4096))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("worker-1")
+    assert claimed["task_id"] == task_id
+    with coordinator._connect() as connection:
+        connection.execute("UPDATE compute_tasks SET lease_until=? WHERE task_id=?", (0, task_id))
+        connection.commit()
+    assert coordinator.recover_expired_tasks() == 1
+    assert coordinator.task(task_id)["status"] == "queued"
+    assert coordinator.claim("worker-1")["task_id"] == task_id
 
 
 def test_coordinator_rejects_invalid_auth(tmp_path):
     coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token")
-    server = ComputeCoordinatorServer(coordinator, "127.0.0.1", 0)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    server, thread = _start_server(coordinator)
     request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/health")
     try:
         try:
@@ -72,6 +99,4 @@ def test_coordinator_rejects_invalid_auth(tmp_path):
         else:
             raise AssertionError("unauthenticated coordinator request was accepted")
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        _stop_server(server, thread)
