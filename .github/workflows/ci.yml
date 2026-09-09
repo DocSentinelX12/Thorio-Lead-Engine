@@ -20,7 +20,7 @@ jobs:
   test:
     name: Fast Test Suite
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -40,4 +40,4 @@ jobs:
 
       - name: Run full test suite
         run: |
-          python -m pytest -vv -ra --tb=short --timeout=900 --durations=25
+          python -m pytest -vv -ra --tb=short --timeout=600 --durations=25
