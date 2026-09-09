@@ -6,12 +6,18 @@ from .qualification import apply_company_qualification
 from .research_queue import queue_paxus_research
 
 
-def apply_discovery_gate(pipeline, result: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply qualification and Paxus research routing to a discovery result.
+def apply_discovery_gate(
+    pipeline,
+    result: Dict[str, Any],
+    *,
+    qualify: bool = True,
+) -> Dict[str, Any]:
+    """Apply the legacy discovery boundary with explicit qualification control.
 
-    The pipeline already performs the initial Airtable synchronization. This
-    gate only applies additive qualification state and queues Paxus research,
-    preventing a single discovery from counting the same sync failure twice.
+    The public gate keeps its historical qualifying behavior for callers that
+    use it directly. Discovery workers pass ``qualify=False`` so discovery
+    remains evidence collection only and Qualification A is the first agent
+    allowed to make a qualification decision.
     """
     if not isinstance(result, dict):
         raise ValueError("result must be a dictionary")
@@ -23,6 +29,13 @@ def apply_discovery_gate(pipeline, result: Dict[str, Any]) -> Dict[str, Any]:
     lead = pipeline.db.get(fingerprint)
     if lead is None:
         return result
+
+    if not qualify:
+        updated = dict(result)
+        updated["lead"] = lead
+        updated["qualification_performed"] = False
+        updated["handoff"] = "qualification_a"
+        return updated
 
     evaluated = apply_company_qualification(dict(lead))
     stored = pipeline.db.update_payload(fingerprint, evaluated)
