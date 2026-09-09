@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping
 from .advanced_agent_logic import advanced_handler_registry
 from .agent_queue import claim, complete, enqueue, fail, heartbeat
 from .agent_specializations import AgentSpecialization, get_specialization
+from .agent_stateful_handlers import airtable_integrity, identity_resolution, routing, verification
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
 
@@ -209,7 +210,22 @@ def _audit(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dic
 
 _DISCOVERY_AGENTS = tuple(_DISCOVERY_SOURCE_ALIASES) + ("web_job_signal",)
 _DISCOVERY = {name: _make_discovery_handler(name) for name in _DISCOVERY_AGENTS}
-_PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {"qualification_a": _qualification_a, "qualification_b": _qualification_b, "company_research": _company_research, "paxus_research": _paxus_research, "duplicate_resolution": _duplicate_resolution, "priority": _priority, "outreach_closer": _outreach_closer, "follow_up": _follow_up, "monitoring": _monitoring, "audit": _audit}
+_PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {
+    "qualification_a": _qualification_a,
+    "qualification_b": _qualification_b,
+    "company_research": _company_research,
+    "paxus_research": _paxus_research,
+    "identity_resolution": identity_resolution,
+    "duplicate_resolution": _duplicate_resolution,
+    "verification": verification,
+    "priority": _priority,
+    "routing": routing,
+    "airtable_integrity": airtable_integrity,
+    "outreach_closer": _outreach_closer,
+    "follow_up": _follow_up,
+    "monitoring": _monitoring,
+    "audit": _audit,
+}
 
 
 def handler_registry() -> Dict[str, Callable[..., Dict[str, Any]]]:
