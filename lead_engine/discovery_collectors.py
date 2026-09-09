@@ -5,11 +5,12 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from urllib.request import Request
 
 from .collector import normalize_lead_input
 from .http_retry import HTTPRetryError, fetch_url
+from .sources import LeadSource
 
 
 DISCOVERY_LANES = (
@@ -60,7 +61,7 @@ class DiscoverySourceConfig:
             raise DiscoveryConfigurationError(f"Discovery endpoint must be HTTP(S): {self.endpoint!r}")
         if self.timeout_seconds <= 0:
             raise DiscoveryConfigurationError("Discovery timeout must be positive")
-        if self.token_header.strip() == "":
+        if not self.token_header.strip():
             raise DiscoveryConfigurationError("Token header cannot be empty")
 
 
@@ -107,16 +108,16 @@ def _first_value(record: Mapping[str, Any], fields: Iterable[str]) -> str:
 def _records(payload: Any, path: Optional[str]) -> List[Dict[str, Any]]:
     value = _path(payload, path)
     if isinstance(value, list):
-        return [item for item in value if isinstance(item, Mapping)]
+        return [dict(item) for item in value if isinstance(item, Mapping)]
     if path:
         raise DiscoveryCollectionError(f"Configured records_path did not resolve to a list: {path}")
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, Mapping)]
+        return [dict(item) for item in payload if isinstance(item, Mapping)]
     if isinstance(payload, Mapping):
         for key in ("data", "items", "results", "posts", "comments", "messages", "jobs"):
             candidate = payload.get(key)
             if isinstance(candidate, list):
-                return [item for item in candidate if isinstance(item, Mapping)]
+                return [dict(item) for item in candidate if isinstance(item, Mapping)]
         raise DiscoveryCollectionError("Discovery response contains no supported record list")
     raise DiscoveryCollectionError("Discovery response must be JSON object or array")
 
@@ -124,7 +125,7 @@ def _records(payload: Any, path: Optional[str]) -> List[Dict[str, Any]]:
 def _checkpoint(payload: Any) -> Optional[str]:
     if not isinstance(payload, Mapping):
         return None
-    for key in ("next_cursor", "nextCursor", "cursor", "next_page_token", "nextPageToken", "next"):
+    for key in ("next_cursor", "nextCursor", "next_page_token", "nextPageToken", "next"):
         value = payload.get(key)
         if isinstance(value, Mapping):
             value = value.get("cursor") or value.get("token") or value.get("url")
@@ -141,11 +142,8 @@ def _record_to_lead(item: Mapping[str, Any], config: DiscoverySourceConfig) -> O
     person = _first_value(item, config.person_fields)
     source_id = _first_value(item, (config.id_field, "uuid", "slug")) or url
 
-    if not url or not text or not source_id:
+    if not url or not text or not source_id or not company:
         return None
-
-    if not company:
-        company = "Unknown company"
 
     signal = text if not person else f"{person}: {text}"
     evidence = f"Source: {config.source}\nURL: {url}\nSignal: {signal}"
@@ -178,10 +176,11 @@ class AuthorizedJsonDiscoveryCollector:
 
     def collect(self, checkpoint: Optional[str] = None) -> DiscoveryCollectionResult:
         endpoint = self.config.endpoint
-        if checkpoint and "?" in endpoint:
-            endpoint = f"{endpoint}&cursor={checkpoint}"
-        elif checkpoint:
-            endpoint = f"{endpoint}?cursor={checkpoint}"
+        if checkpoint:
+            parts = urlsplit(endpoint)
+            query = parse_qsl(parts.query, keep_blank_values=True)
+            query.append(("cursor", checkpoint))
+            endpoint = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
         headers = {
             "User-Agent": "Thorio-Lead-Engine/1.0",
@@ -216,14 +215,22 @@ class AuthorizedJsonDiscoveryCollector:
         )
 
 
-def load_authorized_discovery_configs(*, required: bool = False) -> tuple[DiscoverySourceConfig, ...]:
-    """Load configured discovery lanes from environment without inventing endpoints.
+class AuthorizedDiscoveryLeadSource(LeadSource):
+    """LeadSource wrapper used by the existing scheduler/checkpoint pipeline."""
 
-    Each active lane uses THORIO_DISCOVERY_<LANE>_URL. A token may be supplied
-    directly through THORIO_DISCOVERY_<LANE>_TOKEN or indirectly through
-    THORIO_DISCOVERY_<LANE>_TOKEN_ENV. Missing configuration is reported rather
-    than silently skipped when required=True.
-    """
+    def __init__(self, config: DiscoverySourceConfig):
+        self.definition = config
+        self.name = config.source
+        self._collector = AuthorizedJsonDiscoveryCollector(config)
+        self.last_checkpoint: Optional[str] = None
+
+    def collect(self, checkpoint: Optional[str] = None) -> Iterable[Dict[str, Any]]:
+        result = self._collector.collect(checkpoint=checkpoint)
+        self.last_checkpoint = result.checkpoint
+        return result.records
+
+
+def load_authorized_discovery_configs(*, required: bool = False) -> tuple[DiscoverySourceConfig, ...]:
     configs: List[DiscoverySourceConfig] = []
     missing: List[str] = []
     for lane in DISCOVERY_LANES:
@@ -276,6 +283,10 @@ def load_authorized_discovery_configs(*, required: bool = False) -> tuple[Discov
     if missing:
         raise DiscoveryConfigurationError("Missing required discovery source configuration: " + "; ".join(missing))
     return tuple(configs)
+
+
+def configured_discovery_sources(*, required: bool = False) -> tuple[AuthorizedDiscoveryLeadSource, ...]:
+    return tuple(AuthorizedDiscoveryLeadSource(config) for config in load_authorized_discovery_configs(required=required))
 
 
 def collect_configured_discovery(*, required: bool = False, checkpoints: Optional[Mapping[str, str]] = None) -> List[DiscoveryCollectionResult]:
