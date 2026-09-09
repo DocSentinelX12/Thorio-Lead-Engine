@@ -1,17 +1,10 @@
-"""Bridge durable local specialist work into the authenticated free coordinator.
-
-Only stateless discovery and social-research specialists are eligible for remote
-execution. Stateful processing remains local because it requires LeadDB and the
-engine's transactional side effects. Completed remote findings are persisted
-before the local task is marked complete, so a bridge interruption cannot turn a
-successful remote computation into an invisible local loss.
-"""
+"""Bridge durable local specialist work into the authenticated free coordinator."""
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any, Dict, Mapping
 
 from .advanced_agent_logic import advanced_handler_registry
-from .agent_queue import COMPLETE, QUEUED, RUNNING, claim_task, complete, pending, retry
+from .agent_queue import COMPLETE, QUEUED, RUNNING, claim_task, complete, enqueue, pending, retry
 from .compute_worker import ComputeWorkerClient, ComputeWorkerError
 
 REMOTE_SAFE_AGENTS = frozenset(advanced_handler_registry())
@@ -41,15 +34,7 @@ def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> No
     stored = db.update_payload(fingerprint, updates)
     if stored is None:
         raise ComputeWorkerError(f"failed to persist remote {agent} result: {fingerprint}")
-
-    from .agent_queue import enqueue
-    enqueue(
-        db,
-        "qualification_a",
-        {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent},
-        priority=2,
-        dedupe_key=f"qualification_a:{fingerprint}",
-    )
+    enqueue(db, "qualification_a", {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent}, priority=2, dedupe_key=f"qualification_a:{fingerprint}")
 
 
 def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20) -> Dict[str, Any]:
@@ -69,10 +54,7 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
 def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 50) -> Dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
-    local_tasks = [
-        task for task in pending(db)
-        if task.get("status") == RUNNING and str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)
-    ]
+    local_tasks = [task for task in pending(db) if task.get("status") == RUNNING and str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)]
     completed = []
     retried = []
     for task in local_tasks[:limit]:
@@ -83,12 +65,12 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
             if not isinstance(result, Mapping):
                 raise ComputeWorkerError(f"remote task {task['task_id']} completed without a result")
             agent = str(remote.get("payload", {}).get("agent") or task.get("agent") or "")
-            _persist_remote_result(db, agent, result.get("result", result) if isinstance(result.get("result"), Mapping) else result)
+            inner = result.get("result") if isinstance(result.get("result"), Mapping) else result
+            _persist_remote_result(db, agent, inner)
             complete(db, task["task_id"], worker_id=task["worker_id"], result=dict(result))
             completed.append(task["task_id"])
         elif status == "queued":
-            error = str(remote.get("error") or "remote task returned to queue")
-            retry(db, task["task_id"], worker_id=task["worker_id"], error=error)
+            retry(db, task["task_id"], worker_id=task["worker_id"], error=str(remote.get("error") or "remote task returned to queue"))
             retried.append(task["task_id"])
         elif status == "leased":
             continue
@@ -100,4 +82,4 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
 def bridge_once(db: Any, client: ComputeWorkerClient, *, publish_limit: int = 20, reconcile_limit: int = 50) -> Dict[str, Any]:
     reconciled = reconcile_remote_work(db, client, limit=reconcile_limit)
     published = publish_remote_work(db, client, limit=publish_limit)
-    return {"reconciled": reconciled, "published": published}
+    return {"status": "ok", "completed_count": reconciled["completed_count"], "retried_count": reconciled["retried_count"], "published_count": published["published_count"], "reconciled": reconciled, "published": published}
