@@ -11,7 +11,7 @@ def test_paxus_base_match_waits_for_true_referral():
     assert len(routed["Shiftr"]) == 1
     assert len(routed["Thorio"]) == 1
     assert routed["Paxus"] == []
-    assert routed["Review"][0]["fingerprint"] == "paxus-gate"
+    assert routed["Review"] == []
     state = route_state(lead)
     assert state["destinations"]["Paxus"]["state"] == "paxus_research_required"
     assert state["destinations"]["Paxus"]["final"] is False
