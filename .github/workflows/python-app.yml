@@ -12,8 +12,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: thorio-lead-engine-${{ github.ref }}
-  cancel-in-progress: false
+  # Keep scheduled production cycles from blocking push/PR test runs.
+  group: thorio-lead-engine-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -23,6 +24,8 @@ jobs:
   test:
     name: Test Lead Engine
     runs-on: ubuntu-latest
+    # Whole-suite backstop. Individual tests are capped below at 15 minutes.
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
@@ -39,11 +42,11 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           fi
-          python -m pip install pytest
+          python -m pip install pytest pytest-timeout
 
       - name: Run pytest
         run: |
-          python -m pytest
+          python -m pytest -vv -ra --tb=short --timeout=900 --durations=25
 
   engine:
     name: Run Lead Engine
