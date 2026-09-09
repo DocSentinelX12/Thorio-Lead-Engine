@@ -1,9 +1,12 @@
+import os
 import time
 from typing import Any, Dict, Iterable, List, Optional
 
 from .agent_orchestrator import AgentOrchestrator
 from .agent_registry import ALL_AGENT_ROLES
 from .checkpoint_runner import CheckpointRunner
+from .compute_bridge import bridge_once
+from .compute_worker import ComputeWorkerClient
 from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
 from .sources import LeadSource
@@ -11,7 +14,7 @@ from .sync_worker import sync_pending
 
 
 class LeadScheduler:
-    """Continuous execution layer for lead sources, agents, and Paxus research."""
+    """Continuous execution layer for lead sources, agents, Paxus research, and free remote specialists."""
 
     _POLLING_STATE_KEY = "lead_scheduler_polling"
 
@@ -21,7 +24,19 @@ class LeadScheduler:
         self.agent_orchestrator = AgentOrchestrator(runner.pipeline.db)
         self._next_run_at: Dict[str, float] = {}
         self._persisted_next_run_at: Dict[str, float] = {}
+        self._remote_compute = self._remote_client_from_environment()
         self._load_polling_state()
+
+    @staticmethod
+    def _remote_client_from_environment() -> Optional[ComputeWorkerClient]:
+        url = os.environ.get("THORIO_COMPUTE_COORDINATOR_URL", "").strip()
+        token = os.environ.get("THORIO_COMPUTE_AUTH_TOKEN", "").strip()
+        if not url and not token:
+            return None
+        if not url or not token:
+            raise RuntimeError("THORIO_COMPUTE_COORDINATOR_URL and THORIO_COMPUTE_AUTH_TOKEN must be configured together")
+        worker_id = os.environ.get("THORIO_WORKER_ID", "scheduler-bridge").strip() or "scheduler-bridge"
+        return ComputeWorkerClient(url, token, worker_id, int(os.environ.get("THORIO_COMPUTE_HTTP_TIMEOUT", "20")))
 
     def _source_key(self, source: LeadSource) -> str:
         definition = getattr(source, "definition", None)
@@ -92,6 +107,11 @@ class LeadScheduler:
         """Use the registry's declared capacity instead of processing one task."""
         return max(role.max_concurrency for role in ALL_AGENT_ROLES)
 
+    def _bridge_remote(self, *, publish_limit: int = 20, reconcile_limit: int = 50) -> Dict[str, Any]:
+        if self._remote_compute is None:
+            return {"status": "disabled", "published_count": 0, "completed_count": 0, "retried_count": 0}
+        return bridge_once(self.runner.pipeline.db, self._remote_compute, publish_limit=publish_limit, reconcile_limit=reconcile_limit)
+
     def run(self, sources: Iterable[LeadSource]) -> Dict[str, Any]:
         results = []
         failed = []
@@ -128,6 +148,11 @@ class LeadScheduler:
         sync_result = sync_pending(db)
 
         try:
+            remote_before = self._bridge_remote()
+        except Exception as exc:
+            remote_before = {"status": "failed", "error": str(exc), "published_count": 0, "completed_count": 0, "retried_count": 0}
+
+        try:
             agent_result = self.agent_orchestrator.run_all_once(
                 limit_per_agent=self._agent_batch_limit()
             )
@@ -139,6 +164,11 @@ class LeadScheduler:
                 "failed_count": 1,
                 "error": str(exc),
             }
+
+        try:
+            remote_after = self._bridge_remote()
+        except Exception as exc:
+            remote_after = {"status": "failed", "error": str(exc), "published_count": 0, "completed_count": 0, "retried_count": 0}
 
         try:
             paxus_research = process_paxus_research_queue(db)
@@ -170,7 +200,9 @@ class LeadScheduler:
             "duplicate_count": duplicate_total,
             "processing_failed_count": processing_failed_total,
             "sync": sync_result,
+            "remote_compute_before": remote_before,
             "agents": agent_result,
+            "remote_compute_after": remote_after,
             "paxus_research": paxus_research,
         }
 
@@ -181,13 +213,14 @@ class LeadScheduler:
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be greater than or equal to 1.")
         if not source_list:
-            return {"cycles": 0, "results": [], "failed": [], "skipped": [], "sync": [], "agents": [], "paxus_research": [], "source_count": 0, "successful_source_count": 0, "result_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0, "status": "no_sources_configured"}
+            return {"cycles": 0, "results": [], "failed": [], "skipped": [], "sync": [], "remote_compute": [], "agents": [], "paxus_research": [], "source_count": 0, "successful_source_count": 0, "result_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0, "status": "no_sources_configured"}
 
         cycles = 0
         total_results = []
         total_failed = []
         total_skipped = []
         total_sync = []
+        total_remote_compute = []
         total_agents = []
         total_paxus_research = []
         total_discovered = total_accepted = total_duplicates = total_processing_failed = 0
@@ -198,6 +231,7 @@ class LeadScheduler:
             total_failed.extend(result["failed"])
             total_skipped.extend(result.get("skipped", []))
             total_sync.append(result["sync"])
+            total_remote_compute.append({"before": result.get("remote_compute_before"), "after": result.get("remote_compute_after")})
             total_agents.append(result["agents"])
             total_paxus_research.append(result["paxus_research"])
             total_discovered += result.get("discovered_count", 0)
@@ -210,7 +244,7 @@ class LeadScheduler:
             if interval_seconds:
                 time.sleep(interval_seconds)
 
-        return {"cycles": cycles, "results": total_results, "failed": total_failed, "skipped": total_skipped, "sync": total_sync, "agents": total_agents, "paxus_research": total_paxus_research, "source_count": len(source_list), "successful_source_count": len(total_results), "result_count": len(total_results), "failed_count": len(total_failed), "skipped_count": len(total_skipped), "discovered_count": total_discovered, "accepted_count": total_accepted, "duplicate_count": total_duplicates, "processing_failed_count": total_processing_failed, "status": "completed"}
+        return {"cycles": cycles, "results": total_results, "failed": total_failed, "skipped": total_skipped, "sync": total_sync, "remote_compute": total_remote_compute, "agents": total_agents, "paxus_research": total_paxus_research, "source_count": len(source_list), "successful_source_count": len(total_results), "result_count": len(total_results), "failed_count": len(total_failed), "skipped_count": len(total_skipped), "discovered_count": total_discovered, "accepted_count": total_accepted, "duplicate_count": total_duplicates, "processing_failed_count": total_processing_failed, "status": "completed"}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 10) -> Dict[str, Any]:
         if max_cycles < 1:
