@@ -28,6 +28,14 @@ def _save_queue(db, queue: Dict[str, Any]) -> None:
     db.set_state(STATE_KEY, {"items": queue})
 
 
+def _missing_items(
+    research_items: List[str],
+    verification_items: List[str],
+) -> List[str]:
+    """Return the legacy combined view while retaining separated categories."""
+    return list(dict.fromkeys([*research_items, *verification_items]))
+
+
 def queue_paxus_research(db, lead: Dict[str, Any]) -> Dict[str, Any]:
     """
     Retain a Paxus-qualified lead for research instead of rejecting it when
@@ -67,13 +75,14 @@ def queue_paxus_research(db, lead: Dict[str, Any]) -> Dict[str, Any]:
             "missing_items": [],
         }
 
-    missing_items: List[str] = list(referral.get("research_required", []))
+    missing_research: List[str] = list(referral.get("research_required", []))
     verification_items: List[str] = list(referral.get("verification_required", []))
     queue[fingerprint] = {
         "fingerprint": fingerprint,
         "status": RESEARCH_REQUIRED,
-        "missing_research": missing_items,
+        "missing_research": missing_research,
         "missing_verification": verification_items,
+        "missing_items": _missing_items(missing_research, verification_items),
         "failures": list(referral.get("failures", [])),
         "last_attempt_at": _now(),
         "attempts": int(queue.get(fingerprint, {}).get("attempts", 0)) + 1,
@@ -93,8 +102,9 @@ def queue_paxus_research(db, lead: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": RESEARCH_REQUIRED,
         "fingerprint": fingerprint,
-        "missing_research": missing_items,
+        "missing_research": missing_research,
         "missing_verification": verification_items,
+        "missing_items": queue[fingerprint]["missing_items"],
         "lead": updated or lead,
     }
 
@@ -153,6 +163,7 @@ def process_paxus_research_queue(db, limit: int = 50) -> Dict[str, Any]:
                 "status": COMPLETE if is_complete else RESEARCH_REQUIRED,
                 "missing_research": missing_research,
                 "missing_verification": missing_verification,
+                "missing_items": _missing_items(missing_research, missing_verification),
                 "failures": list(referral.get("failures", [])),
                 "last_attempt_at": _now(),
                 "attempts": attempts,
