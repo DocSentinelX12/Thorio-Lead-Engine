@@ -1,6 +1,16 @@
 from unittest.mock import Mock
 
-from .source_runner import SourceRunner
+from .source_runner import SourceRunner, _queue_priority
+
+
+def test_queue_priority_normalizes_numeric_and_named_values():
+    assert _queue_priority(3) == 3
+    assert _queue_priority("2") == 2
+    assert _queue_priority("High") == 2
+    assert _queue_priority("critical") == 3
+    assert _queue_priority("Medium") == 1
+    assert _queue_priority("unknown") == 0
+    assert _queue_priority(None) == 0
 
 
 def test_source_runner_processes_all_records_independently():
