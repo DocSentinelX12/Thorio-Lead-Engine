@@ -2,6 +2,7 @@ import time
 from typing import Any, Dict, Iterable, List, Optional
 
 from .agent_orchestrator import AgentOrchestrator
+from .agent_registry import ALL_AGENT_ROLES
 from .checkpoint_runner import CheckpointRunner
 from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
@@ -87,6 +88,10 @@ class LeadScheduler:
         self._persisted_next_run_at[key] = started_wall + interval
         self._save_polling_state()
 
+    def _agent_batch_limit(self) -> int:
+        """Use the registry's declared capacity instead of processing one task."""
+        return max(role.max_concurrency for role in ALL_AGENT_ROLES)
+
     def run(self, sources: Iterable[LeadSource]) -> Dict[str, Any]:
         results = []
         failed = []
@@ -123,7 +128,9 @@ class LeadScheduler:
         sync_result = sync_pending(db)
 
         try:
-            agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=1)
+            agent_result = self.agent_orchestrator.run_all_once(
+                limit_per_agent=self._agent_batch_limit()
+            )
         except Exception as exc:
             agent_result = {
                 "agent_count": 0,
