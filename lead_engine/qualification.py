@@ -26,8 +26,16 @@ INQUIRY_CONTEXT = re.compile(
     r"\b(?:inquir(?:y|ed|ies)|requested information|requested a quote|"
     r"requested pricing|requested a proposal|asked about|contacted us|"
     r"reached out|submitted an inquiry|submitted a request|"
-    r"expressed interest|interested in|looking for|need(?:s|ed)?|"
-    r"seeking|evaluating|considering|exploring)\b",
+    r"expressed interest|interested in|evaluating|considering|exploring)\b",
+    re.IGNORECASE,
+)
+
+CURRENT_NEED_CONTEXT = re.compile(
+    r"\b(?:hiring|hire|hiring for|recruiting|recruit|open(?:ing| role)?|"
+    r"looking to hire|seeking (?:a |an )?(?:developer|engineer|designer|"
+    r"product manager|data scientist|ai|ml)|need(?:s|ed)? (?:a |an )?(?:developer|"
+    r"engineer|designer|product manager|data scientist|ai|ml)|staffing|"
+    r"building (?:our|the) team|growing (?:our|the) team)\b",
     re.IGNORECASE,
 )
 
@@ -62,25 +70,16 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _recent_timestamp(lead: Dict[str, Any], *, days: int) -> str | None:
+def _recent_timestamp(
+    lead: Dict[str, Any],
+    *,
+    days: int,
+    fields: tuple[str, ...],
+) -> str | None:
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
 
-    # These fields describe an observed business/inquiry event. Discovery,
-    # record-update, and ingestion timestamps are intentionally excluded:
-    # finding an old webpage today must not manufacture current intent.
-    candidates = (
-        "need_at",
-        "current_need_at",
-        "hiring_need_at",
-        "inquiry_at",
-        "inquired_at",
-        "last_inquiry_at",
-        "last_contact_at",
-        "intent_at",
-    )
-
-    for key in candidates:
+    for key in fields:
         parsed = _parse_datetime(lead.get(key))
         if parsed and cutoff <= parsed <= now:
             return parsed.isoformat()
@@ -89,18 +88,22 @@ def _recent_timestamp(lead: Dict[str, Any], *, days: int) -> str | None:
 
 def _current_need(lead: Dict[str, Any], route_scores: Dict[str, int]) -> Dict[str, Any]:
     text = _text(lead)
+    has_need_language = bool(CURRENT_NEED_CONTEXT.search(text))
+    observed_at = _recent_timestamp(
+        lead,
+        days=CURRENT_NEED_DAYS,
+        fields=("need_at", "current_need_at", "hiring_need_at"),
+    )
     active_route = any(route_scores.get(route, 0) > 0 for route in ROUTES)
-    observed_at = _recent_timestamp(lead, days=CURRENT_NEED_DAYS)
-
-    qualified = active_route and observed_at is not None
+    qualified = active_route and has_need_language and observed_at is not None
     return {
         "qualified": qualified,
         "observed_at": observed_at,
         "evidence": text.strip() if qualified else "",
         "reason": (
-            "Recent qualifying business/hiring signal observed."
+            "Recent explicit current-need/hiring evidence matched an existing route."
             if qualified
-            else "No recent qualifying current-need signal was verified."
+            else "No recent explicit current-need/hiring evidence was verified."
         ),
     }
 
@@ -108,7 +111,11 @@ def _current_need(lead: Dict[str, Any], route_scores: Dict[str, int]) -> Dict[st
 def _recent_inquiry(lead: Dict[str, Any]) -> Dict[str, Any]:
     text = _text(lead)
     has_inquiry_language = bool(INQUIRY_CONTEXT.search(text))
-    observed_at = _recent_timestamp(lead, days=RECENT_INQUIRY_DAYS)
+    observed_at = _recent_timestamp(
+        lead,
+        days=RECENT_INQUIRY_DAYS,
+        fields=("inquiry_at", "inquired_at", "last_inquiry_at", "intent_at"),
+    )
     qualified = has_inquiry_language and observed_at is not None
 
     return {
@@ -237,26 +244,42 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply independent qualification results without deleting lead data."""
+    """Apply independent qualification while preserving unknown/review states."""
     updated = dict(lead)
     evaluation = evaluate_company_qualification(updated)
     updated["qualification_results"] = evaluation["companies"]
     updated["research_status"] = evaluation["research_status"]
     updated["potential_routes"] = evaluation["qualified_companies"]
-
     updated["qualified"] = bool(evaluation["qualified_companies"])
+
     if evaluation["qualified_companies"]:
         updated["status"] = QUALIFIED
         updated["review_status"] = "Qualified"
         updated["qualification_status"] = "qualified"
+        updated["review_state"] = "qualified"
         updated["reason_not_qualified"] = ""
     else:
-        updated["status"] = NOT_QUALIFIED
-        updated["review_status"] = "Not Qualified"
-        updated["qualification_status"] = "not_qualified"
-        updated["reason_not_qualified"] = (
-            "No company matched an existing category with current/recent intent evidence."
+        has_observed_evidence = bool(
+            evaluation["companies"]
+            and any(
+                company_result["current_need"]["observed_at"]
+                or company_result["recent_inquiry"]["observed_at"]
+                for company_result in evaluation["companies"].values()
+            )
         )
+        updated["qualified"] = False
+        if has_observed_evidence:
+            updated["status"] = IN_REVIEW
+            updated["review_status"] = "Review"
+            updated["qualification_status"] = "in_review"
+            updated["review_state"] = "review"
+            updated["reason_not_qualified"] = "Evidence exists but no company currently satisfies all qualification gates."
+        else:
+            updated["status"] = UNVERIFIED
+            updated["review_status"] = "Review"
+            updated["qualification_status"] = "unverified"
+            updated["review_state"] = "review"
+            updated["reason_not_qualified"] = "No current qualification decision is available; additional evidence is required."
 
     return updated
 
@@ -277,12 +300,14 @@ def qualify_lead(
         updated["status"] = QUALIFIED
         updated["review_status"] = "Qualified"
         updated["qualification_status"] = "qualified"
+        updated["review_state"] = "qualified"
         updated["reason_not_qualified"] = ""
     else:
         updated["qualified"] = False
         updated["status"] = NOT_QUALIFIED
         updated["review_status"] = "Not Qualified"
         updated["qualification_status"] = "not_qualified"
+        updated["review_state"] = "rejected"
         updated["reason_not_qualified"] = reason
     return updated
 
@@ -292,6 +317,7 @@ def begin_review(lead: Dict[str, object]) -> Dict[str, object]:
     updated["status"] = IN_REVIEW
     updated["review_status"] = "Review"
     updated["qualification_status"] = "in_review"
+    updated["review_state"] = "review"
     return updated
 
 
