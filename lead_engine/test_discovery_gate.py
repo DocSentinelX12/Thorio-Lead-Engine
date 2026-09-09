@@ -20,9 +20,9 @@ def test_discovery_gate_qualifies_matching_company_without_destroying_other_rout
         source_id="opp-1",
         url="https://example.test/opp-1",
         company="Acme",
-        signal="Acme is hiring an AI engineer",
-        evidence="Acme is hiring an AI engineer now",
-        job_title="AI Engineer",
+        signal="Acme is hiring a software engineer",
+        evidence="Acme is hiring a software engineer now",
+        job_title="Software Engineer",
         need_at=_now(),
     )
 
