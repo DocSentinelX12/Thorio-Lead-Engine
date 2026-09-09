@@ -1,20 +1,15 @@
 name: Thorio Lead Engine
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  # Production runs are deliberately independent from code-push testing.
+  # Pushes and pull requests are handled by .github/workflows/ci.yml.
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
 concurrency:
-  # Keep scheduled production cycles from blocking push/PR test runs.
-  group: thorio-lead-engine-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+  group: thorio-production
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -22,10 +17,9 @@ permissions:
 
 jobs:
   test:
-    name: Test Lead Engine
+    name: Production Preflight Tests
     runs-on: ubuntu-latest
-    # Whole-suite backstop. Individual tests are capped below at 15 minutes.
-    timeout-minutes: 60
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -50,25 +44,16 @@ jobs:
 
   engine:
     name: Run Lead Engine
-    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     env:
-      # Accept either of the repository's Airtable secret names while
-      # keeping the runtime variable stable. The engine itself only
-      # needs the resulting AIRTABLE_API_KEY environment variable.
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT || secrets.AIRTABLE_API_KEY }}
-
-      # Production Master Tracker.
-      # One unified Airtable system contains Paxus, Shiftr,
-      # and Thorio routes.
       AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
       AIRTABLE_LEAD_TABLE: Lead Radar
-
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "20"
-
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
@@ -95,58 +80,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           previous_run_id=""
-
           while IFS= read -r run_id; do
             [ -z "$run_id" ] && continue
-
-            artifact_id="$(
-              gh api \
-                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
-                --paginate \
-                --jq '
-                  .artifacts[]
-                  | select(
-                      .name == "thorio-lead-engine-state"
-                      and .expired == false
-                    )
-                  | .id
-                ' \
-                | head -n 1
-            )"
-
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
             if [ -n "$artifact_id" ]; then
               previous_run_id="$run_id"
-              echo "Found newest usable Lead Engine state: $run_id"
-              echo "State artifact ID: $artifact_id"
               break
             fi
-          done < <(
-            gh run list \
-              --workflow python-app.yml \
-              --branch main \
-              --limit 50 \
-              --json databaseId,event,status \
-              --jq '
-                .[]
-                | select(
-                    .status == "completed"
-                    and (
-                      .event == "schedule"
-                      or .event == "push"
-                      or .event == "workflow_dispatch"
-                    )
-                  )
-                | .databaseId
-              '
-          )
-
+          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status --jq '.[] | select(.status == "completed" and (.event == "schedule" or .event == "workflow_dispatch")) | .databaseId')
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
-
-          if [ -n "$previous_run_id" ]; then
-            echo "Previous Lead Engine state run: $previous_run_id"
-          else
-            echo "No previous Lead Engine state artifact found."
-          fi
 
       - name: Download previous Lead Engine state
         if: steps.previous_state.outputs.run_id != ''
@@ -159,17 +101,12 @@ jobs:
           run-id: ${{ steps.previous_state.outputs.run_id }}
 
       - name: Ensure Lead Engine data directory exists
-        run: |
-          mkdir -p data
+        run: mkdir -p data
 
       - name: Run Lead Engine continuously for bounded window
         run: |
           set -o pipefail
-
-          python -m lead_engine run-scheduled \
-            --interval 60 \
-            --cycles 10 \
-            2>&1 | tee data/scheduled-run-output.txt
+          python -m lead_engine run-scheduled --interval 60 --cycles 10 2>&1 | tee data/scheduled-run-output.txt
 
       - name: Verify production Airtable delivery
         run: |
@@ -179,152 +116,68 @@ jobs:
           import sys
 
           path = pathlib.Path("data/scheduled-run-output.txt")
-
           if not path.exists():
-              print(
-                  "PRODUCTION DELIVERY FAILURE: "
-                  "scheduled run output was not created."
-              )
+              print("PRODUCTION DELIVERY FAILURE: scheduled run output was not created.")
               sys.exit(1)
 
           text = path.read_text(encoding="utf-8")
-
-          results = []
-
           decoder = json.JSONDecoder()
+          results = []
           position = 0
-
           while position < len(text):
               start = text.find("{", position)
-
               if start == -1:
                   break
-
               try:
-                  candidate, end = decoder.raw_decode(
-                      text[start:]
-                  )
+                  candidate, end = decoder.raw_decode(text[start:])
               except json.JSONDecodeError:
                   position = start + 1
                   continue
-
               if isinstance(candidate, dict):
                   results.append(candidate)
-
               position = start + end
 
           if not results:
-              print(
-                  "PRODUCTION DELIVERY FAILURE: "
-                  "no valid Lead Engine result was found."
-              )
-              print("")
-              print("RAW SCHEDULED RUN OUTPUT:")
+              print("PRODUCTION DELIVERY FAILURE: no valid Lead Engine result was found.")
               print(text)
               sys.exit(1)
 
           sync_values = []
-
           for result in results:
               sync_result = result.get("sync")
-
               if isinstance(sync_result, dict):
                   sync_values.append(sync_result)
-
               elif isinstance(sync_result, list):
-                  sync_values.extend(
-                      item
-                      for item in sync_result
-                      if isinstance(item, dict)
-                  )
+                  sync_values.extend(item for item in sync_result if isinstance(item, dict))
 
           if not sync_values:
-              print(
-                  "PRODUCTION DELIVERY FAILURE: "
-                  "the scheduled run did not return an Airtable "
-                  "synchronization result."
-              )
-              print("")
-              print("VALID LEAD ENGINE RESULTS:")
-
-              for result in results:
-                  print(
-                      json.dumps(
-                          result,
-                          indent=2,
-                          sort_keys=True,
-                      )
-                  )
-
+              print("PRODUCTION DELIVERY FAILURE: scheduled run returned no Airtable synchronization result.")
               sys.exit(1)
 
           failed_count = 0
-
           for item in sync_values:
-              value = item.get("failed_count", 0)
-
               try:
-                  failed_count += int(value or 0)
+                  failed_count += int(item.get("failed_count", 0) or 0)
               except (TypeError, ValueError):
                   failed_count += 1
 
-          print(
-              "Airtable synchronization results detected: "
-              f"{len(sync_values)}"
-          )
-
-          print(
-              "Total Airtable synchronization failures: "
-              f"{failed_count}"
-          )
-
+          print(f"Airtable synchronization results detected: {len(sync_values)}")
+          print(f"Total Airtable synchronization failures: {failed_count}")
           if failed_count > 0:
-              print(
-                  "PRODUCTION DELIVERY FAILURE: "
-                  f"{failed_count} Airtable synchronization "
-                  "operation(s) failed."
-              )
-
-              print("")
-              print("FAILED SYNCHRONIZATION DETAILS:")
-
+              print("PRODUCTION DELIVERY FAILURE: synchronization operations failed.")
               for item in sync_values:
                   if item.get("failed_count", 0):
-                      print(
-                          json.dumps(
-                              item,
-                              indent=2,
-                              sort_keys=True,
-                          )
-                      )
-
+                      print(json.dumps(item, indent=2, sort_keys=True))
               sys.exit(1)
 
-          print(
-              "PRODUCTION AIRTABLE DELIVERY VERIFIED: "
-              "no synchronization failures reported."
-          )
+          print("PRODUCTION AIRTABLE DELIVERY VERIFIED: no synchronization failures reported.")
           PY
 
       - name: Report actual Lead Engine result
         if: always()
         run: |
-          echo ""
-          echo "=============================================="
           echo "THORIO LEAD ENGINE PRODUCTION RUN REPORT"
-          echo "=============================================="
-          echo ""
-
-          if [ -f data/scheduled-run-output.txt ]; then
-            cat data/scheduled-run-output.txt
-          else
-            echo "No scheduled run output file was created."
-          fi
-
-          echo ""
-          echo "=============================================="
-          echo "END LEAD ENGINE PRODUCTION RUN REPORT"
-          echo "=============================================="
+          if [ -f data/scheduled-run-output.txt ]; then cat data/scheduled-run-output.txt; else echo "No scheduled run output file was created."; fi
 
       - name: Save Lead Engine state
         if: always()
