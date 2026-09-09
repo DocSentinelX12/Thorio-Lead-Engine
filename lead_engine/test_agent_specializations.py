@@ -17,7 +17,7 @@ def test_every_registered_agent_has_one_professional_specialization():
 def test_specializations_are_task_specific():
     assert "qualification decisions" in get_specialization("x_signal").forbidden_actions
     assert "current need" in get_specialization("qualification_a").responsibilities
-    assert "consent evidence" in get_specialization("paxus_research").responsibilities
+    assert "verify consent evidence" in get_specialization("paxus_research").responsibilities
     assert "merging distinct opportunities" in get_specialization("duplicate_resolution").forbidden_actions
     assert "hiding failures" in get_specialization("monitoring").forbidden_actions
 
