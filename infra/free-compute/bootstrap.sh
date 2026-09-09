@@ -42,7 +42,19 @@ if [[ -f "${APP_DIR}/requirements-browser.txt" ]]; then
   runuser -u "${RUN_USER}" -- "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/requirements-browser.txt"
 fi
 
-install -d -o "${RUN_USER}" -g "${RUN_USER}" "${APP_DIR}/data" "${APP_DIR}/browser-profile"
+install -d -o "${RUN_USER}" -g "${RUN_USER}" "${APP_DIR}/data" "${APP_DIR}/browser-profile" /etc/thorio
+
+if [[ ! -f /etc/thorio/engine.env ]]; then
+  cat > /etc/thorio/engine.env <<'EOF'
+# Optional runtime configuration. Add secrets here manually on the machine.
+# Never commit this file or paste credentials into chat.
+LEAD_ENGINE_DATA_DIR=/opt/thorio-lead-engine/data
+THORIO_BROWSER_PROFILE_DIR=/opt/thorio-lead-engine/browser-profile
+THORIO_FREE_ONLY=1
+EOF
+  chmod 600 /etc/thorio/engine.env
+  chown root:root /etc/thorio/engine.env
+fi
 
 cat > /etc/systemd/system/thorio-lead-engine.service <<EOF
 [Unit]
@@ -54,10 +66,11 @@ Wants=network-online.target
 Type=simple
 User=${RUN_USER}
 WorkingDirectory=${APP_DIR}
+EnvironmentFile=-/etc/thorio/engine.env
 Environment=THORIO_FREE_ONLY=1
 Environment=THORIO_NODE_ID=%H
 Environment=THORIO_BROWSER_PROFILE_DIR=${APP_DIR}/browser-profile
-Environment=THORIO_DATA_DIR=${APP_DIR}/data
+Environment=LEAD_ENGINE_DATA_DIR=${APP_DIR}/data
 ExecStart=${APP_DIR}/.venv/bin/python -m lead_engine.cli run-scheduled --interval 60 --forever
 Restart=always
 RestartSec=10
