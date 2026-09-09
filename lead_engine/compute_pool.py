@@ -96,7 +96,7 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
 
 
 class ComputePool:
-    """SQLite-backed registry and exclusive lease coordinator for all nodes."""
+    """SQLite-backed registry and exclusive lease coordinator for one node."""
 
     def __init__(self, db_path: str = "data/lead_engine.db", lease_seconds: int = 300):
         if lease_seconds < 1:
@@ -122,7 +122,7 @@ class ComputePool:
                 status TEXT NOT NULL DEFAULT 'ready', last_heartbeat REAL NOT NULL,
                 current_load INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL)""")
             connection.execute("""CREATE TABLE IF NOT EXISTS work_leases (
-                lead_id INTEGER PRIMARY KEY, worker_id TEXT NOT NULL, lease_token TEXT NOT NULL UNIQUE,
+                lead_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL, lease_token TEXT NOT NULL UNIQUE,
                 claimed_at REAL NOT NULL, lease_until REAL NOT NULL)""")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_workers_heartbeat ON compute_workers(last_heartbeat)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_work_leases_worker ON work_leases(worker_id)")
@@ -177,7 +177,8 @@ class ComputePool:
             rows = connection.execute("SELECT * FROM compute_workers ORDER BY worker_id").fetchall()
             return [{**dict(row), "capabilities": json.loads(row["capabilities_json"])} for row in rows]
 
-    def claim(self, lead_id: int, worker_id: str) -> Optional[str]:
+    def claim(self, lead_id: str | int, worker_id: str) -> Optional[str]:
+        lead_key = str(lead_id)
         now = time.time()
         token = str(uuid.uuid4())
         with self._connect() as connection:
@@ -185,19 +186,19 @@ class ComputePool:
             worker = connection.execute("SELECT status FROM compute_workers WHERE worker_id=?", (worker_id,)).fetchone()
             if not worker or worker["status"] != "ready":
                 connection.rollback(); return None
-            existing = connection.execute("SELECT lease_until FROM work_leases WHERE lead_id=?", (lead_id,)).fetchone()
+            existing = connection.execute("SELECT lease_until FROM work_leases WHERE lead_id=?", (lead_key,)).fetchone()
             if existing and existing["lease_until"] > now:
                 connection.rollback(); return None
-            connection.execute("DELETE FROM work_leases WHERE lead_id=?", (lead_id,))
-            connection.execute("INSERT INTO work_leases VALUES (?,?,?,?,?)", (lead_id, worker_id, token, now, now + self.lease_seconds))
+            connection.execute("DELETE FROM work_leases WHERE lead_id=?", (lead_key,))
+            connection.execute("INSERT INTO work_leases VALUES (?,?,?,?,?)", (lead_key, worker_id, token, now, now + self.lease_seconds))
             connection.execute("UPDATE compute_workers SET current_load=current_load+1,updated_at=? WHERE worker_id=?", (now, worker_id))
             connection.commit()
         return token
 
-    def complete(self, lead_id: int, worker_id: str, lease_token: str) -> bool:
+    def complete(self, lead_id: str | int, worker_id: str, lease_token: str) -> bool:
         now = time.time()
         with self._connect() as connection:
-            cursor = connection.execute("DELETE FROM work_leases WHERE lead_id=? AND worker_id=? AND lease_token=?", (lead_id, worker_id, lease_token))
+            cursor = connection.execute("DELETE FROM work_leases WHERE lead_id=? AND worker_id=? AND lease_token=?", (str(lead_id), worker_id, lease_token))
             if cursor.rowcount != 1:
                 connection.rollback(); return False
             connection.execute("UPDATE compute_workers SET current_load=MAX(0,current_load-1),updated_at=? WHERE worker_id=?", (now, worker_id))
