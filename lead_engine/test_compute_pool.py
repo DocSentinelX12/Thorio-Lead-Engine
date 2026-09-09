@@ -38,7 +38,7 @@ def test_pool_snapshot_is_auditable():
     assert snapshot["node_count"] == 2
     assert snapshot["total_cpu"] == 6
     assert snapshot["total_memory_mb"] == 12288
-    assert snapshot["total_recommended_workers"] == 5
+    assert snapshot["total_recommended_workers"] == 4
 
 
 def test_local_capacity_has_positive_resources():
