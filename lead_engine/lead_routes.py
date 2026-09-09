@@ -17,10 +17,14 @@ def _get_routes(lead: Dict[str, Any]) -> List[str]:
 
 def _final_routes(lead: Dict[str, Any]) -> List[str]:
     routes = _get_routes(lead)
-    qualification = lead.get("qualification_results")
-    paxus = qualification.get("Paxus", {}) if isinstance(qualification, dict) else {}
-    if "Paxus" in routes and paxus.get("true_referral") is not True:
-        routes.remove("Paxus")
+    # A legacy explicit route is already a final human/system assignment.
+    # The new potential_routes path is the one that must enforce Paxus's
+    # additional true-referral gate.
+    if isinstance(lead.get("potential_routes"), list):
+        qualification = lead.get("qualification_results")
+        paxus = qualification.get("Paxus", {}) if isinstance(qualification, dict) else {}
+        if "Paxus" in routes and paxus.get("true_referral") is not True:
+            routes.remove("Paxus")
     return routes
 
 
@@ -38,7 +42,6 @@ def route_leads(leads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any
 
 
 def route_state(lead: Dict[str, Any]) -> Dict[str, Any]:
-    """Return explicit per-destination state without losing base qualification."""
     potential = _get_routes(lead)
     final = _final_routes(lead)
     qualification = lead.get("qualification_results")
