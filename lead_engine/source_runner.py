@@ -8,6 +8,34 @@ from .agent_queue import enqueue
 logger = logging.getLogger(__name__)
 
 
+_PRIORITY_MAP = {
+    "critical": 3,
+    "urgent": 3,
+    "high": 2,
+    "medium": 1,
+    "normal": 1,
+    "low": 0,
+}
+
+
+def _queue_priority(value: Any) -> int:
+    """Normalize pipeline priority into the integer queue contract."""
+    if value is None or value == "":
+        return 0
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip().lower()
+    if text in _PRIORITY_MAP:
+        return _PRIORITY_MAP[text]
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        logger.warning("Unknown lead priority %r; defaulting to queue priority 0", value)
+        return 0
+
+
 class SourceRunner:
     """Run normalized source records through the existing lead pipeline."""
 
@@ -58,7 +86,7 @@ class SourceRunner:
                         self.pipeline.db,
                         "qualification_a",
                         {"lead": dict(lead)},
-                        priority=int(result.get("priority") or 0),
+                        priority=_queue_priority(result.get("priority")),
                         dedupe_key=fingerprint,
                     )
                     agent_tasks_queued += 1
