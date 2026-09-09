@@ -60,7 +60,7 @@ class ComputeCoordinator:
         now = time.time()
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO compute_tasks(task_id,payload,created_at,updated_at) VALUES(?,?,?,?,?)",
+                "INSERT INTO compute_tasks(task_id,payload,created_at,updated_at) VALUES(?,?,?,?)",
                 (resolved_id, json.dumps(payload, ensure_ascii=False), now, now),
             )
             connection.commit()
