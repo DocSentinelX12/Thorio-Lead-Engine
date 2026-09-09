@@ -49,8 +49,12 @@ class ComputeCoordinator:
                 lease_until REAL,
                 result TEXT,
                 error TEXT NOT NULL DEFAULT '',
+                attempts INTEGER NOT NULL DEFAULT 0,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL)""")
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_tasks)")}
+            if "attempts" not in columns:
+                connection.execute("ALTER TABLE compute_tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
             connection.commit()
 
@@ -61,12 +65,22 @@ class ComputeCoordinator:
         if not isinstance(resolved_id, str) or not resolved_id.strip():
             raise ValueError("task_id must be a non-empty string")
         now = time.time()
-        with self._connect() as connection:
-            connection.execute(
-                "INSERT INTO compute_tasks(task_id,payload,created_at,updated_at) VALUES(?,?,?,?)",
-                (resolved_id, json.dumps(payload, ensure_ascii=False), now, now),
-            )
-            connection.commit()
+        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        with self._lock:
+            with self._connect() as connection:
+                existing = connection.execute(
+                    "SELECT payload,status FROM compute_tasks WHERE task_id=?",
+                    (resolved_id,),
+                ).fetchone()
+                if existing:
+                    if json.dumps(json.loads(existing["payload"]), ensure_ascii=False, sort_keys=True) != serialized:
+                        raise ValueError(f"task_id already exists with a different payload: {resolved_id}")
+                    return resolved_id
+                connection.execute(
+                    "INSERT INTO compute_tasks(task_id,payload,created_at,updated_at) VALUES(?,?,?,?)",
+                    (resolved_id, serialized, now, now),
+                )
+                connection.commit()
         return resolved_id
 
     def task(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -102,7 +116,7 @@ class ComputeCoordinator:
                 lease_token = str(uuid.uuid4())
                 now = time.time()
                 updated = connection.execute(
-                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,lease_until=?,updated_at=? WHERE task_id=? AND status='queued'",
+                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE task_id=? AND status='queued'",
                     (worker_id, lease_token, now + self.lease_seconds, now, task_id),
                 )
                 if updated.rowcount != 1:
@@ -123,7 +137,7 @@ class ComputeCoordinator:
                 if not self._valid_lease(connection, worker_id, task_id, lease_token):
                     return False
                 connection.execute(
-                    "UPDATE compute_tasks SET status='completed',result=?,lease_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=?",
+                    "UPDATE compute_tasks SET status='completed',result=?,error='',lease_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=?",
                     (json.dumps(result, ensure_ascii=False), time.time(), task_id),
                 )
                 connection.commit()
@@ -183,6 +197,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/health":
             self._send(200, self.server.coordinator.health())
+            return
+        if self.path.startswith("/work/status/"):
+            task_id = self.path.rsplit("/", 1)[-1]
+            task = self.server.coordinator.task(task_id)
+            self._send(200 if task else 404, task or {"error": "task not found"})
             return
         self._send(404, {"error": "not found"})
 
