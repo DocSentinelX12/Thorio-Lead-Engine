@@ -57,26 +57,22 @@ class LeadScheduler:
         return interval if interval > 0 else 0.0
 
     def _load_polling_state(self) -> None:
-        try:
-            state = self.runner.pipeline.db.get_state(self._POLLING_STATE_KEY)
-        except Exception:
+        state = self.runner.pipeline.db.get_state(self._POLLING_STATE_KEY)
+        if state is None:
             return
         if not isinstance(state, dict):
-            return
-        persisted = state.get("next_run_at")
+            raise RuntimeError("lead scheduler polling state is corrupt")
+        persisted = state.get("next_run_at", {})
         if not isinstance(persisted, dict):
-            return
+            raise RuntimeError("lead scheduler next_run_at state is corrupt")
         for source_key, deadline in persisted.items():
             try:
                 self._persisted_next_run_at[str(source_key)] = float(deadline)
-            except (TypeError, ValueError):
-                continue
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(f"invalid persisted scheduler deadline for {source_key!r}") from exc
 
     def _save_polling_state(self) -> None:
-        try:
-            self.runner.pipeline.db.set_state(self._POLLING_STATE_KEY, {"next_run_at": dict(self._persisted_next_run_at)})
-        except Exception:
-            return
+        self.runner.pipeline.db.set_state(self._POLLING_STATE_KEY, {"next_run_at": dict(self._persisted_next_run_at)})
 
     def _is_due(self, source: LeadSource, now: float) -> bool:
         interval = self._poll_interval(source)
@@ -97,14 +93,12 @@ class LeadScheduler:
         if interval <= 0:
             self._next_run_at.pop(key, None)
             self._persisted_next_run_at.pop(key, None)
-            self._save_polling_state()
-            return
-        self._next_run_at[key] = started_at + interval
-        self._persisted_next_run_at[key] = started_wall + interval
+        else:
+            self._next_run_at[key] = started_at + interval
+            self._persisted_next_run_at[key] = started_wall + interval
         self._save_polling_state()
 
     def _agent_batch_limit(self) -> int:
-        """Use the registry's declared capacity instead of processing one task."""
         return max(role.max_concurrency for role in ALL_AGENT_ROLES)
 
     def _bridge_remote(self, *, publish_limit: int = 20, reconcile_limit: int = 50) -> Dict[str, Any]:
@@ -125,17 +119,12 @@ class LeadScheduler:
             if not self._is_due(source, now):
                 skipped.append({"source": source_name, "reason": "not_due"})
                 continue
-
             started_at = time.monotonic()
             started_wall = time.time()
             try:
                 previous_checkpoint = self.checkpoint_runner.get_checkpoint(source)
                 result = dict(self.checkpoint_runner.run(source=source, checkpoint=previous_checkpoint))
-                failed_count = result.get("failed_count", 0)
-                try:
-                    failed_count = int(failed_count or 0)
-                except (TypeError, ValueError):
-                    failed_count = 1
+                failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count != 0:
                     result["checkpoint"] = previous_checkpoint
                 results.append({"source": source_name, "result": result})
@@ -147,64 +136,16 @@ class LeadScheduler:
         db = self.runner.pipeline.db
         sync_result = sync_pending(db)
 
-        try:
-            remote_before = self._bridge_remote()
-        except Exception as exc:
-            remote_before = {"status": "failed", "error": str(exc), "published_count": 0, "completed_count": 0, "retried_count": 0}
-
-        try:
-            agent_result = self.agent_orchestrator.run_all_once(
-                limit_per_agent=self._agent_batch_limit()
-            )
-        except Exception as exc:
-            agent_result = {
-                "agent_count": 0,
-                "claimed_count": 0,
-                "completed_count": 0,
-                "failed_count": 1,
-                "error": str(exc),
-            }
-
-        try:
-            remote_after = self._bridge_remote()
-        except Exception as exc:
-            remote_after = {"status": "failed", "error": str(exc), "published_count": 0, "completed_count": 0, "retried_count": 0}
-
-        try:
-            paxus_research = process_paxus_research_queue(db)
-        except Exception as exc:
-            paxus_research = {
-                "status": "failed",
-                "processed": [],
-                "completed": [],
-                "still_required": [],
-                "errors": [{"error": str(exc)}],
-                "queued_count": len(db.pending_research(1_000_000)),
-            }
+        remote_before = self._bridge_remote()
+        agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
+        remote_after = self._bridge_remote()
+        paxus_research = process_paxus_research_queue(db)
 
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
-
-        return {
-            "results": results,
-            "failed": failed,
-            "skipped": skipped,
-            "source_count": source_count,
-            "successful_source_count": len(results),
-            "failed_count": len(failed),
-            "skipped_count": len(skipped),
-            "discovered_count": discovered_total,
-            "accepted_count": accepted_total,
-            "duplicate_count": duplicate_total,
-            "processing_failed_count": processing_failed_total,
-            "sync": sync_result,
-            "remote_compute_before": remote_before,
-            "agents": agent_result,
-            "remote_compute_after": remote_after,
-            "paxus_research": paxus_research,
-        }
+        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "remote_compute_before": remote_before, "agents": agent_result, "remote_compute_after": remote_after, "paxus_research": paxus_research}
 
     def run_forever(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: Optional[int] = None) -> Dict[str, Any]:
         source_list = list(sources)
@@ -214,17 +155,15 @@ class LeadScheduler:
             raise ValueError("max_cycles must be greater than or equal to 1.")
         if not source_list:
             return {"cycles": 0, "results": [], "failed": [], "skipped": [], "sync": [], "remote_compute": [], "agents": [], "paxus_research": [], "source_count": 0, "successful_source_count": 0, "result_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0, "status": "no_sources_configured"}
-
         cycles = 0
-        total_results = []
-        total_failed = []
-        total_skipped = []
-        total_sync = []
-        total_remote_compute = []
-        total_agents = []
-        total_paxus_research = []
+        total_results: List[Any] = []
+        total_failed: List[Any] = []
+        total_skipped: List[Any] = []
+        total_sync: List[Any] = []
+        total_remote_compute: List[Any] = []
+        total_agents: List[Any] = []
+        total_paxus_research: List[Any] = []
         total_discovered = total_accepted = total_duplicates = total_processing_failed = 0
-
         while max_cycles is None or cycles < max_cycles:
             result = self.run(source_list)
             total_results.extend(result["results"])
@@ -243,7 +182,6 @@ class LeadScheduler:
                 break
             if interval_seconds:
                 time.sleep(interval_seconds)
-
         return {"cycles": cycles, "results": total_results, "failed": total_failed, "skipped": total_skipped, "sync": total_sync, "remote_compute": total_remote_compute, "agents": total_agents, "paxus_research": total_paxus_research, "source_count": len(source_list), "successful_source_count": len(total_results), "result_count": len(total_results), "failed_count": len(total_failed), "skipped_count": len(total_skipped), "discovered_count": total_discovered, "accepted_count": total_accepted, "duplicate_count": total_duplicates, "processing_failed_count": total_processing_failed, "status": "completed"}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 10) -> Dict[str, Any]:
