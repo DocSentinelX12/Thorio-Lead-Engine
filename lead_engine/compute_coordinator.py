@@ -27,6 +27,7 @@ class ComputeCoordinator:
         self.auth_token = auth_token
         self.pool = ComputePool(db_path, lease_seconds=lease_seconds)
         self._lock = threading.Lock()
+        self.lease_seconds = lease_seconds
         self._initialize_tasks()
 
     def _connect(self) -> sqlite3.Connection:
@@ -42,6 +43,7 @@ class ComputeCoordinator:
                 status TEXT NOT NULL DEFAULT 'queued',
                 worker_id TEXT,
                 lease_token TEXT,
+                lease_until REAL,
                 result TEXT,
                 error TEXT NOT NULL DEFAULT '',
                 created_at REAL NOT NULL,
@@ -69,10 +71,7 @@ class ComputeCoordinator:
             return None
         item = dict(row)
         item["payload"] = json.loads(item["payload"])
-        if item["result"]:
-            item["result"] = json.loads(item["result"])
-        else:
-            item["result"] = None
+        item["result"] = json.loads(item["result"]) if item["result"] else None
         return item
 
     def register_worker(self, identity: WorkerIdentity) -> Dict[str, Any]:
@@ -83,7 +82,7 @@ class ComputeCoordinator:
 
     def claim(self, worker_id: str) -> Optional[Dict[str, Any]]:
         self.pool.reap_stale_workers()
-        self.pool.release_expired()
+        self.recover_expired_tasks()
         with self._lock:
             with self._connect() as connection:
                 row = connection.execute(
@@ -92,24 +91,26 @@ class ComputeCoordinator:
                 if not row:
                     return None
                 task_id = row["task_id"]
-            lease_token = self.pool.claim(self._numeric_lease_id(task_id), worker_id)
-            if not lease_token:
-                return None
-            now = time.time()
-            with self._connect() as connection:
+                lease_token = str(uuid.uuid4())
+                lease_until = time.time() + self.lease_seconds
                 updated = connection.execute(
-                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,updated_at=? WHERE task_id=? AND status='queued'",
-                    (worker_id, lease_token, now, task_id),
+                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,lease_until=?,updated_at=? WHERE task_id=? AND status='queued'",
+                    (worker_id, lease_token, lease_until, time.time(), task_id),
                 )
                 if updated.rowcount != 1:
-                    self.pool.complete(self._numeric_lease_id(task_id), worker_id, lease_token)
+                    connection.rollback()
                     return None
                 connection.commit()
+            if self.pool.worker(worker_id) is None:
+                self._release_task_without_pool(task_id)
+                return None
+            self.pool.claim(task_id, worker_id)
             return {"task_id": task_id, "payload": json.loads(row["payload"]), "lease_token": lease_token}
 
-    @staticmethod
-    def _numeric_lease_id(task_id: str) -> int:
-        return int.from_bytes(task_id.encode("utf-8")[:8].ljust(8, b"\0"), "big", signed=False)
+    def _release_task_without_pool(self, task_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute("UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=?", (time.time(), task_id))
+            connection.commit()
 
     def complete(self, worker_id: str, task_id: str, lease_token: str, result: Dict[str, Any]) -> bool:
         if not isinstance(result, dict):
@@ -119,12 +120,17 @@ class ComputeCoordinator:
             if not row or row["status"] != "leased" or row["worker_id"] != worker_id or not hmac.compare_digest(row["lease_token"], lease_token):
                 return False
             connection.execute(
-                "UPDATE compute_tasks SET status='completed',result=?,lease_token=NULL,updated_at=? WHERE task_id=?",
+                "UPDATE compute_tasks SET status='completed',result=?,lease_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=?",
                 (json.dumps(result, ensure_ascii=False), time.time(), task_id),
             )
             connection.commit()
-        self.pool.complete(self._numeric_lease_id(task_id), worker_id, lease_token)
+        self.pool.complete(task_id, worker_id, self.pool_token_for(task_id, worker_id, lease_token))
         return True
+
+    def pool_token_for(self, task_id: str, worker_id: str, lease_token: str) -> str:
+        with self._connect() as connection:
+            row = connection.execute("SELECT lease_token FROM work_leases WHERE lead_id=? AND worker_id=?", (task_id, worker_id)).fetchone()
+        return row["lease_token"] if row else lease_token
 
     def release(self, worker_id: str, task_id: str, lease_token: str, error: str = "") -> bool:
         with self._connect() as connection:
@@ -132,16 +138,27 @@ class ComputeCoordinator:
             if not row or row["status"] != "leased" or row["worker_id"] != worker_id or not hmac.compare_digest(row["lease_token"], lease_token):
                 return False
             connection.execute(
-                "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,error=?,updated_at=? WHERE task_id=?",
+                "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error=?,updated_at=? WHERE task_id=?",
                 (str(error)[:4000], time.time(), task_id),
             )
             connection.commit()
-        self.pool.complete(self._numeric_lease_id(task_id), worker_id, lease_token)
+        self.pool.complete(task_id, worker_id, self.pool_token_for(task_id, worker_id, lease_token))
         return True
+
+    def recover_expired_tasks(self) -> int:
+        now = time.time()
+        with self._connect() as connection:
+            rows = connection.execute("SELECT task_id,worker_id,lease_token FROM compute_tasks WHERE status='leased' AND lease_until <= ?", (now,)).fetchall()
+            connection.execute("UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE status='leased' AND lease_until <= ?", (now, now))
+            connection.commit()
+        for row in rows:
+            self.pool.complete(row["task_id"], row["worker_id"], self.pool_token_for(row["task_id"], row["worker_id"], row["lease_token"]))
+        return len(rows)
 
     def health(self) -> Dict[str, Any]:
         self.pool.reap_stale_workers()
         self.pool.release_expired()
+        self.recover_expired_tasks()
         with self._connect() as connection:
             queued = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='queued'").fetchone()[0]
             leased = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]
@@ -178,11 +195,11 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send(401, {"error": "unauthorized"})
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        if length > 1_000_000:
-            self._send(413, {"error": "request too large"})
-            return
         try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 1_000_000:
+                self._send(413, {"error": "request too large"})
+                return
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
             if not isinstance(body, dict):
                 raise ValueError("request body must be an object")
