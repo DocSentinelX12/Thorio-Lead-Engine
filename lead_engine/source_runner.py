@@ -3,6 +3,7 @@ import logging
 
 from .pipeline import LeadPipeline
 from .discovery_gate import apply_discovery_gate
+from .agent_queue import enqueue
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class SourceRunner:
         discovered = 0
         qualified = 0
         research_queued = 0
+        agent_tasks_queued = 0
 
         for record in records:
             discovered += 1
@@ -49,14 +51,23 @@ class SourceRunner:
             elif result.get("accepted") is True:
                 accepted += 1
 
+                fingerprint = str(result.get("fingerprint") or "").strip()
+                lead = result.get("lead")
+                if fingerprint and isinstance(lead, dict):
+                    enqueue(
+                        self.pipeline.db,
+                        "qualification_a",
+                        {"lead": dict(lead)},
+                        priority=int(result.get("priority") or 0),
+                        dedupe_key=fingerprint,
+                    )
+                    agent_tasks_queued += 1
+
             if result.get("qualification_status") == "qualified":
                 qualified += 1
             if result.get("paxus_research_status") == "research_required":
                 research_queued += 1
 
-        # Keep the original four-counter result contract for callers that
-        # compare the result shape exactly. Add the newer operational counters
-        # only when they carry a non-zero signal.
         summary = {
             "discovered_count": discovered,
             "accepted_count": accepted,
@@ -67,6 +78,8 @@ class SourceRunner:
             summary["qualified_count"] = qualified
         if research_queued:
             summary["paxus_research_queued_count"] = research_queued
+        if agent_tasks_queued:
+            summary["agent_tasks_queued_count"] = agent_tasks_queued
         return summary
 
     def run_source(self, source, checkpoint: Optional[str] = None) -> Dict[str, Any]:
