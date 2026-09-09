@@ -32,6 +32,14 @@ class BrowserDiscoveryTarget:
     item_selector: str = ""
     max_items: int = 100
 
+    def __post_init__(self) -> None:
+        if not self.lane.strip() or not self.name.strip():
+            raise BrowserDiscoveryConfigurationError("Browser target lane and name are required")
+        if not self.url.startswith(("https://", "http://")):
+            raise BrowserDiscoveryConfigurationError(f"Browser target URL must be HTTP(S): {self.url!r}")
+        if self.max_items <= 0:
+            raise BrowserDiscoveryConfigurationError("Browser target max_items must be positive")
+
 
 @dataclass(frozen=True)
 class BrowserDiscoveryResult:
@@ -79,8 +87,6 @@ def _targets_from_environment() -> tuple[BrowserDiscoveryTarget, ...]:
         if not lane or not name or not url.startswith(("https://", "http://")):
             raise BrowserDiscoveryConfigurationError(f"Browser target {index} requires lane, name and HTTP(S) url")
         max_items = int(item.get("max_items", 100))
-        if max_items <= 0:
-            raise BrowserDiscoveryConfigurationError(f"Browser target {name} max_items must be positive")
         targets.append(BrowserDiscoveryTarget(
             lane=lane,
             name=name,
@@ -138,7 +144,10 @@ class FreeAuthenticatedBrowserCollector:
             try:
                 page = context.new_page()
                 page.goto(self.target.url, wait_until="domcontentloaded", timeout=60_000)
-                page.wait_for_load_state("networkidle", timeout=30_000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=30_000)
+                except Exception:
+                    pass
 
                 if not self.target.item_selector or not self.target.text_selector:
                     raise BrowserDiscoveryConfigurationError(
@@ -167,9 +176,6 @@ class FreeAuthenticatedBrowserCollector:
                         node = item.locator(self.target.company_selector).first()
                         if node.count():
                             company = _text(node)
-                    if not company:
-                        company = _env("THORIO_BROWSER_DEFAULT_COMPANY")
-
                     if not company:
                         continue
 
