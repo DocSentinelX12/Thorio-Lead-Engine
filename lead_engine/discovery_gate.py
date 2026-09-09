@@ -10,14 +10,14 @@ def apply_discovery_gate(
     pipeline,
     result: Dict[str, Any],
     *,
-    qualify: bool = True,
+    qualify: bool = False,
 ) -> Dict[str, Any]:
-    """Apply the legacy discovery boundary with explicit qualification control.
+    """Apply the discovery boundary with explicit qualification control.
 
-    The public gate keeps its historical qualifying behavior for callers that
-    use it directly. Discovery workers pass ``qualify=False`` so discovery
-    remains evidence collection only and Qualification A is the first agent
-    allowed to make a qualification decision.
+    Discovery is evidence collection only. Qualification A is the first
+    specialist permitted to make a qualification decision. The explicit
+    ``qualify=True`` compatibility mode preserves the legacy direct-call
+    behavior for callers that intentionally invoke the old gate semantics.
     """
     if not isinstance(result, dict):
         raise ValueError("result must be a dictionary")
