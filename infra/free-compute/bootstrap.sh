@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Free-only production node bootstrap. This script never asks for or stores
-# credentials. Authentication for browser sources is performed interactively
+# social-account credentials. Browser authentication is performed interactively
 # by the owner on the persistent machine.
 
 REPO_URL="${THORIO_REPO_URL:-https://github.com/DocSentinelX12/Thorio-Lead-Engine.git}"
@@ -45,12 +45,19 @@ fi
 install -d -o "${RUN_USER}" -g "${RUN_USER}" "${APP_DIR}/data" "${APP_DIR}/browser-profile" /etc/thorio
 
 if [[ ! -f /etc/thorio/engine.env ]]; then
-  cat > /etc/thorio/engine.env <<'EOF'
-# Optional runtime configuration. Add secrets here manually on the machine.
+  compute_token="$(runuser -u "${RUN_USER}" -- "${APP_DIR}/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
+  cat > /etc/thorio/engine.env <<EOF
+# Runtime configuration. Add or change secrets manually on the machine.
 # Never commit this file or paste credentials into chat.
-LEAD_ENGINE_DATA_DIR=/opt/thorio-lead-engine/data
-THORIO_BROWSER_PROFILE_DIR=/opt/thorio-lead-engine/browser-profile
+LEAD_ENGINE_DATA_DIR=${APP_DIR}/data
+THORIO_BROWSER_PROFILE_DIR=${APP_DIR}/browser-profile
 THORIO_FREE_ONLY=1
+THORIO_COMPUTE_AUTH_TOKEN=${compute_token}
+THORIO_COMPUTE_DB=${APP_DIR}/data/coordinator.sqlite3
+THORIO_COMPUTE_BIND_HOST=127.0.0.1
+THORIO_COMPUTE_PORT=8787
+THORIO_COMPUTE_COORDINATOR_URL=http://127.0.0.1:8787
+THORIO_WORKER_ID=%H-local
 EOF
   chmod 600 /etc/thorio/engine.env
   chown root:root /etc/thorio/engine.env
@@ -84,11 +91,71 @@ ReadWritePaths=${APP_DIR}/data ${APP_DIR}/browser-profile
 WantedBy=multi-user.target
 EOF
 
+cat > /etc/systemd/system/thorio-compute-coordinator.service <<EOF
+[Unit]
+Description=Thorio free compute coordinator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${RUN_USER}
+WorkingDirectory=${APP_DIR}
+EnvironmentFile=-/etc/thorio/engine.env
+Environment=THORIO_FREE_ONLY=1
+Environment=THORIO_COMPUTE_DB=${APP_DIR}/data/coordinator.sqlite3
+ExecStart=${APP_DIR}/.venv/bin/python -m lead_engine.compute_coordinator
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${APP_DIR}/data
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/thorio-compute-worker.service <<EOF
+[Unit]
+Description=Thorio free local compute worker
+After=thorio-compute-coordinator.service network-online.target
+Requires=thorio-compute-coordinator.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${RUN_USER}
+WorkingDirectory=${APP_DIR}
+EnvironmentFile=-/etc/thorio/engine.env
+Environment=THORIO_FREE_ONLY=1
+ExecStart=${APP_DIR}/.venv/bin/python -m lead_engine.compute_worker
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${APP_DIR}/data
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
 systemctl enable thorio-lead-engine.service
+systemctl enable thorio-compute-coordinator.service
+systemctl enable thorio-compute-worker.service
+systemctl restart thorio-compute-coordinator.service
+systemctl restart thorio-compute-worker.service
 systemctl restart thorio-lead-engine.service
+systemctl --no-pager --full status thorio-compute-coordinator.service || true
+systemctl --no-pager --full status thorio-compute-worker.service || true
 systemctl --no-pager --full status thorio-lead-engine.service || true
 
 echo "Free compute node bootstrap complete."
+echo "Coordinator and local worker are persistent and restart automatically."
+echo "For remote workers, configure a public HTTPS coordinator URL and TLS certificate/key in /etc/thorio/engine.env."
 echo "Credentials were not requested or stored."
 echo "Persistent browser authentication must be completed interactively on this node."
