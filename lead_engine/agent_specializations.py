@@ -88,6 +88,8 @@ for agent, (mission, responsibilities) in _PROCESSING.items():
     forbidden = ("invented evidence", "silent overrides", "unauthorized contact", "provenance deletion")
     if agent == "duplicate_resolution":
         forbidden = forbidden + ("merging distinct opportunities",)
+    if agent == "monitoring":
+        forbidden = forbidden + ("hiding failures",)
     _SPECIALIZATIONS.append(AgentSpecialization(
         agent, mission, responsibilities, ("lead", "evidence_events"),
         ("structured result", "provenance", "research or verification state"),
