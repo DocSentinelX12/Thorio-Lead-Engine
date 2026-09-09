@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from .agent_stateful_handlers import routing
-from .agent_workers import AgentExecutionContext, execute_task
+from .agent_workers import execute_task
 from .database import LeadDB
 from .lead_routes import route_leads
 
@@ -17,7 +17,12 @@ def _db():
 
 
 def test_routing_preserves_all_matching_destinations():
-    lead = {"fingerprint": "multi-route", "potential_routes": ["Shiftr", "Paxus", "Thorio"], "verified": True}
+    lead = {
+        "fingerprint": "multi-route",
+        "potential_routes": ["Shiftr", "Paxus", "Thorio"],
+        "qualification_results": {"Paxus": {"qualified": True, "true_referral": True}},
+        "verified": True,
+    }
     routed = route_leads([lead])
     assert [len(routed[name]) for name in ("Shiftr", "Paxus", "Thorio")] == [1, 1, 1]
     assert not routed["Review"]
@@ -38,9 +43,11 @@ def test_stateful_execution_persists_result_before_completion():
     try:
         lead = {"fingerprint": "priority-persist", "company": "Example", "signal": "hiring"}
         assert db.insert_if_new(lead)
-        from .agent_queue import enqueue
+        from .agent_queue import claim, enqueue
         task = enqueue(db, "priority", {"lead": lead})
-        execution = execute_task(db, task, worker_id="test-worker")
+        claimed = claim(db, "priority", worker_id="test-worker")
+        assert len(claimed) == 1
+        execution = execute_task(db, claimed[0], worker_id="test-worker")
         assert execution.status == "complete"
         stored = db.get("priority-persist")
         assert stored is not None
