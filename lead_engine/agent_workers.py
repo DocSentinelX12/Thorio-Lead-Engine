@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Mapping
 
-from .agent_queue import claim, complete, fail, heartbeat
+from .agent_queue import claim, complete, enqueue, fail, heartbeat
 from .agent_specializations import AgentSpecialization, get_specialization
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
@@ -39,6 +39,16 @@ def _lead_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
     return _require_mapping(lead, "lead")
 
 
+def _persist_lead(db: Any, lead: Dict[str, Any]) -> Dict[str, Any]:
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    if not fingerprint:
+        raise AgentContractError("lead requires fingerprint for persistent processing")
+    stored = db.update_payload(fingerprint, lead)
+    if stored is None:
+        raise AgentContractError(f"lead not found for persistent update: {fingerprint}")
+    return stored
+
+
 def _discovery_handler(agent: str, payload: Mapping[str, Any], _: AgentExecutionContext) -> Dict[str, Any]:
     """Normalize evidence supplied by an authorized discovery adapter.
 
@@ -58,62 +68,36 @@ def _discovery_handler(agent: str, payload: Mapping[str, Any], _: AgentExecution
         "record": record,
         "observed": True,
         "qualification_performed": False,
-        "provenance": {
-            "collector_agent": agent,
-            "collected_at": datetime.now(timezone.utc).isoformat(),
-        },
+        "provenance": {"collector_agent": agent, "collected_at": datetime.now(timezone.utc).isoformat()},
     }
 
 
-def _qualification_a(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
+def _qualification_a(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
-    evaluated = apply_company_qualification(lead)
-    return {
-        "role": "qualification_a",
-        "lead": evaluated,
-        "qualification_results": evaluated.get("qualification_results", {}),
-        "qualified_companies": evaluated.get("potential_routes", []),
-        "independent_review": "primary",
-    }
+    evaluated = _persist_lead(ctx.db, apply_company_qualification(lead))
+    fingerprint = str(evaluated.get("fingerprint"))
+    enqueue(ctx.db, "qualification_b", {"lead": evaluated, "prior_result": {"agent": "qualification_a", "qualified_companies": evaluated.get("potential_routes", [])}}, priority=10, dedupe_key=fingerprint)
+    return {"role": "qualification_a", "lead": evaluated, "qualification_results": evaluated.get("qualification_results", {}), "qualified_companies": evaluated.get("potential_routes", []), "independent_review": "primary"}
 
 
-def _qualification_b(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
+def _qualification_b(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
-    evaluated = apply_company_qualification(lead)
-    prior = payload.get("prior_result")
-    if prior is not None and not isinstance(prior, Mapping):
-        raise AgentContractError("prior_result must be a mapping when supplied")
-    return {
-        "role": "qualification_b",
-        "lead": evaluated,
-        "qualification_results": evaluated.get("qualification_results", {}),
-        "qualified_companies": evaluated.get("potential_routes", []),
-        "independent_review": "validation",
-        "challenged_prior_result": prior is not None,
-    }
+    evaluated = _persist_lead(ctx.db, apply_company_qualification(lead))
+    fingerprint = str(evaluated.get("fingerprint"))
+    enqueue(ctx.db, "priority", {"lead": evaluated}, priority=5, dedupe_key=fingerprint)
+    return {"role": "qualification_b", "lead": evaluated, "qualification_results": evaluated.get("qualification_results", {}), "qualified_companies": evaluated.get("potential_routes", []), "independent_review": "validation", "challenged_prior_result": payload.get("prior_result") is not None}
 
 
 def _company_research(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
     evidence = _require_mapping(payload.get("research", {}), "research")
-    return {
-        "role": "company_research",
-        "lead": lead,
-        "research": evidence,
-        "evidence_only": True,
-        "fabricated_fields": [],
-    }
+    return {"role": "company_research", "lead": lead, "research": evidence, "evidence_only": True, "fabricated_fields": []}
 
 
 def _paxus_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
     result = process_paxus_research_queue(ctx.db, limit=1)
-    return {
-        "role": "paxus_research",
-        "lead": lead,
-        "queue_result": result,
-        "true_referral": bool((lead.get("qualification_results") or {}).get("Paxus", {}).get("true_referral")),
-    }
+    return {"role": "paxus_research", "lead": lead, "queue_result": result, "true_referral": bool((lead.get("qualification_results") or {}).get("Paxus", {}).get("true_referral"))}
 
 
 def _duplicate_resolution(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
@@ -122,13 +106,7 @@ def _duplicate_resolution(_: str, payload: Mapping[str, Any], __: AgentExecution
     if not isinstance(candidates, Iterable) or isinstance(candidates, (str, bytes, Mapping)):
         raise AgentContractError("candidates must be a list-like collection")
     candidate_list = [dict(item) for item in candidates if isinstance(item, Mapping)]
-    return {
-        "role": "duplicate_resolution",
-        "lead": lead,
-        "candidate_count": len(candidate_list),
-        "decision": payload.get("decision", "requires_identity_comparison"),
-        "preserve_distinct_opportunities": True,
-    }
+    return {"role": "duplicate_resolution", "lead": lead, "candidate_count": len(candidate_list), "decision": payload.get("decision", "requires_identity_comparison"), "preserve_distinct_opportunities": True}
 
 
 def _priority(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
@@ -156,14 +134,8 @@ def _follow_up(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) ->
 
 def _monitoring(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     from .agent_queue import pending
-
     tasks = pending(ctx.db)
-    return {
-        "role": "monitoring",
-        "queue_depth": len(tasks),
-        "running_count": sum(1 for task in tasks if task.get("status") == "running"),
-        "queued_count": sum(1 for task in tasks if task.get("status") == "queued"),
-    }
+    return {"role": "monitoring", "queue_depth": len(tasks), "running_count": sum(1 for task in tasks if task.get("status") == "running"), "queued_count": sum(1 for task in tasks if task.get("status") == "queued")}
 
 
 def _audit(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
@@ -177,22 +149,8 @@ def _audit(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dic
     return {"role": "audit", "lead": lead, "violations": violations, "passed": not violations}
 
 
-_DISCOVERY = {name: _discovery_handler for name in (
-    "x_signal", "threads_signal", "reddit_signal", "linkedin_signal", "facebook_signal",
-    "instagram_signal", "hacker_news_signal", "indie_hackers_signal", "product_hunt_signal", "web_job_signal",
-)}
-_PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {
-    "qualification_a": _qualification_a,
-    "qualification_b": _qualification_b,
-    "company_research": _company_research,
-    "paxus_research": _paxus_research,
-    "duplicate_resolution": _duplicate_resolution,
-    "priority": _priority,
-    "outreach_closer": _outreach_closer,
-    "follow_up": _follow_up,
-    "monitoring": _monitoring,
-    "audit": _audit,
-}
+_DISCOVERY = {name: _discovery_handler for name in ("x_signal", "threads_signal", "reddit_signal", "linkedin_signal", "facebook_signal", "instagram_signal", "hacker_news_signal", "indie_hackers_signal", "product_hunt_signal", "web_job_signal")}
+_PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {"qualification_a": _qualification_a, "qualification_b": _qualification_b, "company_research": _company_research, "paxus_research": _paxus_research, "duplicate_resolution": _duplicate_resolution, "priority": _priority, "outreach_closer": _outreach_closer, "follow_up": _follow_up, "monitoring": _monitoring, "audit": _audit}
 
 
 def handler_registry() -> Dict[str, Callable[..., Dict[str, Any]]]:
@@ -236,11 +194,4 @@ def run_worker_once(db, agent: str, *, worker_id: str, limit: int = 1) -> Dict[s
     get_specialization(agent)
     tasks = claim(db, agent, worker_id=worker_id, limit=limit)
     results = [execute_task(db, task, worker_id=worker_id) for task in tasks]
-    return {
-        "agent": agent,
-        "worker_id": worker_id,
-        "claimed_count": len(tasks),
-        "completed_count": sum(result.status == "complete" for result in results),
-        "failed_count": sum(result.status == "failed" for result in results),
-        "results": [result.result for result in results],
-    }
+    return {"agent": agent, "worker_id": worker_id, "claimed_count": len(tasks), "completed_count": sum(result.status == "complete" for result in results), "failed_count": sum(result.status == "failed" for result in results), "results": [result.result for result in results]}
