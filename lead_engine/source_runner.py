@@ -2,6 +2,7 @@ from typing import Any, Dict, Iterable, Optional
 import logging
 
 from .pipeline import LeadPipeline
+from .discovery_gate import apply_discovery_gate
 
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,11 @@ class SourceRunner:
 
     Checkpoints are passed into checkpoint-aware sources. A checkpoint is
     returned only when the source exposes a real checkpoint value.
+
+    Every persisted opportunity then passes through the company-specific
+    qualification gate. This keeps discovery, qualification, Paxus research,
+    and Airtable synchronization connected without making any source adapter
+    responsible for business decisions.
     """
 
     def __init__(
@@ -29,6 +35,8 @@ class SourceRunner:
         duplicates = 0
         failed = 0
         discovered = 0
+        qualified = 0
+        research_queued = 0
 
         for record in records:
             discovered += 1
@@ -49,6 +57,10 @@ class SourceRunner:
             try:
                 result = self.pipeline.process(
                     **record
+                )
+                result = apply_discovery_gate(
+                    self.pipeline,
+                    result,
                 )
 
             except Exception:
@@ -86,11 +98,19 @@ class SourceRunner:
             ) is True:
                 accepted += 1
 
+            if result.get("qualification_status") == "qualified":
+                qualified += 1
+
+            if result.get("paxus_research_status") == "research_required":
+                research_queued += 1
+
         return {
             "discovered_count": discovered,
             "accepted_count": accepted,
             "duplicate_count": duplicates,
             "failed_count": failed,
+            "qualified_count": qualified,
+            "paxus_research_queued_count": research_queued,
         }
 
     def run_source(
@@ -111,12 +131,6 @@ class SourceRunner:
                 checkpoint=checkpoint
             )
         except TypeError as exc:
-            # Only fall back for legacy sources whose collect()
-            # method genuinely does not accept a checkpoint argument.
-            #
-            # Do not catch TypeError raised inside the source's
-            # actual collection logic, because that is a real
-            # production source failure.
             message = str(exc)
 
             if (
@@ -131,12 +145,6 @@ class SourceRunner:
             records
         )
 
-        # Do not use plain getattr() here because unittest.mock.Mock
-        # dynamically creates attributes that do not actually exist.
-        #
-        # Production checkpoint-aware sources expose last_checkpoint
-        # as a real string value. Only add the checkpoint field when
-        # that real value exists.
         source_state = getattr(
             source,
             "__dict__",
@@ -156,4 +164,4 @@ if __name__ == "__main__":
         "Source runner loaded. "
         "Normalized source records can now enter "
         "the lead pipeline."
-            )
+    )
