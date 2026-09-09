@@ -237,3 +237,18 @@ def coordinator_from_environment() -> ComputeCoordinator:
         token,
         int(os.environ.get("THORIO_COMPUTE_LEASE_SECONDS", "300")),
     )
+
+
+def serve_from_environment() -> None:
+    coordinator = coordinator_from_environment()
+    host = os.environ.get("THORIO_COMPUTE_BIND_HOST", "127.0.0.1")
+    port = int(os.environ.get("THORIO_COMPUTE_PORT", "8787"))
+    server = ComputeCoordinatorServer(coordinator, host, port)
+    try:
+        server.serve_forever(poll_interval=1.0)
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    serve_from_environment()
