@@ -2,6 +2,7 @@ import argparse
 import json
 
 from .application import create_application
+from .browser_discovery import configured_browser_discovery_sources
 from .discovery_collectors import configured_discovery_sources
 from .export import export_pending_leads
 from .json_source import JsonLeadSource
@@ -42,11 +43,15 @@ def _sync_pending_if_enabled(application):
 
 
 def _configured_runtime_sources():
-    """Combine existing configured sources with authorized discovery lanes."""
+    """Combine existing sources with free authenticated browser and API lanes."""
+    if __import__("os").environ.get("THORIO_FREE_ONLY", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+        raise RuntimeError("THORIO_FREE_ONLY must remain enabled; paid collection paths are prohibited")
+
     sources = list(configured_sources())
-    discovery = configured_discovery_sources(required=False)
+    discovery = list(configured_discovery_sources(required=False))
+    browser = list(configured_browser_discovery_sources())
     existing = {str(getattr(source, "name", "")).strip().casefold() for source in sources}
-    for source in discovery:
+    for source in discovery + browser:
         key = source.name.strip().casefold()
         if key not in existing:
             sources.append(source)
