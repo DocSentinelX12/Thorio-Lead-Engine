@@ -93,7 +93,7 @@ def test_production_path_allows_unqualified_lead_to_be_rechecked(
     stored = application.db.get(fingerprint)
 
     assert stored is not None
-    assert stored["qualification_status"] == "unqualified"
+    assert stored["qualification_status"] == "Unverified"
 
 
 def test_production_path_deduplicates_qualified_lead_across_separate_runs(
