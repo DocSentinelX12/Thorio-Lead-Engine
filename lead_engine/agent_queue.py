@@ -100,6 +100,31 @@ def _recover_stale(state: Dict[str, Any]) -> bool:
     return changed
 
 
+def claim_task(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) -> Dict[str, Any]:
+    """Atomically claim one exact queued task for a known remote worker."""
+    if not task_id:
+        raise ValueError("task_id is required")
+    if not worker_id:
+        raise ValueError("worker_id is required")
+    if lease_seconds <= 0:
+        raise ValueError("lease_seconds must be positive")
+    state = _load(db)
+    _recover_stale(state)
+    task = state["items"].get(task_id)
+    if task is None:
+        raise ValueError(f"Task not found: {task_id}")
+    if task.get("status") != QUEUED:
+        raise ValueError(f"Task is not queued: {task_id}")
+    now = _now()
+    task["status"] = RUNNING
+    task["worker_id"] = worker_id
+    task["lease_until"] = _iso(now + timedelta(seconds=lease_seconds))
+    task["attempts"] = int(task.get("attempts", 0)) + 1
+    task["updated_at"] = _iso(now)
+    _save(db, state)
+    return dict(task)
+
+
 def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int = 300) -> List[Dict[str, Any]]:
     registry = agent_registry()
     if agent not in registry:
