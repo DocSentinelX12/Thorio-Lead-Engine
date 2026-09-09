@@ -37,10 +37,7 @@ class LeadDB:
         fingerprint = payload.get("fingerprint")
         if not fingerprint:
             raise ValueError("Lead payload must contain a fingerprint.")
-        cursor = self.conn.execute(
-            "INSERT OR IGNORE INTO leads (fingerprint, payload) VALUES (?, ?)",
-            (str(fingerprint), json.dumps(payload, ensure_ascii=False)),
-        )
+        cursor = self.conn.execute("INSERT OR IGNORE INTO leads (fingerprint, payload) VALUES (?, ?)", (str(fingerprint), json.dumps(payload, ensure_ascii=False)))
         self.conn.commit()
         return cursor.rowcount == 1
 
@@ -63,11 +60,7 @@ class LeadDB:
         current.update(updates)
         if current == before:
             return current
-        self.conn.execute(
-            """UPDATE leads SET payload = ?, synced = 0, last_error = '', updated_at = CURRENT_TIMESTAMP
-               WHERE fingerprint = ?""",
-            (json.dumps(current, ensure_ascii=False), fingerprint),
-        )
+        self.conn.execute("UPDATE leads SET payload = ?, synced = 0, last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?", (json.dumps(current, ensure_ascii=False), fingerprint))
         self.conn.commit()
         return current
 
@@ -76,10 +69,7 @@ class LeadDB:
             raise ValueError("Pending limit must be an integer.")
         if limit <= 0:
             raise ValueError("Pending limit must be greater than zero.")
-        return self.conn.execute(
-            "SELECT fingerprint, payload, attempts FROM leads WHERE synced = 0 ORDER BY rowid LIMIT ?",
-            (limit,),
-        ).fetchall()
+        return self.conn.execute("SELECT fingerprint, payload, attempts FROM leads WHERE synced = 0 ORDER BY rowid LIMIT ?", (limit,)).fetchall()
 
     def pending_research(self, limit=50):
         if not isinstance(limit, int) or isinstance(limit, bool):
@@ -103,31 +93,17 @@ class LeadDB:
         return result
 
     def get_sync_state(self, fingerprint: str) -> Dict[str, Any]:
-        row = self.conn.execute(
-            "SELECT synced, attempts, last_error, updated_at FROM leads WHERE fingerprint = ?",
-            (fingerprint,),
-        ).fetchone()
+        row = self.conn.execute("SELECT synced, attempts, last_error, updated_at FROM leads WHERE fingerprint = ?", (fingerprint,)).fetchone()
         if row is None:
             raise ValueError(f"Lead not found: {fingerprint}")
-        return {
-            "synced": bool(row[0]),
-            "attempts": int(row[1]),
-            "last_error": str(row[2] or ""),
-            "updated_at": row[3],
-        }
+        return {"synced": bool(row[0]), "attempts": int(row[1]), "last_error": str(row[2] or ""), "updated_at": row[3]}
 
     def mark_synced(self, fingerprint):
-        self.conn.execute(
-            "UPDATE leads SET synced = 1, last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
-            (fingerprint,),
-        )
+        self.conn.execute("UPDATE leads SET synced = 1, last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?", (fingerprint,))
         self.conn.commit()
 
     def mark_error(self, fingerprint, error):
-        self.conn.execute(
-            "UPDATE leads SET attempts = attempts + 1, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
-            (str(error)[:4000], fingerprint),
-        )
+        self.conn.execute("UPDATE leads SET synced = 0, attempts = attempts + 1, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?", (str(error)[:4000], fingerprint))
         self.conn.commit()
 
     def set_checkpoint(self, collector, checkpoint):
@@ -135,11 +111,7 @@ class LeadDB:
             raise ValueError("Checkpoint collector is required.")
         if checkpoint is None:
             raise ValueError("Checkpoint value is required.")
-        self.conn.execute(
-            """INSERT INTO checkpoints (collector, checkpoint) VALUES (?, ?)
-               ON CONFLICT(collector) DO UPDATE SET checkpoint = excluded.checkpoint, updated_at = CURRENT_TIMESTAMP""",
-            (str(collector), str(checkpoint)),
-        )
+        self.conn.execute("INSERT INTO checkpoints (collector, checkpoint) VALUES (?, ?) ON CONFLICT(collector) DO UPDATE SET checkpoint = excluded.checkpoint, updated_at = CURRENT_TIMESTAMP", (str(collector), str(checkpoint)))
         self.conn.commit()
 
     def get_checkpoint(self, collector):
@@ -160,17 +132,11 @@ class LeadDB:
             raise ValueError("State key is required.")
         if not isinstance(value, dict):
             raise ValueError("State value must be an object.")
-        self.conn.execute(
-            """INSERT INTO state (key, value) VALUES (?, ?)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP""",
-            (key, json.dumps(value, ensure_ascii=False)),
-        )
+        self.conn.execute("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", (key, json.dumps(value, ensure_ascii=False)))
         self.conn.commit()
 
     def stats(self):
-        return self.conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads"
-        ).fetchone()
+        return self.conn.execute("SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads").fetchone()
 
     def close(self) -> None:
         if self.conn is not None:
