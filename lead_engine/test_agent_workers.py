@@ -4,7 +4,7 @@ import pytest
 
 from .agent_orchestrator import AgentOrchestrator
 from .agent_specializations import specialization_registry
-from .agent_workers import AgentContractError, handler_registry, run_worker_once
+from .agent_workers import handler_registry, run_worker_once
 from .database import LeadDB
 from .agent_queue import enqueue
 
@@ -48,7 +48,7 @@ def test_qualification_worker_applies_independent_company_routes(tmp_path):
         {
             "lead": {
                 "company": "Acme",
-                "signal": "Acme is hiring a software engineer",
+                "signal": "Acme is hiring a remote software engineer",
                 "job_title": "Software Engineer",
                 "need_at": _recent(),
             }
