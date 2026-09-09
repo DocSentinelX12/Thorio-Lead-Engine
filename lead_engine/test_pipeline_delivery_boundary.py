@@ -46,7 +46,7 @@ def test_pipeline_keeps_discovery_unqualified():
     )
 
     assert result["lead"]["qualified"] is False
-    assert result["lead"]["qualification_status"] == "unqualified"
+    assert result["lead"]["qualification_status"] == "Unverified"
 
 
 def test_qualification_is_explicit():
@@ -153,7 +153,7 @@ def test_unqualified_duplicate_discovery_is_not_blocked():
 
     assert result["status"] != "duplicate"
     assert result["lead"]["qualified"] is False
-    assert result["lead"]["qualification_status"] == "unqualified"
+    assert result["lead"]["qualification_status"] == "Unverified"
 
 
 def test_qualified_duplicate_is_blocked_after_qualification():
@@ -340,6 +340,6 @@ def test_approval_queue_sync_does_not_equal_partner_delivery():
 
     assert result["sync_status"] == "synced"
     assert result["lead"]["qualified"] is False
-    assert result["lead"]["qualification_status"] == "unqualified"
+    assert result["lead"]["qualification_status"] == "Unverified"
 
     mock_sync.assert_called_once()
