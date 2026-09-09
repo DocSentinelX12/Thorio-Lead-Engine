@@ -17,6 +17,18 @@ _PRIORITY_MAP = {
     "low": 0,
 }
 
+_DISCOVERY_SOURCE_ALIASES = {
+    "x_signal": ("x", "twitter"),
+    "threads_signal": ("threads",),
+    "reddit_signal": ("reddit",),
+    "linkedin_signal": ("linkedin",),
+    "facebook_signal": ("facebook",),
+    "instagram_signal": ("instagram",),
+    "hacker_news_signal": ("hacker news", "hacker_news", "news.ycombinator.com", "hn"),
+    "indie_hackers_signal": ("indie hackers", "indie_hackers", "indiehackers"),
+    "product_hunt_signal": ("product hunt", "product_hunt", "producthunt"),
+}
+
 
 def _queue_priority(value: Any) -> int:
     """Normalize pipeline priority into the integer queue contract."""
@@ -36,8 +48,28 @@ def _queue_priority(value: Any) -> int:
         return 0
 
 
+def _discovery_agent(record: Dict[str, Any]) -> str:
+    """Select the permanent discovery lane from explicit source metadata."""
+    configured = str(record.get("discovery_agent") or "").strip()
+    if configured:
+        return configured
+
+    source_text = " ".join(
+        str(record.get(key) or "").strip().lower()
+        for key in ("source", "provider", "source_url", "url")
+        if str(record.get(key) or "").strip()
+    )
+
+    for agent, aliases in _DISCOVERY_SOURCE_ALIASES.items():
+        if any(alias in source_text for alias in aliases):
+            return agent
+
+    # All unclassified job/career/web records remain in the web-job lane.
+    return "web_job_signal"
+
+
 class SourceRunner:
-    """Run normalized source records through the existing lead pipeline."""
+    """Run normalized source records through the lead pipeline and workforce."""
 
     def __init__(self, pipeline: LeadPipeline):
         self.pipeline = pipeline
@@ -82,12 +114,17 @@ class SourceRunner:
                 fingerprint = str(result.get("fingerprint") or "").strip()
                 lead = result.get("lead")
                 if fingerprint and isinstance(lead, dict):
+                    agent = _discovery_agent(record)
                     enqueue(
                         self.pipeline.db,
-                        "qualification_a",
-                        {"lead": dict(lead)},
+                        agent,
+                        {
+                            "record": dict(record),
+                            "lead": dict(lead),
+                            "fingerprint": fingerprint,
+                        },
                         priority=_queue_priority(result.get("priority")),
-                        dedupe_key=fingerprint,
+                        dedupe_key=f"discovery:{agent}:{fingerprint}",
                     )
                     agent_tasks_queued += 1
 
