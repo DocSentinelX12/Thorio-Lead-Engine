@@ -6,7 +6,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
 from .advanced_agent_logic import advanced_handler_registry
@@ -24,6 +24,7 @@ class ComputeWorkerClient:
     auth_token: str
     worker_id: str
     timeout_seconds: int = 20
+    _registered: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.coordinator_url = self.coordinator_url.rstrip("/")
@@ -55,7 +56,7 @@ class ComputeWorkerClient:
     def register(self) -> Dict[str, Any]:
         identity = local_worker_identity(self.worker_id)
         advanced = list(advanced_handler_registry())
-        return self.request("/workers/register", {
+        result = self.request("/workers/register", {
             "worker_id": identity.worker_id,
             "hostname": identity.hostname,
             "architecture": identity.architecture,
@@ -63,6 +64,8 @@ class ComputeWorkerClient:
             "memory_mb": identity.memory_mb,
             "capabilities": list(identity.capabilities) + ["lead_prepare", "advanced_agent_task"] + advanced,
         })
+        self._registered = True
+        return result
 
     def heartbeat(self, current_load: int = 0) -> Dict[str, Any]:
         return self.request("/workers/heartbeat", {"worker_id": self.worker_id, "current_load": current_load})
@@ -129,7 +132,6 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
         try:
             if not client._registered:
                 client.register()
-                client._registered = True
             now = time.monotonic()
             if now - last_heartbeat >= heartbeat_seconds:
                 client.heartbeat(0)
@@ -173,9 +175,6 @@ def client_from_environment() -> ComputeWorkerClient:
     if not token:
         raise RuntimeError("THORIO_COMPUTE_AUTH_TOKEN is required")
     return ComputeWorkerClient(url, token, worker_id, int(os.environ.get("THORIO_COMPUTE_HTTP_TIMEOUT", "20")))
-
-
-ComputeWorkerClient._registered = False
 
 
 if __name__ == "__main__":
