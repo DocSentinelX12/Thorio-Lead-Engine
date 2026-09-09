@@ -504,7 +504,10 @@ def _load_airtable_source_catalog() -> Tuple[
         )
 
         if not isinstance(fields, dict):
-            continue
+            raise RuntimeError(
+                "Airtable Lead Sources record "
+                f"{index + 1} has invalid 'fields'."
+            )
 
         if fields.get(
             "Active",
@@ -561,7 +564,10 @@ def _load_airtable_source_catalog() -> Tuple[
             )
 
         if not url:
-            continue
+            raise RuntimeError(
+                "Airtable Lead Sources record "
+                f"{index + 1} ({name}) is missing 'Source URL'."
+            )
 
         _validate_source_url(
             url,
