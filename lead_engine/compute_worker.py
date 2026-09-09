@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
 from .advanced_agent_logic import advanced_handler_registry
-from .agent_registry import ALL_AGENT_ROLES
 from .compute_pool import local_worker_identity
 from .lead_pipeline import process_leads
 
@@ -39,7 +38,12 @@ class ComputeWorkerClient:
 
     def request(self, path: str, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         body = None if payload is None else json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(self.coordinator_url + path, data=body, method="GET" if body is None else "POST", headers={"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"})
+        request = urllib.request.Request(
+            self.coordinator_url + path,
+            data=body,
+            method="GET" if body is None else "POST",
+            headers={"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"},
+        )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -67,11 +71,26 @@ class ComputeWorkerClient:
         result = self.request("/work/claim", {"worker_id": self.worker_id})
         return result if result.get("task_id") else None
 
+    def status(self, task_id: str) -> Dict[str, Any]:
+        return self.request(f"/work/status/{task_id}")
+
+    def enqueue(self, payload: Mapping[str, Any], task_id: Optional[str] = None) -> Dict[str, Any]:
+        body: Dict[str, Any] = {"payload": dict(payload)}
+        if task_id is not None:
+            body["task_id"] = task_id
+        return self.request("/work/enqueue", body)
+
     def complete(self, task_id: str, lease_token: str, result: Dict[str, Any]) -> Dict[str, Any]:
-        return self.request("/work/complete", {"worker_id": self.worker_id, "task_id": task_id, "lease_token": lease_token, "result": result})
+        response = self.request("/work/complete", {"worker_id": self.worker_id, "task_id": task_id, "lease_token": lease_token, "result": result})
+        if response.get("completed") is not True:
+            raise ComputeWorkerError(f"coordinator rejected completion for task {task_id}")
+        return response
 
     def release(self, task_id: str, lease_token: str, error: str) -> Dict[str, Any]:
-        return self.request("/work/release", {"worker_id": self.worker_id, "task_id": task_id, "lease_token": lease_token, "error": error})
+        response = self.request("/work/release", {"worker_id": self.worker_id, "task_id": task_id, "lease_token": lease_token, "error": error})
+        if response.get("released") is not True:
+            raise ComputeWorkerError(f"coordinator rejected release for task {task_id}")
+        return response
 
 
 def execute_compute_task(payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -105,17 +124,20 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
         raise ValueError("worker intervals must be positive")
     stop_event = stop_event or _NeverStop()
     backoff = 1.0
-    client.register()
     last_heartbeat = 0.0
     while not stop_event.is_set():
-        now = time.monotonic()
-        if now - last_heartbeat >= heartbeat_seconds:
-            client.heartbeat(0)
-            last_heartbeat = now
         try:
+            if not client._registered:
+                client.register()
+                client._registered = True
+            now = time.monotonic()
+            if now - last_heartbeat >= heartbeat_seconds:
+                client.heartbeat(0)
+                last_heartbeat = now
             task = client.claim()
             backoff = 1.0
         except ComputeWorkerError:
+            client._registered = False
             if stop_event.wait(backoff):
                 break
             backoff = min(30.0, backoff * 2.0)
@@ -127,7 +149,10 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
             result = execute_compute_task(task["payload"])
             client.complete(task["task_id"], task["lease_token"], result)
         except Exception as error:
-            client.release(task["task_id"], task["lease_token"], str(error))
+            try:
+                client.release(task["task_id"], task["lease_token"], str(error))
+            except ComputeWorkerError:
+                client._registered = False
 
 
 class _NeverStop:
@@ -148,6 +173,9 @@ def client_from_environment() -> ComputeWorkerClient:
     if not token:
         raise RuntimeError("THORIO_COMPUTE_AUTH_TOKEN is required")
     return ComputeWorkerClient(url, token, worker_id, int(os.environ.get("THORIO_COMPUTE_HTTP_TIMEOUT", "20")))
+
+
+ComputeWorkerClient._registered = False
 
 
 if __name__ == "__main__":
