@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: thorio-free-compute-workers-${{ github.run_id }}
-  cancel-in-progress: false
+  group: thorio-free-compute-workers
+  cancel-in-progress: true
 
 jobs:
   worker:
