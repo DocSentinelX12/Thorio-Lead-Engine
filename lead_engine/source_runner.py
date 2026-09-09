@@ -2,7 +2,6 @@ from typing import Any, Dict, Iterable, Optional
 import logging
 
 from .pipeline import LeadPipeline
-from .discovery_gate import apply_discovery_gate
 from .agent_queue import enqueue
 
 logger = logging.getLogger(__name__)
@@ -93,8 +92,9 @@ class SourceRunner:
                 )
                 continue
             try:
+                # Collection and persistence happen here. Qualification is a
+                # specialist-stage decision and must not run before discovery.
                 result = self.pipeline.process(**record)
-                result = apply_discovery_gate(self.pipeline, result)
             except Exception:
                 failed += 1
                 source = str(record.get("source", "unknown"))
