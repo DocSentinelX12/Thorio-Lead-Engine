@@ -61,8 +61,6 @@ def test_scheduler_parallelizes_collection_but_keeps_processing_sequential(monke
     assert runner.run_records.call_count == 2
     assert runner.run_records.call_args_list[0].args[0] == [{"company": "one", "source": "one"}]
     assert runner.run_records.call_args_list[1].args[0] == [{"company": "two", "source": "two"}]
-    # The collector owns the authoritative next checkpoint. The dedicated
-    # failed-source test below verifies durable database checkpoint behavior.
     assert sources[0].last_checkpoint == "next-one"
     assert sources[1].last_checkpoint == "next-two"
 
@@ -214,5 +212,31 @@ def test_scheduler_persisted_poll_interval_uses_wall_clock_after_restart(tmp_pat
     with patch("lead_engine.scheduler.time.time", return_value=1061.0), patch("lead_engine.scheduler.time.monotonic", return_value=1.0):
         after_expiry = second_scheduler.run([source])
     assert after_expiry["successful_source_count"] == 1
+    assert runner.run_source.call_count == 1
+    db.close()
+
+
+def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future(tmp_path):
+    runner = MagicMock()
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db)
+    runner.pipeline = pipeline
+    runner.run_source.return_value = {"processed_count": 1, "failed_count": 0, "total": 1}
+    definition = SourceDefinition(
+        name="Bounded Acceptance API", provider="Example", collector_type="json", url="https://example.com/api",
+        pagination_type="none", poll_interval_seconds=3600,
+    )
+    source = create_adapter(definition=definition)
+    scheduler = LeadScheduler(runner=runner)
+    with patch("lead_engine.scheduler.time.time", return_value=1000.0):
+        first = scheduler.run([source])
+    assert first["successful_source_count"] == 1
+    runner.run_source.reset_mock()
+    second_scheduler = LeadScheduler(runner=runner)
+    with patch("lead_engine.scheduler.time.time", return_value=1001.0):
+        result = second_scheduler.run_bounded([source], interval_seconds=0, max_cycles=1)
+    assert result["successful_source_count"] == 1
+    assert result["failed_count"] == 0
+    assert result["discovered_count"] == 1
     assert runner.run_source.call_count == 1
     db.close()
