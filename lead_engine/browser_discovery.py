@@ -112,16 +112,45 @@ def _text(node: Any) -> str:
         return ""
 
 
-class FreeAuthenticatedBrowserCollector:
-    """Collect from pages using an existing local authenticated browser profile.
+def _browser_endpoint() -> str:
+    return _env("THORIO_BROWSER_CDP_URL")
 
-    This collector never receives passwords or API tokens. Authentication stays
-    in the browser profile owned by the operator. It is intended for a free
-    self-hosted runner or another already-authorized browser environment.
+
+class FreeAuthenticatedBrowserCollector:
+    """Collect from an already-authorized persistent browser.
+
+    Two runtime modes are supported:
+    * local persistent Chromium via ``THORIO_BROWSER_PROFILE_DIR``;
+    * an attached persistent Chromium via ``THORIO_BROWSER_CDP_URL``.
+
+    The CDP mode is specifically for the free Android/Termux node. Chromium owns
+    the persistent profile and the engine attaches to it without copying cookies
+    or credentials into GitHub Actions, Airtable, or the repository.
     """
 
     def __init__(self, target: BrowserDiscoveryTarget):
         self.target = target
+
+    def _open_context(self, playwright: Any) -> tuple[Any, bool]:
+        endpoint = _browser_endpoint()
+        if endpoint:
+            try:
+                browser = playwright.chromium.connect_over_cdp(endpoint, timeout=30_000)
+            except Exception as exc:
+                raise BrowserDiscoveryUnavailable(
+                    f"Persistent browser CDP endpoint is unavailable: {endpoint}"
+                ) from exc
+            contexts = browser.contexts
+            if not contexts:
+                raise BrowserDiscoveryUnavailable("Persistent CDP browser has no active browser context")
+            return contexts[0], False
+
+        profile = _required_profile()
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile),
+            headless=_env("THORIO_BROWSER_HEADLESS", "1").lower() in {"1", "true", "yes", "on"},
+        )
+        return context, True
 
     def collect(self, checkpoint: Optional[str] = None) -> BrowserDiscoveryResult:
         try:
@@ -131,16 +160,12 @@ class FreeAuthenticatedBrowserCollector:
                 "Playwright is required for browser discovery; install it in the authorized local runner environment"
             ) from exc
 
-        profile = _required_profile()
         seen_after = checkpoint or ""
         records: list[dict[str, Any]] = []
         next_checkpoint: Optional[str] = None
 
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile),
-                headless=_env("THORIO_BROWSER_HEADLESS", "1").lower() in {"1", "true", "yes", "on"},
-            )
+            context, owns_context = self._open_context(playwright)
             try:
                 page = context.new_page()
                 page.goto(self.target.url, wait_until="domcontentloaded", timeout=60_000)
@@ -207,7 +232,8 @@ class FreeAuthenticatedBrowserCollector:
                     records.append(normalize_lead_input(record))
                     next_checkpoint = fingerprint
             finally:
-                context.close()
+                if owns_context:
+                    context.close()
 
         return BrowserDiscoveryResult(
             lane=self.target.lane,
