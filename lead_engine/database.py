@@ -31,7 +31,26 @@ class LeadDB:
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS agent_queue (
+            task_id TEXT PRIMARY KEY,
+            agent TEXT NOT NULL,
+            queue TEXT NOT NULL,
+            status TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            payload TEXT NOT NULL,
+            dedupe_key TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            lease_until TEXT,
+            worker_id TEXT,
+            last_error TEXT,
+            result TEXT
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
         self.conn.commit()
+        self._migrate_agent_queue_state()
 
     def _connect_with_recovery(self):
         if not self.path.exists():
@@ -164,6 +183,71 @@ class LeadDB:
             raise ValueError("State value must be an object.")
         self.conn.execute("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", (key, json.dumps(value, ensure_ascii=False)))
         self.conn.commit()
+
+    def _migrate_agent_queue_state(self):
+        row = self.conn.execute("SELECT COUNT(*) FROM agent_queue").fetchone()
+        if row and int(row[0]) > 0:
+            return
+        legacy = self.get_state("agent_work_queue")
+        items = legacy.get("items", {}) if isinstance(legacy, dict) else {}
+        if not isinstance(items, dict) or not items:
+            return
+        rows = []
+        for task_id, task in items.items():
+            if not isinstance(task, dict) or not task_id:
+                continue
+            rows.append((
+                str(task_id), str(task.get("agent", "")), str(task.get("queue", "")), str(task.get("status", "queued")),
+                int(task.get("priority", 0)), json.dumps(task.get("payload", {}), ensure_ascii=False), task.get("dedupe_key"),
+                str(task.get("created_at", "")), str(task.get("updated_at", "")), int(task.get("attempts", 0)),
+                task.get("lease_until"), task.get("worker_id"), task.get("last_error"), json.dumps(task.get("result"), ensure_ascii=False) if task.get("result") is not None else None,
+            ))
+        if rows:
+            self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+            self.conn.commit()
+
+    def queue_insert_many(self, rows):
+        self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        self.conn.commit()
+
+    def queue_find_duplicate(self, agent, dedupe_key):
+        if not dedupe_key:
+            return None
+        row = self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND dedupe_key = ? AND status IN ('queued', 'running') ORDER BY created_at LIMIT 1", (agent, dedupe_key)).fetchone()
+        return row
+
+    def queue_get(self, task_id):
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone()
+
+    def queue_recover_stale(self, now_iso):
+        cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def queue_claim(self, agent, worker_id, limit, lease_until, now_iso):
+        rows = self.conn.execute("SELECT task_id FROM agent_queue WHERE agent = ? AND status = 'queued' ORDER BY priority DESC, created_at LIMIT ?", (agent, limit)).fetchall()
+        claimed_ids = [row[0] for row in rows]
+        if claimed_ids:
+            self.conn.executemany("UPDATE agent_queue SET status = 'running', worker_id = ?, lease_until = ?, attempts = attempts + 1, updated_at = ? WHERE task_id = ? AND status = 'queued'", [(worker_id, lease_until, now_iso, task_id) for task_id in claimed_ids])
+            self.conn.commit()
+        return [self.queue_get(task_id) for task_id in claimed_ids]
+
+    def queue_update(self, task_id, **updates):
+        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result"}
+        unknown = set(updates) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
+        if not updates:
+            return
+        assignments = ", ".join(f"{field} = ?" for field in updates)
+        values = list(updates.values()) + [task_id]
+        self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
+        self.conn.commit()
+
+    def queue_pending(self, agent=None):
+        if agent is None:
+            return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
 
     def stats(self):
         return self.conn.execute("SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads").fetchone()
