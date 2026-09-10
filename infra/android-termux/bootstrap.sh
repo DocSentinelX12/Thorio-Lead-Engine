@@ -8,7 +8,7 @@ SERVICE_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/service"
 LOG_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/log"
 
 pkg update -y
-pkg install -y git python termux-services curl x11-repo chromium
+pkg install -y git python termux-services curl x11-repo chromium termux-x11-nightly
 
 mkdir -p "$HOME/.thorio" "$PROFILE_DIR" "$APP_DIR"
 
