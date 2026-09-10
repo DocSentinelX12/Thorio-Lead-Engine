@@ -38,7 +38,7 @@ def _register(base_url, worker_id="worker-1"):
         "architecture": "x86_64",
         "cpu_count": 2,
         "memory_mb": 4096,
-        "capabilities": ["lead-processing"],
+        "capabilities": ["lead-processing", "social_intelligence", "lead_prepare"],
     })
     assert status == 200
     assert registered["worker_id"] == worker_id
@@ -123,7 +123,9 @@ def test_remote_enqueue_requires_object_payload(tmp_path):
 
 def test_expired_lease_is_requeued_and_claimable(tmp_path):
     coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
-    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity("worker-1", "host", "x86_64", 2, 4096))
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
+        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
+    ))
     task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
     claimed = coordinator.claim("worker-1")
     assert claimed["task_id"] == task_id
