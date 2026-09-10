@@ -145,6 +145,52 @@ def social_research(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def company_research(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Turn collected evidence into an auditable research packet.
+
+    The researcher may promote a named person that was actually observed by a
+    collector, but never guesses a title, email, phone number, or decision-maker
+    status. Missing facts remain explicitly research-required.
+    """
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
+    events = _events(payload)
+    company = str(lead.get("company") or "").strip()
+    source_url = str(lead.get("source_url") or lead.get("url") or "").strip()
+    person = str(lead.get("contact_name") or lead.get("person") or "").strip()
+    signal = str(lead.get("signal") or lead.get("evidence") or "").strip()
+    evidence = str(lead.get("evidence") or "").strip()
+
+    facts: Dict[str, Any] = {
+        "company_verified": bool(company),
+        "company_identity_evidence": f"Observed company name: {company}" if company else "",
+        "business_context": signal,
+        "current_need_evidence": signal,
+        "recent_activity_evidence": evidence,
+        "source_url": source_url,
+        "evidence_event_count": len(events),
+        "researched_at": datetime.now(timezone.utc).isoformat(),
+        "fabricated_fields": [],
+    }
+    if person:
+        facts["decision_maker"] = person
+        facts["decision_maker_evidence"] = (
+            f"Named person was directly observed in collector evidence: {person}."
+        )
+        facts["decision_maker_verification_status"] = "observed_needs_role_verification"
+    status = "complete" if facts["company_verified"] and facts.get("decision_maker") and facts.get("decision_maker_evidence") else "research_required"
+    return {
+        "role": "company_research",
+        "fingerprint": _fingerprint(payload),
+        "lead": dict(lead),
+        "research": facts,
+        "research_status": status,
+        "decision_maker_verified": bool(facts.get("decision_maker") and facts.get("decision_maker_evidence")),
+        "verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())],
+        "fabricated_fields": [],
+        "handoff": "qualification_b",
+    }
+
+
 def outreach_closing(payload: Mapping[str, Any]) -> Dict[str, Any]:
     """Produce the next revenue action from verified lead evidence."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
@@ -196,6 +242,7 @@ def advanced_handler_registry():
         handlers[agent] = lambda _agent, payload, _ctx, name=agent: discovery_finding(name, payload)
     for agent in SOCIAL_TARGETS:
         handlers[agent] = lambda _agent, payload, _ctx, name=agent: social_research(name, payload)
+    handlers["company_research"] = lambda _agent, payload, _ctx: company_research(payload)
     handlers["outreach_closer"] = lambda _agent, payload, _ctx: outreach_closing(payload)
     handlers["follow_up"] = lambda _agent, payload, _ctx: follow_up_action(payload)
     return handlers
