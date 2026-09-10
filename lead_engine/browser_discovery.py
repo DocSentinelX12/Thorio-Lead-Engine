@@ -144,16 +144,17 @@ def _account_env(account: str, suffix: str) -> str:
 
 def authenticated_browser_lane_status(targets: Iterable[BrowserDiscoveryTarget]) -> dict[str, Any]:
     """Return non-secret readiness evidence for the six supported account lanes."""
+    target_list = tuple(targets)
     target_accounts = {
         target.account.strip().lower().replace("-", "_").replace(" ", "_")
-        for target in targets
+        for target in target_list
         if target.account
     }
     return {
         "supported_accounts": list(SUPPORTED_ACCOUNTS),
         "configured_accounts": sorted(target_accounts),
-        "configured_lane_count": len(tuple(targets)) if not isinstance(targets, tuple) else len(targets),
-        "authenticated_lane_count": sum(1 for target in targets if target.account and target.authenticated_selector),
+        "configured_lane_count": len(target_list),
+        "authenticated_lane_count": sum(1 for target in target_list if target.account and target.authenticated_selector),
         "all_six_account_types_supported": set(SUPPORTED_ACCOUNTS) == target_accounts,
     }
 
