@@ -169,12 +169,21 @@ class LeadDB:
 
     def get_state(self, key: str) -> Optional[Dict[str, Any]]:
         row = self.conn.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
-        if not row:
-            return None
-        value = json.loads(row[0])
-        if not isinstance(value, dict):
-            raise ValueError("Stored state value must be an object.")
-        return value
+        if row:
+            value = json.loads(row[0])
+            if not isinstance(value, dict):
+                raise ValueError("Stored state value must be an object.")
+            return value
+
+        # Compatibility read for older callers that inspect the historical
+        # JSON queue state. Queue mutations use the dedicated table and never
+        # rewrite this large state blob.
+        if key == "agent_work_queue":
+            rows = self.queue_pending_all_rows()
+            items = {str(row[0]): self._queue_row_to_dict(row) for row in rows}
+            if items:
+                return {"items": items}
+        return None
 
     def set_state(self, key: str, value: Dict[str, Any]) -> None:
         if not key:
@@ -188,7 +197,7 @@ class LeadDB:
         row = self.conn.execute("SELECT COUNT(*) FROM agent_queue").fetchone()
         if row and int(row[0]) > 0:
             return
-        legacy = self.get_state("agent_work_queue")
+        legacy = self._get_state_raw("agent_work_queue")
         items = legacy.get("items", {}) if isinstance(legacy, dict) else {}
         if not isinstance(items, dict) or not items:
             return
@@ -206,6 +215,22 @@ class LeadDB:
             self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             self.conn.commit()
 
+    def _get_state_raw(self, key):
+        row = self.conn.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
+        if not row:
+            return None
+        value = json.loads(row[0])
+        return value if isinstance(value, dict) else None
+
+    def _queue_row_to_dict(self, row):
+        return {
+            "task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3],
+            "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6],
+            "created_at": row[7], "updated_at": row[8], "attempts": row[9],
+            "lease_until": row[10], "worker_id": row[11], "last_error": row[12],
+            "result": json.loads(row[13]) if row[13] is not None else None,
+        }
+
     def queue_insert_many(self, rows):
         self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
         self.conn.commit()
@@ -213,8 +238,7 @@ class LeadDB:
     def queue_find_duplicate(self, agent, dedupe_key):
         if not dedupe_key:
             return None
-        row = self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND dedupe_key = ? AND status IN ('queued', 'running') ORDER BY created_at LIMIT 1", (agent, dedupe_key)).fetchone()
-        return row
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND dedupe_key = ? AND status IN ('queued', 'running') ORDER BY created_at LIMIT 1", (agent, dedupe_key)).fetchone()
 
     def queue_get(self, task_id):
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone()
@@ -244,9 +268,12 @@ class LeadDB:
         self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
         self.conn.commit()
 
+    def queue_pending_all_rows(self):
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
+
     def queue_pending(self, agent=None):
         if agent is None:
-            return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
+            return self.queue_pending_all_rows()
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
 
     def stats(self):
