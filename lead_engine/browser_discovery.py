@@ -116,6 +116,15 @@ def _browser_endpoint() -> str:
     return _env("THORIO_BROWSER_CDP_URL")
 
 
+def _browser_navigation_timeout() -> int:
+    """Return a bounded per-target navigation timeout in milliseconds."""
+    try:
+        seconds = int(_env("THORIO_BROWSER_NAVIGATION_TIMEOUT", "15"))
+    except ValueError:
+        seconds = 15
+    return max(1, min(seconds, 120)) * 1000
+
+
 class FreeAuthenticatedBrowserCollector:
     """Collect from an already-authorized persistent browser.
 
@@ -163,15 +172,19 @@ class FreeAuthenticatedBrowserCollector:
         seen_after = checkpoint or ""
         records: list[dict[str, Any]] = []
         next_checkpoint: Optional[str] = None
+        page: Any = None
 
         with sync_playwright() as playwright:
             context, owns_context = self._open_context(playwright)
             try:
                 page = context.new_page()
-                page.goto(self.target.url, wait_until="domcontentloaded", timeout=60_000)
+                navigation_timeout = _browser_navigation_timeout()
+                page.goto(self.target.url, wait_until="domcontentloaded", timeout=navigation_timeout)
                 try:
-                    page.wait_for_load_state("networkidle", timeout=30_000)
+                    page.wait_for_load_state("networkidle", timeout=navigation_timeout)
                 except Exception:
+                    # Dynamic social feeds commonly never become network-idle.
+                    # DOM content is already available, so continue with the bounded page.
                     pass
 
                 if not self.target.item_selector or not self.target.text_selector:
@@ -232,6 +245,11 @@ class FreeAuthenticatedBrowserCollector:
                     records.append(normalize_lead_input(record))
                     next_checkpoint = fingerprint
             finally:
+                if page is not None:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
                 if owns_context:
                     context.close()
 
