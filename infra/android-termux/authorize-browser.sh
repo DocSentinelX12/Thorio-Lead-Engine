@@ -5,8 +5,10 @@ source "$HOME/.thorio/engine.env"
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 PROFILE_DIR="${THORIO_BROWSER_PROFILE_DIR:-$HOME/.thorio/browser-profile}"
-LOG_DIR="$HOME/.thorio/logs"
+LOG_DIR="${HOME}/.thorio/logs"
 CHROME="$PREFIX/lib/chromium/chrome"
+
+mkdir -p "$LOG_DIR" "$PROFILE_DIR"
 
 if ! command -v termux-x11 >/dev/null 2>&1; then
   echo "Termux:X11 runtime is not installed. The Android node must install the Termux:X11 package before authorization." >&2
@@ -22,7 +24,6 @@ sv down thorio-engine || true
 sv down thorio-browser || true
 pkill -f 'chromium.*remote-debugging-port=9222' || true
 
-mkdir -p "$PROFILE_DIR" "$LOG_DIR"
 export DISPLAY=:1
 export XKB_CONFIG_ROOT="$PREFIX/share/xcb"
 
