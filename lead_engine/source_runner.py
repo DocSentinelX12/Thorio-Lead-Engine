@@ -2,6 +2,7 @@ from typing import Any, Dict, Iterable, Optional
 import logging
 
 from .pipeline import LeadPipeline
+from .collector import normalize_lead_input
 from .agent_queue import enqueue_many
 
 logger = logging.getLogger(__name__)
@@ -93,7 +94,8 @@ class SourceRunner:
                 )
                 continue
             try:
-                result = self.pipeline.process(**record)
+                normalized_record = normalize_lead_input(record)
+                result = self.pipeline.process(**normalized_record)
             except Exception:
                 failed += 1
                 source = str(record.get("source", "unknown"))
@@ -113,11 +115,11 @@ class SourceRunner:
                 fingerprint = str(result.get("fingerprint") or "").strip()
                 lead = result.get("lead")
                 if fingerprint and isinstance(lead, dict):
-                    agent = _discovery_agent(record)
+                    agent = _discovery_agent(normalized_record)
                     queue_tasks.append({
                         "agent": agent,
                         "payload": {
-                            "record": dict(record),
+                            "record": dict(normalized_record),
                             "lead": dict(lead),
                             "fingerprint": fingerprint,
                         },
@@ -147,23 +149,3 @@ class SourceRunner:
         if agent_tasks_queued:
             summary["agent_tasks_queued_count"] = agent_tasks_queued
         return summary
-
-    def run_source(self, source, checkpoint: Optional[str] = None) -> Dict[str, Any]:
-        """Collect one source using the supplied checkpoint."""
-        try:
-            records = source.collect(checkpoint=checkpoint)
-        except TypeError as exc:
-            message = str(exc)
-            if "checkpoint" not in message or "unexpected keyword argument" not in message:
-                raise
-            records = source.collect()
-
-        result = self.process(records)
-        source_state = getattr(source, "__dict__", {})
-        if "last_checkpoint" in source_state:
-            result["checkpoint"] = source_state["last_checkpoint"]
-        return result
-
-
-if __name__ == "__main__":
-    print("Source runner loaded. Normalized source records can now enter the lead pipeline.")
