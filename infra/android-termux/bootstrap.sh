@@ -9,6 +9,7 @@ APP_DIR="${THORIO_ANDROID_APP_DIR:-$HOME/thorio-lead-engine}"
 PROFILE_DIR="${THORIO_ANDROID_BROWSER_PROFILE:-$HOME/.thorio/browser-profile}"
 ENV_FILE="${THORIO_ANDROID_ENV_FILE:-$HOME/.thorio/engine.env}"
 SERVICE_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/service"
+LOG_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/log"
 
 pkg update -y
 # Install the Termux-native runtime packages. Do not upgrade pip itself:
@@ -43,9 +44,41 @@ export THORIO_BROWSER_HEADLESS=1
 EOF
 chmod 600 "$ENV_FILE"
 
+# termux-services normally starts runsvdir through service-daemon. Some
+# Termux installations do not start that supervisor reliably immediately
+# after package installation, so this node owns a small idempotent launcher.
+# It uses the same official runit service directory and survives shell exit.
+mkdir -p "$SERVICE_DIR" "$LOG_DIR/sv"
+
+cat > "$HOME/.thorio/start-services" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
+SVDIR="$PREFIX/var/service"
+LOGDIR="$PREFIX/var/log"
+export SVDIR LOGDIR
+
+mkdir -p "$SVDIR" "$LOGDIR/sv"
+
+if ! pgrep -f "[r]unsvdir $SVDIR" >/dev/null 2>&1; then
+  nohup "$PREFIX/bin/runsvdir" "$SVDIR" >/dev/null 2>&1 &
+  for _ in $(seq 1 30); do
+    [ -d "$SVDIR/thorio-browser/supervise" ] && [ -d "$SVDIR/thorio-engine/supervise" ] && break
+    sleep 0.2
+  done
+fi
+
+sv-enable thorio-browser
+sv-enable thorio-engine
+sv up thorio-browser
+sv up thorio-engine
+EOF
+chmod +x "$HOME/.thorio/start-services"
+
 # termux-services supervises services from $PREFIX/var/service.
 # ~/.termux/service is not the active service directory for sv-enable.
-mkdir -p "$SERVICE_DIR/thorio-browser" "$SERVICE_DIR/thorio-engine"
+mkdir -p "$SERVICE_DIR/thorio-browser/log" "$SERVICE_DIR/thorio-engine/log"
 
 cat > "$SERVICE_DIR/thorio-browser/run" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
@@ -66,6 +99,12 @@ exec /data/data/com.termux/files/usr/lib/chromium/chrome \
 EOF
 chmod +x "$SERVICE_DIR/thorio-browser/run"
 
+cat > "$SERVICE_DIR/thorio-browser/log/run" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+exec svlogd -tt "$PREFIX/var/log/sv/thorio-browser"
+EOF
+chmod +x "$SERVICE_DIR/thorio-browser/log/run"
+
 cat > "$SERVICE_DIR/thorio-engine/run" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
@@ -75,21 +114,25 @@ exec python -m lead_engine.cli run-scheduled --interval 60 --forever
 EOF
 chmod +x "$SERVICE_DIR/thorio-engine/run"
 
-# Termux:Boot will start these services after reboot when the companion app is installed.
+cat > "$SERVICE_DIR/thorio-engine/log/run" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+exec svlogd -tt "$PREFIX/var/log/sv/thorio-engine"
+EOF
+chmod +x "$SERVICE_DIR/thorio-engine/log/run"
+
+# Termux:Boot will start the supervisor and services after reboot when the companion app is installed.
 mkdir -p "$HOME/.termux/boot"
 cat > "$HOME/.termux/boot/thorio-start" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 termux-wake-lock || true
-sv-enable thorio-browser || true
-sv-enable thorio-engine || true
-sv up thorio-browser || true
-sv up thorio-engine || true
+"$HOME/.thorio/start-services"
 EOF
 chmod +x "$HOME/.termux/boot/thorio-start"
 
-sv-enable thorio-browser || true
-sv-enable thorio-engine || true
+# Start the runit supervisor explicitly now. This removes the dependency on
+# shell startup hooks and makes the installation immediately verifiable.
+"$HOME/.thorio/start-services"
 
-echo "Thorio Android node installed."
+echo "Thorio Android node installed and runit services started."
 echo "Next: complete one-time browser login in the dedicated Thorio Chromium profile, then keep the phone charging and set Termux battery usage to Unrestricted."
 echo "Do not use your normal Chrome profile. The Thorio profile is $PROFILE_DIR."
