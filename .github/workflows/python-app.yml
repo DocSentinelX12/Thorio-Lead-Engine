@@ -48,13 +48,14 @@ jobs:
     if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Allow the full 60-minute production cycle plus setup, verification, and evidence capture.
+    timeout-minutes: 75
     env:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT || secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
       AIRTABLE_LEAD_TABLE: Lead Radar
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
-      # Keep the free-source network layer bounded so a slow source cannot consume the whole production cycle.
+      # Keep each free-source network request bounded so a slow source cannot consume the whole production cycle.
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "5"
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
@@ -147,7 +148,7 @@ jobs:
       - name: Run Lead Engine for one bounded production cycle
         run: |
           set -o pipefail
-          timeout --signal=TERM --kill-after=30s 900s python -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
+          timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
       - name: Verify active collection and Airtable delivery
         run: |
           python - <<'PY'
