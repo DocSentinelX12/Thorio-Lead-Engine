@@ -24,7 +24,7 @@ permissions:
 jobs:
   test:
     name: Production Preflight Tests
-    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -51,7 +51,7 @@ jobs:
 
   engine:
     name: Run Lead Engine
-    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -176,10 +176,10 @@ jobs:
       - name: Ensure Lead Engine data directory exists
         run: mkdir -p data
 
-      - name: Run Lead Engine continuously for bounded window
+      - name: Run Lead Engine for one bounded production cycle
         run: |
           set -o pipefail
-          python -m lead_engine run-scheduled --interval 60 --cycles 3 2>&1 | tee data/scheduled-run-output.txt
+          python -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
 
       - name: Verify active collection and Airtable delivery
         run: |
