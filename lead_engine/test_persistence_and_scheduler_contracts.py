@@ -38,3 +38,18 @@ def test_scheduler_remote_configuration_requires_both_coordinator_settings(monke
     client = LeadScheduler._remote_client_from_environment()
     assert isinstance(client, ComputeWorkerClient)
     assert client.coordinator_url == "https://coordinator.example"
+
+
+def test_scheduler_remote_configuration_requires_https_for_non_local_coordinator(monkeypatch):
+    monkeypatch.setenv("THORIO_COMPUTE_COORDINATOR_URL", "http://coordinator.example")
+    monkeypatch.setenv("THORIO_COMPUTE_AUTH_TOKEN", "secret")
+    with pytest.raises(RuntimeError, match="HTTPS"):
+        LeadScheduler._remote_client_from_environment()
+
+
+def test_scheduler_remote_configuration_allows_local_http_coordinator(monkeypatch):
+    monkeypatch.setenv("THORIO_COMPUTE_COORDINATOR_URL", "http://127.0.0.1:8787")
+    monkeypatch.setenv("THORIO_COMPUTE_AUTH_TOKEN", "secret")
+    client = LeadScheduler._remote_client_from_environment()
+    assert isinstance(client, ComputeWorkerClient)
+    assert client.coordinator_url == "http://127.0.0.1:8787"
