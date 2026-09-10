@@ -41,7 +41,7 @@ def test_queue_lease_heartbeat_and_completion(tmp_path):
     assert pending(db, "paxus_research") == []
 
 
-def test_enqueue_many_persists_the_queue_once(tmp_path, monkeypatch):
+def test_enqueue_many_uses_incremental_queue_persistence(tmp_path, monkeypatch):
     db = _db(tmp_path)
     calls = []
     original = db.set_state
@@ -62,8 +62,9 @@ def test_enqueue_many_persists_the_queue_once(tmp_path, monkeypatch):
 
     assert len(tasks) == 3
     assert all(task["status"] == QUEUED for task in tasks)
-    assert calls == ["agent_work_queue"]
+    assert calls == []
     assert len(pending(db)) == 3
+    assert len(db.get_state("agent_work_queue")["items"]) == 3
 
 
 def test_unknown_agent_is_rejected(tmp_path):
