@@ -32,6 +32,13 @@ SOCIAL_TARGETS = {
     "social_company_context": ("company", "startup", "saas", "product", "team", "funding", "launch", "customer", "customers"),
 }
 
+_SOURCE_SIGNAL_ALIASES = {
+    "x_signal": "X", "threads_signal": "Threads", "reddit_signal": "Reddit",
+    "linkedin_signal": "LinkedIn", "facebook_signal": "Facebook", "instagram_signal": "Instagram",
+    "hacker_news_signal": "Hacker News", "indie_hackers_signal": "Indie Hackers", "product_hunt_signal": "Product Hunt",
+    "web_job_signal": "web",
+}
+
 
 def _text(value: Any) -> str:
     if isinstance(value, Mapping):
@@ -71,6 +78,29 @@ def _fingerprint(payload: Mapping[str, Any]) -> str:
     if isinstance(lead, Mapping):
         return str(lead.get("fingerprint") or "").strip()
     return str(payload.get("fingerprint") or "").strip()
+
+
+def _source_signal(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
+    record = dict(payload.get("record", payload)) if isinstance(payload.get("record", payload), Mapping) else {}
+    signal = str(record.get("signal") or record.get("evidence") or "").strip()
+    if not signal:
+        raise OutreachContractError(f"{agent} requires observed signal/evidence")
+    fingerprint = str(record.get("fingerprint") or payload.get("fingerprint") or "").strip()
+    lead = db.get(fingerprint) if db is not None and fingerprint else None
+    normalized = dict(record)
+    normalized["source_lane"] = agent
+    normalized["observed"] = True
+    normalized["qualification_performed"] = False
+    normalized["provenance"] = {**dict(record.get("provenance") or {}) if isinstance(record.get("provenance"), Mapping) else {}, "collector_agent": agent, "source_lane": agent, "collected_at": datetime.now(timezone.utc).isoformat()}
+    handoffs = []
+    if fingerprint and lead is not None:
+        enqueue(db, "qualification_a", {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=1, dedupe_key=f"qualification_a:{fingerprint}")
+        handoffs.append("qualification_a")
+        if agent in {"x_signal", "threads_signal", "reddit_signal", "linkedin_signal", "facebook_signal", "instagram_signal"}:
+            for social_agent in SOCIAL_TARGETS:
+                enqueue(db, social_agent, {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=3, dedupe_key=f"{social_agent}:{fingerprint}")
+                handoffs.append(social_agent)
+    return {"agent": agent, "role": "discovery", "source": record.get("source") or _SOURCE_SIGNAL_ALIASES.get(agent, agent), "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoffs": handoffs, "handoff": handoffs[0] if handoffs else "awaiting_persistence", "provenance": normalized["provenance"]}
 
 
 def discovery_finding(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
@@ -136,17 +166,7 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
         raise ValueError("company_research requires lead fingerprint")
-    facts: Dict[str, Any] = {
-        "company_verified": bool(company),
-        "company_identity_evidence": f"Observed company name: {company}" if company else "",
-        "business_context": signal,
-        "current_need_evidence": signal,
-        "recent_activity_evidence": evidence,
-        "source_url": source_url,
-        "evidence_event_count": len(events),
-        "researched_at": datetime.now(timezone.utc).isoformat(),
-        "fabricated_fields": [],
-    }
+    facts: Dict[str, Any] = {"company_verified": bool(company), "company_identity_evidence": f"Observed company name: {company}" if company else "", "business_context": signal, "current_need_evidence": signal, "recent_activity_evidence": evidence, "source_url": source_url, "evidence_event_count": len(events), "researched_at": datetime.now(timezone.utc).isoformat(), "fabricated_fields": []}
     if person:
         facts["decision_maker"] = person
         facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
@@ -186,6 +206,8 @@ def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
 
 def advanced_handler_registry():
     handlers = {}
+    for agent in _SOURCE_SIGNAL_ALIASES:
+        handlers[agent] = lambda _agent, payload, ctx, name=agent: _source_signal(name, payload, ctx.db)
     for agent in DISCOVERY_TARGETS:
         handlers[agent] = lambda _agent, payload, ctx, name=agent: discovery_finding(name, payload, ctx.db)
     for agent in SOCIAL_TARGETS:
