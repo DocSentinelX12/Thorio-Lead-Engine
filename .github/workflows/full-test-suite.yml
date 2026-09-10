@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# Full-suite runs share the test queue with CI. Every queued test is preserved
+# and waits for the previous test run instead of being cancelled.
+concurrency:
+  group: thorio-test-queue
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Full pytest suite
