@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
+from .account_auth import SUPPORTED_ACCOUNTS, ensure_authenticated
 from .collector import normalize_lead_input
 from .sources import LeadSource
 
@@ -30,6 +31,9 @@ class BrowserDiscoveryTarget:
     text_selector: str = ""
     link_selector: str = ""
     item_selector: str = ""
+    account: str = ""
+    authenticated_selector: str = ""
+    login_url: str = ""
     max_items: int = 100
 
     def __post_init__(self) -> None:
@@ -39,6 +43,9 @@ class BrowserDiscoveryTarget:
             raise BrowserDiscoveryConfigurationError(f"Browser target URL must be HTTP(S): {self.url!r}")
         if self.max_items <= 0:
             raise BrowserDiscoveryConfigurationError("Browser target max_items must be positive")
+        account = self.account.strip().lower().replace("-", "_").replace(" ", "_")
+        if account and account not in SUPPORTED_ACCOUNTS:
+            raise BrowserDiscoveryConfigurationError(f"Unsupported authenticated browser account: {account}")
 
 
 @dataclass(frozen=True)
@@ -48,6 +55,8 @@ class BrowserDiscoveryResult:
     records: list[dict[str, Any]]
     checkpoint: Optional[str]
     collected_at: str
+    authenticated: bool = False
+    relogin_attempted: bool = False
 
 
 def _env(name: str, default: str = "") -> str:
@@ -96,6 +105,9 @@ def _targets_from_environment() -> tuple[BrowserDiscoveryTarget, ...]:
             text_selector=str(item.get("text_selector", "")).strip(),
             link_selector=str(item.get("link_selector", "")).strip(),
             item_selector=str(item.get("item_selector", "")).strip(),
+            account=str(item.get("account", "")).strip(),
+            authenticated_selector=str(item.get("authenticated_selector", "")).strip(),
+            login_url=str(item.get("login_url", "")).strip(),
             max_items=max_items,
         ))
     return tuple(targets)
@@ -119,23 +131,31 @@ def _browser_endpoint() -> str:
 def _browser_navigation_timeout() -> int:
     """Return a bounded per-target navigation timeout in milliseconds."""
     try:
-        seconds = int(_env("THORIO_BROWSER_NAVIGATION_TIMEOUT", "15"))
+        seconds = int(_env("THORIO_BROWSER_NAVIGATION_TIMEOUT", "30"))
     except ValueError:
-        seconds = 15
-    return max(1, min(seconds, 120)) * 1000
+        seconds = 30
+    return max(5, min(seconds, 120)) * 1000
+
+
+def _account_env(account: str, suffix: str) -> str:
+    normalized = account.strip().lower().replace("-", "_").replace(" ", "_")
+    return _env(f"THORIO_ACCOUNT_{normalized.upper()}_{suffix}")
+
+
+def authenticated_browser_lane_status(targets: Iterable[BrowserDiscoveryTarget]) -> dict[str, Any]:
+    """Return non-secret readiness evidence for the six supported account lanes."""
+    target_accounts = {target.account.strip().lower().replace("-", "_").replace(" ", "_") for target in targets if target.account}
+    return {
+        "supported_accounts": list(SUPPORTED_ACCOUNTS),
+        "configured_accounts": sorted(target_accounts),
+        "configured_lane_count": len(targets),
+        "authenticated_lane_count": sum(1 for target in targets if target.account and target.authenticated_selector),
+        "all_six_account_types_supported": set(SUPPORTED_ACCOUNTS) == set(target_accounts),
+    }
 
 
 class FreeAuthenticatedBrowserCollector:
-    """Collect from an already-authorized persistent browser.
-
-    Two runtime modes are supported:
-    * local persistent Chromium via ``THORIO_BROWSER_PROFILE_DIR``;
-    * an attached persistent Chromium via ``THORIO_BROWSER_CDP_URL``.
-
-    The CDP mode is specifically for the free Android/Termux node. Chromium owns
-    the persistent profile and the engine attaches to it without copying cookies
-    or credentials into GitHub Actions, Airtable, or the repository.
-    """
+    """Collect from an operator-owned persistent browser with bounded recovery."""
 
     def __init__(self, target: BrowserDiscoveryTarget):
         self.target = target
@@ -161,6 +181,50 @@ class FreeAuthenticatedBrowserCollector:
         )
         return context, True
 
+    def _session_is_valid(self, page: Any) -> bool:
+        selector = self.target.authenticated_selector
+        if not selector:
+            return True
+        try:
+            return page.locator(selector).count() > 0
+        except Exception:
+            return False
+
+    def _login(self, page: Any, account: str) -> None:
+        login_url = self.target.login_url or _account_env(account, "LOGIN_URL")
+        username_selector = _account_env(account, "USERNAME_SELECTOR")
+        password_selector = _account_env(account, "PASSWORD_SELECTOR")
+        submit_selector = _account_env(account, "SUBMIT_SELECTOR")
+        if not login_url or not username_selector or not password_selector or not submit_selector:
+            raise BrowserDiscoveryConfigurationError(
+                f"{account}: login URL and username/password/submit selectors must be configured for automatic re-login"
+            )
+
+        from .account_auth import login_credentials
+        credentials = login_credentials(account)
+        page.goto(login_url, wait_until="domcontentloaded", timeout=_browser_navigation_timeout())
+        page.locator(username_selector).fill(credentials.username)
+        page.locator(password_selector).fill(credentials.password)
+        page.locator(submit_selector).click()
+        page.wait_for_load_state("domcontentloaded", timeout=_browser_navigation_timeout())
+        if not self._session_is_valid(page):
+            raise BrowserDiscoveryUnavailable(f"{account}: authorized login completed without a valid authenticated session")
+
+    def _ensure_authenticated(self, page: Any) -> tuple[bool, bool]:
+        account = self.target.account.strip().lower().replace("-", "_").replace(" ", "_")
+        if not account or not self.target.authenticated_selector:
+            return True, False
+        relogin_attempted = False
+        ensure_authenticated(
+            account,
+            lambda: self._session_is_valid(page),
+            lambda credentials: self._login(page, account),
+        )
+        if not self._session_is_valid(page):
+            raise BrowserDiscoveryUnavailable(f"{account}: browser session is not authenticated")
+        relogin_attempted = True
+        return True, relogin_attempted
+
     def collect(self, checkpoint: Optional[str] = None) -> BrowserDiscoveryResult:
         try:
             from playwright.sync_api import sync_playwright
@@ -173,6 +237,8 @@ class FreeAuthenticatedBrowserCollector:
         records: list[dict[str, Any]] = []
         next_checkpoint: Optional[str] = None
         page: Any = None
+        authenticated = False
+        relogin_attempted = False
 
         with sync_playwright() as playwright:
             context, owns_context = self._open_context(playwright)
@@ -180,11 +246,12 @@ class FreeAuthenticatedBrowserCollector:
                 page = context.new_page()
                 navigation_timeout = _browser_navigation_timeout()
                 page.goto(self.target.url, wait_until="domcontentloaded", timeout=navigation_timeout)
+                authenticated, relogin_attempted = self._ensure_authenticated(page)
+                if page.url != self.target.url:
+                    page.goto(self.target.url, wait_until="domcontentloaded", timeout=navigation_timeout)
                 try:
                     page.wait_for_load_state("networkidle", timeout=navigation_timeout)
                 except Exception:
-                    # Dynamic social feeds commonly never become network-idle.
-                    # DOM content is already available, so continue with the bounded page.
                     pass
 
                 if not self.target.item_selector or not self.target.text_selector:
@@ -200,7 +267,6 @@ class FreeAuthenticatedBrowserCollector:
                     text = _text(text_node.first()) if text_node.count() else _text(item)
                     if not text:
                         continue
-
                     link = ""
                     if self.target.link_selector:
                         link_node = item.locator(self.target.link_selector).first()
@@ -208,7 +274,6 @@ class FreeAuthenticatedBrowserCollector:
                             link = str(link_node.get_attribute("href") or "").strip()
                     if not link:
                         link = self.target.url
-
                     company = ""
                     if self.target.company_selector:
                         node = item.locator(self.target.company_selector).first()
@@ -216,18 +281,15 @@ class FreeAuthenticatedBrowserCollector:
                             company = _text(node)
                     if not company:
                         continue
-
                     author = ""
                     if self.target.author_selector:
                         node = item.locator(self.target.author_selector).first()
                         if node.count():
                             author = _text(node)
-
                     fingerprint = _fingerprint(link, text)
                     if seen_after and fingerprint == seen_after:
                         next_checkpoint = fingerprint
                         break
-
                     record = {
                         "source": self.target.name,
                         "source_id": fingerprint,
@@ -239,6 +301,7 @@ class FreeAuthenticatedBrowserCollector:
                         "source_url": link,
                         "discovery_agent": self.target.lane,
                         "discovery_timestamp": datetime.now(timezone.utc).isoformat(),
+                        "authenticated": authenticated,
                     }
                     if author:
                         record["person"] = author
@@ -259,6 +322,8 @@ class FreeAuthenticatedBrowserCollector:
             records=records,
             checkpoint=next_checkpoint,
             collected_at=datetime.now(timezone.utc).isoformat(),
+            authenticated=authenticated,
+            relogin_attempted=relogin_attempted,
         )
 
 
