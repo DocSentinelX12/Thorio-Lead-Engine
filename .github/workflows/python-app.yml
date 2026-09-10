@@ -24,7 +24,7 @@ permissions:
 jobs:
   test:
     name: Production Preflight Tests
-    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -45,7 +45,7 @@ jobs:
 
   engine:
     name: Run Lead Engine
-    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     needs: test
     runs-on: ubuntu-latest
     # Allow the full 60-minute production cycle plus setup, verification, and evidence capture.
@@ -55,14 +55,11 @@ jobs:
       AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
       AIRTABLE_LEAD_TABLE: Lead Radar
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
-      # Keep each free-source network request bounded so a slow source cannot consume the whole production cycle.
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "5"
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
       THORIO_FREE_ONLY: "1"
-      # Source collection has its own pool, separate from the larger specialist workforce.
-      # Forty concurrent collection lanes let the full public source universe make progress together.
       THORIO_SOURCE_COLLECTION_WORKERS: "40"
       THORIO_AGENT_DRAIN_ROUNDS: "1"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
@@ -179,3 +176,19 @@ jobs:
               sys.exit(1)
           discovered_total = sum(int(result.get("discovered_count", 0) or 0) for result in results)
           successful_source_counts = [int(result.get("successful_source_count", 0) or 0) for result in results]
+          if discovered_total <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no leads were discovered during the production cycle.")
+              sys.exit(1)
+          if not successful_source_counts or max(successful_source_counts) <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no configured source reported successful collection.")
+              sys.exit(1)
+          print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, successful_source_count={max(successful_source_counts)}")
+          PY
+      - name: Persist Lead Engine state
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-lead-engine-state
+          path: data
+          if-no-files-found: warn
+          retention-days: 7
