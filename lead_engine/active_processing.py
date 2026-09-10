@@ -53,4 +53,13 @@ def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
 
 
 def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
-    return _airtable_integrity(agent, payload, ctx)
+    result = _airtable_integrity(agent, payload, ctx)
+    lead = _lead(payload)
+    fingerprint = lead["fingerprint"]
+    # Integrity is the terminal persistence gate for the automated qualification
+    # chain. Once durable synchronization is verified, record an audit task so
+    # the system has an explicit post-route quality checkpoint. Outreach remains
+    # separately authorization-gated and is never implicitly sent here.
+    enqueue(ctx.db, "audit", {"lead": lead, "integrity_result": result, "routing_result": payload.get("routing_result", {})}, priority=4, dedupe_key=f"audit:{fingerprint}")
+    result["handoff"] = "audit"
+    return result
