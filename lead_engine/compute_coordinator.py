@@ -99,6 +99,27 @@ class ComputeCoordinator:
     def heartbeat(self, worker_id: str, current_load: int = 0) -> bool:
         return self.pool.heartbeat(worker_id, current_load)
 
+    @staticmethod
+    def _required_capabilities(payload: Dict[str, Any]) -> tuple[str, ...]:
+        explicit = payload.get("required_capabilities")
+        if explicit is not None:
+            if not isinstance(explicit, (list, tuple, set)) or not all(isinstance(item, str) and item.strip() for item in explicit):
+                raise ValueError("required_capabilities must be a sequence of non-empty strings")
+            return tuple(dict.fromkeys(item.strip() for item in explicit))
+        kind = str(payload.get("kind") or "").strip()
+        if kind == "lead_prepare":
+            return ("lead_prepare",)
+        if kind == "agent_task":
+            agent = str(payload.get("agent") or payload.get("role") or "").strip()
+            if agent:
+                return (agent,)
+        return ()
+
+    @staticmethod
+    def _worker_supports(worker: Dict[str, Any], required: tuple[str, ...]) -> bool:
+        capabilities = {str(item).strip() for item in worker.get("capabilities", []) if str(item).strip()}
+        return all(capability in capabilities for capability in required)
+
     def claim(self, worker_id: str) -> Optional[Dict[str, Any]]:
         self.pool.reap_stale_workers()
         self.recover_expired_tasks()
@@ -107,11 +128,19 @@ class ComputeCoordinator:
             if not worker or worker["status"] != "ready":
                 return None
             with self._connect() as connection:
-                row = connection.execute(
-                    "SELECT task_id,payload FROM compute_tasks WHERE status='queued' ORDER BY created_at,task_id LIMIT 1"
-                ).fetchone()
-                if not row:
+                rows = connection.execute(
+                    "SELECT task_id,payload FROM compute_tasks WHERE status='queued' ORDER BY created_at,task_id LIMIT 100"
+                ).fetchall()
+                selected = None
+                for row in rows:
+                    payload = json.loads(row["payload"])
+                    required = self._required_capabilities(payload)
+                    if self._worker_supports(worker, required):
+                        selected = (row, required)
+                        break
+                if selected is None:
                     return None
+                row, _ = selected
                 task_id = row["task_id"]
                 lease_token = str(uuid.uuid4())
                 now = time.time()
