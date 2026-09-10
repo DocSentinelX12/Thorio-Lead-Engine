@@ -87,6 +87,11 @@ SHIFTR_RULES = [
     r"\bdevelopment team hiring\b", r"\bdevelopment contractor\b", r"\bsoftware contractor\b",
     r"\bengineering talent\b", r"\bdeveloper talent\b", r"\btechnical talent\b",
     r"\bengineering team\b", r"\bsoftware development team\b",
+    r"\bai development\b", r"\bai engineer\b", r"\bai developer\b", r"\bai agent(?:s)?\b",
+    r"\bai agent development\b", r"\bllm\b", r"\bllm integration\b",
+    r"\bmobile development\b", r"\bmobile developer\b", r"\bmobile engineer\b",
+    r"\bsaas development\b", r"\benterprise software development\b", r"\bsoftware development\b",
+    r"\bdevelopment team\b", r"\bengineering team\b", r"\bstaff augmentation\b", r"\boutsourcing\b",
 ]
 
 
