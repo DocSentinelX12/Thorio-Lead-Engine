@@ -105,16 +105,6 @@ PAXUS_RULES = [
 ]
 
 
-SHIFTR_SERVICE_CONTEXT = (
-    r"\bneed(?:s|ed)?\b|\bwant(?:s|ed)?\b|\blooking for\b|\bseeking\b|\bneed help\b|\bhelp with\b"
-    r"|\bbuild(?:ing)?\b|\bdevelop(?:ment|ing)?\b|\bintegrat(?:e|ion|ing)\b|\boutsource(?:d|ing)?\b"
-    r"|\bstaff augmentation\b|\bdevelopment team\b|\bengineering team\b|\bsoftware team\b"
-    r"|\bai development\b|\bai engineer\b|\bllm\b|\bllm integration\b|\bai agent(?:s)?\b"
-    r"|\bmobile development\b|\bmobile developer\b|\bmobile engineer\b|\bsaas development\b"
-    r"|\benterprise software development\b|\bsoftware development\b|\btechnology delivery\b"
-)
-
-
 THORIO_REMOTE_RULES = [
     r"\bremote\b", r"\bremote[- ]first\b", r"\bfully remote\b", r"\b100% remote\b",
     r"\bremote only\b", r"\bremote position\b", r"\bremote role\b", r"\bremote job\b",
@@ -156,7 +146,16 @@ def _has_job_role_context(text: str) -> bool:
 
 
 def _has_shiftr_service_context(text: str) -> bool:
-    return bool(re.search(SHIFTR_SERVICE_CONTEXT, text, re.IGNORECASE))
+    return bool(re.search(
+        r"\bneed(?:s|ed)?\b|\bwant(?:s|ed)?\b|\blooking for\b|\bseeking\b|\bneed help\b|\bhelp with\b"
+        r"|\bbuild(?:ing)?\b|\bdevelop(?:ment|ing)?\b|\bintegrat(?:e|ion|ing)\b|\boutsource(?:d|ing)?\b"
+        r"|\bstaff augmentation\b|\bdevelopment team\b|\bengineering team\b|\bsoftware team\b"
+        r"|\bai development\b|\bai engineer\b|\bllm\b|\bllm integration\b|\bai agent(?:s)?\b"
+        r"|\bmobile development\b|\bmobile developer\b|\bmobile engineer\b|\bsaas development\b"
+        r"|\benterprise software development\b|\bsoftware development\b|\btechnology delivery\b",
+        text,
+        re.IGNORECASE,
+    ))
 
 
 def _has_remote_context(text: str) -> bool:
@@ -175,24 +174,17 @@ def score_routes(company: str, signal: str, evidence: str) -> Dict[str, int]:
     text = _text(company, signal, evidence)
     scores = {"Shiftr": 0, "Paxus": 0, "Thorio": 0}
 
-    has_hiring = _has_hiring_context(text) or _has_job_role_context(text)
-    has_shiftr_service = _has_shiftr_service_context(text)
+    if not (_has_hiring_context(text) or _has_job_role_context(text) or _has_shiftr_service_context(text)):
+        return scores
 
-    # Shiftr can qualify technology delivery needs even when the prospect is
-    # not hiring an employee. This preserves hiring-based signals while also
-    # covering development, AI, LLM, SaaS, mobile, teams, outsourcing, and
-    # staff-augmentation opportunities.
-    if has_hiring or has_shiftr_service:
-        scores["Shiftr"] = _matches(text, SHIFTR_RULES)
+    scores["Shiftr"] = _matches(text, SHIFTR_RULES)
+    scores["Paxus"] = _matches(text, PAXUS_RULES)
 
-    # Paxus remains recruitment/staffing focused.
-    if has_hiring:
-        scores["Paxus"] = _matches(text, PAXUS_RULES)
-
-    # Thorio remains strictly remote and job-role/hiring based.
+    # Thorio remains strictly remote. Hybrid/on-site roles are excluded.
+    # Part-time remote roles are intentionally NOT excluded because
+    # remote-only is the location requirement, not a full-time-only rule.
     if (
-        has_hiring
-        and _has_remote_context(text)
+        _has_remote_context(text)
         and not _has_non_remote_context(text)
         and _has_job_role_context(text)
     ):
