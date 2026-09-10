@@ -1,8 +1,9 @@
 """Stateless professional logic for high-volume discovery and social research.
 
 The handlers consume observed evidence and return auditable findings. They do not
-invent facts, access credentials, or perform outreach. Persistence and routing
-remain owned by the existing engine layers.
+invent facts, access credentials, or perform outreach transport. Revenue-stage
+decisioning is delegated to outreach_engine so cadence, stop states, routing,
+and evidence-grounded copy remain deterministic and testable.
 """
 
 from __future__ import annotations
@@ -10,6 +11,8 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
+
+from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 
 
 DISCOVERY_TARGETS = {
@@ -142,10 +145,57 @@ def social_research(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def outreach_closing(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Produce the next revenue action from verified lead evidence."""
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
+    decision = build_outreach_decision(lead)
+    return {
+        "role": "outreach_closer",
+        "lead": dict(lead),
+        "action": "dispatch_outreach",
+        "autonomous": True,
+        "route": decision.route,
+        "contact": {"name": decision.contact_name, "email": decision.contact_email},
+        "subject": decision.subject,
+        "body": decision.body,
+        "evidence_refs": list(decision.evidence_refs),
+        "buying_signal": decision.buying_signal,
+        "next_state": decision.next_state,
+        "next_follow_up_at": decision.next_follow_up_at,
+        "stop_reason": decision.stop_reason,
+        "truthfulness_guard": "evidence_only",
+    }
+
+
+def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Advance an existing outreach state and determine whether contact stops or continues."""
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
+    outcome = str(payload.get("outcome") or lead.get("outreach_state") or "").strip().lower()
+    if not outcome:
+        raise OutreachContractError("follow_up requires an observed outreach outcome")
+    updated = apply_outcome(lead, outcome)
+    result: Dict[str, Any] = {
+        "role": "follow_up",
+        "lead": updated,
+        "autonomous": True,
+        "outreach_state": updated.get("outreach_state"),
+        "next_follow_up_at": updated.get("next_follow_up_at"),
+        "stop_reason": updated.get("outreach_stop_reason"),
+        "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "dispatch_follow_up",
+        "outcome_recorded": True,
+    }
+    objection = payload.get("objection")
+    if objection:
+        result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"))
+    return result
+
+
 def advanced_handler_registry():
     handlers = {}
     for agent in DISCOVERY_TARGETS:
         handlers[agent] = lambda _agent, payload, _ctx, name=agent: discovery_finding(name, payload)
     for agent in SOCIAL_TARGETS:
         handlers[agent] = lambda _agent, payload, _ctx, name=agent: social_research(name, payload)
+    handlers["outreach_closer"] = lambda _agent, payload, _ctx: outreach_closing(payload)
+    handlers["follow_up"] = lambda _agent, payload, _ctx: follow_up_action(payload)
     return handlers
