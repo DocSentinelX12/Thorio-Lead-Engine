@@ -623,5 +623,113 @@
       "default_company": "Stripe",
       "signal_keywords": "software;engineering;developer;data;product;ai;fintech;technology"
     }
+  },
+  {
+    "name": "NoDesk",
+    "url": "https://nodesk.co/remote-jobs/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Welcome to the Jungle",
+    "url": "https://www.welcometothejungle.com/en/pages/jobs",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "EURES",
+    "url": "https://europa.eu/eures/portal/jv-se/home?lang=en&pageCode=find_a_job",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Remotive",
+    "url": "https://remotive.com/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Working Nomads",
+    "url": "https://www.workingnomads.com/jobs",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "We Work Remotely",
+    "url": "https://weworkremotely.com/remote-jobs/all-jobs",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Jobspresso",
+    "url": "https://jobspresso.co/jobs/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Landing Jobs",
+    "url": "https://landing.jobs/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "EU Remote Jobs",
+    "url": "https://euremotejobs.com/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "WorkWave",
+    "url": "https://jobs.lever.co/workwave/?workplaceType=remote",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "AI Jobs",
+    "url": "https://ai-jobs.net/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Total",
+    "url": "https://www.totaljobs.com/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "FlexJobs",
+    "url": "https://www.flexjobs.com/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "US Remotely",
+    "url": "https://usremotely.com/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Rocketship",
+    "url": "https://rocketship.fm/jobs",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "JobFill.AI",
+    "url": "https://jobfill.ai/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Remote Woman",
+    "url": "https://remotewoman.com/",
+    "enabled": true,
+    "type": "html"
+  },
+  {
+    "name": "Wellfound",
+    "url": "https://wellfound.com/remote",
+    "enabled": true,
+    "type": "html"
   }
 ]
