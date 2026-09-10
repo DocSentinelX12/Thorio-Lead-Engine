@@ -72,9 +72,6 @@ class LeadScheduler:
             value = int(raw)
         except ValueError:
             value = 1
-        # Source collection is its own concurrency pool. Keep it independent
-        # from the much larger specialist workforce, while allowing the full
-        # public source universe to make progress concurrently.
         return max(1, min(value, 40))
 
     def _collect_source(self, source: LeadSource, checkpoint: str):
@@ -146,7 +143,6 @@ class LeadScheduler:
         return bridge_once(self.runner.pipeline.db, self._remote_compute, publish_limit=publish_limit, reconcile_limit=reconcile_limit)
 
     def _run_without_immediate_sync(self, callback):
-        """Run collection processing with Airtable deferred until specialists finish."""
         pipeline = getattr(self.runner, "pipeline", None)
         original = getattr(pipeline, "sync_enabled", None)
         if original is not True:
@@ -241,9 +237,6 @@ class LeadScheduler:
                 max_rounds=agent_max_rounds,
             )
         remote_after = self._bridge_remote()
-
-        # Airtable is the delivery/approval gate. Defer it until the bounded
-        # specialist pass has consumed the freshly persisted discovery queue.
         sync_result = sync_pending(db)
         paxus_research = process_paxus_research_queue(db)
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
@@ -251,6 +244,55 @@ class LeadScheduler:
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
         return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "remote_compute_before": remote_before, "agents": agent_result, "remote_compute_after": remote_after, "paxus_research": paxus_research}
+
+    def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 1) -> Dict[str, Any]:
+        """Run a finite production window and force each supplied source through its bounded cycles.
+
+        A bounded production invocation is an explicit execution request, so persisted
+        polling deadlines must not suppress the requested first cycle. Each cycle uses
+        one specialist drain round to keep the bounded path predictable.
+        """
+        source_list = list(sources)
+        if interval_seconds < 0:
+            raise ValueError("interval_seconds must be greater than or equal to 0.")
+        if max_cycles < 1:
+            raise ValueError("max_cycles must be greater than or equal to 1.")
+        if not source_list:
+            return {"status": "completed", "cycles": 0, "results": [], "source_count": 0, "successful_source_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0}
+
+        cycle_results = []
+        for cycle_index in range(max_cycles):
+            for source in source_list:
+                key = self._source_key(source)
+                self._next_run_at[key] = 0.0
+            cycle_results.append(self.run(source_list, agent_max_rounds=1))
+            if cycle_index + 1 < max_cycles:
+                time.sleep(interval_seconds)
+
+        if len(cycle_results) == 1:
+            result = dict(cycle_results[0])
+        else:
+            result = {
+                "results": [item for cycle in cycle_results for item in cycle["results"]],
+                "failed": [item for cycle in cycle_results for item in cycle["failed"]],
+                "skipped": [item for cycle in cycle_results for item in cycle["skipped"]],
+                "source_count": len(source_list),
+                "successful_source_count": sum(cycle["successful_source_count"] for cycle in cycle_results),
+                "failed_count": sum(cycle["failed_count"] for cycle in cycle_results),
+                "skipped_count": sum(cycle["skipped_count"] for cycle in cycle_results),
+                "discovered_count": sum(cycle["discovered_count"] for cycle in cycle_results),
+                "accepted_count": sum(cycle["accepted_count"] for cycle in cycle_results),
+                "duplicate_count": sum(cycle["duplicate_count"] for cycle in cycle_results),
+                "processing_failed_count": sum(cycle["processing_failed_count"] for cycle in cycle_results),
+                "sync": [cycle["sync"] for cycle in cycle_results],
+                "remote_compute_before": [cycle["remote_compute_before"] for cycle in cycle_results],
+                "agents": [cycle["agents"] for cycle in cycle_results],
+                "remote_compute_after": [cycle["remote_compute_after"] for cycle in cycle_results],
+                "paxus_research": [cycle["paxus_research"] for cycle in cycle_results],
+            }
+        result["status"] = "completed"
+        result["cycles"] = max_cycles
+        return result
 
     def run_forever(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: Optional[int] = None, *, agent_max_rounds: Optional[int] = None) -> Dict[str, Any]:
         source_list = list(sources)
