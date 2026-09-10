@@ -10,6 +10,8 @@ PROFILE_DIR="${THORIO_ANDROID_BROWSER_PROFILE:-$HOME/.thorio/browser-profile}"
 ENV_FILE="${THORIO_ANDROID_ENV_FILE:-$HOME/.thorio/engine.env}"
 
 pkg update -y
+# Install the Termux-native runtime packages. Do not upgrade pip itself:
+# Termux owns the pip package and blocks replacing it with a PyPI pip build.
 pkg install -y git python termux-services curl x11-repo chromium
 
 mkdir -p "$HOME/.thorio" "$PROFILE_DIR" "$APP_DIR"
@@ -22,11 +24,7 @@ else
   git clone --branch main --single-branch https://github.com/DocSentinelX12/Thorio-Lead-Engine.git "$APP_DIR"
 fi
 
-python -m pip install --upgrade pip
 python -m pip install -r "$APP_DIR/requirements.txt"
-if [ -f "$APP_DIR/requirements-browser.txt" ]; then
-  python -m pip install -r "$APP_DIR/requirements-browser.txt"
-fi
 
 cat > "$ENV_FILE" <<EOF
 # Thorio Android node runtime configuration.
@@ -51,7 +49,7 @@ cat > "$HOME/.termux/service/thorio-browser/run" <<'EOF'
 set -euo pipefail
 source "$HOME/.thorio/engine.env"
 mkdir -p "$THORIO_BROWSER_PROFILE_DIR"
-exec chromium-browser \
+exec /data/data/com.termux/files/usr/lib/chromium/chrome \
   --headless \
   --no-sandbox \
   --disable-gpu \
