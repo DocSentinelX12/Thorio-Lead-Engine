@@ -44,12 +44,11 @@ class LeadDB:
                 return conn
         except sqlite3.DatabaseError:
             pass
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except sqlite3.DatabaseError:
-                    pass
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.DatabaseError:
+                pass
         self._quarantine_corrupt_database()
         self.recovered_corrupt_database = True
         return sqlite3.connect(self.path, timeout=30)
