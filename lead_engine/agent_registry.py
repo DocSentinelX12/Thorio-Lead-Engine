@@ -57,8 +57,8 @@ PROCESSING_AGENT_ROLES: Tuple[AgentRole, ...] = (
     AgentRole("airtable_integrity", "system.airtable", "Verify durable Airtable synchronization and consistency.", 2),
     AgentRole("monitoring", "system.monitoring", "Detect stalled workers, failures, and queue anomalies.", 2),
     AgentRole("audit", "system.audit", "Audit agent decisions and protected business invariants.", 2),
-    AgentRole("outreach_closer", "revenue.outreach", "Prepare human-approved outreach without autonomous sending.", 1),
-    AgentRole("follow_up", "revenue.follow_up", "Track human-entered outreach outcomes without autonomous contact.", 1),
+    AgentRole("outreach_closer", "revenue.outreach", "Autonomously decide and prepare evidence-grounded outreach actions.", 2),
+    AgentRole("follow_up", "revenue.follow_up", "Advance outreach cadence and record outcomes without fabricating engagement.", 2),
 )
 
 ALL_AGENT_ROLES: Tuple[AgentRole, ...] = DISCOVERY_AGENT_ROLES + SOCIAL_RESEARCH_AGENT_ROLES + PROCESSING_AGENT_ROLES
