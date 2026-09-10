@@ -144,13 +144,17 @@ def _account_env(account: str, suffix: str) -> str:
 
 def authenticated_browser_lane_status(targets: Iterable[BrowserDiscoveryTarget]) -> dict[str, Any]:
     """Return non-secret readiness evidence for the six supported account lanes."""
-    target_accounts = {target.account.strip().lower().replace("-", "_").replace(" ", "_") for target in targets if target.account}
+    target_accounts = {
+        target.account.strip().lower().replace("-", "_").replace(" ", "_")
+        for target in targets
+        if target.account
+    }
     return {
         "supported_accounts": list(SUPPORTED_ACCOUNTS),
         "configured_accounts": sorted(target_accounts),
-        "configured_lane_count": len(targets),
+        "configured_lane_count": len(tuple(targets)) if not isinstance(targets, tuple) else len(targets),
         "authenticated_lane_count": sum(1 for target in targets if target.account and target.authenticated_selector),
-        "all_six_account_types_supported": set(SUPPORTED_ACCOUNTS) == set(target_accounts),
+        "all_six_account_types_supported": set(SUPPORTED_ACCOUNTS) == target_accounts,
     }
 
 
@@ -214,16 +218,15 @@ class FreeAuthenticatedBrowserCollector:
         account = self.target.account.strip().lower().replace("-", "_").replace(" ", "_")
         if not account or not self.target.authenticated_selector:
             return True, False
-        relogin_attempted = False
+        was_valid = self._session_is_valid(page)
         ensure_authenticated(
             account,
-            lambda: self._session_is_valid(page),
+            lambda: was_valid,
             lambda credentials: self._login(page, account),
         )
         if not self._session_is_valid(page):
             raise BrowserDiscoveryUnavailable(f"{account}: browser session is not authenticated")
-        relogin_attempted = True
-        return True, relogin_attempted
+        return True, not was_valid
 
     def collect(self, checkpoint: Optional[str] = None) -> BrowserDiscoveryResult:
         try:
