@@ -204,13 +204,15 @@ def validate_authenticated_browser_configuration(
         )
 
     invalid: list[str] = []
+    from .account_auth import auth_status
+    statuses = auth_status()
     for account, lanes in by_account.items():
         for lane in lanes:
             if not lane.authenticated_selector:
                 invalid.append(f"{account}/{lane.lane}: authenticated_selector missing")
             if not lane.item_selector or not lane.text_selector:
                 invalid.append(f"{account}/{lane.lane}: item_selector and text_selector are required")
-            login_configured = all(
+            login_ready = all(
                 (
                     lane.login_url or _account_env(account, "LOGIN_URL"),
                     _account_env(account, "USERNAME_SELECTOR"),
@@ -219,12 +221,13 @@ def validate_authenticated_browser_configuration(
                 )
             )
             if require_credentials_or_storage:
-                from .account_auth import auth_status
-                status = auth_status()[account]
+                status = statuses[account]
                 if not status["configured"]:
                     invalid.append(f"{account}/{lane.lane}: credentials or storage state not configured")
-            if not login_configured and require_credentials_or_storage:
-                invalid.append(f"{account}/{lane.lane}: automatic re-login selectors are incomplete")
+                elif not status["session_ready"] and not (status["relogin_ready"] and login_ready):
+                    invalid.append(
+                        f"{account}/{lane.lane}: authenticated storage state or complete automatic re-login configuration required"
+                    )
 
     if invalid:
         raise BrowserDiscoveryConfigurationError("; ".join(invalid))
