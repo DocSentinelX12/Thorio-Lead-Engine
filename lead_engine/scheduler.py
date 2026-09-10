@@ -1,6 +1,7 @@
 import os
 import time
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse
 
 from .agent_orchestrator import AgentOrchestrator
 from .agent_registry import ALL_AGENT_ROLES
@@ -36,6 +37,13 @@ class LeadScheduler:
             return None
         if not url or not token:
             raise RuntimeError("THORIO_COMPUTE_COORDINATOR_URL and THORIO_COMPUTE_AUTH_TOKEN must be configured together")
+        parsed = urlparse(url)
+        if parsed.scheme == "https":
+            pass
+        elif parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
+            pass
+        else:
+            raise RuntimeError("THORIO_COMPUTE_COORDINATOR_URL must use HTTPS for non-local remote compute")
         worker_id = os.environ.get("THORIO_WORKER_ID", "scheduler-bridge").strip() or "scheduler-bridge"
         return ComputeWorkerClient(url, token, worker_id, int(os.environ.get("THORIO_COMPUTE_HTTP_TIMEOUT", "20")))
 
