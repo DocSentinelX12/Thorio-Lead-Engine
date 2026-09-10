@@ -1,4 +1,4 @@
-from .agent_queue import COMPLETE, QUEUED, RUNNING, claim, complete, enqueue, heartbeat, pending
+from .agent_queue import COMPLETE, QUEUED, RUNNING, claim, complete, enqueue, enqueue_many, heartbeat, pending
 from .database import LeadDB
 
 
@@ -39,6 +39,31 @@ def test_queue_lease_heartbeat_and_completion(tmp_path):
     )
     assert finished["status"] == COMPLETE
     assert pending(db, "paxus_research") == []
+
+
+def test_enqueue_many_persists_the_queue_once(tmp_path, monkeypatch):
+    db = _db(tmp_path)
+    calls = []
+    original = db.set_state
+
+    def counted_set_state(key, value):
+        calls.append(key)
+        return original(key, value)
+
+    monkeypatch.setattr(db, "set_state", counted_set_state)
+    tasks = enqueue_many(
+        db,
+        [
+            {"agent": "x_signal", "payload": {"source_id": "1"}, "dedupe_key": "x:1"},
+            {"agent": "x_signal", "payload": {"source_id": "2"}, "dedupe_key": "x:2"},
+            {"agent": "linkedin_signal", "payload": {"source_id": "3"}, "dedupe_key": "li:3"},
+        ],
+    )
+
+    assert len(tasks) == 3
+    assert all(task["status"] == QUEUED for task in tasks)
+    assert calls == ["agent_work_queue"]
+    assert len(pending(db)) == 3
 
 
 def test_unknown_agent_is_rejected(tmp_path):
