@@ -10,6 +10,8 @@ on:
     types: [thorio-production-run]
   issue_comment:
     types: [created]
+  issues:
+    types: [opened]
 
 concurrency:
   group: thorio-production
@@ -22,7 +24,7 @@ permissions:
 jobs:
   test:
     name: Production Preflight Tests
-    if: github.event_name != 'issue_comment' || (github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == 'THORIO_PRODUCTION_RUN')
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -49,7 +51,7 @@ jobs:
 
   engine:
     name: Run Lead Engine
-    if: github.event_name != 'issue_comment' || (github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == 'THORIO_PRODUCTION_RUN')
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == 'THORIO_PRODUCTION_RUN') || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -157,7 +159,7 @@ jobs:
               previous_run_id="$run_id"
               break
             fi
-          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status --jq '.[] | select(.status == "completed" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment")) | .databaseId')
+          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status --jq '.[] | select(.status == "completed" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
 
       - name: Download previous Lead Engine state
