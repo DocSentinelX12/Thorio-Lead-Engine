@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
@@ -52,16 +53,56 @@ class AgentOrchestrator:
         identity = worker_id or f"{self.worker_prefix}:{agent}:{uuid4().hex[:12]}"
         return run_worker_once(self.db, agent, worker_id=identity, limit=limit)
 
+    @staticmethod
+    def _max_drain_rounds() -> int:
+        raw = os.environ.get("THORIO_AGENT_DRAIN_ROUNDS", "8").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 8
+        return max(1, min(value, 32))
+
     def run_all_once(self, *, limit_per_agent: int = 1) -> Dict[str, Any]:
-        results: List[Dict[str, Any]] = []
-        for role in ALL_AGENT_ROLES:
-            results.append(self.run_agent_once(role.name, limit=limit_per_agent))
+        """Run specialist work in dependency rounds until the queue stops progressing.
+
+        Handoffs created by one specialist are therefore eligible for the next
+        specialist during the same scheduler cycle. The round cap is a hard
+        safety boundary against a malformed handler continuously creating work.
+        """
+        if limit_per_agent <= 0:
+            raise ValueError("limit_per_agent must be greater than zero")
+
+        rounds: List[Dict[str, Any]] = []
+        total_claimed = total_completed = total_failed = 0
+        max_rounds = self._max_drain_rounds()
+
+        for round_number in range(1, max_rounds + 1):
+            results: List[Dict[str, Any]] = []
+            for role in ALL_AGENT_ROLES:
+                results.append(self.run_agent_once(role.name, limit=min(limit_per_agent, role.max_concurrency)))
+
+            claimed = sum(int(item.get("claimed_count", 0) or 0) for item in results)
+            completed = sum(int(item.get("completed_count", 0) or 0) for item in results)
+            failed = sum(int(item.get("failed_count", 0) or 0) for item in results)
+            rounds.append({"round": round_number, "claimed_count": claimed, "completed_count": completed, "failed_count": failed, "agents": results})
+            total_claimed += claimed
+            total_completed += completed
+            total_failed += failed
+
+            if claimed == 0:
+                break
+
+        remaining = pending(self.db)
         return {
-            "agent_count": len(results),
-            "claimed_count": sum(item["claimed_count"] for item in results),
-            "completed_count": sum(item["completed_count"] for item in results),
-            "failed_count": sum(item["failed_count"] for item in results),
-            "agents": results,
+            "agent_count": len(ALL_AGENT_ROLES),
+            "claimed_count": total_claimed,
+            "completed_count": total_completed,
+            "failed_count": total_failed,
+            "round_count": len(rounds),
+            "drain_complete": not remaining,
+            "remaining_queue_count": len(remaining),
+            "rounds": rounds,
+            "agents": rounds[-1]["agents"] if rounds else [],
         }
 
     def status(self) -> Dict[str, Any]:
