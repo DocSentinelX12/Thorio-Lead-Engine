@@ -57,6 +57,18 @@ jobs:
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
+      THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
+      THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
+      THORIO_ACCOUNT_X_USERNAME: ${{ secrets.THORIO_ACCOUNT_X_USERNAME }}
+      THORIO_ACCOUNT_X_PASSWORD: ${{ secrets.THORIO_ACCOUNT_X_PASSWORD }}
+      THORIO_ACCOUNT_THREADS_USERNAME: ${{ secrets.THORIO_ACCOUNT_THREADS_USERNAME }}
+      THORIO_ACCOUNT_THREADS_PASSWORD: ${{ secrets.THORIO_ACCOUNT_THREADS_PASSWORD }}
+      THORIO_ACCOUNT_FACEBOOK_USERNAME: ${{ secrets.THORIO_ACCOUNT_FACEBOOK_USERNAME }}
+      THORIO_ACCOUNT_FACEBOOK_PASSWORD: ${{ secrets.THORIO_ACCOUNT_FACEBOOK_PASSWORD }}
+      THORIO_ACCOUNT_HACKER_NEWS_USERNAME: ${{ secrets.THORIO_ACCOUNT_HACKER_NEWS_USERNAME }}
+      THORIO_ACCOUNT_HACKER_NEWS_PASSWORD: ${{ secrets.THORIO_ACCOUNT_HACKER_NEWS_PASSWORD }}
+      THORIO_ACCOUNT_INDIE_HACKERS_USERNAME: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_USERNAME }}
+      THORIO_ACCOUNT_INDIE_HACKERS_PASSWORD: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_PASSWORD }}
 
     steps:
       - name: Check out repository
@@ -73,6 +85,29 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           fi
+
+      - name: Verify account authentication configuration
+        run: |
+          python - <<'PY'
+          from lead_engine.account_auth import SUPPORTED_ACCOUNTS, auth_status
+
+          status = auth_status()
+          missing = [account for account in SUPPORTED_ACCOUNTS if not status[account]["configured"]]
+          if missing:
+              print("ACCOUNT AUTH CONFIGURATION FAILURE: missing credentials for " + ", ".join(missing))
+              raise SystemExit(1)
+
+          for account in SUPPORTED_ACCOUNTS:
+              item = status[account]
+              print(
+                  f"{account}: configured={item['configured']} "
+                  f"username_configured={item['username_configured']} "
+                  f"password_configured={item['password_configured']} "
+                  f"storage_state_configured={item['storage_state_configured']} "
+                  f"secrets_exposed={item['secrets_exposed']}"
+              )
+          print("ACCOUNT AUTH CONFIGURATION VERIFIED: all agreed accounts are available to the production runtime without exposing secret values.")
+          PY
 
       - name: Find newest usable engine state
         id: previous_state
