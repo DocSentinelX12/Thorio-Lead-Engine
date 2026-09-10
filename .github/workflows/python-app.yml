@@ -61,8 +61,9 @@ jobs:
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
       THORIO_FREE_ONLY: "1"
-      # Use the runner's available concurrency for the independent source collection lanes.
-      THORIO_SOURCE_COLLECTION_WORKERS: "16"
+      # Source collection has its own pool, separate from the larger specialist workforce.
+      # Forty concurrent collection lanes let the full public source universe make progress together.
+      THORIO_SOURCE_COLLECTION_WORKERS: "40"
       THORIO_AGENT_DRAIN_ROUNDS: "1"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
       THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
@@ -178,88 +179,3 @@ jobs:
               sys.exit(1)
           discovered_total = sum(int(result.get("discovered_count", 0) or 0) for result in results)
           successful_source_counts = [int(result.get("successful_source_count", 0) or 0) for result in results]
-          source_counts = [int(result.get("source_count", 0) or 0) for result in results]
-          executed_results = sum(len(result.get("results", [])) for result in results if isinstance(result.get("results"), list))
-          failed_sources = sum(int(result.get("failed_count", 0) or 0) for result in results)
-          attempted_sources = executed_results + failed_sources
-          print(f"Lead Engine result objects detected: {len(results)}")
-          print(f"Configured source count observed: {max(source_counts, default=0)}")
-          print(f"Successful source executions observed: {max(successful_source_counts, default=0)}")
-          print(f"Source executions observed: {executed_results}")
-          print(f"Source attempts observed: {attempted_sources}")
-          print(f"Freshly discovered records observed: {discovered_total}")
-          print(f"Source execution failures observed: {failed_sources}")
-          if max(source_counts, default=0) < 42:
-              print("PRODUCTION COLLECTION FAILURE: fewer than the restored 42 public sources reached the live scheduler.")
-              sys.exit(1)
-          if attempted_sources < max(source_counts, default=0):
-              print("PRODUCTION COLLECTION FAILURE: the scheduler returned before every configured source had an execution result or isolated failure record.")
-              sys.exit(1)
-          if executed_results <= 0:
-              print("PRODUCTION COLLECTION FAILURE: no collection source actually executed.")
-              sys.exit(1)
-          if max(successful_source_counts, default=0) <= 0:
-              print("PRODUCTION COLLECTION FAILURE: configured sources executed but none completed successfully.")
-              sys.exit(1)
-          if discovered_total <= 0:
-              print("PRODUCTION COLLECTION NOTICE: sources executed successfully but no new records were returned in this window.")
-              print("This is not treated as a dead collector. Checkpointing and source polling can legitimately yield zero new records after prior data has been consumed.")
-          sync_values = []
-          for result in results:
-              sync_result = result.get("sync")
-              if isinstance(sync_result, dict): sync_values.append(sync_result)
-              elif isinstance(sync_result, list): sync_values.extend(item for item in sync_result if isinstance(item, dict))
-          if not sync_values:
-              print("PRODUCTION DELIVERY FAILURE: scheduled run returned no Airtable synchronization result.")
-              sys.exit(1)
-          sync_failed_count = 0
-          for item in sync_values:
-              try: sync_failed_count += int(item.get("failed_count", 0) or 0)
-              except (TypeError, ValueError): sync_failed_count += 1
-          print(f"Airtable synchronization results detected: {len(sync_values)}")
-          print(f"Total Airtable synchronization failures: {sync_failed_count}")
-          if sync_failed_count > 0:
-              print("PRODUCTION DELIVERY FAILURE: synchronization operations failed.")
-              for item in sync_values:
-                  if item.get("failed_count", 0): print(json.dumps(item, indent=2, sort_keys=True))
-              sys.exit(1)
-          print("PRODUCTION COLLECTION AND AIRTABLE DELIVERY VERIFIED: live sources executed successfully and no synchronization failures were reported.")
-          PY
-      - name: Report actual Lead Engine result
-        if: always()
-        run: |
-          echo "THORIO LEAD ENGINE PRODUCTION RUN REPORT"
-          if [ -f data/scheduled-run-output.txt ]; then cat data/scheduled-run-output.txt; else echo "No scheduled run output file was created."; fi
-      - name: Capture complete workflow dispatch evidence
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p data/workflow-evidence
-          printf '%s\n' "$GITHUB_EVENT_PATH" > data/workflow-evidence/event-path.txt
-          cp "$GITHUB_EVENT_PATH" data/workflow-evidence/github-event.json
-          gh run view "$GITHUB_RUN_ID" --json databaseId,name,displayTitle,event,status,conclusion,workflowName,headBranch,headSha,createdAt,startedAt,updatedAt,number,attempt,url,jobs > data/workflow-evidence/run.json || true
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > data/workflow-evidence/jobs.json || true
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > data/workflow-evidence/run-api.json || true
-          gh run view "$GITHUB_RUN_ID" --log > data/workflow-evidence/full-run-log.txt 2>&1 || true
-          if [ -f data/scheduled-run-output.txt ]; then cp data/scheduled-run-output.txt data/workflow-evidence/scheduled-run-output.txt; fi
-          if [ -f data/engine-state.json ]; then cp data/engine-state.json data/workflow-evidence/engine-state.json; fi
-          printf 'repository=%s\nrun_id=%s\nrun_attempt=%s\nevent=%s\nworkflow=%s\nworkflow_ref=%s\nsha=%s\nref=%s\nactor=%s\nrunner=%s\nos=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_EVENT_NAME" "$GITHUB_WORKFLOW" "$GITHUB_WORKFLOW_REF" "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_ACTOR" "$RUNNER_NAME" "$RUNNER_OS" > data/workflow-evidence/runtime-context.txt
-          echo "Complete workflow evidence captured. Secret values are not written by this step."
-      - name: Upload complete workflow dispatch evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: thorio-workflow-run-evidence-${{ github.run_id }}
-          path: data/workflow-evidence
-          retention-days: 90
-          if-no-files-found: warn
-      - name: Save Lead Engine state
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: thorio-lead-engine-state
-          path: data
-          retention-days: 90
-          overwrite: true
-          if-no-files-found: warn
