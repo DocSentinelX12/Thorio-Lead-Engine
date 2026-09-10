@@ -57,6 +57,7 @@ jobs:
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
+      THORIO_FREE_ONLY: "1"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
       THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
       THORIO_ACCOUNT_X_USERNAME: ${{ secrets.THORIO_ACCOUNT_X_USERNAME }}
@@ -143,7 +144,7 @@ jobs:
           set -o pipefail
           python -m lead_engine run-scheduled --interval 60 --cycles 10 2>&1 | tee data/scheduled-run-output.txt
 
-      - name: Verify production Airtable delivery
+      - name: Verify active collection and Airtable delivery
         run: |
           python - <<'PY'
           import json
@@ -152,7 +153,7 @@ jobs:
 
           path = pathlib.Path("data/scheduled-run-output.txt")
           if not path.exists():
-              print("PRODUCTION DELIVERY FAILURE: scheduled run output was not created.")
+              print("PRODUCTION COLLECTION FAILURE: scheduled run output was not created.")
               sys.exit(1)
 
           text = path.read_text(encoding="utf-8")
@@ -173,8 +174,32 @@ jobs:
               position = start + end
 
           if not results:
-              print("PRODUCTION DELIVERY FAILURE: no valid Lead Engine result was found.")
+              print("PRODUCTION COLLECTION FAILURE: no valid Lead Engine result was found.")
               print(text)
+              sys.exit(1)
+
+          discovered_total = sum(int(result.get("discovered_count", 0) or 0) for result in results)
+          source_counts = [int(result.get("source_count", 0) or 0) for result in results]
+          executed_results = sum(
+              len(result.get("results", []))
+              for result in results
+              if isinstance(result.get("results"), list)
+          )
+
+          print(f"Lead Engine result objects detected: {len(results)}")
+          print(f"Configured source count observed: {max(source_counts, default=0)}")
+          print(f"Source executions observed: {executed_results}")
+          print(f"Freshly discovered records observed: {discovered_total}")
+
+          if max(source_counts, default=0) <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no collection sources are configured.")
+              sys.exit(1)
+          if executed_results <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no collection source actually executed.")
+              sys.exit(1)
+          if discovered_total <= 0:
+              print("PRODUCTION COLLECTION FAILURE: collection executed but produced zero discovered records across the production window.")
+              print("This prevents a green run from masking a dead or unwired collection pipeline.")
               sys.exit(1)
 
           sync_values = []
@@ -205,7 +230,7 @@ jobs:
                       print(json.dumps(item, indent=2, sort_keys=True))
               sys.exit(1)
 
-          print("PRODUCTION AIRTABLE DELIVERY VERIFIED: no synchronization failures reported.")
+          print("PRODUCTION COLLECTION AND AIRTABLE DELIVERY VERIFIED: live source execution produced records and no synchronization failures were reported.")
           PY
 
       - name: Report actual Lead Engine result
