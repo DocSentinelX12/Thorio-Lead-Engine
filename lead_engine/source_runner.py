@@ -14,6 +14,7 @@ _PRIORITY_MAP = {
     "medium": 1,
     "normal": 1,
     "low": 0,
+    "review": 0,
 }
 
 _DISCOVERY_SOURCE_ALIASES = {
@@ -63,7 +64,6 @@ def _discovery_agent(record: Dict[str, Any]) -> str:
         if any(alias in source_text for alias in aliases):
             return agent
 
-    # All unclassified job/career/web records remain in the web-job lane.
     return "web_job_signal"
 
 
@@ -92,8 +92,6 @@ class SourceRunner:
                 )
                 continue
             try:
-                # Collection and persistence happen here. Qualification is a
-                # specialist-stage decision and must not run before discovery.
                 result = self.pipeline.process(**record)
             except Exception:
                 failed += 1
