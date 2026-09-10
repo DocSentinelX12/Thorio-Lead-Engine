@@ -23,10 +23,10 @@ def test_source_runner_processes_all_records_independently():
     ]
     runner = SourceRunner(pipeline)
     result = runner.process([
-        {"source": "test", "source_id": "1", "evidence": "Observed signal 1."},
-        {"source": "test", "source_id": "2", "evidence": "Observed signal 2."},
-        {"source": "test", "source_id": "3", "evidence": "Observed signal 3."},
-        {"source": "test", "source_id": "4", "evidence": "Observed signal 4."},
+        {"source": "test", "source_id": "1", "url": "https://example.com/1", "evidence": "Observed signal 1."},
+        {"source": "test", "source_id": "2", "url": "https://example.com/2", "evidence": "Observed signal 2."},
+        {"source": "test", "source_id": "3", "url": "https://example.com/3", "evidence": "Observed signal 3."},
+        {"source": "test", "source_id": "4", "url": "https://example.com/4", "evidence": "Observed signal 4."},
     ])
     assert result == {"discovered_count": 4, "accepted_count": 2, "duplicate_count": 1, "failed_count": 1}
     assert pipeline.process.call_count == 4
@@ -37,8 +37,8 @@ def test_source_runner_runs_source_collection():
     pipeline.process.return_value = {"accepted": True, "status": "accepted"}
     source = Mock()
     source.collect.return_value = [
-        {"source": "web", "source_id": "001", "evidence": "Observed web signal 1."},
-        {"source": "web", "source_id": "002", "evidence": "Observed web signal 2."},
+        {"source": "web", "source_id": "001", "url": "https://example.com/001", "evidence": "Observed web signal 1."},
+        {"source": "web", "source_id": "002", "url": "https://example.com/002", "evidence": "Observed web signal 2."},
     ]
     runner = SourceRunner(pipeline)
     result = runner.run_source(source)
@@ -52,8 +52,8 @@ def test_source_runner_continues_after_pipeline_failure():
     pipeline.process.side_effect = [Exception("temporary failure"), {"accepted": True, "status": "accepted"}]
     runner = SourceRunner(pipeline)
     result = runner.process([
-        {"source": "test", "source_id": "failed", "evidence": "Observed failing signal."},
-        {"source": "test", "source_id": "successful", "evidence": "Observed successful signal."},
+        {"source": "test", "source_id": "failed", "url": "https://example.com/failed", "evidence": "Observed failing signal."},
+        {"source": "test", "source_id": "successful", "url": "https://example.com/successful", "evidence": "Observed successful signal."},
     ])
     assert result["failed_count"] == 1
     assert result["accepted_count"] == 1
@@ -68,8 +68,8 @@ def test_source_runner_run_source_collects_and_processes_records():
     ]
     source = Mock()
     source.collect.return_value = [
-        {"source": "web", "source_id": "runner-001", "evidence": "Observed runner signal 1."},
-        {"source": "web", "source_id": "runner-002", "evidence": "Observed runner signal 2."},
+        {"source": "web", "source_id": "runner-001", "url": "https://example.com/runner-001", "evidence": "Observed runner signal 1."},
+        {"source": "web", "source_id": "runner-002", "url": "https://example.com/runner-002", "evidence": "Observed runner signal 2."},
     ]
     runner = SourceRunner(pipeline)
     result = runner.run_source(source)
