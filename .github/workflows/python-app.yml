@@ -8,6 +8,8 @@ on:
   workflow_dispatch:
   repository_dispatch:
     types: [thorio-production-run]
+  issue_comment:
+    types: [created]
 
 concurrency:
   group: thorio-production
@@ -20,6 +22,7 @@ permissions:
 jobs:
   test:
     name: Production Preflight Tests
+    if: github.event_name != 'issue_comment' || (github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == '/thorio-production-run')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -46,6 +49,7 @@ jobs:
 
   engine:
     name: Run Lead Engine
+    if: github.event_name != 'issue_comment' || (github.event.issue.number == 1 && github.event.issue.pull_request == null && github.event.comment.body == '/thorio-production-run')
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -153,7 +157,7 @@ jobs:
               previous_run_id="$run_id"
               break
             fi
-          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status --jq '.[] | select(.status == "completed" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch")) | .databaseId')
+          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status --jq '.[] | select(.status == "completed" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment")) | .databaseId')
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
 
       - name: Download previous Lead Engine state
