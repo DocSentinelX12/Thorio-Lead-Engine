@@ -98,9 +98,6 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
 class ComputePool:
     """SQLite-backed provider-neutral registry and exclusive task lease pool."""
 
-    # A registered worker is one logical execution slot. Physical node capacity
-    # determines how many workers should be launched on that node; it does not
-    # allow one logical worker to run multiple specialist tasks concurrently.
     LOGICAL_SLOTS_PER_WORKER = 1
 
     def __init__(self, db_path: str = "data/lead_engine.db", lease_seconds: int = 300):
@@ -183,6 +180,32 @@ class ComputePool:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM compute_workers ORDER BY worker_id").fetchall()
             return [{**dict(row), "capabilities": json.loads(row["capabilities_json"])} for row in rows]
+
+    def reserve_task_slot(self, worker_id: str) -> bool:
+        """Atomically reserve the worker's single logical execution slot."""
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE compute_workers SET current_load=current_load+1,updated_at=? "
+                "WHERE worker_id=? AND status='ready' AND current_load < ?",
+                (now, worker_id, self.LOGICAL_SLOTS_PER_WORKER),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return False
+            connection.commit()
+            return True
+
+    def release_task_slot(self, worker_id: str) -> bool:
+        now = time.time()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE compute_workers SET current_load=MAX(0,current_load-1),updated_at=? WHERE worker_id=?",
+                (now, worker_id),
+            )
+            connection.commit()
+            return cursor.rowcount == 1
 
     def claim(self, lead_id: str | int, worker_id: str) -> Optional[str]:
         lead_key = str(lead_id)
