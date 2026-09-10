@@ -2,7 +2,7 @@ from typing import Any, Dict, Iterable, Optional
 import logging
 
 from .pipeline import LeadPipeline
-from .agent_queue import enqueue
+from .agent_queue import enqueue_many
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ class SourceRunner:
         qualified = 0
         research_queued = 0
         agent_tasks_queued = 0
+        queue_tasks = []
 
         for record in records:
             discovered += 1
@@ -113,23 +114,25 @@ class SourceRunner:
                 lead = result.get("lead")
                 if fingerprint and isinstance(lead, dict):
                     agent = _discovery_agent(record)
-                    enqueue(
-                        self.pipeline.db,
-                        agent,
-                        {
+                    queue_tasks.append({
+                        "agent": agent,
+                        "payload": {
                             "record": dict(record),
                             "lead": dict(lead),
                             "fingerprint": fingerprint,
                         },
-                        priority=_queue_priority(result.get("priority")),
-                        dedupe_key=f"discovery:{agent}:{fingerprint}",
-                    )
-                    agent_tasks_queued += 1
+                        "priority": _queue_priority(result.get("priority")),
+                        "dedupe_key": f"discovery:{agent}:{fingerprint}",
+                    })
 
             if result.get("qualification_status") == "qualified":
                 qualified += 1
             if result.get("paxus_research_status") == "research_required":
                 research_queued += 1
+
+        if queue_tasks:
+            enqueue_many(self.pipeline.db, queue_tasks)
+            agent_tasks_queued = len(queue_tasks)
 
         summary = {
             "discovered_count": discovered,
