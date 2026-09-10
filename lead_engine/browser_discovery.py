@@ -43,9 +43,13 @@ class BrowserDiscoveryTarget:
             raise BrowserDiscoveryConfigurationError(f"Browser target URL must be HTTP(S): {self.url!r}")
         if self.max_items <= 0:
             raise BrowserDiscoveryConfigurationError("Browser target max_items must be positive")
-        account = self.account.strip().lower().replace("-", "_").replace(" ", "_")
+        account = normalize_account(self.account)
         if account and account not in SUPPORTED_ACCOUNTS:
             raise BrowserDiscoveryConfigurationError(f"Unsupported authenticated browser account: {account}")
+        if account and not self.authenticated_selector.strip():
+            raise BrowserDiscoveryConfigurationError(
+                f"{account}: authenticated_selector is required for an authenticated browser lane"
+            )
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,10 @@ class BrowserDiscoveryResult:
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
+
+
+def normalize_account(account: str) -> str:
+    return account.strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def _required_profile() -> Path:
@@ -87,6 +95,7 @@ def _targets_from_environment() -> tuple[BrowserDiscoveryTarget, ...]:
         raise BrowserDiscoveryConfigurationError("THORIO_BROWSER_DISCOVERY_TARGETS must be a JSON list")
 
     targets: list[BrowserDiscoveryTarget] = []
+    seen_lanes: set[str] = set()
     for index, item in enumerate(payload):
         if not isinstance(item, Mapping):
             raise BrowserDiscoveryConfigurationError(f"Browser target {index} must be an object")
@@ -95,7 +104,14 @@ def _targets_from_environment() -> tuple[BrowserDiscoveryTarget, ...]:
         url = str(item.get("url", "")).strip()
         if not lane or not name or not url.startswith(("https://", "http://")):
             raise BrowserDiscoveryConfigurationError(f"Browser target {index} requires lane, name and HTTP(S) url")
-        max_items = int(item.get("max_items", 100))
+        lane_key = lane.casefold()
+        if lane_key in seen_lanes:
+            raise BrowserDiscoveryConfigurationError(f"Duplicate browser lane: {lane}")
+        seen_lanes.add(lane_key)
+        try:
+            max_items = int(item.get("max_items", 100))
+        except (TypeError, ValueError) as exc:
+            raise BrowserDiscoveryConfigurationError(f"Browser target {index} max_items must be an integer") from exc
         targets.append(BrowserDiscoveryTarget(
             lane=lane,
             name=name,
@@ -105,7 +121,7 @@ def _targets_from_environment() -> tuple[BrowserDiscoveryTarget, ...]:
             text_selector=str(item.get("text_selector", "")).strip(),
             link_selector=str(item.get("link_selector", "")).strip(),
             item_selector=str(item.get("item_selector", "")).strip(),
-            account=str(item.get("account", "")).strip(),
+            account=normalize_account(str(item.get("account", ""))),
             authenticated_selector=str(item.get("authenticated_selector", "")).strip(),
             login_url=str(item.get("login_url", "")).strip(),
             max_items=max_items,
@@ -138,24 +154,98 @@ def _browser_navigation_timeout() -> int:
 
 
 def _account_env(account: str, suffix: str) -> str:
-    normalized = account.strip().lower().replace("-", "_").replace(" ", "_")
-    return _env(f"THORIO_ACCOUNT_{normalized.upper()}_{suffix}")
+    return _env(f"THORIO_ACCOUNT_{normalize_account(account).upper()}_{suffix}")
 
 
 def authenticated_browser_lane_status(targets: Iterable[BrowserDiscoveryTarget]) -> dict[str, Any]:
     """Return non-secret readiness evidence for the six supported account lanes."""
     target_list = tuple(targets)
     target_accounts = {
-        target.account.strip().lower().replace("-", "_").replace(" ", "_")
+        normalize_account(target.account)
         for target in target_list
         if target.account
     }
+    authenticated_lanes = sum(
+        1 for target in target_list
+        if target.account and target.authenticated_selector
+    )
     return {
         "supported_accounts": list(SUPPORTED_ACCOUNTS),
         "configured_accounts": sorted(target_accounts),
         "configured_lane_count": len(target_list),
-        "authenticated_lane_count": sum(1 for target in target_list if target.account and target.authenticated_selector),
+        "authenticated_lane_count": authenticated_lanes,
         "all_six_account_types_supported": set(SUPPORTED_ACCOUNTS) == target_accounts,
+    }
+
+
+def validate_authenticated_browser_configuration(
+    targets: Iterable[BrowserDiscoveryTarget],
+    *,
+    require_credentials_or_storage: bool = False,
+) -> dict[str, Any]:
+    """Validate the complete six-lane account configuration without exposing secrets.
+
+    This validates repository/runtime wiring only. It does not claim that a
+    live browser session is currently authenticated.
+    """
+    target_list = tuple(targets)
+    by_account: dict[str, list[BrowserDiscoveryTarget]] = {account: [] for account in SUPPORTED_ACCOUNTS}
+    for target in target_list:
+        account = normalize_account(target.account)
+        if account:
+            if account not in by_account:
+                raise BrowserDiscoveryConfigurationError(f"Unsupported authenticated browser account: {account}")
+            by_account[account].append(target)
+
+    missing = [account for account, lanes in by_account.items() if not lanes]
+    if missing:
+        raise BrowserDiscoveryConfigurationError(
+            "Missing authenticated browser lanes for: " + ", ".join(missing)
+        )
+
+    invalid: list[str] = []
+    for account, lanes in by_account.items():
+        for lane in lanes:
+            if not lane.authenticated_selector:
+                invalid.append(f"{account}/{lane.lane}: authenticated_selector missing")
+            if not lane.item_selector or not lane.text_selector:
+                invalid.append(f"{account}/{lane.lane}: item_selector and text_selector are required")
+            login_configured = all(
+                (
+                    lane.login_url or _account_env(account, "LOGIN_URL"),
+                    _account_env(account, "USERNAME_SELECTOR"),
+                    _account_env(account, "PASSWORD_SELECTOR"),
+                    _account_env(account, "SUBMIT_SELECTOR"),
+                )
+            )
+            if require_credentials_or_storage:
+                from .account_auth import auth_status
+                status = auth_status()[account]
+                if not status["configured"]:
+                    invalid.append(f"{account}/{lane.lane}: credentials or storage state not configured")
+            if not login_configured and require_credentials_or_storage:
+                invalid.append(f"{account}/{lane.lane}: automatic re-login selectors are incomplete")
+
+    if invalid:
+        raise BrowserDiscoveryConfigurationError("; ".join(invalid))
+
+    return {
+        "supported_accounts": list(SUPPORTED_ACCOUNTS),
+        "configured_accounts": list(SUPPORTED_ACCOUNTS),
+        "configured_lane_count": len(target_list),
+        "authenticated_lane_count": sum(len(lanes) for lanes in by_account.values()),
+        "automatic_relogin_ready_accounts": [
+            account for account in SUPPORTED_ACCOUNTS
+            if all(
+                (
+                    _account_env(account, "USERNAME_SELECTOR"),
+                    _account_env(account, "PASSWORD_SELECTOR"),
+                    _account_env(account, "SUBMIT_SELECTOR"),
+                    _account_env(account, "LOGIN_URL"),
+                )
+            )
+        ],
+        "secrets_exposed": False,
     }
 
 
@@ -195,7 +285,7 @@ class FreeAuthenticatedBrowserCollector:
         except Exception:
             return False
 
-    def _login(self, page: Any, account: str) -> None:
+    def _login(self, page: Any, account: str, credentials: Any = None) -> None:
         login_url = self.target.login_url or _account_env(account, "LOGIN_URL")
         username_selector = _account_env(account, "USERNAME_SELECTOR")
         password_selector = _account_env(account, "PASSWORD_SELECTOR")
@@ -205,25 +295,29 @@ class FreeAuthenticatedBrowserCollector:
                 f"{account}: login URL and username/password/submit selectors must be configured for automatic re-login"
             )
 
-        from .account_auth import login_credentials
-        credentials = login_credentials(account)
+        if credentials is None:
+            from .account_auth import login_credentials
+            credentials = login_credentials(account)
         page.goto(login_url, wait_until="domcontentloaded", timeout=_browser_navigation_timeout())
         page.locator(username_selector).fill(credentials.username)
         page.locator(password_selector).fill(credentials.password)
         page.locator(submit_selector).click()
-        page.wait_for_load_state("domcontentloaded", timeout=_browser_navigation_timeout())
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=_browser_navigation_timeout())
+        except Exception:
+            pass
         if not self._session_is_valid(page):
             raise BrowserDiscoveryUnavailable(f"{account}: authorized login completed without a valid authenticated session")
 
     def _ensure_authenticated(self, page: Any) -> tuple[bool, bool]:
-        account = self.target.account.strip().lower().replace("-", "_").replace(" ", "_")
+        account = normalize_account(self.target.account)
         if not account or not self.target.authenticated_selector:
             return True, False
         was_valid = self._session_is_valid(page)
         ensure_authenticated(
             account,
-            lambda: was_valid,
-            lambda credentials: self._login(page, account),
+            lambda: self._session_is_valid(page),
+            lambda credentials: self._login(page, account, credentials),
         )
         if not self._session_is_valid(page):
             raise BrowserDiscoveryUnavailable(f"{account}: browser session is not authenticated")
