@@ -62,22 +62,23 @@ class AgentOrchestrator:
             value = 8
         return max(1, min(value, 32))
 
-    def run_all_once(self, *, limit_per_agent: int = 1) -> Dict[str, Any]:
+    def run_all_once(self, *, limit_per_agent: int = 1, max_rounds: int | None = None) -> Dict[str, Any]:
         """Run specialist work in dependency rounds until the queue stops progressing.
 
-        Each round snapshots which specialist queues are already populated before
-        execution begins. Handoffs created during that round are held for the next
-        dependency round, which makes the drain-round safety limit a real bound
-        rather than allowing same-round cascades to bypass it.
+        ``max_rounds`` is an explicit per-invocation bound used by bounded
+        production execution. When omitted, the normal environment-configured
+        drain limit is retained for continuous operation.
         """
         if limit_per_agent <= 0:
             raise ValueError("limit_per_agent must be greater than zero")
+        if max_rounds is not None and max_rounds < 1:
+            raise ValueError("max_rounds must be greater than zero")
 
         rounds: List[Dict[str, Any]] = []
         total_claimed = total_completed = total_failed = 0
-        max_rounds = self._max_drain_rounds()
+        effective_max_rounds = self._max_drain_rounds() if max_rounds is None else max_rounds
 
-        for round_number in range(1, max_rounds + 1):
+        for round_number in range(1, effective_max_rounds + 1):
             queued_agents = {
                 str(task.get("agent"))
                 for task in pending(self.db)
