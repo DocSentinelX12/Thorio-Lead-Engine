@@ -23,7 +23,10 @@ fi
 python -m pip install -r "$APP_DIR/requirements.txt"
 python -m pip install -r "$APP_DIR/requirements-browser.txt"
 
-cat > "$ENV_FILE" <<EOF
+# Never overwrite an operator's private runtime configuration during an update.
+# Credentials, browser targets, and other local state must survive bootstrap runs.
+if [ ! -f "$ENV_FILE" ]; then
+  cat > "$ENV_FILE" <<EOF
 # Private Android runtime configuration. Never commit this file.
 export LEAD_ENGINE_DATA_DIR=$APP_DIR/data
 export THORIO_FREE_ONLY=1
@@ -36,7 +39,8 @@ export THORIO_BROWSER_HEADLESS=1
 # Add the six browser feed target definitions locally after they are defined.
 # export THORIO_BROWSER_DISCOVERY_TARGETS='[...]'
 EOF
-chmod 600 "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+fi
 
 mkdir -p "$SERVICE_DIR" "$LOG_DIR/sv"
 
@@ -89,11 +93,11 @@ exec svlogd -tt "$PREFIX/var/log/sv/thorio-browser"
 EOF
 chmod +x "$SERVICE_DIR/thorio-browser/log/run"
 
-cat > "$SERVICE_DIR/thorio-engine/run" <<'EOF'
+cat > "$SERVICE_DIR/thorio-engine/run" <<EOF
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
-source "$HOME/.thorio/engine.env"
-cd "$HOME/thorio-lead-engine"
+source "\$HOME/.thorio/engine.env"
+cd "$APP_DIR"
 exec python -m lead_engine.cli run-scheduled --interval 60 --forever
 EOF
 chmod +x "$SERVICE_DIR/thorio-engine/run"
