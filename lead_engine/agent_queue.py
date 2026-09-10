@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
 from .agent_registry import agent_registry
@@ -33,6 +33,80 @@ def _save(db, state: Dict[str, Any]) -> None:
     db.set_state(STATE_KEY, state)
 
 
+def enqueue_many(
+    db,
+    tasks: List[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Persist a group of queue tasks with one state read and one state write.
+
+    Discovery can accept many records in one source. Persisting each accepted
+    record independently rewrites the complete JSON queue state repeatedly and
+    can stall a production cycle. This batch path keeps the same validation and
+    dedupe semantics while reducing persistence to one transaction per source.
+    """
+    if not isinstance(tasks, list):
+        raise ValueError("tasks must be a list")
+    if not tasks:
+        return []
+
+    registry = agent_registry()
+    state = _load(db)
+    existing_items = state["items"]
+    now = _iso(_now())
+    created: List[Dict[str, Any]] = []
+
+    for specification in tasks:
+        if not isinstance(specification, Mapping):
+            raise ValueError("each task specification must be a mapping")
+        agent = specification.get("agent")
+        payload = specification.get("payload")
+        priority = specification.get("priority", 0)
+        dedupe_key = specification.get("dedupe_key")
+
+        if agent not in registry:
+            raise ValueError(f"Unknown agent role: {agent}")
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be a dictionary")
+
+        if dedupe_key:
+            duplicate = next(
+                (
+                    existing
+                    for existing in existing_items.values()
+                    if existing.get("agent") == agent
+                    and existing.get("dedupe_key") == dedupe_key
+                    and existing.get("status") in {QUEUED, RUNNING}
+                ),
+                None,
+            )
+            if duplicate is not None:
+                created.append(dict(duplicate))
+                continue
+
+        task_id = uuid4().hex
+        task = {
+            "task_id": task_id,
+            "agent": agent,
+            "queue": registry[agent].queue,
+            "status": QUEUED,
+            "priority": int(priority),
+            "payload": dict(payload),
+            "dedupe_key": dedupe_key,
+            "created_at": now,
+            "updated_at": now,
+            "attempts": 0,
+            "lease_until": None,
+            "worker_id": None,
+            "last_error": None,
+            "result": None,
+        }
+        existing_items[task_id] = task
+        created.append(dict(task))
+
+    _save(db, state)
+    return created
+
+
 def enqueue(
     db,
     agent: str,
@@ -41,43 +115,15 @@ def enqueue(
     priority: int = 0,
     dedupe_key: str | None = None,
 ) -> Dict[str, Any]:
-    registry = agent_registry()
-    if agent not in registry:
-        raise ValueError(f"Unknown agent role: {agent}")
-    if not isinstance(payload, dict):
-        raise ValueError("payload must be a dictionary")
-
-    state = _load(db)
-    if dedupe_key:
-        for existing in state["items"].values():
-            if (
-                existing.get("agent") == agent
-                and existing.get("dedupe_key") == dedupe_key
-                and existing.get("status") in {QUEUED, RUNNING}
-            ):
-                return dict(existing)
-
-    task_id = uuid4().hex
-    now = _iso(_now())
-    task = {
-        "task_id": task_id,
-        "agent": agent,
-        "queue": registry[agent].queue,
-        "status": QUEUED,
-        "priority": int(priority),
-        "payload": dict(payload),
-        "dedupe_key": dedupe_key,
-        "created_at": now,
-        "updated_at": now,
-        "attempts": 0,
-        "lease_until": None,
-        "worker_id": None,
-        "last_error": None,
-        "result": None,
-    }
-    state["items"][task_id] = task
-    _save(db, state)
-    return task
+    return enqueue_many(
+        db,
+        [{
+            "agent": agent,
+            "payload": payload,
+            "priority": priority,
+            "dedupe_key": dedupe_key,
+        }],
+    )[0]
 
 
 def _recover_stale(state: Dict[str, Any]) -> bool:
