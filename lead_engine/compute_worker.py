@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
+from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_finding, social_research
 from .advanced_agent_logic import advanced_handler_registry
 from .compute_pool import local_worker_identity
 from .lead_pipeline import process_leads
@@ -111,14 +112,18 @@ def execute_compute_task(payload: Mapping[str, Any]) -> Dict[str, Any]:
         agent = str(payload.get("agent") or "").strip()
         if not agent:
             raise ComputeWorkerError("agent_task requires agent")
-        handler = advanced_handler_registry().get(agent)
-        if handler is None:
-            raise ComputeWorkerError(f"agent_task is not supported for stateless distributed agent: {agent}")
         task_payload = payload.get("payload", {})
         if not isinstance(task_payload, Mapping):
             raise ComputeWorkerError("agent_task payload must be an object")
-        result = handler(agent, task_payload, None)
-        return {"kind": kind, "agent": agent, "result": result}
+        if agent in DISCOVERY_TARGETS:
+            result = discovery_finding(agent, task_payload, None)
+            return {"kind": kind, "agent": agent, "result": result}
+        if agent in SOCIAL_TARGETS:
+            result = social_research(agent, task_payload, None)
+            return {"kind": kind, "agent": agent, "result": result}
+        if advanced_handler_registry().get(agent) is None:
+            raise ComputeWorkerError(f"agent_task is not supported for stateless distributed agent: {agent}")
+        raise ComputeWorkerError(f"agent_task is not supported for stateless distributed agent: {agent}")
     raise ComputeWorkerError(f"unsupported compute task kind: {kind or '<missing>'}")
 
 
