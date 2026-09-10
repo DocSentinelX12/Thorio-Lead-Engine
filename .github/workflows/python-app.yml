@@ -274,6 +274,34 @@ jobs:
           echo "THORIO LEAD ENGINE PRODUCTION RUN REPORT"
           if [ -f data/scheduled-run-output.txt ]; then cat data/scheduled-run-output.txt; else echo "No scheduled run output file was created."; fi
 
+      - name: Capture complete workflow dispatch evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data/workflow-evidence
+          printf '%s\n' "$GITHUB_EVENT_PATH" > data/workflow-evidence/event-path.txt
+          cp "$GITHUB_EVENT_PATH" data/workflow-evidence/github-event.json
+          gh run view "$GITHUB_RUN_ID" --json databaseId,name,displayTitle,event,status,conclusion,workflowName,headBranch,headSha,createdAt,startedAt,updatedAt,runNumber,runAttempt,url,jobs > data/workflow-evidence/run.json || true
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > data/workflow-evidence/jobs.json || true
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > data/workflow-evidence/run-api.json || true
+          gh run view "$GITHUB_RUN_ID" --log > data/workflow-evidence/full-run-log.txt 2>&1 || true
+          if [ -f data/scheduled-run-output.txt ]; then cp data/scheduled-run-output.txt data/workflow-evidence/scheduled-run-output.txt; fi
+          if [ -f data/engine-state.json ]; then cp data/engine-state.json data/workflow-evidence/engine-state.json; fi
+          printf 'repository=%s\nrun_id=%s\nrun_attempt=%s\nevent=%s\nworkflow=%s\nworkflow_ref=%s\nsha=%s\nref=%s\nactor=%s\nrunner=%s\nos=%s\n' \
+            "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_EVENT_NAME" "$GITHUB_WORKFLOW" "$GITHUB_WORKFLOW_REF" "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_ACTOR" "$RUNNER_NAME" "$RUNNER_OS" \
+            > data/workflow-evidence/runtime-context.txt
+          echo "Complete workflow evidence captured. Secret values are not written by this step."
+
+      - name: Upload complete workflow dispatch evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: thorio-workflow-run-evidence-${{ github.run_id }}
+          path: data/workflow-evidence
+          retention-days: 90
+          if-no-files-found: warn
+
       - name: Save Lead Engine state
         if: always()
         uses: actions/upload-artifact@v7
