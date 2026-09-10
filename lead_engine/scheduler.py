@@ -72,7 +72,10 @@ class LeadScheduler:
             value = int(raw)
         except ValueError:
             value = 1
-        return max(1, min(value, 16))
+        # Source collection is its own concurrency pool. Keep it independent
+        # from the much larger specialist workforce, while allowing the full
+        # public source universe to make progress concurrently.
+        return max(1, min(value, 40))
 
     def _collect_source(self, source: LeadSource, checkpoint: str):
         try:
@@ -258,48 +261,14 @@ class LeadScheduler:
         if agent_max_rounds is not None and agent_max_rounds < 1:
             raise ValueError("agent_max_rounds must be greater than zero")
         if not source_list:
-            return {"cycles": 0, "results": [], "failed": [], "skipped": [], "sync": [], "remote_compute": [], "agents": [], "paxus_research": [], "source_count": 0, "successful_source_count": 0, "result_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0, "status": "no_sources_configured"}
+            return {"cycles": 0, "results": []}
+
+        cycle_results = []
         cycles = 0
-        total_results: List[Any] = []
-        total_failed: List[Any] = []
-        total_skipped: List[Any] = []
-        total_sync: List[Any] = []
-        total_remote_compute: List[Any] = []
-        total_agents: List[Any] = []
-        total_paxus_research: List[Any] = []
-        total_discovered = total_accepted = total_duplicates = total_processing_failed = 0
         while max_cycles is None or cycles < max_cycles:
-            result = self.run(source_list, agent_max_rounds=agent_max_rounds)
-            total_results.extend(result["results"])
-            total_failed.extend(result["failed"])
-            total_skipped.extend(result.get("skipped", []))
-            total_sync.append(result["sync"])
-            total_remote_compute.append({"before": result.get("remote_compute_before"), "after": result.get("remote_compute_after")})
-            total_agents.append(result["agents"])
-            total_paxus_research.append(result["paxus_research"])
-            total_discovered += result.get("discovered_count", 0)
-            total_accepted += result.get("accepted_count", 0)
-            total_duplicates += result.get("duplicate_count", 0)
-            total_processing_failed += result.get("processing_failed_count", 0)
+            cycle_results.append(self.run(source_list, agent_max_rounds=agent_max_rounds))
             cycles += 1
             if max_cycles is not None and cycles >= max_cycles:
                 break
-            if interval_seconds:
-                time.sleep(interval_seconds)
-        return {"cycles": cycles, "results": total_results, "failed": total_failed, "skipped": total_skipped, "sync": total_sync, "remote_compute": total_remote_compute, "agents": total_agents, "paxus_research": total_paxus_research, "source_count": len(source_list), "successful_source_count": len(total_results), "result_count": len(total_results), "failed_count": len(total_failed), "skipped_count": len(total_skipped), "discovered_count": total_discovered, "accepted_count": total_accepted, "duplicate_count": total_duplicates, "processing_failed_count": total_processing_failed, "status": "completed"}
-
-    def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 10) -> Dict[str, Any]:
-        if max_cycles < 1:
-            raise ValueError("max_cycles must be greater than or equal to 1.")
-        source_list = list(sources)
-        for source in source_list:
-            key = self._source_key(source)
-            self._next_run_at.pop(key, None)
-            self._persisted_next_run_at.pop(key, None)
-        self._save_polling_state()
-        return self.run_forever(
-            sources=source_list,
-            interval_seconds=interval_seconds,
-            max_cycles=max_cycles,
-            agent_max_rounds=1,
-        )
+            time.sleep(interval_seconds)
+        return {"cycles": cycles, "results": cycle_results}
