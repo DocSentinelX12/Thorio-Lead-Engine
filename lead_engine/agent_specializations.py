@@ -80,12 +80,12 @@ _PROCESSING = {
     "airtable_integrity": ("Verify durable Airtable synchronization and consistency.", ("check writes", "check identifiers", "detect partial sync", "produce recovery work")),
     "monitoring": ("Continuously detect worker, queue, scheduler, persistence, and delivery anomalies.", ("inspect leases", "detect stalled work", "detect queue growth", "surface failures")),
     "audit": ("Independently audit decisions, provenance, Paxus gates, and protected business invariants.", ("audit qualification", "audit dedupe", "audit routing", "audit provenance")),
-    "outreach_closer": ("Prepare human-approved outreach without autonomous sending.", ("verify readiness", "prepare draft", "record authorization state")),
-    "follow_up": ("Track human-entered outreach outcomes without autonomous contact.", ("review engagement", "record outcomes", "respect stop states")),
+    "outreach_closer": ("Autonomously decide and prepare evidence-grounded revenue outreach actions.", ("understand prospect", "identify problem and buying signal", "select valid destination", "personalize from verified evidence", "handle objections", "choose cadence", "record conversion state")),
+    "follow_up": ("Autonomously advance outreach cadence and conversion tracking from observed outcomes.", ("review engagement", "handle objections", "schedule next step", "record outcomes", "enforce stop states")),
 }
 
 for agent, (mission, responsibilities) in _PROCESSING.items():
-    forbidden = ("invented evidence", "silent overrides", "unauthorized contact", "provenance deletion")
+    forbidden = ("invented evidence", "silent overrides", "unauthorized contact", "provenance deletion", "fabricated urgency", "unsupported promises")
     if agent == "duplicate_resolution":
         forbidden = forbidden + ("merging distinct opportunities",)
     if agent == "monitoring":
