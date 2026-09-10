@@ -53,6 +53,8 @@ def _prefix(account: str) -> str:
     normalized = account.strip().lower().replace("-", "_").replace(" ", "_")
     if not normalized:
         raise AccountAuthConfigurationError("account name is required")
+    if normalized not in SUPPORTED_ACCOUNTS:
+        raise AccountAuthConfigurationError(f"unsupported account: {normalized}")
     return "THORIO_ACCOUNT_" + normalized.upper()
 
 
@@ -73,8 +75,9 @@ def credentials_for(account: str) -> Optional[AccountCredentials]:
 def storage_state_json(account: str) -> Optional[dict[str, Any]]:
     """Decode an authenticated Playwright storage state from a runtime secret.
 
-    Preferred secret format is base64-encoded JSON. Plain JSON is also accepted
-    for local development only; production workflows should use base64 secrets.
+    Production workers use base64-encoded JSON so the secret can be transported
+    safely through environment variables without writing session material to the
+    repository or normal logs.
     """
     prefix = _prefix(account)
     raw = _env(prefix + "_STORAGE_STATE_B64")
@@ -89,6 +92,10 @@ def storage_state_json(account: str) -> Optional[dict[str, Any]]:
         ) from exc
     if not isinstance(state, Mapping):
         raise AccountAuthConfigurationError(f"{account}: browser storage state must be a JSON object")
+    if "cookies" not in state and "origins" not in state:
+        raise AccountAuthConfigurationError(
+            f"{account}: browser storage state must contain cookies or origins"
+        )
     return dict(state)
 
 
@@ -112,12 +119,23 @@ def auth_status() -> dict[str, dict[str, Any]]:
         storage = bool(_env(prefix + "_STORAGE_STATE_B64"))
         status[account] = {
             "configured": username and password or storage,
+            "credentials_configured": username and password,
             "username_configured": username,
             "password_configured": password,
             "storage_state_configured": storage,
+            "session_ready": storage,
             "secrets_exposed": False,
         }
     return status
+
+
+def authenticated_accounts() -> tuple[str, ...]:
+    """Return only accounts with a complete authenticated browser session."""
+    ready: list[str] = []
+    for account in SUPPORTED_ACCOUNTS:
+        if storage_state_json(account) is not None:
+            ready.append(account)
+    return tuple(ready)
 
 
 def playwright_context_options(account: str) -> dict[str, Any]:
