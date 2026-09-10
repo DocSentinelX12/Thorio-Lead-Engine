@@ -10,7 +10,10 @@ from lead_engine.account_auth import (
     auth_status,
     configured_accounts,
     credentials_for,
+    ensure_authenticated,
+    login_credentials,
     playwright_context_options,
+    relogin_with_credentials,
 )
 
 
@@ -76,9 +79,67 @@ def test_status_distinguishes_credentials_from_authenticated_session(monkeypatch
 
     assert status["linkedin"]["credentials_configured"] is True
     assert status["linkedin"]["session_ready"] is False
+    assert status["linkedin"]["relogin_ready"] is True
     assert status["x"]["credentials_configured"] is False
     assert status["x"]["session_ready"] is True
+    assert status["x"]["relogin_ready"] is False
     assert status["x"]["secrets_exposed"] is False
+
+
+def test_relogin_uses_existing_runtime_credentials_without_persisting_them(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_X_USERNAME", "operator")
+    monkeypatch.setenv("THORIO_ACCOUNT_X_PASSWORD", "secret")
+    received = []
+
+    result = relogin_with_credentials("x", lambda credentials: received.append(credentials))
+
+    assert result is None
+    assert received[0].account == "x"
+    assert received[0].username == "operator"
+    assert received[0].password == "secret"
+
+
+def test_login_credentials_fail_closed_without_complete_credentials(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_X_USERNAME", "operator")
+    with pytest.raises(AccountAuthConfigurationError, match="both"):
+        login_credentials("x")
+
+
+def test_ensure_authenticated_does_not_relogin_when_session_is_valid(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_X_USERNAME", "operator")
+    monkeypatch.setenv("THORIO_ACCOUNT_X_PASSWORD", "secret")
+    called = []
+
+    result = ensure_authenticated("x", lambda: True, lambda credentials: called.append(credentials))
+
+    assert result is None
+    assert called == []
+
+
+def test_ensure_authenticated_immediately_relogs_in_when_session_is_invalid(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_X_USERNAME", "operator")
+    monkeypatch.setenv("THORIO_ACCOUNT_X_PASSWORD", "secret")
+    called = []
+
+    ensure_authenticated("x", lambda: False, lambda credentials: called.append(credentials))
+
+    assert len(called) == 1
+    assert called[0].account == "x"
+    assert called[0].username == "operator"
+    assert called[0].password == "secret"
+
+
+def test_ensure_authenticated_treats_session_check_error_as_logout(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_X_USERNAME", "operator")
+    monkeypatch.setenv("THORIO_ACCOUNT_X_PASSWORD", "secret")
+    called = []
+
+    def broken_session_check():
+        raise RuntimeError("session unavailable")
+
+    ensure_authenticated("x", broken_session_check, lambda credentials: called.append(credentials))
+
+    assert len(called) == 1
 
 
 def test_only_agreed_accounts_are_supported():
