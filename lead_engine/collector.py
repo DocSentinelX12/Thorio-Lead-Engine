@@ -171,41 +171,49 @@ def validate_lead_input(
             )
 
 
+def _sanitize_text(value: str) -> str:
+    """Remove non-JSON-safe ASCII control characters from source text."""
+    return "".join(
+        character
+        for character in value
+        if ord(character) >= 32
+        or character in ("\t", "\n", "\r")
+    )
+
+
 def normalize_lead_input(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
     Normalize incoming discovery data without making
     qualification, routing, or deduplication decisions.
+
+    External sources can contain embedded ASCII control characters,
+    especially copied HTML/text evidence. Clean those characters at
+    the ingestion boundary so one malformed source record cannot
+    interrupt the production collection stream.
     """
 
-    validate_lead_input(lead)
+    if not isinstance(lead, dict):
+        raise ValueError(
+            "Lead input must be an object."
+        )
 
     normalized = dict(lead)
 
-    for field in REQUIRED_FIELDS:
+    text_fields = (
+        REQUIRED_FIELDS
+        | OPTIONAL_TEXT_FIELDS
+        | OPTIONAL_URL_FIELDS
+        | OPTIONAL_EMAIL_FIELDS
+    )
+
+    for field in text_fields:
         value = normalized.get(field)
-
         if isinstance(value, str):
-            normalized[field] = value.strip()
+            normalized[field] = _sanitize_text(value).strip()
 
-    for field in OPTIONAL_TEXT_FIELDS:
-        value = normalized.get(field)
-
-        if isinstance(value, str):
-            normalized[field] = value.strip()
-
-    for field in OPTIONAL_URL_FIELDS:
-        value = normalized.get(field)
-
-        if isinstance(value, str):
-            normalized[field] = value.strip()
-
-    for field in OPTIONAL_EMAIL_FIELDS:
-        value = normalized.get(field)
-
-        if isinstance(value, str):
-            normalized[field] = value.strip()
+    validate_lead_input(normalized)
 
     return normalized
 
