@@ -73,7 +73,7 @@ def _fingerprint(payload: Mapping[str, Any]) -> str:
     return str(payload.get("fingerprint") or "").strip()
 
 
-def discovery_finding(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+def discovery_finding(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
     events = _events(payload)
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else {}
     if not events and lead:
@@ -86,10 +86,16 @@ def discovery_finding(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         if matches:
             findings.append({"matches": matches, "source": event.get("source") or event.get("provider"), "url": event.get("url") or event.get("source_url"), "recent": _recent(event), "evidence": text[:2000]})
     recent_count = sum(item["recent"] for item in findings)
-    return {"agent": agent, "role": "discovery_intelligence", "fingerprint": _fingerprint(payload), "target": agent.removesuffix("_discovery"), "matched_event_count": len(findings), "recent_event_count": recent_count, "findings": findings, "requires_verification": bool(findings), "no_match_is_not_rejection": True}
+    fingerprint = _fingerprint(payload)
+    handoff = None
+    if findings and fingerprint and db is not None:
+        stored_lead = db.get(fingerprint) or dict(lead)
+        enqueue(db, "qualification_a", {"lead": stored_lead, "evidence_events": events, "discovery_agent": agent, "discovery_findings": findings}, priority=4, dedupe_key=f"qualification_a:{fingerprint}")
+        handoff = "qualification_a"
+    return {"agent": agent, "role": "discovery_intelligence", "fingerprint": fingerprint, "target": agent.removesuffix("_discovery"), "matched_event_count": len(findings), "recent_event_count": recent_count, "findings": findings, "requires_verification": bool(findings), "no_match_is_not_rejection": True, "handoff": handoff}
 
 
-def social_research(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+def social_research(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
     events = _events(payload)
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else {}
     if not events and lead:
@@ -109,7 +115,13 @@ def social_research(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         is_recent = _recent(event)
         recent += int(is_recent)
         findings.append({"matches": matches, "source": event.get("source") or event.get("provider"), "url": event.get("url") or event.get("source_url"), "recent": is_recent, "evidence": text[:2000]})
-    return {"agent": agent, "role": "social_research", "fingerprint": _fingerprint(payload), "matched_event_count": len(findings), "recent_event_count": recent, "source_count": len(sources), "sources": sorted(sources), "findings": findings, "research_status": "evidence_found" if findings else "research_required", "verification_required": True, "fabricated_fields": []}
+    fingerprint = _fingerprint(payload)
+    handoff = None
+    if findings and fingerprint and db is not None:
+        stored_lead = db.get(fingerprint) or dict(lead)
+        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "social_research_agent": agent, "social_findings": findings}, priority=7, dedupe_key=f"company_research:{fingerprint}")
+        handoff = "company_research"
+    return {"agent": agent, "role": "social_research", "fingerprint": fingerprint, "matched_event_count": len(findings), "recent_event_count": recent, "source_count": len(sources), "sources": sorted(sources), "findings": findings, "research_status": "evidence_found" if findings else "research_required", "verification_required": True, "fabricated_fields": [], "handoff": handoff}
 
 
 def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
@@ -175,9 +187,9 @@ def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
 def advanced_handler_registry():
     handlers = {}
     for agent in DISCOVERY_TARGETS:
-        handlers[agent] = lambda _agent, payload, _ctx, name=agent: discovery_finding(name, payload)
+        handlers[agent] = lambda _agent, payload, ctx, name=agent: discovery_finding(name, payload, ctx.db)
     for agent in SOCIAL_TARGETS:
-        handlers[agent] = lambda _agent, payload, _ctx, name=agent: social_research(name, payload)
+        handlers[agent] = lambda _agent, payload, ctx, name=agent: social_research(name, payload, ctx.db)
     handlers["company_research"] = lambda _agent, payload, ctx: company_research(payload, ctx)
     handlers["priority"] = priority
     handlers["verification"] = verification
