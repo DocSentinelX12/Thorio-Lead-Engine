@@ -75,12 +75,7 @@ def _batch_upsert(
     merge_field: str,
     records: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Upsert up to 10 records per Airtable request.
-
-    Airtable's performUpsert endpoint combines lookup, create, and update into
-    one request. We keep the 10-record API ceiling explicit and let the caller
-    fall back to the durable single-record path if a batch is rejected.
-    """
+    """Upsert up to 10 records per Airtable request."""
     if not records:
         return []
     if len(records) > BATCH_SIZE:
@@ -97,6 +92,32 @@ def _batch_upsert(
             f"Airtable batch upsert for {table_key} returned an unexpected record count."
         )
     return [record for record in returned if isinstance(record, dict)]
+
+
+def _resilient_batch_upsert(
+    table_key: str,
+    merge_field: str,
+    records: List[Dict[str, Any]],
+) -> None:
+    """Deliver a batch while isolating bad records without exploding requests.
+
+    A rejected batch is recursively split into smaller batches. This preserves
+    the normal high-volume path when the service is healthy, isolates a malformed
+    or otherwise rejected record to the smallest possible unit, and only uses a
+    single-record request when a single record itself must be isolated.
+    """
+    if not records:
+        return
+    try:
+        _batch_upsert(table_key, merge_field, records)
+        return
+    except Exception:
+        if len(records) == 1:
+            raise
+
+    midpoint = max(1, len(records) // 2)
+    _resilient_batch_upsert(table_key, merge_field, records[:midpoint])
+    _resilient_batch_upsert(table_key, merge_field, records[midpoint:])
 
 
 def _lead_machine_fields(lead: Dict[str, Any]) -> Dict[str, Any]:
@@ -145,11 +166,11 @@ def _opportunity_records(leads: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
-    """Synchronize the high-volume tables in bounded batches."""
+    """Synchronize high-volume tables with resilient bounded batches."""
     for chunk in _chunks([
         {"fields": _lead_machine_fields(lead)} for lead in leads
     ]):
-        _batch_upsert("lead_radar", "Duplicate Key", chunk)
+        _resilient_batch_upsert("lead_radar", "Duplicate Key", chunk)
 
     companies: Dict[str, Dict[str, Any]] = {}
     for lead in leads:
@@ -158,11 +179,11 @@ def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
             companies[company] = {"fields": _company_fields(lead)}
     company_records = list(companies.values())
     for chunk in _chunks(company_records):
-        _batch_upsert("companies", "Company", chunk)
+        _resilient_batch_upsert("companies", "Company", chunk)
 
     opportunities = _opportunity_records(leads)
     for chunk in _chunks(opportunities):
-        _batch_upsert("opportunities", "Opportunity", chunk)
+        _resilient_batch_upsert("opportunities", "Opportunity", chunk)
 
 
 def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
@@ -170,9 +191,9 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
 
     High-volume tables are sent in 10-record upserts. Route-specific lifecycle
     records remain on the existing single-record adapters because they are
-    lower-volume and have stricter state transitions. A failed batch never marks
-    local state as synced; the affected records are retried individually so no
-    data is lost merely because a batch request was rejected.
+    lower-volume and have stricter state transitions. A high-volume batch is
+    recursively isolated on rejection so one bad record does not force the
+    entire batch back through the per-record compatibility path.
     """
     rows = db.pending(limit=limit)
     valid: List[tuple[str, Dict[str, Any]]] = []
@@ -202,7 +223,8 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
         try:
             _run_batch_high_volume_sync(leads)
         except Exception as batch_exc:
-            # Preserve the existing durable single-record path as the fallback.
+            # Only a record that remains individually undeliverable reaches the
+            # compatibility path. Successful subsets remain batched.
             from .sync_worker import sync_one
             for fingerprint, lead in chunk:
                 result = sync_one(lead)
@@ -218,8 +240,6 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
                     failed.append({**result, "error": error})
             continue
 
-        # High-volume tables are durable at this point. Finish lower-volume
-        # lifecycle state per lead, retaining the established state-machine rules.
         from .sync_worker import sync_one
         for fingerprint, lead in chunk:
             try:
