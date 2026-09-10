@@ -158,5 +158,11 @@ class SourceRunner:
         if checkpoint is None:
             records = source.collect()
         else:
-            records = source.collect(checkpoint=checkpoint)
+            try:
+                records = source.collect(checkpoint=checkpoint)
+            except TypeError as exc:
+                message = str(exc)
+                if "checkpoint" not in message or "unexpected keyword argument" not in message:
+                    raise
+                records = source.collect()
         return self.process(records)
