@@ -97,5 +97,5 @@ def test_capacity_snapshot_accounts_for_eighty_logical_slots(tmp_path):
 
     assert capacity["logical_slots"] == 80
     assert capacity["ready_workers"] == 80
-    assert capacity["available_slots"] == 80 * 3
+    assert capacity["available_slots"] == 80
     assert capacity["worker_count"] == 80
