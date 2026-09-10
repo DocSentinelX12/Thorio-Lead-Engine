@@ -18,6 +18,7 @@ from .sync_worker import sync_pending
 
 DEFAULT_SCHEDULE_INTERVAL = 60.0
 DEFAULT_SCHEDULE_CYCLES = 10
+DEFAULT_PRODUCTION_MAX_SECONDS = 840.0
 
 
 def build_parser():
@@ -80,42 +81,53 @@ def _run_scheduled_with_lock(application, sources, interval_seconds, max_cycles,
 
 
 def _install_production_diagnostics():
-    """Keep long production runs observable and make hangs diagnostically actionable."""
-    if os.environ.get("THORIO_PRODUCTION_DIAGNOSTICS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+    """Bound production runs and make hangs diagnostically actionable."""
+    enabled = os.environ.get("THORIO_PRODUCTION_DIAGNOSTICS", "1").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
         return None
 
     started = time.monotonic()
     stop_event = threading.Event()
-
-    def heartbeat():
-        while not stop_event.wait(30.0):
-            elapsed = time.monotonic() - started
-            print(f"PRODUCTION HEARTBEAT: scheduler process is alive after {elapsed:.0f}s; awaiting bounded cycle completion.", flush=True)
-
-    heartbeat_thread = threading.Thread(target=heartbeat, name="production-heartbeat", daemon=True)
-    heartbeat_thread.start()
-
-    previous_usr1 = signal.getsignal(signal.SIGUSR1)
+    try:
+        max_seconds = float(os.environ.get("THORIO_PRODUCTION_MAX_SECONDS", str(DEFAULT_PRODUCTION_MAX_SECONDS)))
+    except (TypeError, ValueError):
+        max_seconds = DEFAULT_PRODUCTION_MAX_SECONDS
+    if max_seconds <= 0:
+        max_seconds = DEFAULT_PRODUCTION_MAX_SECONDS
 
     def dump_stack(_signum, _frame):
         elapsed = time.monotonic() - started
         print(f"PRODUCTION STACK DUMP: requested after {elapsed:.0f}s; dumping all Python thread stacks.", flush=True)
         faulthandler.dump_traceback()
 
-    signal.signal(signal.SIGUSR1, dump_stack)
-
-    def on_term(signum, frame):
+    def on_term(signum, _frame):
         elapsed = time.monotonic() - started
         print(f"PRODUCTION TERMINATION: received signal {signum} after {elapsed:.0f}s; dumping all Python thread stacks before exit.", flush=True)
         faulthandler.dump_traceback()
         raise SystemExit(128 + signum)
 
+    signal.signal(signal.SIGUSR1, dump_stack)
     previous_term = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, on_term)
 
+    def heartbeat():
+        while not stop_event.wait(30.0):
+            elapsed = time.monotonic() - started
+            print(f"PRODUCTION HEARTBEAT: scheduler process is alive after {elapsed:.0f}s; bounded execution budget is {max_seconds:.0f}s.", flush=True)
+
+    def watchdog():
+        if stop_event.wait(max_seconds):
+            return
+        elapsed = time.monotonic() - started
+        print(f"PRODUCTION TIME BUDGET EXCEEDED: no bounded cycle completed within {max_seconds:.0f}s. Capturing Python thread stacks and terminating honestly.", flush=True)
+        faulthandler.dump_traceback()
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=heartbeat, name="production-heartbeat", daemon=True).start()
+    threading.Thread(target=watchdog, name="production-watchdog", daemon=True).start()
+
     def cleanup():
         stop_event.set()
-        signal.signal(signal.SIGUSR1, previous_usr1)
         signal.signal(signal.SIGTERM, previous_term)
 
     return cleanup
