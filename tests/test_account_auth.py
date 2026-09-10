@@ -5,7 +5,7 @@ import pytest
 
 from lead_engine.account_auth import (
     AccountAuthConfigurationError,
-    auth_status,
+    SUPPORTED_ACCOUNTS,
     configured_accounts,
     credentials_for,
     playwright_context_options,
@@ -49,14 +49,13 @@ def test_storage_state_must_be_valid_json(monkeypatch):
         playwright_context_options("facebook")
 
 
-def test_status_never_returns_secret_values(monkeypatch):
-    monkeypatch.setenv("THORIO_ACCOUNT_EMAIL_USERNAME", "operator@example.test")
-    monkeypatch.setenv("THORIO_ACCOUNT_EMAIL_PASSWORD", "super-secret")
-
-    status = auth_status()["email"]
-
-    assert status["configured"] is True
-    assert status["username_configured"] is True
-    assert status["password_configured"] is True
-    assert status["secrets_exposed"] is False
-    assert "super-secret" not in json.dumps(status)
+def test_only_agreed_accounts_are_supported():
+    assert SUPPORTED_ACCOUNTS == (
+        "linkedin",
+        "x",
+        "threads",
+        "facebook",
+        "hacker_news",
+        "indie_hackers",
+    )
+    assert "email" not in SUPPORTED_ACCOUNTS
