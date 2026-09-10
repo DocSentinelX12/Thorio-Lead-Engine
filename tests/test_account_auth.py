@@ -6,6 +6,8 @@ import pytest
 from lead_engine.account_auth import (
     AccountAuthConfigurationError,
     SUPPORTED_ACCOUNTS,
+    authenticated_accounts,
+    auth_status,
     configured_accounts,
     credentials_for,
     playwright_context_options,
@@ -39,6 +41,7 @@ def test_storage_state_is_decoded_without_logging_secret(monkeypatch):
     options = playwright_context_options("threads")
 
     assert options == {"storage_state": state}
+    assert authenticated_accounts() == ("threads",)
 
 
 def test_storage_state_must_be_valid_json(monkeypatch):
@@ -47,6 +50,35 @@ def test_storage_state_must_be_valid_json(monkeypatch):
 
     with pytest.raises(AccountAuthConfigurationError, match="valid base64-encoded JSON"):
         playwright_context_options("facebook")
+
+
+def test_storage_state_must_have_playwright_state_fields(monkeypatch):
+    encoded = base64.b64encode(json.dumps({"unexpected": []}).encode()).decode()
+    monkeypatch.setenv("THORIO_ACCOUNT_X_STORAGE_STATE_B64", encoded)
+
+    with pytest.raises(AccountAuthConfigurationError, match="cookies or origins"):
+        playwright_context_options("x")
+
+
+def test_unsupported_accounts_fail_closed():
+    with pytest.raises(AccountAuthConfigurationError, match="unsupported account"):
+        credentials_for("email")
+
+
+def test_status_distinguishes_credentials_from_authenticated_session(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_LINKEDIN_USERNAME", "operator")
+    monkeypatch.setenv("THORIO_ACCOUNT_LINKEDIN_PASSWORD", "secret")
+    state = {"cookies": [], "origins": []}
+    encoded = base64.b64encode(json.dumps(state).encode()).decode()
+    monkeypatch.setenv("THORIO_ACCOUNT_X_STORAGE_STATE_B64", encoded)
+
+    status = auth_status()
+
+    assert status["linkedin"]["credentials_configured"] is True
+    assert status["linkedin"]["session_ready"] is False
+    assert status["x"]["credentials_configured"] is False
+    assert status["x"]["session_ready"] is True
+    assert status["x"]["secrets_exposed"] is False
 
 
 def test_only_agreed_accounts_are_supported():
