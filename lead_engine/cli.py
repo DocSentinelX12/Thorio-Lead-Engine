@@ -66,13 +66,56 @@ def _configured_runtime_sources():
     return sources
 
 
+def _instrument_scheduler(scheduler):
+    """Emit explicit production phase boundaries without changing scheduler behavior."""
+    original_collection = scheduler._run_sources_parallel_collection
+    original_sequential = scheduler._run_sources_sequential
+    original_bridge = scheduler._bridge_remote
+    original_agents = scheduler.agent_orchestrator.run_all_once
+
+    def collection(*args, **kwargs):
+        print("PRODUCTION PHASE: source collection and record processing started.", flush=True)
+        started = time.monotonic()
+        result = original_collection(*args, **kwargs)
+        print(f"PRODUCTION PHASE: source collection and record processing finished in {time.monotonic() - started:.1f}s.", flush=True)
+        return result
+
+    def sequential(*args, **kwargs):
+        print("PRODUCTION PHASE: sequential source collection and record processing started.", flush=True)
+        started = time.monotonic()
+        result = original_sequential(*args, **kwargs)
+        print(f"PRODUCTION PHASE: sequential source collection and record processing finished in {time.monotonic() - started:.1f}s.", flush=True)
+        return result
+
+    def bridge(*args, **kwargs):
+        print("PRODUCTION PHASE: remote compute bridge started.", flush=True)
+        started = time.monotonic()
+        result = original_bridge(*args, **kwargs)
+        print(f"PRODUCTION PHASE: remote compute bridge finished in {time.monotonic() - started:.1f}s.", flush=True)
+        return result
+
+    def agents(*args, **kwargs):
+        print("PRODUCTION PHASE: specialist workforce drain started.", flush=True)
+        started = time.monotonic()
+        result = original_agents(*args, **kwargs)
+        print(f"PRODUCTION PHASE: specialist workforce drain finished in {time.monotonic() - started:.1f}s.", flush=True)
+        return result
+
+    scheduler._run_sources_parallel_collection = collection
+    scheduler._run_sources_sequential = sequential
+    scheduler._bridge_remote = bridge
+    scheduler.agent_orchestrator.run_all_once = agents
+    return scheduler
+
+
 def _run_scheduled_with_lock(application, sources, interval_seconds, max_cycles, forever=False):
     lock_path = application.config.database_dir
     lock = RuntimeLock(str(__import__("pathlib").Path(lock_path) / "engine.lock"))
     if not lock.acquire():
         raise RuntimeError("Lead Engine is already running.")
     try:
-        scheduler = LeadScheduler(application.service.runner)
+        scheduler = _instrument_scheduler(LeadScheduler(application.service.runner))
+        print(f"PRODUCTION START: {len(sources)} runtime source lanes loaded; interval={interval_seconds}s; cycles={'forever' if forever else max_cycles}.", flush=True)
         if forever:
             return scheduler.run_forever(sources=sources, interval_seconds=interval_seconds, max_cycles=None)
         return scheduler.run_bounded(sources=sources, interval_seconds=interval_seconds, max_cycles=max_cycles)
