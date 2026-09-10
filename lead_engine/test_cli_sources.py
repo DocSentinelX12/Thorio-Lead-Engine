@@ -48,7 +48,7 @@ def test_run_command_handles_no_configured_sources():
 
 
 def test_runtime_source_builder_preserves_full_catalog_and_adds_discovery_layers():
-    catalog_sources = [type("Source", (), {"name": f"catalog-{i}"})() for i in range(24)]
+    catalog_sources = [type("Source", (), {"name": f"catalog-{i}"})() for i in range(42)]
     discovery_sources = [type("Source", (), {"name": "x_signal"})()]
     browser_sources = [type("Source", (), {"name": "linkedin_signal"})()]
 
@@ -68,11 +68,11 @@ def test_runtime_source_builder_preserves_full_catalog_and_adds_discovery_layers
     ):
         sources = _configured_runtime_sources()
 
-    assert len(sources) == 26
-    assert [source.name for source in sources[:24]] == [
-        f"catalog-{i}" for i in range(24)
+    assert len(sources) == 44
+    assert [source.name for source in sources[:42]] == [
+        f"catalog-{i}" for i in range(42)
     ]
-    assert {source.name for source in sources[24:]} == {
+    assert {source.name for source in sources[42:]} == {
         "x_signal",
         "linkedin_signal",
     }
