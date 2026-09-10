@@ -163,8 +163,10 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str, Tuple[str, ...
         keywords = fields.get("Signal Keywords", "") if isinstance(fields.get("Signal Keywords", ""), str) else ""
         name, url, source_type = name.strip(), url.strip(), source_type.strip().lower()
         signal_keywords = tuple(k.strip() for k in keywords.split(";") if k.strip())
-        if not name or not url:
+        if not name:
             raise RuntimeError(f"Airtable Lead Sources record {index + 1} is missing required source fields.")
+        if not url:
+            continue
         _validate_source_url(url, index)
         if source_type not in SUPPORTED_FREE_SOURCE_TYPES:
             raise RuntimeError(f"Airtable Lead Sources record {index + 1} has unsupported Collector Type: {source_type or '<empty>'}.")
