@@ -9,9 +9,11 @@ on:
       - main
   workflow_dispatch:
 
+# Preserve every queued run and execute them one at a time.
+# A newer commit must never cancel an older test run.
 concurrency:
   group: thorio-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
