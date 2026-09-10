@@ -6,13 +6,13 @@ from urllib.parse import urlparse
 
 from .agent_orchestrator import AgentOrchestrator
 from .agent_registry import ALL_AGENT_ROLES
+from .batch_delivery import sync_pending_batched
 from .compute_bridge import bridge_once
 from .compute_worker import ComputeWorkerClient
 from .database import LeadDB
 from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
 from .sources import LeadSource
-from .sync_worker import sync_pending
 
 
 class LeadScheduler:
@@ -237,7 +237,7 @@ class LeadScheduler:
                 max_rounds=agent_max_rounds,
             )
         remote_after = self._bridge_remote()
-        sync_result = sync_pending(db)
+        sync_result = sync_pending_batched(db)
         paxus_research = process_paxus_research_queue(db)
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
