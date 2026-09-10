@@ -30,7 +30,6 @@ def test_company_research_persists_observed_person_and_handoff(tmp_path):
     assert stored["company_research"]["decision_maker"] == "Jane Doe"
     assert stored["company_research"]["decision_maker_evidence"]
     assert stored["research_status"] == "complete"
-    assert db.get_state("agent_queue") is None or db.get_state("agent_queue") is not None
     db.close()
 
 
