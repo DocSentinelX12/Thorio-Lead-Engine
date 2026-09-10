@@ -78,4 +78,4 @@ def test_objection_handler_stops_on_opt_out_language():
 
 def test_objection_handler_does_not_make_unsupported_price_claims():
     response = objection_response("That sounds too expensive", "Shiftr")
-    assert "guess" in response.lower()
+    assert "assumptions" in response.lower()
