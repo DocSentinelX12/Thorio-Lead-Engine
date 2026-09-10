@@ -21,6 +21,7 @@ else
 fi
 
 python -m pip install -r "$APP_DIR/requirements.txt"
+python -m pip install -r "$APP_DIR/requirements-browser.txt"
 
 cat > "$ENV_FILE" <<EOF
 # Private Android runtime configuration. Never commit this file.
