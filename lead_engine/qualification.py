@@ -28,16 +28,11 @@ CURRENT_NEED_CONTEXT = re.compile(
     r"looking to hire|seeking (?:a |an )?(?:developer|engineer|designer|"
     r"product manager|data scientist|ai|ml|contractor|developer|engineer)|"
     r"need(?:s|ed)? (?:a |an )?(?:developer|engineer|designer|product manager|"
-    r"data scientist|ai|ml|contractor|developer|engineer)|staffing|"
-    r"recruitment support|technology recruitment|development contractor|"
-    r"building (?:our|the) team|growing (?:our|the) team|"
-    r"need(?:s|ed)? (?:help|support) (?:with|for) (?:software|development|engineering|ai|llm|saas|mobile|technology)|"
-    r"looking for (?:a |an )?(?:development team|engineering team|software team|staff augmentation|software development|ai development|llm integration)|"
-    r"seeking (?:a |an )?(?:development team|engineering team|software team|staff augmentation|software development|ai development|llm integration)|"
-    r"outsourc(?:e|ed|ing) (?:software|development|engineering|technology)|"
-    r"staff augmentation|ai development|ai agent(?:s)?|llm integration|"
-    r"mobile development|saas development|enterprise software development|"
-    r"software development|technology delivery)\b",
+    r"data scientist|ai|ml|contractor|developer|engineer|development team|"
+    r"engineering team|software team)|staffing|recruitment support|"
+    r"technology recruitment|development contractor|building (?:our|the) team|"
+    r"growing (?:our|the) team|staff augmentation|outsourcing|outsource|"
+    r"llm integration|ai agents?|saas development|mobile development)\b",
     re.IGNORECASE,
 )
 
@@ -76,12 +71,7 @@ def _recent_timestamp(lead: Dict[str, Any], *, days: int, fields: tuple[str, ...
 
 
 def _observed_signal_timestamp(lead: Dict[str, Any]) -> str | None:
-    """Use the collector observation time when no explicit event timestamp exists.
-
-    A collector has direct evidence that it observed the supplied signal at this
-    time. This is not a guessed historical date and is only used when an explicit
-    current-need or inquiry phrase is present in the observed text.
-    """
+    """Use the collector observation time when no explicit event timestamp exists."""
     return _recent_timestamp(
         lead,
         days=max(CURRENT_NEED_DAYS, RECENT_INQUIRY_DAYS),
@@ -103,7 +93,7 @@ def _current_need(lead: Dict[str, Any], route_scores: Dict[str, int]) -> Dict[st
         "qualified": qualified,
         "observed_at": observed_at,
         "evidence": text.strip() if qualified else "",
-        "reason": "Recent explicit current-need/hiring evidence matched an existing route." if qualified else "No recent explicit current-need/hiring evidence was verified.",
+        "reason": "Recent explicit current-need evidence matched an existing route." if qualified else "No recent explicit current-need evidence was verified.",
     }
 
 
