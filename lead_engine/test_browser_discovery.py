@@ -12,6 +12,7 @@ from .browser_discovery import (
     authenticated_browser_lane_status,
     configured_browser_discovery_sources,
     validate_authenticated_browser_configuration,
+    validate_browser_collection_configuration,
 )
 
 
@@ -53,14 +54,15 @@ def test_browser_targets_load_without_credentials(monkeypatch):
     )
 
 
-def test_authenticated_target_requires_session_selector():
-    with pytest.raises(BrowserDiscoveryConfigurationError, match="authenticated_selector"):
-        BrowserDiscoveryTarget(
-            lane="x_signal",
-            name="X Home",
-            url="https://x.com/home",
-            account="x",
-        )
+def test_authenticated_target_does_not_require_session_selector():
+    target = BrowserDiscoveryTarget(
+        lane="x_signal",
+        name="X Home",
+        url="https://x.com/home",
+        account="x",
+    )
+    assert target.account == "x"
+    assert target.authenticated_selector == ""
 
 
 def test_no_browser_targets_means_no_browser_sources(monkeypatch):
@@ -91,16 +93,16 @@ def test_browser_navigation_timeout_is_bounded_and_configurable(monkeypatch):
     assert _browser_navigation_timeout() == 30_000
 
 
-def _six_targets():
+def _six_targets(*, selectors=True):
     return tuple(
         BrowserDiscoveryTarget(
             lane=f"{account}_signals",
             name=f"{account} signals",
             url="https://example.com/feed",
-            item_selector="article",
-            text_selector=".text",
+            item_selector="article" if selectors else "",
+            text_selector=".text" if selectors else "",
             account=account,
-            authenticated_selector="[data-authenticated='true']",
+            authenticated_selector="[data-authenticated='true']" if selectors else "",
         )
         for account in SUPPORTED_ACCOUNTS
     )
@@ -114,11 +116,16 @@ def test_all_six_authenticated_account_types_are_supported():
     assert set(status["configured_accounts"]) == set(SUPPORTED_ACCOUNTS)
 
 
-def test_complete_six_lane_configuration_validates_without_secrets():
-    result = validate_authenticated_browser_configuration(_six_targets())
+def test_authentication_validation_does_not_require_collection_selectors():
+    result = validate_authenticated_browser_configuration(_six_targets(selectors=False))
     assert result["configured_lane_count"] == 6
     assert result["authenticated_lane_count"] == 6
     assert result["secrets_exposed"] is False
+
+
+def test_collection_validation_is_separate_from_authentication():
+    with pytest.raises(BrowserDiscoveryConfigurationError, match="item_selector"):
+        validate_browser_collection_configuration(_six_targets(selectors=False))
 
 
 def test_complete_six_lane_configuration_rejects_missing_account():
@@ -127,17 +134,29 @@ def test_complete_six_lane_configuration_rejects_missing_account():
         validate_authenticated_browser_configuration(targets)
 
 
-def test_complete_six_lane_configuration_can_use_storage_state_without_relogin_selectors(monkeypatch):
+def test_complete_six_lane_configuration_can_use_storage_state_without_collection_selectors(monkeypatch):
     state = {"cookies": [{"name": "session", "value": "opaque"}], "origins": []}
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
-    monkeypatch.setenv("THORIO_ACCOUNT_LINKEDIN_STORAGE_STATE_B64", encoded)
-    validate_authenticated_browser_configuration(_six_targets(), require_credentials_or_storage=True)
-
-
-def test_complete_six_lane_configuration_requires_runtime_auth_material_when_requested(monkeypatch):
     for account in SUPPORTED_ACCOUNTS:
         monkeypatch.delenv(f"THORIO_ACCOUNT_{account.upper()}_USERNAME", raising=False)
         monkeypatch.delenv(f"THORIO_ACCOUNT_{account.upper()}_PASSWORD", raising=False)
         monkeypatch.delenv(f"THORIO_ACCOUNT_{account.upper()}_STORAGE_STATE_B64", raising=False)
+    monkeypatch.setenv("THORIO_ACCOUNT_LINKEDIN_STORAGE_STATE_B64", encoded)
     with pytest.raises(BrowserDiscoveryConfigurationError, match="credentials or storage state"):
-        validate_authenticated_browser_configuration(_six_targets(), require_credentials_or_storage=True)
+        validate_authenticated_browser_configuration(
+            _six_targets(selectors=False), require_credentials_or_storage=True
+        )
+
+
+def test_browser_authentication_can_be_configured_before_collection():
+    targets = tuple(
+        BrowserDiscoveryTarget(
+            lane=f"{account}_auth",
+            name=f"{account} authentication",
+            url="https://example.com/login",
+            account=account,
+        )
+        for account in SUPPORTED_ACCOUNTS
+    )
+    result = validate_authenticated_browser_configuration(targets)
+    assert result["configured_accounts"] == list(SUPPORTED_ACCOUNTS)
