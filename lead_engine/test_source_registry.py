@@ -269,16 +269,16 @@ def test_free_source_catalog_nomado24_uses_description_field():
     )
 
 
-def test_active_airtable_source_without_url_fails_loudly():
+def test_active_airtable_search_theme_without_url_is_skipped_from_direct_catalog():
     records = {
         "records": [
             {
-                "id": "rec-invalid",
+                "id": "rec-search-theme",
                 "fields": {
                     "Active": True,
                     "Source / Search": "LinkedIn hiring",
                     "Source URL": "",
-                    "Collector Type": "json",
+                    "Collector Type": "",
                 },
             }
         ]
@@ -291,9 +291,4 @@ def test_active_airtable_source_without_url_fails_loudly():
         },
         clear=True,
     ), patch("lead_engine.source_registry._request", return_value=records):
-        try:
-            _load_airtable_source_catalog()
-        except RuntimeError as exc:
-            assert "missing required source fields" in str(exc)
-        else:
-            raise AssertionError("active Airtable source without URL was silently ignored")
+        assert _load_airtable_source_catalog() == ()
