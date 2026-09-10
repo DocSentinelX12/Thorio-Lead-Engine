@@ -1,5 +1,10 @@
 import argparse
+import faulthandler
 import json
+import os
+import signal
+import threading
+import time
 
 from .application import create_application
 from .browser_discovery import configured_browser_discovery_sources
@@ -45,7 +50,7 @@ def _sync_pending_if_enabled(application):
 
 def _configured_runtime_sources():
     """Combine existing sources with free authenticated browser and API lanes."""
-    if __import__("os").environ.get("THORIO_FREE_ONLY", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+    if os.environ.get("THORIO_FREE_ONLY", "1").strip().lower() not in {"1", "true", "yes", "on"}:
         raise RuntimeError("THORIO_FREE_ONLY must remain enabled; paid collection paths are prohibited")
 
     sources = list(configured_sources())
@@ -74,6 +79,48 @@ def _run_scheduled_with_lock(application, sources, interval_seconds, max_cycles,
         lock.release()
 
 
+def _install_production_diagnostics():
+    """Keep long production runs observable and make hangs diagnostically actionable."""
+    if os.environ.get("THORIO_PRODUCTION_DIAGNOSTICS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        return None
+
+    started = time.monotonic()
+    stop_event = threading.Event()
+
+    def heartbeat():
+        while not stop_event.wait(30.0):
+            elapsed = time.monotonic() - started
+            print(f"PRODUCTION HEARTBEAT: scheduler process is alive after {elapsed:.0f}s; awaiting bounded cycle completion.", flush=True)
+
+    heartbeat_thread = threading.Thread(target=heartbeat, name="production-heartbeat", daemon=True)
+    heartbeat_thread.start()
+
+    previous_usr1 = signal.getsignal(signal.SIGUSR1)
+
+    def dump_stack(_signum, _frame):
+        elapsed = time.monotonic() - started
+        print(f"PRODUCTION STACK DUMP: requested after {elapsed:.0f}s; dumping all Python thread stacks.", flush=True)
+        faulthandler.dump_traceback()
+
+    signal.signal(signal.SIGUSR1, dump_stack)
+
+    def on_term(signum, frame):
+        elapsed = time.monotonic() - started
+        print(f"PRODUCTION TERMINATION: received signal {signum} after {elapsed:.0f}s; dumping all Python thread stacks before exit.", flush=True)
+        faulthandler.dump_traceback()
+        raise SystemExit(128 + signum)
+
+    previous_term = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, on_term)
+
+    def cleanup():
+        stop_event.set()
+        signal.signal(signal.SIGUSR1, previous_usr1)
+        signal.signal(signal.SIGTERM, previous_term)
+
+    return cleanup
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -93,7 +140,12 @@ def main(argv=None):
         if sync_result is not None:
             result["sync"] = sync_result
     elif args.command == "run-scheduled":
-        result = _run_scheduled_with_lock(application, _configured_runtime_sources(), args.interval, args.cycles, args.forever)
+        cleanup = _install_production_diagnostics()
+        try:
+            result = _run_scheduled_with_lock(application, _configured_runtime_sources(), args.interval, args.cycles, args.forever)
+        finally:
+            if cleanup is not None:
+                cleanup()
     elif args.command in {"import-json", "run-json"}:
         result = application.run_sources([JsonLeadSource(args.path)])
         sync_result = _sync_pending_if_enabled(application)
@@ -104,7 +156,7 @@ def main(argv=None):
     else:
         parser.error(f"Unknown command: {args.command}")
 
-    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    print(json.dumps(result, indent=2, ensure_ascii=False, default=str), flush=True)
     return 0
 
 
