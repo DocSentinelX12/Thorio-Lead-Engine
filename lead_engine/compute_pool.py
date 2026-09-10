@@ -96,7 +96,12 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
 
 
 class ComputePool:
-    """SQLite-backed registry and exclusive lease coordinator for one node."""
+    """SQLite-backed provider-neutral registry and exclusive task lease pool."""
+
+    # A registered worker is one logical execution slot. Physical node capacity
+    # determines how many workers should be launched on that node; it does not
+    # allow one logical worker to run multiple specialist tasks concurrently.
+    LOGICAL_SLOTS_PER_WORKER = 1
 
     def __init__(self, db_path: str = "data/lead_engine.db", lease_seconds: int = 300):
         if lease_seconds < 1:
@@ -129,6 +134,8 @@ class ComputePool:
             connection.commit()
 
     def register(self, identity: WorkerIdentity) -> Dict[str, Any]:
+        if identity.cpu_count < 1 or identity.memory_mb < 1:
+            raise ValueError("worker resources must be positive")
         now = time.time()
         with self._connect() as connection:
             connection.execute("""INSERT INTO compute_workers
@@ -143,8 +150,8 @@ class ComputePool:
         return self.worker(identity.worker_id) or {}
 
     def heartbeat(self, worker_id: str, current_load: Optional[int] = None) -> bool:
-        if current_load is not None and (isinstance(current_load, bool) or current_load < 0):
-            raise ValueError("current_load must be a non-negative integer")
+        if current_load is not None and (isinstance(current_load, bool) or current_load < 0 or current_load > self.LOGICAL_SLOTS_PER_WORKER):
+            raise ValueError("current_load must be between 0 and the worker's logical slot capacity")
         now = time.time()
         with self._connect() as connection:
             if current_load is None:
@@ -183,8 +190,8 @@ class ComputePool:
         token = str(uuid.uuid4())
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            worker = connection.execute("SELECT status FROM compute_workers WHERE worker_id=?", (worker_id,)).fetchone()
-            if not worker or worker["status"] != "ready":
+            worker = connection.execute("SELECT status,current_load FROM compute_workers WHERE worker_id=?", (worker_id,)).fetchone()
+            if not worker or worker["status"] != "ready" or worker["current_load"] >= self.LOGICAL_SLOTS_PER_WORKER:
                 connection.rollback(); return None
             existing = connection.execute("SELECT lease_until FROM work_leases WHERE lead_id=?", (lead_key,)).fetchone()
             if existing and existing["lease_until"] > now:
@@ -215,8 +222,41 @@ class ComputePool:
             connection.commit()
             return len(rows)
 
-    def capacity_snapshot(self) -> Dict[str, int]:
+    def capacity_snapshot(self) -> Dict[str, Any]:
         self.reap_stale_workers()
         with self._connect() as connection:
-            row = connection.execute("SELECT COALESCE(SUM(cpu_count),0) cpu_count,COALESCE(SUM(memory_mb),0) memory_mb,COUNT(*) workers,COALESCE(SUM(current_load),0) active_leases FROM compute_workers WHERE status='ready'").fetchone()
-            return {key: int(row[key]) for key in ("cpu_count", "memory_mb", "workers", "active_leases")}
+            rows = connection.execute("""SELECT worker_id,hostname,architecture,cpu_count,memory_mb,
+                status,current_load,last_heartbeat,capabilities_json
+                FROM compute_workers ORDER BY worker_id""").fetchall()
+        worker_items = []
+        for row in rows:
+            status = row["status"]
+            active = int(row["current_load"])
+            logical_slots = self.LOGICAL_SLOTS_PER_WORKER if status == "ready" else 0
+            worker_items.append({
+                "worker_id": row["worker_id"],
+                "hostname": row["hostname"],
+                "architecture": row["architecture"],
+                "cpu_count": int(row["cpu_count"]),
+                "memory_mb": int(row["memory_mb"]),
+                "status": status,
+                "capabilities": json.loads(row["capabilities_json"]),
+                "logical_slots": logical_slots,
+                "recommended_slots": self.LOGICAL_SLOTS_PER_WORKER,
+                "active_load": active,
+                "available_slots": max(0, logical_slots - active),
+                "last_heartbeat": float(row["last_heartbeat"]),
+            })
+        ready = [item for item in worker_items if item["status"] == "ready"]
+        return {
+            "free_only": True,
+            "worker_count": len(worker_items),
+            "ready_workers": len(ready),
+            "stale_workers": sum(item["status"] == "stale" for item in worker_items),
+            "logical_slots": len(ready),
+            "active_leases": sum(item["active_load"] for item in ready),
+            "available_slots": sum(item["available_slots"] for item in ready),
+            "total_cpu": sum(item["cpu_count"] for item in ready),
+            "total_memory_mb": sum(item["memory_mb"] for item in ready),
+            "workers": worker_items,
+        }
