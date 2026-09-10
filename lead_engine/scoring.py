@@ -57,6 +57,108 @@ SIGNAL_WEIGHTS = {
 }
 
 
+ROUTE_SIGNAL_WEIGHTS = {
+    "Shiftr": {
+        "individual developer": 8,
+        "software engineer": 7,
+        "software developer": 7,
+        "developer": 6,
+        "engineering hire": 7,
+        "engineering hiring": 7,
+        "contract developer": 8,
+        "contract engineer": 8,
+        "freelance developer": 7,
+        "developer contractor": 8,
+        "technical contractor": 7,
+        "engineering contractor": 7,
+        "software development": 7,
+        "development team": 7,
+        "engineering team": 7,
+        "development contractor": 8,
+        "software contractor": 8,
+        "technical talent": 6,
+        "engineering talent": 6,
+        "developer talent": 6,
+        "staff augmentation": 8,
+        "outsourcing": 7,
+        "development team hiring": 8,
+        "ai development": 7,
+        "ai engineer": 7,
+        "llm": 6,
+        "llm integration": 8,
+        "ai agent": 7,
+        "ai agents": 7,
+        "mobile development": 7,
+        "mobile developer": 7,
+        "mobile engineer": 7,
+        "saas development": 7,
+        "enterprise software development": 7,
+    },
+    "Paxus": {
+        "technology recruitment": 9,
+        "tech recruitment": 9,
+        "it recruitment": 9,
+        "technical recruitment": 9,
+        "technology staffing": 9,
+        "it staffing": 9,
+        "technical staffing": 9,
+        "engineering recruitment": 8,
+        "engineering staffing": 8,
+        "technology talent acquisition": 8,
+        "it talent acquisition": 8,
+        "recruiting engineers": 8,
+        "staffing engineers": 8,
+        "recruiting developers": 8,
+        "staffing developers": 8,
+        "technology recruiting": 9,
+        "technical recruiting": 9,
+        "engineering recruiting": 8,
+        "technology hiring support": 8,
+        "technical hiring support": 8,
+        "engineering hiring support": 8,
+        "recruitment support": 8,
+        "staffing support": 8,
+        "talent acquisition support": 8,
+        "recruiting support": 8,
+    },
+    "Thorio": {
+        "remote software engineer": 8,
+        "remote software developer": 8,
+        "remote developer": 8,
+        "remote engineer": 7,
+        "remote engineering": 7,
+        "remote product designer": 8,
+        "remote designer": 7,
+        "remote product manager": 8,
+        "remote data scientist": 8,
+        "remote data analyst": 8,
+        "remote data engineer": 8,
+        "remote machine learning": 8,
+        "remote ml engineer": 8,
+        "remote ai engineer": 8,
+        "remote technology role": 8,
+        "remote tech role": 8,
+        "remote technical role": 8,
+        "remote-first hiring": 7,
+        "remote hiring": 6,
+        "work-from-home technology role": 8,
+        "distributed engineering": 7,
+        "distributed development": 7,
+        "remote engineering position": 8,
+        "remote engineering role": 8,
+        "remote data": 7,
+        "remote ai": 7,
+        "remote machine learning": 8,
+        "remote product": 7,
+        "remote design": 7,
+        "remote ux": 7,
+        "remote ui": 7,
+        "remote web": 7,
+        "remote technical": 7,
+    },
+}
+
+
 ROUTE_BONUSES = {
     "Shiftr": {
         "developer": 3,
@@ -98,27 +200,13 @@ def score_lead(
     evidence: str,
 ) -> int:
     """
-    Calculate a lead-intent score.
+    Calculate the overall opportunity signal score.
 
-    The score is based only on meaningful opportunity signals.
-
-    Generic words such as "hiring", "opening", "position",
-    "role", and "job" do not create a score by themselves.
+    This preserves the broad signal pool. Qualification and routing remain
+    separate decisions, and generic hiring language does not create a score.
     """
-
-    text = _build_text(
-        company=company,
-        signal=signal,
-        evidence=evidence,
-    )
-
-    score = 0
-
-    for phrase, weight in SIGNAL_WEIGHTS.items():
-        if phrase in text:
-            score += weight
-
-    return score
+    text = _build_text(company=company, signal=signal, evidence=evidence)
+    return sum(weight for phrase, weight in SIGNAL_WEIGHTS.items() if phrase in text)
 
 
 def score_route(
@@ -128,53 +216,30 @@ def score_route(
     evidence: str,
 ) -> int:
     """
-    Calculate a route-specific opportunity score.
+    Calculate an independent route score.
 
-    The same lead can receive different scores for Shiftr,
-    Paxus, and Thorio based on route-specific signals.
+    Route scoring intentionally uses only signals assigned to that route plus
+    its route-specific bonuses. A strong signal for one partner therefore does
+    not artificially inflate the score of another partner. Multi-route leads
+    remain fully supported because each applicable route is scored separately.
     """
-
-    text = _build_text(
-        company=company,
-        signal=signal,
-        evidence=evidence,
-    )
-
-    score = score_lead(
-        company=company,
-        signal=signal,
-        evidence=evidence,
-    )
-
-    bonuses = ROUTE_BONUSES.get(
-        route,
-        {},
-    )
-
-    for phrase, weight in bonuses.items():
-        if phrase in text:
-            score += weight
-
+    text = _build_text(company=company, signal=signal, evidence=evidence)
+    route_signals = ROUTE_SIGNAL_WEIGHTS.get(route, {})
+    score = sum(weight for phrase, weight in route_signals.items() if phrase in text)
+    bonuses = ROUTE_BONUSES.get(route, {})
+    score += sum(weight for phrase, weight in bonuses.items() if phrase in text)
     return score
 
 
 def priority_from_score(score: int) -> str:
-    """
-    Convert a numeric opportunity score into a review priority.
-    """
-
     if score >= 20:
         return "Critical"
-
     if score >= 12:
         return "High"
-
     if score >= 6:
         return "Medium"
-
     if score > 0:
         return "Low"
-
     return "Review"
 
 
@@ -183,18 +248,7 @@ def score_result(
     signal: str,
     evidence: str,
 ) -> Dict[str, object]:
-    """
-    Return the overall score and review priority.
-
-    Qualification remains a separate decision.
-    """
-
-    score = score_lead(
-        company=company,
-        signal=signal,
-        evidence=evidence,
-    )
-
+    score = score_lead(company=company, signal=signal, evidence=evidence)
     return {
         "lead_score": score,
         "priority": priority_from_score(score),
@@ -207,17 +261,12 @@ def route_score_result(
     signal: str,
     evidence: str,
 ) -> Dict[str, object]:
-    """
-    Return a route-specific score and priority.
-    """
-
     score = score_route(
         route=route,
         company=company,
         signal=signal,
         evidence=evidence,
     )
-
     return {
         "route": route,
         "route_score": score,
