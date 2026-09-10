@@ -25,7 +25,7 @@ sv down thorio-browser || true
 pkill -f 'chromium.*remote-debugging-port=9222' || true
 
 export DISPLAY=:1
-export XKB_CONFIG_ROOT="$PREFIX/share/xcb"
+unset XKB_CONFIG_ROOT
 
 # Start the Android X11 server if it is not already running.
 if ! pgrep -f '[t]ermux-x11 :1' >/dev/null 2>&1; then
