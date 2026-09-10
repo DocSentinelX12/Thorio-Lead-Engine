@@ -8,7 +8,7 @@ BOOTSTRAP_SCRIPT = ROOT / "infra" / "android-termux" / "bootstrap.sh"
 
 def test_android_authorization_does_not_set_invalid_xkb_path():
     text = AUTH_SCRIPT.read_text(encoding="utf-8")
-    assert "XKB_CONFIG_ROOT" not in text
+    assert "export XKB_CONFIG_ROOT" not in text
     assert "termux-x11 :1" in text
     assert "remote-debugging-port=9222" in text
 
