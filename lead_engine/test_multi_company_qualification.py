@@ -78,6 +78,21 @@ def test_all_three_are_preserved():
     assert result["companies"]["Paxus"]["qualified"] is True
 
 
+def test_shiftr_service_delivery_need_can_qualify_without_employee_hiring_language():
+    result = evaluate_company_qualification(_lead("AI agent development", "We need help building AI agents for our SaaS product."))
+    assert result["qualified_companies"] == ["Shiftr"]
+    assert result["companies"]["Shiftr"]["qualified"] is True
+    assert result["companies"]["Paxus"]["qualified"] is False
+    assert result["companies"]["Thorio"]["qualified"] is False
+
+
+def test_shiftr_service_need_can_overlap_with_thorio_when_remote_hiring_is_present():
+    result = evaluate_company_qualification(_lead("remote software engineer and AI development", "We are hiring a remote software engineer and need an AI development team."))
+    assert "Shiftr" in result["qualified_companies"]
+    assert "Thorio" in result["qualified_companies"]
+    assert "Paxus" not in result["qualified_companies"]
+
+
 def test_stale_signal_does_not_qualify():
     result = evaluate_company_qualification(_lead("software developer hiring", "Old hiring announcement.", need_at="2025-01-01T00:00:00+00:00", discovered_at=NOW))
     assert result["qualified_companies"] == []
