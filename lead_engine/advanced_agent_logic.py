@@ -91,7 +91,9 @@ def _source_signal(agent: str, payload: Mapping[str, Any], db: Any = None) -> Di
     normalized["source_lane"] = agent
     normalized["observed"] = True
     normalized["qualification_performed"] = False
-    normalized["provenance"] = {**dict(record.get("provenance") or {}) if isinstance(record.get("provenance"), Mapping) else {}, "collector_agent": agent, "source_lane": agent, "collected_at": datetime.now(timezone.utc).isoformat()}
+    provenance = dict(record.get("provenance") or {}) if isinstance(record.get("provenance"), Mapping) else {}
+    provenance.update({"collector_agent": agent, "source_lane": agent, "collected_at": datetime.now(timezone.utc).isoformat()})
+    normalized["provenance"] = provenance
     handoffs = []
     if fingerprint and lead is not None:
         enqueue(db, "qualification_a", {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=1, dedupe_key=f"qualification_a:{fingerprint}")
@@ -100,7 +102,7 @@ def _source_signal(agent: str, payload: Mapping[str, Any], db: Any = None) -> Di
             for social_agent in SOCIAL_TARGETS:
                 enqueue(db, social_agent, {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=3, dedupe_key=f"{social_agent}:{fingerprint}")
                 handoffs.append(social_agent)
-    return {"agent": agent, "role": "discovery", "source": record.get("source") or _SOURCE_SIGNAL_ALIASES.get(agent, agent), "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoffs": handoffs, "handoff": handoffs[0] if handoffs else "awaiting_persistence", "provenance": normalized["provenance"]}
+    return {"agent": agent, "role": "discovery", "source": record.get("source") or _SOURCE_SIGNAL_ALIASES.get(agent, agent), "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoffs": handoffs, "handoff": handoffs[0] if handoffs else "awaiting_persistence", "provenance": provenance}
 
 
 def discovery_finding(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
