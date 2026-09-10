@@ -77,12 +77,32 @@ def test_qualification_worker_applies_independent_company_routes(tmp_path):
     assert task["agent"] == "qualification_a"
 
 
-def test_outreach_worker_refuses_unauthorized_action(tmp_path):
+def test_outreach_worker_autonomously_builds_evidence_grounded_action(tmp_path):
     db = _db(tmp_path)
-    enqueue(db, "outreach_closer", {"lead": {"company": "Acme"}})
+    lead = {
+        "fingerprint": "outreach-worker-test",
+        "company": "Acme",
+        "potential_routes": ["Thorio", "Shiftr"],
+        "signal": "Acme is hiring a remote software engineer",
+        "research_status": "complete",
+        "company_research": {
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "contact_email": "taylor@example.com",
+        },
+        "evidence_events": [{"source_id": "evt-1", "source_url": "https://example.com/signal"}],
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "outreach_closer", {"lead": lead})
     result = run_worker_once(db, "outreach_closer", worker_id="outreach")
-    assert result["failed_count"] == 1
-    assert "authorized=True" in result["results"][0]["error"]
+    assert result["completed_count"] == 1
+    assert result["failed_count"] == 0
+    output = result["results"][0]
+    assert output["autonomous"] is True
+    assert output["action"] == "dispatch_outreach"
+    assert output["route"] in {"Thorio", "Shiftr"}
+    assert output["evidence_refs"] == ["https://example.com/signal", "https://example.com/taylor"]
+    assert "Acme is hiring a remote software engineer" in output["body"]
 
 
 def test_orchestrator_rejects_cross_workforce_dispatch(tmp_path):
