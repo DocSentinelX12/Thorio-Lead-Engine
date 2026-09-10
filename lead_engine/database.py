@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -9,7 +10,8 @@ class LeadDB:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.data_dir / "leads.sqlite3"
-        self.conn = sqlite3.connect(self.path, timeout=30)
+        self.recovered_corrupt_database = False
+        self.conn = self._connect_with_recovery()
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=FULL")
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -30,6 +32,35 @@ class LeadDB:
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
         self.conn.commit()
+
+    def _connect_with_recovery(self):
+        if not self.path.exists():
+            return sqlite3.connect(self.path, timeout=30)
+        conn = None
+        try:
+            conn = sqlite3.connect(self.path, timeout=30)
+            result = conn.execute("PRAGMA integrity_check").fetchone()
+            if result and str(result[0]).lower() == "ok":
+                return conn
+        except sqlite3.DatabaseError:
+            pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except sqlite3.DatabaseError:
+                    pass
+        self._quarantine_corrupt_database()
+        self.recovered_corrupt_database = True
+        return sqlite3.connect(self.path, timeout=30)
+
+    def _quarantine_corrupt_database(self):
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        for suffix in ("", "-wal", "-shm"):
+            source = Path(f"{self.path}{suffix}")
+            if source.exists():
+                destination = Path(f"{self.path}.corrupt-{stamp}{suffix}")
+                source.replace(destination)
 
     def insert_if_new(self, payload: Dict[str, Any]) -> bool:
         if not isinstance(payload, dict):
