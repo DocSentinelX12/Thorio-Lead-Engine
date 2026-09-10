@@ -142,10 +142,24 @@ class LeadScheduler:
             return {"status": "disabled", "published_count": 0, "completed_count": 0, "retried_count": 0}
         return bridge_once(self.runner.pipeline.db, self._remote_compute, publish_limit=publish_limit, reconcile_limit=reconcile_limit)
 
+    def _run_without_immediate_sync(self, callback):
+        """Run collection processing with Airtable deferred until specialists finish."""
+        pipeline = getattr(self.runner, "pipeline", None)
+        original = getattr(pipeline, "sync_enabled", None)
+        if original is not True:
+            return callback()
+        pipeline.sync_enabled = False
+        try:
+            return callback()
+        finally:
+            pipeline.sync_enabled = original
+
     def _run_sources_sequential(self, due_sources, results, failed):
         for source, previous_checkpoint, started_at, started_wall in due_sources:
             try:
-                result = dict(self.checkpoint_runner.run(source=source, checkpoint=previous_checkpoint))
+                result = dict(self._run_without_immediate_sync(
+                    lambda: self.checkpoint_runner.run(source=source, checkpoint=previous_checkpoint)
+                ))
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count != 0:
                     result["checkpoint"] = previous_checkpoint
@@ -176,7 +190,9 @@ class LeadScheduler:
                 if isinstance(collected_value, Exception):
                     raise collected_value
                 records, next_checkpoint = collected_value
-                result = dict(self.runner.process(records))
+                result = dict(self._run_without_immediate_sync(
+                    lambda: self.runner.process(records)
+                ))
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count == 0:
                     current_checkpoint = "" if next_checkpoint is None else next_checkpoint
@@ -213,7 +229,6 @@ class LeadScheduler:
             self._run_sources_sequential(due_sources, results, failed)
 
         db = self.runner.pipeline.db
-        sync_result = sync_pending(db)
         remote_before = self._bridge_remote()
         if agent_max_rounds is None:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
@@ -223,6 +238,10 @@ class LeadScheduler:
                 max_rounds=agent_max_rounds,
             )
         remote_after = self._bridge_remote()
+
+        # Airtable is the delivery/approval gate. Defer it until the bounded
+        # specialist pass has consumed the freshly persisted discovery queue.
+        sync_result = sync_pending(db)
         paxus_research = process_paxus_research_queue(db)
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
@@ -273,19 +292,11 @@ class LeadScheduler:
         if max_cycles < 1:
             raise ValueError("max_cycles must be greater than or equal to 1.")
         source_list = list(sources)
-        # A bounded execution is an explicit request to perform collection now.
-        # Clear only the scheduler's persisted due-times before this bounded run;
-        # each successfully attempted source immediately writes its next due-time
-        # again. Continuous run_forever retains normal polling semantics.
         for source in source_list:
             key = self._source_key(source)
             self._next_run_at.pop(key, None)
             self._persisted_next_run_at.pop(key, None)
         self._save_polling_state()
-        # A bounded production cycle must make forward progress without attempting
-        # to drain every downstream dependency cascade in one invocation. The
-        # durable queue remains intact and the normal continuous scheduler keeps
-        # the configured multi-round drain behavior on subsequent cycles.
         return self.run_forever(
             sources=source_list,
             interval_seconds=interval_seconds,
