@@ -221,7 +221,7 @@ def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future
     db = LeadDB(data_dir=str(tmp_path))
     pipeline = LeadPipeline(db=db)
     runner.pipeline = pipeline
-    runner.process.return_value = {"discovered_count": 1, "accepted_count": 1, "duplicate_count": 0, "failed_count": 0}
+    runner.run_source.return_value = {"discovered_count": 1, "accepted_count": 1, "duplicate_count": 0, "failed_count": 0}
     monkeypatch.setenv("THORIO_SOURCE_COLLECTION_WORKERS", "2")
     definition = SourceDefinition(
         name="Bounded Acceptance API", provider="Example", collector_type="json", url="https://example.com/api",
@@ -232,12 +232,12 @@ def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future
     with patch("lead_engine.scheduler.time.time", return_value=1000.0):
         first = scheduler.run([source])
     assert first["successful_source_count"] == 1
-    runner.process.reset_mock()
+    runner.run_source.reset_mock()
     second_scheduler = LeadScheduler(runner=runner)
     with patch("lead_engine.scheduler.time.time", return_value=1001.0):
         result = second_scheduler.run_bounded([source], interval_seconds=0, max_cycles=1)
     assert result["successful_source_count"] == 1
     assert result["failed_count"] == 0
     assert result["discovered_count"] == 1
-    assert runner.process.call_count == 1
+    assert runner.run_source.call_count == 1
     db.close()
