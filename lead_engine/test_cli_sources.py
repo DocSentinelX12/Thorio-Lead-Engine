@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from .cli import main
+from .cli import _configured_runtime_sources, main
 
 
 def test_run_command_uses_configured_sources():
@@ -45,3 +45,34 @@ def test_run_command_handles_no_configured_sources():
 
     assert result == 0
     mock_app.run_sources.assert_called_once_with([])
+
+
+def test_runtime_source_builder_preserves_full_catalog_and_adds_discovery_layers():
+    catalog_sources = [type("Source", (), {"name": f"catalog-{i}"})() for i in range(24)]
+    discovery_sources = [type("Source", (), {"name": "x_signal"})()]
+    browser_sources = [type("Source", (), {"name": "linkedin_signal"})()]
+
+    with patch(
+        "lead_engine.cli.configured_sources",
+        return_value=catalog_sources,
+    ), patch(
+        "lead_engine.cli.configured_discovery_sources",
+        return_value=discovery_sources,
+    ), patch(
+        "lead_engine.cli.configured_browser_discovery_sources",
+        return_value=browser_sources,
+    ), patch.dict(
+        "os.environ",
+        {"THORIO_FREE_ONLY": "1"},
+        clear=True,
+    ):
+        sources = _configured_runtime_sources()
+
+    assert len(sources) == 26
+    assert [source.name for source in sources[:24]] == [
+        f"catalog-{i}" for i in range(24)
+    ]
+    assert {source.name for source in sources[24:]} == {
+        "x_signal",
+        "linkedin_signal",
+    }
