@@ -46,10 +46,6 @@ class BrowserDiscoveryTarget:
         account = normalize_account(self.account)
         if account and account not in SUPPORTED_ACCOUNTS:
             raise BrowserDiscoveryConfigurationError(f"Unsupported authenticated browser account: {account}")
-        if account and not self.authenticated_selector.strip():
-            raise BrowserDiscoveryConfigurationError(
-                f"{account}: authenticated_selector is required for an authenticated browser lane"
-            )
 
 
 @dataclass(frozen=True)
@@ -157,23 +153,28 @@ def _account_env(account: str, suffix: str) -> str:
     return _env(f"THORIO_ACCOUNT_{normalize_account(account).upper()}_{suffix}")
 
 
+def _login_configuration_ready(account: str, target: BrowserDiscoveryTarget) -> bool:
+    return all((
+        target.login_url or _account_env(account, "LOGIN_URL"),
+        _account_env(account, "USERNAME_SELECTOR"),
+        _account_env(account, "PASSWORD_SELECTOR"),
+        _account_env(account, "SUBMIT_SELECTOR"),
+    ))
+
+
 def authenticated_browser_lane_status(targets: Iterable[BrowserDiscoveryTarget]) -> dict[str, Any]:
-    """Return non-secret readiness evidence for the six supported account lanes."""
+    """Return account and lane readiness without requiring collection selectors for login."""
     target_list = tuple(targets)
     target_accounts = {
         normalize_account(target.account)
         for target in target_list
         if target.account
     }
-    authenticated_lanes = sum(
-        1 for target in target_list
-        if target.account and target.authenticated_selector
-    )
     return {
         "supported_accounts": list(SUPPORTED_ACCOUNTS),
         "configured_accounts": sorted(target_accounts),
         "configured_lane_count": len(target_list),
-        "authenticated_lane_count": authenticated_lanes,
+        "authenticated_lane_count": sum(1 for target in target_list if target.account),
         "all_six_account_types_supported": set(SUPPORTED_ACCOUNTS) == target_accounts,
     }
 
@@ -183,10 +184,10 @@ def validate_authenticated_browser_configuration(
     *,
     require_credentials_or_storage: bool = False,
 ) -> dict[str, Any]:
-    """Validate the complete six-lane account configuration without exposing secrets.
+    """Validate authentication readiness independently from feed collection selectors.
 
-    This validates repository/runtime wiring only. It does not claim that a
-    live browser session is currently authenticated.
+    Collection selectors are deliberately not authentication prerequisites. A
+    browser can authenticate first and receive collection instructions later.
     """
     target_list = tuple(targets)
     by_account: dict[str, list[BrowserDiscoveryTarget]] = {account: [] for account in SUPPORTED_ACCOUNTS}
@@ -207,26 +208,16 @@ def validate_authenticated_browser_configuration(
     from .account_auth import auth_status
     statuses = auth_status()
     for account, lanes in by_account.items():
+        status = statuses[account]
         for lane in lanes:
-            if not lane.authenticated_selector:
-                invalid.append(f"{account}/{lane.lane}: authenticated_selector missing")
-            if not lane.item_selector or not lane.text_selector:
-                invalid.append(f"{account}/{lane.lane}: item_selector and text_selector are required")
-            login_ready = all(
-                (
-                    lane.login_url or _account_env(account, "LOGIN_URL"),
-                    _account_env(account, "USERNAME_SELECTOR"),
-                    _account_env(account, "PASSWORD_SELECTOR"),
-                    _account_env(account, "SUBMIT_SELECTOR"),
-                )
-            )
             if require_credentials_or_storage:
-                status = statuses[account]
                 if not status["configured"]:
                     invalid.append(f"{account}/{lane.lane}: credentials or storage state not configured")
-                elif not status["session_ready"] and not (status["relogin_ready"] and login_ready):
+                elif not status["session_ready"] and not (
+                    status["relogin_ready"] and _login_configuration_ready(account, lane)
+                ):
                     invalid.append(
-                        f"{account}/{lane.lane}: authenticated storage state or complete automatic re-login configuration required"
+                        f"{account}/{lane.lane}: authenticated storage state or automatic re-login configuration required"
                     )
 
     if invalid:
@@ -239,16 +230,26 @@ def validate_authenticated_browser_configuration(
         "authenticated_lane_count": sum(len(lanes) for lanes in by_account.values()),
         "automatic_relogin_ready_accounts": [
             account for account in SUPPORTED_ACCOUNTS
-            if all(
-                (
-                    _account_env(account, "USERNAME_SELECTOR"),
-                    _account_env(account, "PASSWORD_SELECTOR"),
-                    _account_env(account, "SUBMIT_SELECTOR"),
-                    _account_env(account, "LOGIN_URL"),
-                )
-            )
+            if any(_login_configuration_ready(account, lane) for lane in by_account[account])
         ],
         "secrets_exposed": False,
+    }
+
+
+def validate_browser_collection_configuration(
+    targets: Iterable[BrowserDiscoveryTarget],
+) -> dict[str, Any]:
+    """Validate collection-specific selectors separately from authentication."""
+    target_list = tuple(targets)
+    invalid: list[str] = []
+    for target in target_list:
+        if not target.item_selector:
+            invalid.append(f"{target.lane}: item_selector is required for collection")
+    if invalid:
+        raise BrowserDiscoveryConfigurationError("; ".join(invalid))
+    return {
+        "configured_lane_count": len(target_list),
+        "collection_ready_lane_count": len(target_list),
     }
 
 
@@ -281,12 +282,18 @@ class FreeAuthenticatedBrowserCollector:
 
     def _session_is_valid(self, page: Any) -> bool:
         selector = self.target.authenticated_selector
-        if not selector:
-            return True
+        if selector:
+            try:
+                return page.locator(selector).count() > 0
+            except Exception:
+                return False
         try:
-            return page.locator(selector).count() > 0
+            current_url = str(page.url or "").lower()
         except Exception:
+            current_url = ""
+        if any(marker in current_url for marker in ("/login", "/signin", "/sign-in", "authwall", "/checkpoint")):
             return False
+        return True
 
     def _login(self, page: Any, account: str, credentials: Any = None) -> None:
         login_url = self.target.login_url or _account_env(account, "LOGIN_URL")
@@ -314,7 +321,7 @@ class FreeAuthenticatedBrowserCollector:
 
     def _ensure_authenticated(self, page: Any) -> tuple[bool, bool]:
         account = normalize_account(self.target.account)
-        if not account or not self.target.authenticated_selector:
+        if not account:
             return True, False
         was_valid = self._session_is_valid(page)
         ensure_authenticated(
@@ -355,17 +362,22 @@ class FreeAuthenticatedBrowserCollector:
                 except Exception:
                     pass
 
-                if not self.target.item_selector or not self.target.text_selector:
+                if not self.target.item_selector:
                     raise BrowserDiscoveryConfigurationError(
-                        f"Target {self.target.name} must define item_selector and text_selector"
+                        f"Target {self.target.name} must define item_selector for collection"
                     )
 
                 items = page.locator(self.target.item_selector)
                 count = min(items.count(), self.target.max_items)
                 for index in range(count):
                     item = items.nth(index)
-                    text_node = item.locator(self.target.text_selector)
-                    text = _text(text_node.first()) if text_node.count() else _text(item)
+                    text = ""
+                    if self.target.text_selector:
+                        text_node = item.locator(self.target.text_selector)
+                        if text_node.count():
+                            text = _text(text_node.first())
+                    if not text:
+                        text = _text(item)
                     if not text:
                         continue
                     link = ""
@@ -380,8 +392,6 @@ class FreeAuthenticatedBrowserCollector:
                         node = item.locator(self.target.company_selector).first()
                         if node.count():
                             company = _text(node)
-                    if not company:
-                        continue
                     author = ""
                     if self.target.author_selector:
                         node = item.locator(self.target.author_selector).first()
