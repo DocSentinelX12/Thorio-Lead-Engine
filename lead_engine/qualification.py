@@ -68,12 +68,28 @@ def _recent_timestamp(lead: Dict[str, Any], *, days: int, fields: tuple[str, ...
     return None
 
 
+def _observed_signal_timestamp(lead: Dict[str, Any]) -> str | None:
+    """Use the collector observation time when no explicit event timestamp exists.
+
+    A collector has direct evidence that it observed the supplied signal at this
+    time. This is not a guessed historical date and is only used when an explicit
+    current-need or inquiry phrase is present in the observed text.
+    """
+    return _recent_timestamp(
+        lead,
+        days=max(CURRENT_NEED_DAYS, RECENT_INQUIRY_DAYS),
+        fields=("discovery_timestamp", "observed_at", "collected_at"),
+    )
+
+
 def _current_need(lead: Dict[str, Any], route_scores: Dict[str, int]) -> Dict[str, Any]:
     text = _text(lead)
     has_need_language = bool(CURRENT_NEED_CONTEXT.search(text))
     observed_at = _recent_timestamp(
         lead, days=CURRENT_NEED_DAYS, fields=("need_at", "current_need_at", "hiring_need_at")
     )
+    if has_need_language and observed_at is None:
+        observed_at = _observed_signal_timestamp(lead)
     active_route = any(route_scores.get(route, 0) > 0 for route in ROUTES)
     qualified = active_route and has_need_language and observed_at is not None
     return {
@@ -90,6 +106,8 @@ def _recent_inquiry(lead: Dict[str, Any]) -> Dict[str, Any]:
     observed_at = _recent_timestamp(
         lead, days=RECENT_INQUIRY_DAYS, fields=("inquiry_at", "inquired_at", "last_inquiry_at", "intent_at")
     )
+    if has_inquiry_language and observed_at is None:
+        observed_at = _observed_signal_timestamp(lead)
     qualified = has_inquiry_language and observed_at is not None
     return {
         "qualified": qualified,
