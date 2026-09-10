@@ -77,7 +77,7 @@ def test_qualification_worker_applies_independent_company_routes(tmp_path):
     assert task["agent"] == "qualification_a"
 
 
-def test_outreach_worker_autonomously_builds_evidence_grounded_action(tmp_path):
+def test_outreach_worker_requires_explicit_authorization(tmp_path):
     db = _db(tmp_path)
     lead = {
         "fingerprint": "outreach-worker-test",
@@ -94,15 +94,33 @@ def test_outreach_worker_autonomously_builds_evidence_grounded_action(tmp_path):
     }
     db.insert_if_new(lead)
     enqueue(db, "outreach_closer", {"lead": lead})
-    result = run_worker_once(db, "outreach_closer", worker_id="outreach")
+    blocked = run_worker_once(db, "outreach_closer", worker_id="outreach-blocked")
+    assert blocked["completed_count"] == 0
+    assert blocked["failed_count"] == 1
+
+    enqueue(db, "outreach_closer", {"lead": lead, "authorized": True})
+    result = run_worker_once(db, "outreach_closer", worker_id="outreach-authorized")
     assert result["completed_count"] == 1
     assert result["failed_count"] == 0
     output = result["results"][0]
     assert output["autonomous"] is True
-    assert output["action"] == "dispatch_outreach"
+    assert output["authorized"] is True
+    assert output["action"] == "prepare_authorized_outreach"
     assert output["route"] in {"Thorio", "Shiftr"}
     assert output["evidence_refs"] == ["https://example.com/signal", "https://example.com/taylor"]
     assert "Acme is hiring a remote software engineer" in output["body"]
+
+
+def test_company_research_does_not_mark_observed_person_as_verified_decision_maker(tmp_path):
+    db = _db(tmp_path)
+    lead = {"fingerprint": "research-verification-test", "company": "Acme", "person": "Taylor", "signal": "Acme is hiring a backend engineer"}
+    db.insert_if_new(lead)
+    enqueue(db, "company_research", {"lead": lead, "evidence_events": [{"source": "linkedin", "signal": "Taylor is mentioned by Acme"}]})
+    result = run_worker_once(db, "company_research", worker_id="research-worker")
+    assert result["completed_count"] == 1
+    stored = db.get(lead["fingerprint"])
+    assert stored["research_status"] == "research_required"
+    assert stored["company_research"]["decision_maker_verification_status"] == "observed_needs_role_verification"
 
 
 def test_orchestrator_rejects_cross_workforce_dispatch(tmp_path):
