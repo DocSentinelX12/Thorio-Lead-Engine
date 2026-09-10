@@ -18,6 +18,18 @@ def test_database_health_is_healthy(tmp_path):
     assert result["status"] == "healthy"
 
 
+def test_database_recovers_from_corrupt_sqlite(tmp_path):
+    path = tmp_path / "leads.sqlite3"
+    path.write_bytes(b"not a valid sqlite database")
+
+    db = LeadDB(data_dir=str(tmp_path))
+
+    assert db.recovered_corrupt_database is True
+    assert db.insert_if_new({"fingerprint": "recovered", "company": "Recovery Test"}) is True
+    assert db.get("recovered")["company"] == "Recovery Test"
+    assert list(tmp_path.glob("leads.sqlite3.corrupt-*"))
+
+
 def test_configuration_health_is_healthy(tmp_path):
     config = LeadEngineConfig(
         database_dir=str(tmp_path),
