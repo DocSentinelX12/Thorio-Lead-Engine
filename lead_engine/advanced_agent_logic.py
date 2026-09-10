@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterable, Mapping
 
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .agent_queue import enqueue
-
+from .active_processing import airtable_integrity, priority, routing, verification
 
 DISCOVERY_TARGETS = {
     "engineering_demand_discovery": ("software", "engineer", "developer", "backend", "frontend", "full stack", "devops", "platform", "engineering"),
@@ -124,7 +124,6 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
         raise ValueError("company_research requires lead fingerprint")
-
     facts: Dict[str, Any] = {
         "company_verified": bool(company),
         "company_identity_evidence": f"Observed company name: {company}" if company else "",
@@ -140,7 +139,6 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         facts["decision_maker"] = person
         facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
         facts["decision_maker_verification_status"] = "observed_needs_role_verification"
-
     status = "complete" if facts["company_verified"] and facts.get("decision_maker") and facts.get("decision_maker_evidence") else "research_required"
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())]})
     if stored is None:
@@ -177,6 +175,10 @@ def advanced_handler_registry():
     for agent in SOCIAL_TARGETS:
         handlers[agent] = lambda _agent, payload, _ctx, name=agent: social_research(name, payload)
     handlers["company_research"] = lambda _agent, payload, ctx: company_research(payload, ctx)
+    handlers["priority"] = priority
+    handlers["verification"] = verification
+    handlers["routing"] = routing
+    handlers["airtable_integrity"] = airtable_integrity
     handlers["outreach_closer"] = lambda _agent, payload, _ctx: outreach_closing(payload)
     handlers["follow_up"] = lambda _agent, payload, _ctx: follow_up_action(payload)
     return handlers
