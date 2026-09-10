@@ -6,7 +6,7 @@ from .agent_orchestrator import AgentOrchestrator
 from .agent_specializations import specialization_registry
 from .agent_workers import handler_registry, run_worker_once
 from .database import LeadDB
-from .agent_queue import enqueue
+from .agent_queue import enqueue, pending
 
 
 def _db(tmp_path):
@@ -40,6 +40,23 @@ def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
     assert task["agent"] == "x_signal"
 
 
+def test_social_source_discovery_handoffs_to_social_research(tmp_path):
+    db = _db(tmp_path)
+    lead = {"fingerprint": "social-handoff-test", "company": "Acme", "signal": "Acme is hiring a CTO", "source": "linkedin"}
+    db.insert_if_new(lead)
+    AgentOrchestrator(db).dispatch_discovery("linkedin_signal", {**lead, "evidence": "Acme is hiring a CTO", "source_id": "social-1"})
+    result = run_worker_once(db, "linkedin_signal", worker_id="linkedin-worker")
+    assert result["completed_count"] == 1
+    queued = pending(db)
+    agents = {task["agent"] for task in queued}
+    assert "qualification_a" in agents
+    assert "social_intelligence" in agents
+    assert "social_hiring_research" in agents
+    assert "social_decision_maker_research" in agents
+    assert "social_inquiry_research" in agents
+    assert "social_company_context" in agents
+
+
 def test_advanced_discovery_specialist_extracts_evidence_without_qualifying(tmp_path):
     db = _db(tmp_path)
     orchestrator = AgentOrchestrator(db)
@@ -49,19 +66,23 @@ def test_advanced_discovery_specialist_extracts_evidence_without_qualifying(tmp_
     finding = result["results"][0]
     assert finding["matched_event_count"] == 1
     assert finding["requires_verification"] is True
+    assert finding["handoff"] == "qualification_a"
     assert task["agent"] == "engineering_demand_discovery"
 
 
-def test_social_research_requires_no_fabricated_identity(tmp_path):
+def test_social_research_handoffs_to_company_research(tmp_path):
     db = _db(tmp_path)
-    orchestrator = AgentOrchestrator(db)
-    orchestrator.dispatch_social_research("social_decision_maker_research", {"lead": {"fingerprint": "s1"}, "evidence_events": [{"source": "linkedin", "signal": "Taylor is CTO at Acme", "observed_at": _recent()}]})
+    lead = {"fingerprint": "social-research-handoff", "company": "Acme"}
+    db.insert_if_new(lead)
+    AgentOrchestrator(db).dispatch_social_research("social_decision_maker_research", {"lead": lead, "evidence_events": [{"source": "linkedin", "signal": "Taylor is CTO at Acme", "observed_at": _recent()}]})
     result = run_worker_once(db, "social_decision_maker_research", worker_id="social-worker")
     assert result["completed_count"] == 1
     output = result["results"][0]
     assert output["matched_event_count"] == 1
     assert output["fabricated_fields"] == []
     assert output["verification_required"] is True
+    assert output["handoff"] == "company_research"
+    assert any(task["agent"] == "company_research" for task in pending(db))
 
 
 def test_qualification_worker_applies_independent_company_routes(tmp_path):
