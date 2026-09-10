@@ -1,0 +1,97 @@
+name: Thorio Lead Engine
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    types: [thorio-production-run]
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+
+concurrency:
+  group: thorio-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  engine:
+    name: Run Lead Engine
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT || secrets.AIRTABLE_API_KEY }}
+      AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
+      AIRTABLE_LEAD_TABLE: Lead Radar
+      LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
+      LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "5"
+      LEAD_ENGINE_SYNC_ENABLED: "true"
+      LEAD_ENGINE_BATCH_SIZE: "50"
+      LEAD_ENGINE_DATA_DIR: "data"
+      THORIO_FREE_ONLY: "1"
+      THORIO_SOURCE_COLLECTION_WORKERS: "40"
+      THORIO_AGENT_DRAIN_ROUNDS: "1"
+      THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
+      THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
+      THORIO_ACCOUNT_X_USERNAME: ${{ secrets.THORIO_ACCOUNT_X_USERNAME }}
+      THORIO_ACCOUNT_X_PASSWORD: ${{ secrets.THORIO_ACCOUNT_X_PASSWORD }}
+      THORIO_ACCOUNT_THREADS_USERNAME: ${{ secrets.THORIO_ACCOUNT_THREADS_USERNAME }}
+      THORIO_ACCOUNT_THREADS_PASSWORD: ${{ secrets.THORIO_ACCOUNT_THREADS_PASSWORD }}
+      THORIO_ACCOUNT_FACEBOOK_USERNAME: ${{ secrets.THORIO_ACCOUNT_FACEBOOK_USERNAME }}
+      THORIO_ACCOUNT_FACEBOOK_PASSWORD: ${{ secrets.THORIO_ACCOUNT_FACEBOOK_PASSWORD }}
+      THORIO_ACCOUNT_HACKER_NEWS_USERNAME: ${{ secrets.THORIO_ACCOUNT_HACKER_NEWS_USERNAME }}
+      THORIO_ACCOUNT_HACKER_NEWS_PASSWORD: ${{ secrets.THORIO_ACCOUNT_HACKER_NEWS_PASSWORD }}
+      THORIO_ACCOUNT_INDIE_HACKERS_USERNAME: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_USERNAME }}
+      THORIO_ACCOUNT_INDIE_HACKERS_PASSWORD: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_PASSWORD }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Find newest usable engine state
+        id: previous_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_run_id=""
+          while IFS= read -r run_id; do
+            [ -z "$run_id" ] && continue
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
+            if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
+          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status --jq '.[] | select(.status == "completed" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
+          echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
+      - name: Download previous Lead Engine state
+        if: steps.previous_state.outputs.run_id != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: thorio-lead-engine-state
+          path: data
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.previous_state.outputs.run_id }}
+      - name: Ensure Lead Engine data directory exists
+        run: mkdir -p data
+      - name: Run Lead Engine for one bounded production cycle
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
+      - name: Persist Lead Engine state
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-lead-engine-state
+          path: data
+          if-no-files-found: warn
+          retention-days: 7
