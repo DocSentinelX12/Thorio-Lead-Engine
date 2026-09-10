@@ -175,11 +175,8 @@ class LeadDB:
                 raise ValueError("Stored state value must be an object.")
             return value
 
-        # Compatibility read for older callers that inspect the historical
-        # JSON queue state. Queue mutations use the dedicated table and never
-        # rewrite this large state blob.
         if key == "agent_work_queue":
-            rows = self.queue_pending_all_rows()
+            rows = self.queue_all_rows()
             items = {str(row[0]): self._queue_row_to_dict(row) for row in rows}
             if items:
                 return {"items": items}
@@ -205,12 +202,7 @@ class LeadDB:
         for task_id, task in items.items():
             if not isinstance(task, dict) or not task_id:
                 continue
-            rows.append((
-                str(task_id), str(task.get("agent", "")), str(task.get("queue", "")), str(task.get("status", "queued")),
-                int(task.get("priority", 0)), json.dumps(task.get("payload", {}), ensure_ascii=False), task.get("dedupe_key"),
-                str(task.get("created_at", "")), str(task.get("updated_at", "")), int(task.get("attempts", 0)),
-                task.get("lease_until"), task.get("worker_id"), task.get("last_error"), json.dumps(task.get("result"), ensure_ascii=False) if task.get("result") is not None else None,
-            ))
+            rows.append((str(task_id), str(task.get("agent", "")), str(task.get("queue", "")), str(task.get("status", "queued")), int(task.get("priority", 0)), json.dumps(task.get("payload", {}), ensure_ascii=False), task.get("dedupe_key"), str(task.get("created_at", "")), str(task.get("updated_at", "")), int(task.get("attempts", 0)), task.get("lease_until"), task.get("worker_id"), task.get("last_error"), json.dumps(task.get("result"), ensure_ascii=False) if task.get("result") is not None else None))
         if rows:
             self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             self.conn.commit()
@@ -223,13 +215,7 @@ class LeadDB:
         return value if isinstance(value, dict) else None
 
     def _queue_row_to_dict(self, row):
-        return {
-            "task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3],
-            "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6],
-            "created_at": row[7], "updated_at": row[8], "attempts": row[9],
-            "lease_until": row[10], "worker_id": row[11], "last_error": row[12],
-            "result": json.loads(row[13]) if row[13] is not None else None,
-        }
+        return {"task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3], "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6], "created_at": row[7], "updated_at": row[8], "attempts": row[9], "lease_until": row[10], "worker_id": row[11], "last_error": row[12], "result": json.loads(row[13]) if row[13] is not None else None}
 
     def queue_insert_many(self, rows):
         self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
@@ -267,6 +253,9 @@ class LeadDB:
         values = list(updates.values()) + [task_id]
         self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
         self.conn.commit()
+
+    def queue_all_rows(self):
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
 
     def queue_pending_all_rows(self):
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
