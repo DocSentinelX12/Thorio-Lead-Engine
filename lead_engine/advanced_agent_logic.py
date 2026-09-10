@@ -98,9 +98,17 @@ def _source_signal(agent: str, payload: Mapping[str, Any], db: Any = None) -> Di
     if fingerprint and lead is not None:
         enqueue(db, "qualification_a", {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=1, dedupe_key=f"qualification_a:{fingerprint}")
         handoffs.append("qualification_a")
-        if agent in {"x_signal", "threads_signal", "reddit_signal", "linkedin_signal", "facebook_signal", "instagram_signal"}:
+        # Every observed source signal is fanned into the permanent demand
+        # discovery specialists. Social lanes additionally fan into every
+        # social research specialist. This keeps the workforce connected to
+        # the evidence at collection time instead of relying on a later stage
+        # to rediscover the same signal.
+        for discovery_agent in DISCOVERY_TARGETS:
+            enqueue(db, discovery_agent, {"lead": dict(lead), "evidence_events": [normalized], "source_lane": agent}, priority=3, dedupe_key=f"{discovery_agent}:{fingerprint}:{agent}")
+            handoffs.append(discovery_agent)
+        if agent != "web_job_signal":
             for social_agent in SOCIAL_TARGETS:
-                enqueue(db, social_agent, {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=3, dedupe_key=f"{social_agent}:{fingerprint}")
+                enqueue(db, social_agent, {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=3, dedupe_key=f"{social_agent}:{fingerprint}:{agent}")
                 handoffs.append(social_agent)
     return {"agent": agent, "role": "discovery", "source": record.get("source") or _SOURCE_SIGNAL_ALIASES.get(agent, agent), "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoffs": handoffs, "handoff": handoffs[0] if handoffs else "awaiting_persistence", "provenance": provenance}
 
@@ -160,6 +168,9 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     """Persist an evidence-grounded research packet and hand it to validation."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     events = _events(payload)
+    social_findings = payload.get("social_findings", [])
+    if not isinstance(social_findings, list):
+        social_findings = []
     company = str(lead.get("company") or "").strip()
     source_url = str(lead.get("source_url") or lead.get("url") or "").strip()
     person = str(lead.get("contact_name") or lead.get("person") or "").strip()
@@ -168,7 +179,10 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
         raise ValueError("company_research requires lead fingerprint")
-    facts: Dict[str, Any] = {"company_verified": bool(company), "company_identity_evidence": f"Observed company name: {company}" if company else "", "business_context": signal, "current_need_evidence": signal, "recent_activity_evidence": evidence, "source_url": source_url, "evidence_event_count": len(events), "researched_at": datetime.now(timezone.utc).isoformat(), "fabricated_fields": []}
+    facts: Dict[str, Any] = {"company_verified": bool(company), "company_identity_evidence": f"Observed company name: {company}" if company else "", "business_context": signal, "current_need_evidence": signal, "recent_activity_evidence": evidence, "source_url": source_url, "evidence_event_count": len(events), "social_findings": social_findings, "researched_at": datetime.now(timezone.utc).isoformat(), "fabricated_fields": []}
+    if social_findings:
+        facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in social_findings if isinstance(item, Mapping) and item.get("source")})
+        facts["social_evidence_count"] = len(social_findings)
     if person:
         facts["decision_maker"] = person
         facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
