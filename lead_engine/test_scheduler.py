@@ -73,6 +73,38 @@ def test_scheduler_keeps_running_after_source_failure():
     assert runner.run_source.call_count == 2
 
 
+def test_scheduler_parallelizes_collection_but_keeps_processing_sequential(monkeypatch):
+    class CollectingSource:
+        def __init__(self, name):
+            self.name = name
+            self.last_checkpoint = None
+
+        def collect(self, checkpoint=None):
+            self.last_checkpoint = f"next-{self.name}"
+            return [{"company": self.name, "source": self.name}]
+
+    runner = MagicMock()
+    runner.run_records.return_value = {
+        "processed_count": 1,
+        "failed_count": 0,
+        "total": 1,
+    }
+
+    monkeypatch.setenv("THORIO_SOURCE_COLLECTION_WORKERS", "2")
+    scheduler = LeadScheduler(runner=runner)
+    sources = [CollectingSource("one"), CollectingSource("two")]
+
+    result = scheduler.run(sources)
+
+    assert result["source_count"] == 2
+    assert result["successful_source_count"] == 2
+    assert result["failed_count"] == 0
+    assert runner.run_source.call_count == 0
+    assert runner.run_records.call_count == 2
+    assert runner.run_records.call_args_list[0].args[0] == [{"company": "one", "source": "one"}]
+    assert runner.run_records.call_args_list[1].args[0] == [{"company": "two", "source": "two"}]
+
+
 def test_scheduler_respects_source_poll_interval():
     runner = MagicMock()
 
