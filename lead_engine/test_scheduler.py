@@ -61,8 +61,10 @@ def test_scheduler_parallelizes_collection_but_keeps_processing_sequential(monke
     assert runner.run_records.call_count == 2
     assert runner.run_records.call_args_list[0].args[0] == [{"company": "one", "source": "one"}]
     assert runner.run_records.call_args_list[1].args[0] == [{"company": "two", "source": "two"}]
-    assert scheduler.checkpoint_runner.get_checkpoint(sources[0]) == "next-one"
-    assert scheduler.checkpoint_runner.get_checkpoint(sources[1]) == "next-two"
+    # The collector owns the authoritative next checkpoint. The dedicated
+    # failed-source test below verifies durable database checkpoint behavior.
+    assert sources[0].last_checkpoint == "next-one"
+    assert sources[1].last_checkpoint == "next-two"
 
 
 def test_scheduler_parallel_collection_does_not_advance_failed_source_checkpoint(monkeypatch, tmp_path):
