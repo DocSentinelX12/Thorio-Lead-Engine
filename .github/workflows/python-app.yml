@@ -110,6 +110,30 @@ jobs:
           print("ACCOUNT AUTH CONFIGURATION VERIFIED: all agreed accounts are available to the production runtime without exposing secret values.")
           PY
 
+      - name: Verify complete free source catalog wiring
+        run: |
+          python - <<'PY'
+          from lead_engine.source_registry import _load_free_source_catalog, configured_sources
+
+          catalog = _load_free_source_catalog()
+          configured = configured_sources()
+          catalog_names = {definition.name for definition in catalog}
+          configured_names = {source.name for source in configured}
+          missing = sorted(catalog_names - configured_names)
+
+          print(f"Free source catalog entries: {len(catalog)}")
+          print(f"Enabled free source definitions: {len(catalog)}")
+          print(f"Configured runtime sources: {len(configured)}")
+
+          if missing:
+              print("FREE SOURCE WIRING FAILURE: catalog entries missing from configured runtime sources:")
+              for name in missing:
+                  print(f"- {name}")
+              raise SystemExit(1)
+
+          print("FREE SOURCE WIRING VERIFIED: every enabled catalog source is handed to the runtime source registry.")
+          PY
+
       - name: Find newest usable engine state
         id: previous_state
         env:
