@@ -290,7 +290,7 @@ jobs:
           mkdir -p data/workflow-evidence
           printf '%s\n' "$GITHUB_EVENT_PATH" > data/workflow-evidence/event-path.txt
           cp "$GITHUB_EVENT_PATH" data/workflow-evidence/github-event.json
-          gh run view "$GITHUB_RUN_ID" --json databaseId,name,displayTitle,event,status,conclusion,workflowName,headBranch,headSha,createdAt,startedAt,updatedAt,runNumber,runAttempt,url,jobs > data/workflow-evidence/run.json || true
+          gh run view "$GITHUB_RUN_ID" --json databaseId,name,displayTitle,event,status,conclusion,workflowName,headBranch,headSha,createdAt,startedAt,updatedAt,number,attempt,url,jobs > data/workflow-evidence/run.json || true
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" > data/workflow-evidence/jobs.json || true
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > data/workflow-evidence/run-api.json || true
           gh run view "$GITHUB_RUN_ID" --log > data/workflow-evidence/full-run-log.txt 2>&1 || true
