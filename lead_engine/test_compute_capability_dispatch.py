@@ -1,3 +1,5 @@
+import threading
+
 from lead_engine.compute_coordinator import ComputeCoordinator
 from lead_engine.compute_pool import WorkerIdentity
 
@@ -81,6 +83,7 @@ def test_capacity_is_released_on_completion_and_expiry(tmp_path):
 
     coordinator.enqueue({"fingerprint": "two"}, task_id="two")
     claimed = coordinator.claim("worker")
+    assert claimed is not None
     with coordinator._connect() as connection:
         connection.execute("UPDATE compute_tasks SET lease_until=0 WHERE task_id='two'")
         connection.commit()
@@ -99,3 +102,74 @@ def test_capacity_snapshot_accounts_for_eighty_logical_slots(tmp_path):
     assert capacity["ready_workers"] == 80
     assert capacity["available_slots"] == 80
     assert capacity["worker_count"] == 80
+
+
+def test_workers_balance_pull_workload_without_exceeding_one_slot(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "secret", lease_seconds=30)
+    coordinator.register_worker(_worker("provider-a-worker", ["research"]))
+    coordinator.register_worker(_worker("provider-b-worker", ["research"]))
+    for index in range(10):
+        coordinator.enqueue({"required_capabilities": ["research"], "index": index}, task_id=f"balanced-{index}")
+
+    counts = {"provider-a-worker": 0, "provider-b-worker": 0}
+    for index in range(10):
+        worker_id = "provider-a-worker" if index % 2 == 0 else "provider-b-worker"
+        claimed = coordinator.claim(worker_id)
+        assert claimed is not None
+        counts[worker_id] += 1
+        assert coordinator.complete(worker_id, claimed["task_id"], claimed["lease_token"], {"ok": True})
+
+    assert counts == {"provider-a-worker": 5, "provider-b-worker": 5}
+    assert coordinator.health()["queued"] == 0
+    assert coordinator.health()["capacity"]["available_slots"] == 2
+
+
+def test_stale_provider_worker_releases_capacity_after_lease_reclamation(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "secret", lease_seconds=30)
+    coordinator.register_worker(_worker("failed-provider-worker", ["research"]))
+    coordinator.register_worker(_worker("replacement-provider-worker", ["research"]))
+    coordinator.enqueue({"required_capabilities": ["research"]}, task_id="recoverable")
+
+    claimed = coordinator.claim("failed-provider-worker")
+    assert claimed is not None
+    with coordinator._connect() as connection:
+        connection.execute("UPDATE compute_tasks SET lease_until=0 WHERE task_id='recoverable'")
+        connection.execute("UPDATE compute_workers SET last_heartbeat=0 WHERE worker_id='failed-provider-worker'")
+        connection.commit()
+
+    coordinator.pool.reap_stale_workers(stale_after_seconds=1)
+    assert coordinator.recover_expired_tasks() == 1
+    assert coordinator.task("recoverable")["status"] == "queued"
+    assert coordinator.health()["capacity"]["stale_workers"] == 1
+    assert coordinator.health()["capacity"]["available_slots"] == 1
+
+    replacement = coordinator.claim("replacement-provider-worker")
+    assert replacement is not None
+    assert replacement["task_id"] == "recoverable"
+
+
+def test_concurrent_workers_never_double_claim_the_same_task(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "secret", lease_seconds=30)
+    worker_ids = [f"worker-{index:02d}" for index in range(40)]
+    for worker_id in worker_ids:
+        coordinator.register_worker(_worker(worker_id, ["research"], cpu_count=2, memory_mb=4096))
+    coordinator.enqueue({"required_capabilities": ["research"]}, task_id="single-task")
+
+    claims = []
+    lock = threading.Lock()
+
+    def attempt(worker_id):
+        result = coordinator.claim(worker_id)
+        if result is not None:
+            with lock:
+                claims.append((worker_id, result["task_id"], result["lease_token"]))
+
+    threads = [threading.Thread(target=attempt, args=(worker_id,)) for worker_id in worker_ids]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert len(claims) == 1
+    assert claims[0][1] == "single-task"
+    assert coordinator.task("single-task")["attempts"] == 1
