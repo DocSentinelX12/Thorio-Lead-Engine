@@ -37,6 +37,15 @@ CURRENT_NEED_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 
+SHIFTR_SERVICE_NEED_CONTEXT = re.compile(
+    r"\b(?:need(?:s|ed)?|want(?:s|ed)?|looking for|seeking|help with)\b"
+    r".{0,80}\b(?:build(?:ing)?|develop(?:ing|ment)?|integrat(?:e|ing|ion)|"
+    r"ai agents?|llm(?: integration)?|mobile development|saas development|"
+    r"software development|development team|engineering team|staff augmentation|"
+    r"outsourc(?:e|ed|ing)?)\b",
+    re.IGNORECASE,
+)
+
 
 def validate_status(status: str) -> bool:
     return status in VALID_STATUSES
@@ -78,9 +87,8 @@ def _current_need(lead: Dict[str, Any], route_scores: Dict[str, int]) -> Dict[st
     observed_at = _recent_timestamp(lead, days=CURRENT_NEED_DAYS, fields=("need_at", "current_need_at", "hiring_need_at"))
     if has_need_language and observed_at is None:
         observed_at = _observed_signal_timestamp(lead)
-    active_route = any(route_scores.get(route, 0) > 0 for route in ROUTES)
-    qualified = active_route and has_need_language and observed_at is not None
-    return {"qualified": qualified, "observed_at": observed_at, "evidence": text.strip() if qualified else "", "reason": "Recent explicit current-need evidence matched an existing route." if qualified else "No recent explicit current-need evidence was verified."}
+    qualified = has_need_language and observed_at is not None
+    return {"qualified": qualified, "observed_at": observed_at, "evidence": text.strip() if qualified else "", "reason": "Recent explicit current-need evidence was verified." if qualified else "No recent explicit current-need evidence was verified."}
 
 
 def _recent_inquiry(lead: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,21 +118,27 @@ def _paxus_referral_checks(lead: Dict[str, Any], paxus_qualified: bool) -> Dict[
 def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(lead, dict):
         raise ValueError("lead must be a dictionary")
-    scores = score_routes(company=str(lead.get("company") or ""), signal=str(lead.get("signal") or ""), evidence=str(lead.get("evidence") or ""))
+    company = str(lead.get("company") or "")
+    signal = str(lead.get("signal") or "")
+    evidence = str(lead.get("evidence") or "")
+    text = _text(lead)
+    scores = score_routes(company=company, signal=signal, evidence=evidence)
     current_need = _current_need(lead, scores)
     recent_inquiry = _recent_inquiry(lead)
     intent_passed = current_need["qualified"] or recent_inquiry["qualified"]
     results: Dict[str, Any] = {}
-    for company in ROUTES:
-        category_score = scores.get(company, 0)
+    for company_name in ROUTES:
+        category_score = scores.get(company_name, 0)
+        if company_name == "Shiftr" and SHIFTR_SERVICE_NEED_CONTEXT.search(text):
+            category_score = max(category_score, 1)
         qualified = category_score > 0 and intent_passed
-        results[company] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": current_need, "recent_inquiry": recent_inquiry, "reason": "Matched an existing category and has current/recent intent evidence." if qualified else "Did not satisfy both an existing category and current/recent intent evidence.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
+        results[company_name] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": current_need, "recent_inquiry": recent_inquiry, "reason": "Matched an existing category and has current/recent intent evidence." if qualified else "Did not satisfy both an existing category and current/recent intent evidence.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
     paxus = results["Paxus"]
     paxus_referral = _paxus_referral_checks(lead, paxus["qualified"])
     paxus["true_referral"] = paxus_referral["passed"]
     paxus["referral_status"] = "true_referral" if paxus_referral["passed"] else "research_required" if paxus["qualified"] and (paxus_referral["research_required"] or paxus_referral["verification_required"]) else "not_ready"
     paxus["referral_checklist"] = paxus_referral
-    return {"companies": results, "qualified_companies": [company for company in ROUTES if results[company]["qualified"]], "paxus_true_referral": paxus_referral["passed"], "research_status": "research_required" if paxus["qualified"] and paxus.get("referral_status") == "research_required" else "complete"}
+    return {"companies": results, "qualified_companies": [company_name for company_name in ROUTES if results[company_name]["qualified"]], "paxus_true_referral": paxus_referral["passed"], "research_status": "research_required" if paxus["qualified"] and paxus.get("referral_status") == "research_required" else "complete"}
 
 
 def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
