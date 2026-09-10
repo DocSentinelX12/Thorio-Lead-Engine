@@ -42,7 +42,6 @@ SUPPORTED_ACCOUNTS = (
     "facebook",
     "hacker_news",
     "indie_hackers",
-    "email",
 )
 
 
