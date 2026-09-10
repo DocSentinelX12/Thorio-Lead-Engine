@@ -30,7 +30,7 @@ class ComputeCoordinator:
         self.auth_token = auth_token
         self.pool = ComputePool(db_path, lease_seconds=lease_seconds)
         self.lease_seconds = lease_seconds
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._initialize_tasks()
 
     def _connect(self) -> sqlite3.Connection:
@@ -121,13 +121,13 @@ class ComputeCoordinator:
         return all(capability in capabilities for capability in required)
 
     def claim(self, worker_id: str) -> Optional[Dict[str, Any]]:
-        self.pool.reap_stale_workers()
-        self.recover_expired_tasks()
         with self._lock:
+            self.pool.reap_stale_workers()
+            self.recover_expired_tasks()
             worker = self.pool.worker(worker_id)
             if not worker or worker["status"] != "ready":
                 return None
-            if int(worker["current_load"]) >= self.pool.LOGICAL_SLOTS_PER_WORKER:
+            if not self.pool.reserve_task_slot(worker_id):
                 return None
             with self._connect() as connection:
                 rows = connection.execute(
@@ -138,12 +138,13 @@ class ComputeCoordinator:
                     payload = json.loads(row["payload"])
                     required = self._required_capabilities(payload)
                     if self._worker_supports(worker, required):
-                        selected = (row, required)
+                        selected = row
                         break
                 if selected is None:
+                    connection.rollback()
+                    self.pool.release_task_slot(worker_id)
                     return None
-                row, _ = selected
-                task_id = row["task_id"]
+                task_id = selected["task_id"]
                 lease_token = str(uuid.uuid4())
                 now = time.time()
                 updated = connection.execute(
@@ -152,12 +153,10 @@ class ComputeCoordinator:
                 )
                 if updated.rowcount != 1:
                     connection.rollback()
-                    return None
-                if not self.pool.reserve_task_slot(worker_id):
-                    connection.rollback()
+                    self.pool.release_task_slot(worker_id)
                     return None
                 connection.commit()
-            return {"task_id": task_id, "payload": json.loads(row["payload"]), "lease_token": lease_token}
+            return {"task_id": task_id, "payload": json.loads(selected["payload"]), "lease_token": lease_token}
 
     def _valid_lease(self, connection: sqlite3.Connection, worker_id: str, task_id: str, lease_token: str) -> bool:
         row = connection.execute("SELECT status,worker_id,lease_token,lease_until FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()
@@ -212,13 +211,15 @@ class ComputeCoordinator:
             return len(rows)
 
     def health(self) -> Dict[str, Any]:
-        self.pool.reap_stale_workers()
-        self.recover_expired_tasks()
-        with self._connect() as connection:
-            queued = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='queued'").fetchone()[0]
-            leased = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]
-            completed = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='completed'").fetchone()[0]
-        return {"ok": True, "free_only": True, "queued": queued, "leased": leased, "completed": completed, "capacity": self.pool.capacity_snapshot()}
+        with self._lock:
+            self.pool.reap_stale_workers()
+            self.recover_expired_tasks()
+            with self._connect() as connection:
+                queued = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='queued'").fetchone()[0]
+                leased = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]
+                completed = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='completed'").fetchone()[0]
+            capacity = self.pool.capacity_snapshot()
+            return {"ok": True, "free_only": True, "queued": queued, "leased": leased, "completed": completed, "capacity": capacity}
 
 
 class _Handler(BaseHTTPRequestHandler):
