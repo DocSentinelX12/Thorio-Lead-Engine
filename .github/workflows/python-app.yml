@@ -54,12 +54,14 @@ jobs:
       AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
       AIRTABLE_LEAD_TABLE: Lead Radar
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
-      LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "20"
+      # Keep the free-source network layer bounded so a slow source cannot consume the whole production cycle.
+      LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "5"
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
       THORIO_FREE_ONLY: "1"
-      THORIO_SOURCE_COLLECTION_WORKERS: "8"
+      # Use the runner's available concurrency for the independent source collection lanes.
+      THORIO_SOURCE_COLLECTION_WORKERS: "16"
       THORIO_AGENT_DRAIN_ROUNDS: "1"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
       THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
