@@ -179,13 +179,9 @@ class LeadScheduler:
                 result = dict(self.runner.run_records(records))
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count == 0:
-                    # The collector already returned its authoritative next
-                    # checkpoint. Persist it only after all records from this
-                    # source were processed successfully.
                     current_checkpoint = "" if next_checkpoint is None else next_checkpoint
                     self.checkpoint_runner.save_checkpoint(source, current_checkpoint)
                 else:
-                    # A failed downstream batch must never advance the source.
                     current_checkpoint = previous_checkpoint
                 result["previous_checkpoint"] = previous_checkpoint
                 result["checkpoint"] = current_checkpoint
@@ -268,4 +264,14 @@ class LeadScheduler:
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 10) -> Dict[str, Any]:
         if max_cycles < 1:
             raise ValueError("max_cycles must be greater than or equal to 1.")
-        return self.run_forever(sources=sources, interval_seconds=interval_seconds, max_cycles=max_cycles)
+        source_list = list(sources)
+        # A bounded execution is an explicit request to perform collection now.
+        # Clear only the scheduler's persisted due-times before this bounded run;
+        # each successfully attempted source immediately writes its next due-time
+        # again. Continuous run_forever retains normal polling semantics.
+        for source in source_list:
+            key = self._source_key(source)
+            self._next_run_at.pop(key, None)
+            self._persisted_next_run_at.pop(key, None)
+        self._save_polling_state()
+        return self.run_forever(sources=source_list, interval_seconds=interval_seconds, max_cycles=max_cycles)
