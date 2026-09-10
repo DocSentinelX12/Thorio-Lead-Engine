@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
+from .agent_queue import enqueue
 
 
 DISCOVERY_TARGETS = {
@@ -83,25 +84,9 @@ def discovery_finding(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         text = _text(event.get("signal") or event.get("evidence") or event)
         matches = _matches(text, terms)
         if matches:
-            findings.append({
-                "matches": matches,
-                "source": event.get("source") or event.get("provider"),
-                "url": event.get("url") or event.get("source_url"),
-                "recent": _recent(event),
-                "evidence": text[:2000],
-            })
+            findings.append({"matches": matches, "source": event.get("source") or event.get("provider"), "url": event.get("url") or event.get("source_url"), "recent": _recent(event), "evidence": text[:2000]})
     recent_count = sum(item["recent"] for item in findings)
-    return {
-        "agent": agent,
-        "role": "discovery_intelligence",
-        "fingerprint": _fingerprint(payload),
-        "target": agent.removesuffix("_discovery"),
-        "matched_event_count": len(findings),
-        "recent_event_count": recent_count,
-        "findings": findings,
-        "requires_verification": bool(findings),
-        "no_match_is_not_rejection": True,
-    }
+    return {"agent": agent, "role": "discovery_intelligence", "fingerprint": _fingerprint(payload), "target": agent.removesuffix("_discovery"), "matched_event_count": len(findings), "recent_event_count": recent_count, "findings": findings, "requires_verification": bool(findings), "no_match_is_not_rejection": True}
 
 
 def social_research(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -123,35 +108,12 @@ def social_research(agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
             continue
         is_recent = _recent(event)
         recent += int(is_recent)
-        findings.append({
-            "matches": matches,
-            "source": event.get("source") or event.get("provider"),
-            "url": event.get("url") or event.get("source_url"),
-            "recent": is_recent,
-            "evidence": text[:2000],
-        })
-    return {
-        "agent": agent,
-        "role": "social_research",
-        "fingerprint": _fingerprint(payload),
-        "matched_event_count": len(findings),
-        "recent_event_count": recent,
-        "source_count": len(sources),
-        "sources": sorted(sources),
-        "findings": findings,
-        "research_status": "evidence_found" if findings else "research_required",
-        "verification_required": True,
-        "fabricated_fields": [],
-    }
+        findings.append({"matches": matches, "source": event.get("source") or event.get("provider"), "url": event.get("url") or event.get("source_url"), "recent": is_recent, "evidence": text[:2000]})
+    return {"agent": agent, "role": "social_research", "fingerprint": _fingerprint(payload), "matched_event_count": len(findings), "recent_event_count": recent, "source_count": len(sources), "sources": sorted(sources), "findings": findings, "research_status": "evidence_found" if findings else "research_required", "verification_required": True, "fabricated_fields": []}
 
 
-def company_research(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    """Turn collected evidence into an auditable research packet.
-
-    The researcher may promote a named person that was actually observed by a
-    collector, but never guesses a title, email, phone number, or decision-maker
-    status. Missing facts remain explicitly research-required.
-    """
+def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
+    """Persist an evidence-grounded research packet and hand it to validation."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     events = _events(payload)
     company = str(lead.get("company") or "").strip()
@@ -159,6 +121,9 @@ def company_research(payload: Mapping[str, Any]) -> Dict[str, Any]:
     person = str(lead.get("contact_name") or lead.get("person") or "").strip()
     signal = str(lead.get("signal") or lead.get("evidence") or "").strip()
     evidence = str(lead.get("evidence") or "").strip()
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    if not fingerprint:
+        raise ValueError("company_research requires lead fingerprint")
 
     facts: Dict[str, Any] = {
         "company_verified": bool(company),
@@ -173,44 +138,22 @@ def company_research(payload: Mapping[str, Any]) -> Dict[str, Any]:
     }
     if person:
         facts["decision_maker"] = person
-        facts["decision_maker_evidence"] = (
-            f"Named person was directly observed in collector evidence: {person}."
-        )
+        facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
         facts["decision_maker_verification_status"] = "observed_needs_role_verification"
+
     status = "complete" if facts["company_verified"] and facts.get("decision_maker") and facts.get("decision_maker_evidence") else "research_required"
-    return {
-        "role": "company_research",
-        "fingerprint": _fingerprint(payload),
-        "lead": dict(lead),
-        "research": facts,
-        "research_status": status,
-        "decision_maker_verified": bool(facts.get("decision_maker") and facts.get("decision_maker_evidence")),
-        "verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())],
-        "fabricated_fields": [],
-        "handoff": "qualification_b",
-    }
+    stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())]})
+    if stored is None:
+        raise ValueError(f"Lead not found for company research: {fingerprint}")
+    enqueue(ctx.db, "qualification_b", {"lead": stored, "prior_result": {"agent": "company_research", "research_status": status}, "evidence_events": events, "research_result": {"status": status, "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_b:{fingerprint}")
+    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": bool(facts.get("decision_maker") and facts.get("decision_maker_evidence")), "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_b"}
 
 
 def outreach_closing(payload: Mapping[str, Any]) -> Dict[str, Any]:
     """Produce the next revenue action from verified lead evidence."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     decision = build_outreach_decision(lead)
-    return {
-        "role": "outreach_closer",
-        "lead": dict(lead),
-        "action": "dispatch_outreach",
-        "autonomous": True,
-        "route": decision.route,
-        "contact": {"name": decision.contact_name, "email": decision.contact_email},
-        "subject": decision.subject,
-        "body": decision.body,
-        "evidence_refs": list(decision.evidence_refs),
-        "buying_signal": decision.buying_signal,
-        "next_state": decision.next_state,
-        "next_follow_up_at": decision.next_follow_up_at,
-        "stop_reason": decision.stop_reason,
-        "truthfulness_guard": "evidence_only",
-    }
+    return {"role": "outreach_closer", "lead": dict(lead), "action": "dispatch_outreach", "autonomous": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
 
 
 def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -220,16 +163,7 @@ def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
     if not outcome:
         raise OutreachContractError("follow_up requires an observed outreach outcome")
     updated = apply_outcome(lead, outcome)
-    result: Dict[str, Any] = {
-        "role": "follow_up",
-        "lead": updated,
-        "autonomous": True,
-        "outreach_state": updated.get("outreach_state"),
-        "next_follow_up_at": updated.get("next_follow_up_at"),
-        "stop_reason": updated.get("outreach_stop_reason"),
-        "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "dispatch_follow_up",
-        "outcome_recorded": True,
-    }
+    result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "dispatch_follow_up", "outcome_recorded": True}
     objection = payload.get("objection")
     if objection:
         result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"))
@@ -242,7 +176,7 @@ def advanced_handler_registry():
         handlers[agent] = lambda _agent, payload, _ctx, name=agent: discovery_finding(name, payload)
     for agent in SOCIAL_TARGETS:
         handlers[agent] = lambda _agent, payload, _ctx, name=agent: social_research(name, payload)
-    handlers["company_research"] = lambda _agent, payload, _ctx: company_research(payload)
+    handlers["company_research"] = lambda _agent, payload, ctx: company_research(payload, ctx)
     handlers["outreach_closer"] = lambda _agent, payload, _ctx: outreach_closing(payload)
     handlers["follow_up"] = lambda _agent, payload, _ctx: follow_up_action(payload)
     return handlers
