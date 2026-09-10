@@ -5,6 +5,7 @@ import pytest
 from .browser_discovery import (
     BrowserDiscoveryConfigurationError,
     BrowserDiscoveryTarget,
+    _browser_navigation_timeout,
     _targets_from_environment,
     configured_browser_discovery_sources,
 )
@@ -63,3 +64,14 @@ def test_browser_target_rejects_nonpositive_limit():
             text_selector="div[data-testid='tweetText']",
             max_items=0,
         )
+
+
+def test_browser_navigation_timeout_is_bounded_and_configurable(monkeypatch):
+    monkeypatch.setenv("THORIO_BROWSER_NAVIGATION_TIMEOUT", "30")
+    assert _browser_navigation_timeout() == 30_000
+
+    monkeypatch.setenv("THORIO_BROWSER_NAVIGATION_TIMEOUT", "999")
+    assert _browser_navigation_timeout() == 120_000
+
+    monkeypatch.setenv("THORIO_BROWSER_NAVIGATION_TIMEOUT", "invalid")
+    assert _browser_navigation_timeout() == 15_000
