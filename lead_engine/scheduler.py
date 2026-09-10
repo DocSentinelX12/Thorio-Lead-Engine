@@ -108,7 +108,7 @@ class LeadScheduler:
             return
         db.set_state(self._POLLING_STATE_KEY, {"next_run_at": dict(self._persisted_next_run_at)})
 
-    def _is_due(self, source: LeadSource, now: float) -> bool:
+    def _is_due(self, source: LeadSource, now: float, wall_now: Optional[float] = None) -> bool:
         interval = self._poll_interval(source)
         if interval <= 0:
             return True
@@ -119,7 +119,9 @@ class LeadScheduler:
         persisted = self._persisted_next_run_at.get(key)
         if persisted is None:
             return True
-        return time.time() >= persisted
+        if wall_now is None:
+            wall_now = time.time()
+        return wall_now >= persisted
 
     def _schedule_next_run(self, source: LeadSource, started_at: float, started_wall: float) -> None:
         interval = self._poll_interval(source)
@@ -176,11 +178,14 @@ class LeadScheduler:
                 records, next_checkpoint = collected_value
                 result = dict(self.runner.run_records(records))
                 failed_count = int(result.get("failed_count", 0) or 0)
-                effective_checkpoint = previous_checkpoint or ""
                 if failed_count == 0:
-                    current_checkpoint = next_checkpoint if "last_checkpoint" in getattr(source, "__dict__", {}) else effective_checkpoint
-                    self.checkpoint_runner.save_checkpoint(source, "" if current_checkpoint is None else current_checkpoint)
+                    # The collector already returned its authoritative next
+                    # checkpoint. Persist it only after all records from this
+                    # source were processed successfully.
+                    current_checkpoint = "" if next_checkpoint is None else next_checkpoint
+                    self.checkpoint_runner.save_checkpoint(source, current_checkpoint)
                 else:
+                    # A failed downstream batch must never advance the source.
                     current_checkpoint = previous_checkpoint
                 result["previous_checkpoint"] = previous_checkpoint
                 result["checkpoint"] = current_checkpoint
@@ -197,10 +202,11 @@ class LeadScheduler:
         source_list = list(sources)
         source_count = len(source_list)
         now = time.monotonic()
+        wall_now = time.time()
         due_sources = []
         for source in source_list:
             source_name = source.name
-            if not self._is_due(source, now):
+            if not self._is_due(source, now, wall_now):
                 skipped.append({"source": source_name, "reason": "not_due"})
                 continue
             due_sources.append((source, self.checkpoint_runner.get_checkpoint(source), time.monotonic(), time.time()))
