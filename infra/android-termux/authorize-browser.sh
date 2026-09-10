@@ -5,6 +5,7 @@ source "$HOME/.thorio/engine.env"
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 PROFILE_DIR="${THORIO_BROWSER_PROFILE_DIR:-$HOME/.thorio/browser-profile}"
+LOG_DIR="$HOME/.thorio/logs"
 CHROME="$PREFIX/lib/chromium/chrome"
 
 if ! command -v termux-x11 >/dev/null 2>&1; then
@@ -21,13 +22,13 @@ sv down thorio-engine || true
 sv down thorio-browser || true
 pkill -f 'chromium.*remote-debugging-port=9222' || true
 
-mkdir -p "$PROFILE_DIR"
+mkdir -p "$PROFILE_DIR" "$LOG_DIR"
 export DISPLAY=:1
 export XKB_CONFIG_ROOT="$PREFIX/share/xcb"
 
 # Start the Android X11 server if it is not already running.
 if ! pgrep -f '[t]ermux-x11 :1' >/dev/null 2>&1; then
-  nohup termux-x11 :1 >/tmp/thorio-x11.log 2>&1 &
+  nohup termux-x11 :1 >"$LOG_DIR/thorio-x11.log" 2>&1 &
   sleep 3
 fi
 
@@ -46,7 +47,7 @@ nohup "$CHROME" \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port=9222 \
   --user-data-dir="$PROFILE_DIR" \
-  about:blank >/tmp/thorio-chromium-auth.log 2>&1 &
+  about:blank >"$LOG_DIR/thorio-chromium-auth.log" 2>&1 &
 
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
@@ -57,7 +58,7 @@ done
 
 if ! curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
   echo "Chromium started but CDP did not become reachable on 127.0.0.1:9222." >&2
-  echo "See /tmp/thorio-chromium-auth.log for the local Chromium error." >&2
+  echo "See $LOG_DIR/thorio-chromium-auth.log for the local Chromium error." >&2
   exit 1
 fi
 
