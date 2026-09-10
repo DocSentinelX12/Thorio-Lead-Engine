@@ -14,6 +14,9 @@ from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
 from .sources import LeadSource
 
+# Compatibility seam retained for existing scheduler tests and integrations.
+sync_pending = sync_pending_batched
+
 
 class LeadScheduler:
     """Continuous execution layer for lead sources, agents, Paxus research, and free remote specialists."""
@@ -237,7 +240,7 @@ class LeadScheduler:
                 max_rounds=agent_max_rounds,
             )
         remote_after = self._bridge_remote()
-        sync_result = sync_pending_batched(db)
+        sync_result = sync_pending(db)
         paxus_research = process_paxus_research_queue(db)
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
