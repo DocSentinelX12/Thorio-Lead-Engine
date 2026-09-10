@@ -139,29 +139,33 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         facts["decision_maker"] = person
         facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
         facts["decision_maker_verification_status"] = "observed_needs_role_verification"
-    status = "complete" if facts["company_verified"] and facts.get("decision_maker") and facts.get("decision_maker_evidence") else "research_required"
+    status = "complete" if facts["company_verified"] and facts.get("decision_maker") and facts.get("decision_maker_evidence") and facts.get("decision_maker_verification_status") == "verified" else "research_required"
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())]})
     if stored is None:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
     enqueue(ctx.db, "qualification_b", {"lead": stored, "prior_result": {"agent": "company_research", "research_status": status}, "evidence_events": events, "research_result": {"status": status, "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_b:{fingerprint}")
-    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": bool(facts.get("decision_maker") and facts.get("decision_maker_evidence")), "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_b"}
+    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": facts.get("decision_maker_verification_status") == "verified", "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_b"}
 
 
 def outreach_closing(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    """Produce the next revenue action from verified lead evidence."""
+    """Prepare the next revenue action only after explicit user authorization."""
+    if payload.get("authorized") is not True:
+        raise OutreachContractError("outreach_closer requires explicit authorized=True")
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     decision = build_outreach_decision(lead)
-    return {"role": "outreach_closer", "lead": dict(lead), "action": "dispatch_outreach", "autonomous": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
+    return {"role": "outreach_closer", "lead": dict(lead), "action": "prepare_authorized_outreach", "autonomous": True, "authorized": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
 
 
 def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
     """Advance an existing outreach state and determine whether contact stops or continues."""
+    if payload.get("authorized") is not True:
+        raise OutreachContractError("follow_up requires explicit authorized=True")
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     outcome = str(payload.get("outcome") or lead.get("outreach_state") or "").strip().lower()
     if not outcome:
         raise OutreachContractError("follow_up requires an observed outreach outcome")
     updated = apply_outcome(lead, outcome)
-    result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "dispatch_follow_up", "outcome_recorded": True}
+    result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "authorized": True, "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_authorized_follow_up", "outcome_recorded": True}
     objection = payload.get("objection")
     if objection:
         result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"))
