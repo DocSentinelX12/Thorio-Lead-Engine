@@ -1,11 +1,11 @@
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
 from .agent_orchestrator import AgentOrchestrator
 from .agent_registry import ALL_AGENT_ROLES
-from .checkpoint_runner import CheckpointRunner
 from .compute_bridge import bridge_once
 from .compute_worker import ComputeWorkerClient
 from .database import LeadDB
@@ -22,6 +22,7 @@ class LeadScheduler:
 
     def __init__(self, runner: LeadEngineRunner):
         self.runner = runner
+        from .checkpoint_runner import CheckpointRunner
         self.checkpoint_runner = CheckpointRunner(db=runner.pipeline.db, runner=runner)
         self.agent_orchestrator = AgentOrchestrator(runner.pipeline.db)
         self._next_run_at: Dict[str, float] = {}
@@ -64,6 +65,24 @@ class LeadScheduler:
         except (TypeError, ValueError):
             return 0.0
         return interval if interval > 0 else 0.0
+
+    def _collection_workers(self) -> int:
+        raw = os.environ.get("THORIO_SOURCE_COLLECTION_WORKERS", "1").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 1
+        return max(1, min(value, 16))
+
+    def _collect_source(self, source: LeadSource, checkpoint: str):
+        try:
+            records = source.collect(checkpoint=checkpoint)
+        except TypeError as exc:
+            message = str(exc)
+            if "checkpoint" not in message or "unexpected keyword argument" not in message:
+                raise
+            records = source.collect()
+        return list(records), getattr(source, "last_checkpoint", checkpoint)
 
     def _load_polling_state(self) -> None:
         db = getattr(getattr(self.runner, "pipeline", None), "db", None)
@@ -121,6 +140,56 @@ class LeadScheduler:
             return {"status": "disabled", "published_count": 0, "completed_count": 0, "retried_count": 0}
         return bridge_once(self.runner.pipeline.db, self._remote_compute, publish_limit=publish_limit, reconcile_limit=reconcile_limit)
 
+    def _run_sources_sequential(self, due_sources, results, failed):
+        for source, previous_checkpoint, started_at, started_wall in due_sources:
+            try:
+                result = dict(self.checkpoint_runner.run(source=source, checkpoint=previous_checkpoint))
+                failed_count = int(result.get("failed_count", 0) or 0)
+                if failed_count != 0:
+                    result["checkpoint"] = previous_checkpoint
+                results.append({"source": source.name, "result": result})
+                self._schedule_next_run(source, started_at, started_wall)
+            except Exception as exc:
+                failed.append({"source": source.name, "error": str(exc)})
+                self._schedule_next_run(source, started_at, started_wall)
+
+    def _run_sources_parallel_collection(self, due_sources, results, failed):
+        collected = {}
+        workers = min(self._collection_workers(), max(1, len(due_sources)))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="source-collector") as executor:
+            futures = {
+                executor.submit(self._collect_source, source, previous_checkpoint): index
+                for index, (source, previous_checkpoint, _started_at, _started_wall) in enumerate(due_sources)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    collected[index] = future.result()
+                except Exception as exc:
+                    collected[index] = exc
+
+        for index, (source, previous_checkpoint, started_at, started_wall) in enumerate(due_sources):
+            collected_value = collected.get(index)
+            try:
+                if isinstance(collected_value, Exception):
+                    raise collected_value
+                records, next_checkpoint = collected_value
+                result = dict(self.runner.run_records(records))
+                failed_count = int(result.get("failed_count", 0) or 0)
+                effective_checkpoint = previous_checkpoint or ""
+                if failed_count == 0:
+                    current_checkpoint = next_checkpoint if "last_checkpoint" in getattr(source, "__dict__", {}) else effective_checkpoint
+                    self.checkpoint_runner.save_checkpoint(source, "" if current_checkpoint is None else current_checkpoint)
+                else:
+                    current_checkpoint = previous_checkpoint
+                result["previous_checkpoint"] = previous_checkpoint
+                result["checkpoint"] = current_checkpoint
+                results.append({"source": source.name, "result": result})
+                self._schedule_next_run(source, started_at, started_wall)
+            except Exception as exc:
+                failed.append({"source": source.name, "error": str(exc)})
+                self._schedule_next_run(source, started_at, started_wall)
+
     def run(self, sources: Iterable[LeadSource]) -> Dict[str, Any]:
         results = []
         failed = []
@@ -128,24 +197,19 @@ class LeadScheduler:
         source_list = list(sources)
         source_count = len(source_list)
         now = time.monotonic()
+        due_sources = []
         for source in source_list:
             source_name = source.name
             if not self._is_due(source, now):
                 skipped.append({"source": source_name, "reason": "not_due"})
                 continue
-            started_at = time.monotonic()
-            started_wall = time.time()
-            try:
-                previous_checkpoint = self.checkpoint_runner.get_checkpoint(source)
-                result = dict(self.checkpoint_runner.run(source=source, checkpoint=previous_checkpoint))
-                failed_count = int(result.get("failed_count", 0) or 0)
-                if failed_count != 0:
-                    result["checkpoint"] = previous_checkpoint
-                results.append({"source": source_name, "result": result})
-                self._schedule_next_run(source, started_at, started_wall)
-            except Exception as exc:
-                failed.append({"source": source_name, "error": str(exc)})
-                self._schedule_next_run(source, started_at, started_wall)
+            due_sources.append((source, self.checkpoint_runner.get_checkpoint(source), time.monotonic(), time.time()))
+
+        if self._collection_workers() > 1 and len(due_sources) > 1:
+            self._run_sources_parallel_collection(due_sources, results, failed)
+        else:
+            self._run_sources_sequential(due_sources, results, failed)
+
         db = self.runner.pipeline.db
         sync_result = sync_pending(db)
         remote_before = self._bridge_remote()
