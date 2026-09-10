@@ -176,7 +176,12 @@ class LeadScheduler:
                 if isinstance(collected_value, Exception):
                     raise collected_value
                 records, next_checkpoint = collected_value
-                result = dict(self.runner.run_records(records))
+                # The production service runner is the canonical SourceRunner,
+                # which exposes process(records), not the compatibility wrapper's
+                # run_records(records). Keep parallel collection on that canonical
+                # interface so the actual production runtime can process collected
+                # records instead of failing before persistence.
+                result = dict(self.runner.process(records))
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count == 0:
                     current_checkpoint = "" if next_checkpoint is None else next_checkpoint
