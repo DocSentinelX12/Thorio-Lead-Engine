@@ -8,6 +8,7 @@ set -euo pipefail
 APP_DIR="${THORIO_ANDROID_APP_DIR:-$HOME/thorio-lead-engine}"
 PROFILE_DIR="${THORIO_ANDROID_BROWSER_PROFILE:-$HOME/.thorio/browser-profile}"
 ENV_FILE="${THORIO_ANDROID_ENV_FILE:-$HOME/.thorio/engine.env}"
+SERVICE_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/service"
 
 pkg update -y
 # Install the Termux-native runtime packages. Do not upgrade pip itself:
@@ -42,9 +43,11 @@ export THORIO_BROWSER_HEADLESS=1
 EOF
 chmod 600 "$ENV_FILE"
 
-mkdir -p "$HOME/.termux/service/thorio-browser" "$HOME/.termux/service/thorio-engine"
+# termux-services supervises services from $PREFIX/var/service.
+# ~/.termux/service is not the active service directory for sv-enable.
+mkdir -p "$SERVICE_DIR/thorio-browser" "$SERVICE_DIR/thorio-engine"
 
-cat > "$HOME/.termux/service/thorio-browser/run" <<'EOF'
+cat > "$SERVICE_DIR/thorio-browser/run" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 source "$HOME/.thorio/engine.env"
@@ -61,16 +64,16 @@ exec /data/data/com.termux/files/usr/lib/chromium/chrome \
   --user-data-dir="$THORIO_BROWSER_PROFILE_DIR" \
   about:blank
 EOF
-chmod +x "$HOME/.termux/service/thorio-browser/run"
+chmod +x "$SERVICE_DIR/thorio-browser/run"
 
-cat > "$HOME/.termux/service/thorio-engine/run" <<'EOF'
+cat > "$SERVICE_DIR/thorio-engine/run" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 source "$HOME/.thorio/engine.env"
 cd "$HOME/thorio-lead-engine"
 exec python -m lead_engine.cli run-scheduled --interval 60 --forever
 EOF
-chmod +x "$HOME/.termux/service/thorio-engine/run"
+chmod +x "$SERVICE_DIR/thorio-engine/run"
 
 # Termux:Boot will start these services after reboot when the companion app is installed.
 mkdir -p "$HOME/.termux/boot"
