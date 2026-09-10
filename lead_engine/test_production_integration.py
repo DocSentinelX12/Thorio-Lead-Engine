@@ -152,8 +152,9 @@ def test_production_end_to_end_scheduled_path(tmp_path, monkeypatch):
     assert result["processing_failed_count"] == 0
     assert len(result["results"]) == 1
     assert result["results"][0]["source"] == source.name
-    assert len(result["sync"]) == 1
-    assert result["sync"][0]["synced_count"] == 1
+    assert result["sync"]["synced_count"] == 1
+    assert result["sync"]["failed_count"] == 0
+    assert result["sync"]["already_exists_count"] == 0
     status = application.status()
     assert status["total_leads"] == 1
     assert status["pending_leads"] == 1
