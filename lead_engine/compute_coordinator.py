@@ -127,6 +127,8 @@ class ComputeCoordinator:
             worker = self.pool.worker(worker_id)
             if not worker or worker["status"] != "ready":
                 return None
+            if int(worker["current_load"]) >= self.pool.LOGICAL_SLOTS_PER_WORKER:
+                return None
             with self._connect() as connection:
                 rows = connection.execute(
                     "SELECT task_id,payload FROM compute_tasks WHERE status='queued' ORDER BY created_at,task_id LIMIT 100"
@@ -151,6 +153,9 @@ class ComputeCoordinator:
                 if updated.rowcount != 1:
                     connection.rollback()
                     return None
+                if not self.pool.reserve_task_slot(worker_id):
+                    connection.rollback()
+                    return None
                 connection.commit()
             return {"task_id": task_id, "payload": json.loads(row["payload"]), "lease_token": lease_token}
 
@@ -170,6 +175,7 @@ class ComputeCoordinator:
                     (json.dumps(result, ensure_ascii=False), time.time(), task_id),
                 )
                 connection.commit()
+            self.pool.release_task_slot(worker_id)
         return True
 
     def release(self, worker_id: str, task_id: str, lease_token: str, error: str = "") -> bool:
@@ -182,17 +188,28 @@ class ComputeCoordinator:
                     (str(error)[:4000], time.time(), task_id),
                 )
                 connection.commit()
+            self.pool.release_task_slot(worker_id)
         return True
 
     def recover_expired_tasks(self) -> int:
         now = time.time()
-        with self._connect() as connection:
-            cursor = connection.execute(
-                "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error='lease expired',updated_at=? WHERE status='leased' AND lease_until <= ?",
-                (now, now),
-            )
-            connection.commit()
-            return cursor.rowcount
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT task_id,worker_id FROM compute_tasks WHERE status='leased' AND lease_until <= ?",
+                    (now,),
+                ).fetchall()
+                if not rows:
+                    return 0
+                connection.execute(
+                    "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error='lease expired',updated_at=? WHERE status='leased' AND lease_until <= ?",
+                    (now, now),
+                )
+                connection.commit()
+            for row in rows:
+                if row["worker_id"]:
+                    self.pool.release_task_slot(row["worker_id"])
+            return len(rows)
 
     def health(self) -> Dict[str, Any]:
         self.pool.reap_stale_workers()
