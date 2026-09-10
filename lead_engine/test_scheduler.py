@@ -49,7 +49,7 @@ def test_scheduler_parallelizes_collection_but_keeps_processing_sequential(monke
             return [{"company": self.name, "source": self.name}]
 
     runner = MagicMock()
-    runner.run_records.return_value = {"processed_count": 1, "failed_count": 0, "total": 1}
+    runner.process.return_value = {"discovered_count": 1, "accepted_count": 1, "duplicate_count": 0, "failed_count": 0}
     monkeypatch.setenv("THORIO_SOURCE_COLLECTION_WORKERS", "2")
     scheduler = LeadScheduler(runner=runner)
     sources = [CollectingSource("one"), CollectingSource("two")]
@@ -58,9 +58,9 @@ def test_scheduler_parallelizes_collection_but_keeps_processing_sequential(monke
     assert result["successful_source_count"] == 2
     assert result["failed_count"] == 0
     assert runner.run_source.call_count == 0
-    assert runner.run_records.call_count == 2
-    assert runner.run_records.call_args_list[0].args[0] == [{"company": "one", "source": "one"}]
-    assert runner.run_records.call_args_list[1].args[0] == [{"company": "two", "source": "two"}]
+    assert runner.process.call_count == 2
+    assert runner.process.call_args_list[0].args[0] == [{"company": "one", "source": "one"}]
+    assert runner.process.call_args_list[1].args[0] == [{"company": "two", "source": "two"}]
     assert sources[0].last_checkpoint == "next-one"
     assert sources[1].last_checkpoint == "next-two"
 
@@ -79,9 +79,9 @@ def test_scheduler_parallel_collection_does_not_advance_failed_source_checkpoint
     db = LeadDB(data_dir=str(tmp_path))
     pipeline = LeadPipeline(db=db)
     runner.pipeline = pipeline
-    runner.run_records.side_effect = [
-        {"processed_count": 1, "failed_count": 1, "total": 1},
-        {"processed_count": 1, "failed_count": 0, "total": 1},
+    runner.process.side_effect = [
+        {"discovered_count": 1, "accepted_count": 0, "duplicate_count": 0, "failed_count": 1},
+        {"discovered_count": 1, "accepted_count": 1, "duplicate_count": 0, "failed_count": 0},
     ]
     monkeypatch.setenv("THORIO_SOURCE_COLLECTION_WORKERS", "2")
     scheduler = LeadScheduler(runner=runner)
@@ -216,12 +216,14 @@ def test_scheduler_persisted_poll_interval_uses_wall_clock_after_restart(tmp_pat
     db.close()
 
 
-def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future(tmp_path):
+def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future(tmp_path, monkeypatch):
     runner = MagicMock()
     db = LeadDB(data_dir=str(tmp_path))
     pipeline = LeadPipeline(db=db)
     runner.pipeline = pipeline
     runner.run_source.return_value = {"processed_count": 1, "failed_count": 0, "total": 1}
+    runner.process.return_value = {"discovered_count": 1, "accepted_count": 1, "duplicate_count": 0, "failed_count": 0}
+    monkeypatch.setenv("THORIO_SOURCE_COLLECTION_WORKERS", "2")
     definition = SourceDefinition(
         name="Bounded Acceptance API", provider="Example", collector_type="json", url="https://example.com/api",
         pagination_type="none", poll_interval_seconds=3600,
@@ -232,11 +234,13 @@ def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future
         first = scheduler.run([source])
     assert first["successful_source_count"] == 1
     runner.run_source.reset_mock()
+    runner.process.reset_mock()
     second_scheduler = LeadScheduler(runner=runner)
     with patch("lead_engine.scheduler.time.time", return_value=1001.0):
         result = second_scheduler.run_bounded([source], interval_seconds=0, max_cycles=1)
     assert result["successful_source_count"] == 1
     assert result["failed_count"] == 0
     assert result["discovered_count"] == 1
-    assert runner.run_source.call_count == 1
+    assert runner.run_source.call_count == 0
+    assert runner.process.call_count == 1
     db.close()
