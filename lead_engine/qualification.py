@@ -30,7 +30,14 @@ CURRENT_NEED_CONTEXT = re.compile(
     r"need(?:s|ed)? (?:a |an )?(?:developer|engineer|designer|product manager|"
     r"data scientist|ai|ml|contractor|developer|engineer)|staffing|"
     r"recruitment support|technology recruitment|development contractor|"
-    r"building (?:our|the) team|growing (?:our|the) team)\b",
+    r"building (?:our|the) team|growing (?:our|the) team|"
+    r"need(?:s|ed)? (?:help|support) (?:with|for) (?:software|development|engineering|ai|llm|saas|mobile|technology)|"
+    r"looking for (?:a |an )?(?:development team|engineering team|software team|staff augmentation|software development|ai development|llm integration)|"
+    r"seeking (?:a |an )?(?:development team|engineering team|software team|staff augmentation|software development|ai development|llm integration)|"
+    r"outsourc(?:e|ed|ing) (?:software|development|engineering|technology)|"
+    r"staff augmentation|ai development|ai agent(?:s)?|llm integration|"
+    r"mobile development|saas development|enterprise software development|"
+    r"software development|technology delivery)\b",
     re.IGNORECASE,
 )
 
