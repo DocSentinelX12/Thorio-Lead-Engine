@@ -11,7 +11,7 @@ from .compute_worker import ComputeWorkerClient, ComputeWorkerError, execute_com
 
 
 def _identity(worker_id="test-worker"):
-    return WorkerIdentity(worker_id, "test-host", "x86_64", 2, 1024, ("lead-processing",))
+    return WorkerIdentity(worker_id, "test-host", "x86_64", 2, 1024, ("lead-processing", "ai_demand_discovery"))
 
 
 def test_coordinator_enqueue_is_idempotent_and_rejects_payload_drift():
