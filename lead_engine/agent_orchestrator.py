@@ -65,9 +65,10 @@ class AgentOrchestrator:
     def run_all_once(self, *, limit_per_agent: int = 1) -> Dict[str, Any]:
         """Run specialist work in dependency rounds until the queue stops progressing.
 
-        Handoffs created by one specialist are therefore eligible for the next
-        specialist during the same scheduler cycle. The round cap is a hard
-        safety boundary against a malformed handler continuously creating work.
+        Each round snapshots which specialist queues are already populated before
+        execution begins. Handoffs created during that round are held for the next
+        dependency round, which makes the drain-round safety limit a real bound
+        rather than allowing same-round cascades to bypass it.
         """
         if limit_per_agent <= 0:
             raise ValueError("limit_per_agent must be greater than zero")
@@ -77,8 +78,18 @@ class AgentOrchestrator:
         max_rounds = self._max_drain_rounds()
 
         for round_number in range(1, max_rounds + 1):
+            queued_agents = {
+                str(task.get("agent"))
+                for task in pending(self.db)
+                if task.get("status") in {None, "queued"} and task.get("agent")
+            }
+            if not queued_agents:
+                break
+
             results: List[Dict[str, Any]] = []
             for role in ALL_AGENT_ROLES:
+                if role.name not in queued_agents:
+                    continue
                 results.append(self.run_agent_once(role.name, limit=min(limit_per_agent, role.max_concurrency)))
 
             claimed = sum(int(item.get("claimed_count", 0) or 0) for item in results)
