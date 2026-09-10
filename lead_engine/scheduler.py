@@ -176,11 +176,6 @@ class LeadScheduler:
                 if isinstance(collected_value, Exception):
                     raise collected_value
                 records, next_checkpoint = collected_value
-                # The production service runner is the canonical SourceRunner,
-                # which exposes process(records), not the compatibility wrapper's
-                # run_records(records). Keep parallel collection on that canonical
-                # interface so the actual production runtime can process collected
-                # records instead of failing before persistence.
                 result = dict(self.runner.process(records))
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count == 0:
@@ -196,7 +191,7 @@ class LeadScheduler:
                 failed.append({"source": source.name, "error": str(exc)})
                 self._schedule_next_run(source, started_at, started_wall)
 
-    def run(self, sources: Iterable[LeadSource]) -> Dict[str, Any]:
+    def run(self, sources: Iterable[LeadSource], *, agent_max_rounds: Optional[int] = None) -> Dict[str, Any]:
         results = []
         failed = []
         skipped = []
@@ -220,7 +215,13 @@ class LeadScheduler:
         db = self.runner.pipeline.db
         sync_result = sync_pending(db)
         remote_before = self._bridge_remote()
-        agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
+        if agent_max_rounds is None:
+            agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
+        else:
+            agent_result = self.agent_orchestrator.run_all_once(
+                limit_per_agent=self._agent_batch_limit(),
+                max_rounds=agent_max_rounds,
+            )
         remote_after = self._bridge_remote()
         paxus_research = process_paxus_research_queue(db)
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
@@ -229,12 +230,14 @@ class LeadScheduler:
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
         return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "remote_compute_before": remote_before, "agents": agent_result, "remote_compute_after": remote_after, "paxus_research": paxus_research}
 
-    def run_forever(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: Optional[int] = None) -> Dict[str, Any]:
+    def run_forever(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: Optional[int] = None, *, agent_max_rounds: Optional[int] = None) -> Dict[str, Any]:
         source_list = list(sources)
         if interval_seconds < 0:
             raise ValueError("interval_seconds must be greater than or equal to 0.")
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be greater than or equal to 1.")
+        if agent_max_rounds is not None and agent_max_rounds < 1:
+            raise ValueError("agent_max_rounds must be greater than zero")
         if not source_list:
             return {"cycles": 0, "results": [], "failed": [], "skipped": [], "sync": [], "remote_compute": [], "agents": [], "paxus_research": [], "source_count": 0, "successful_source_count": 0, "result_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0, "status": "no_sources_configured"}
         cycles = 0
@@ -247,7 +250,7 @@ class LeadScheduler:
         total_paxus_research: List[Any] = []
         total_discovered = total_accepted = total_duplicates = total_processing_failed = 0
         while max_cycles is None or cycles < max_cycles:
-            result = self.run(source_list)
+            result = self.run(source_list, agent_max_rounds=agent_max_rounds)
             total_results.extend(result["results"])
             total_failed.extend(result["failed"])
             total_skipped.extend(result.get("skipped", []))
@@ -279,4 +282,13 @@ class LeadScheduler:
             self._next_run_at.pop(key, None)
             self._persisted_next_run_at.pop(key, None)
         self._save_polling_state()
-        return self.run_forever(sources=source_list, interval_seconds=interval_seconds, max_cycles=max_cycles)
+        # A bounded production cycle must make forward progress without attempting
+        # to drain every downstream dependency cascade in one invocation. The
+        # durable queue remains intact and the normal continuous scheduler keeps
+        # the configured multi-round drain behavior on subsequent cycles.
+        return self.run_forever(
+            sources=source_list,
+            interval_seconds=interval_seconds,
+            max_cycles=max_cycles,
+            agent_max_rounds=1,
+        )
