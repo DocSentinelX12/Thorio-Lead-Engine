@@ -111,7 +111,6 @@ class SourceRunner:
                 duplicates += 1
             elif result.get("accepted") is True:
                 accepted += 1
-
                 fingerprint = str(result.get("fingerprint") or "").strip()
                 lead = result.get("lead")
                 if fingerprint and isinstance(lead, dict):
@@ -149,3 +148,15 @@ class SourceRunner:
         if agent_tasks_queued:
             summary["agent_tasks_queued_count"] = agent_tasks_queued
         return summary
+
+    def run_source(
+        self,
+        source: Any,
+        checkpoint: Optional[str] = None,
+    ) -> Dict[str, int]:
+        """Collect one source and process every returned record independently."""
+        if checkpoint is None:
+            records = source.collect()
+        else:
+            records = source.collect(checkpoint=checkpoint)
+        return self.process(records)
