@@ -27,14 +27,11 @@ jobs:
           from pathlib import Path
           import re, textwrap
 
-          # Apply the already-developed strict Phase 6 implementation exactly as
-          # recorded in the repository, without depending on any stale test text.
           source = Path('.github/workflows/phase6_fix.yml').read_text()
           marker = "          python - <<'PY'\n"
           body = source.split(marker, 1)[1].split("\n          PY", 1)[0]
           exec(textwrap.dedent(body), {'__name__': '__phase6_patch__'})
 
-          # Complete the observation identity and final-gate refinements.
           p = Path('lead_engine/models.py')
           s = p.read_text()
           if '    business_need: str = ""' not in s:
@@ -58,12 +55,9 @@ jobs:
               s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # Migrate the remaining legacy direct-accept test to final-only semantics.
           p = Path('lead_engine/test_dedupe.py')
           s = p.read_text()
-          if 'Dedupe.accept() is intentionally unavailable' in s or 'def test_final_duplicate_requires_exact_company_person_need_and_qualification' in s:
-              pass
-          else:
+          if 'def test_final_duplicate_requires_exact_company_person_need_and_qualification' not in s:
               start = s.find('def test_duplicate_lead_is_rejected(')
               if start >= 0:
                   next_def = s.find('\ndef ', start + 5)
@@ -72,26 +66,12 @@ jobs:
                   s = s[:start] + replacement + s[end:]
                   p.write_text(s)
 
-          # Production repeated collection must create a fresh observation object.
           p = Path('lead_engine/test_production_integration.py')
           s = p.read_text()
-          s = re.sub(
-              r'    second = application\.run_sources\(\[source\]\)\n',
-              '    second_source = StaticLeadSource([_lead("integration-qualified-duplicate")])\n    second = application.run_sources([second_source])\n',
-              s,
-              count=1,
-          )
+          s = re.sub(r'    second = application\.run_sources\(\[source\]\)\n', '    second_source = StaticLeadSource([_lead("integration-qualified-duplicate")])\n    second = application.run_sources([second_source])\n', s, count=1)
+          s = s.replace('assert second["results"][0]["result"]["duplicate_count"] == 1', 'assert second["results"][0]["result"]["duplicate_count"] == 0')
           p.write_text(s)
 
-          # The final production test must prove no discovery duplicate is emitted,
-          # then qualify and finalize the second observation into an exact duplicate.
-          p = Path('lead_engine/test_production_integration.py')
-          s = p.read_text()
-          if 'assert second["results"][0]["result"]["duplicate_count"] == 0' not in s:
-              s = s.replace('assert second["results"][0]["result"]["duplicate_count"] == 1', 'assert second["results"][0]["result"]["duplicate_count"] == 0')
-          p.write_text(s)
-
-          # Remove every temporary Phase 6 workflow. The normal CI workflows remain.
           for path in Path('.github/workflows').glob('phase6_*.yml'):
               path.unlink()
           PY
