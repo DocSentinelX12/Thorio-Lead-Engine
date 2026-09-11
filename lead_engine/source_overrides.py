@@ -141,8 +141,8 @@ _SOURCE_OVERRIDES = {
         "metadata": {"default_company": "WorkWave"},
     },
     "NoDesk": {
-        "collector_type": "rss",
-        "url": "https://nodesk.co/remote-jobs/index.xml",
+        "collector_type": "html",
+        "url": "https://nodesk.co/remote-jobs/",
         "pagination_type": "none",
         "max_pages": 1,
         "max_requests": 1,
