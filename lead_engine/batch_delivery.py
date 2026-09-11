@@ -84,6 +84,13 @@ def _batch_upsert(
     payload = {
         "performUpsert": {"fieldsToMergeOn": [merge_field]},
         "records": records,
+        # Airtable returns INVALID_MULTIPLE_CHOICE_OPTIONS when a select value
+        # is not yet present and the write omits typecast. Production Lead Radar
+        # uses Applicable Routes for the canonical Thorio/Shiftr/Paxus routing.
+        # The verified production credential is authorized to create select
+        # options, so batch upserts must enable the same behavior as record
+        # writes rather than failing the entire delivery batch.
+        "typecast": True,
     }
     result = _request("PATCH", _master_table_url(table_key), payload)
     returned = result.get("records", [])
