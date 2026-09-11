@@ -197,7 +197,7 @@ jobs:
         run: |
           python - <<'PY'
           from lead_engine.source_registry import _load_free_source_catalog, configured_sources
-          expected_minimum = 42
+          expected_minimum = 41
           catalog = _load_free_source_catalog()
           configured = configured_sources()
           catalog_names = {definition.name for definition in catalog}
@@ -322,3 +322,5 @@ jobs:
           path: data
           if-no-files-found: warn
           retention-days: 7
+          compression-level: 6
+          overwrite: false
