@@ -98,7 +98,7 @@ def test_qualification_worker_applies_independent_company_routes(tmp_path):
     assert task["agent"] == "qualification_a"
 
 
-def test_outreach_worker_requires_explicit_authorization(tmp_path):
+def test_outreach_worker_is_autonomous_after_research(tmp_path):
     db = _db(tmp_path)
     lead = {
         "fingerprint": "outreach-worker-test",
@@ -115,21 +115,18 @@ def test_outreach_worker_requires_explicit_authorization(tmp_path):
     }
     db.insert_if_new(lead)
     enqueue(db, "outreach_closer", {"lead": lead})
-    blocked = run_worker_once(db, "outreach_closer", worker_id="outreach-blocked")
-    assert blocked["completed_count"] == 0
-    assert blocked["failed_count"] == 1
-
-    enqueue(db, "outreach_closer", {"lead": lead, "authorized": True})
-    result = run_worker_once(db, "outreach_closer", worker_id="outreach-authorized")
+    result = run_worker_once(db, "outreach_closer", worker_id="outreach-autonomous")
     assert result["completed_count"] == 1
     assert result["failed_count"] == 0
     output = result["results"][0]
     assert output["autonomous"] is True
-    assert output["authorized"] is True
-    assert output["action"] == "prepare_authorized_outreach"
+    assert output["approval_required"] is False
+    assert output["action"] == "prepare_outreach"
     assert output["route"] in {"Thorio", "Shiftr"}
     assert output["evidence_refs"] == ["https://example.com/signal", "https://example.com/taylor"]
-    assert "Acme is hiring a remote software engineer" in output["body"]
+    assert "Acme" in output["body"]
+    assert "remote software engineer" in output["body"]
+    assert "Hi Taylor" in output["body"]
     stored = db.get(lead["fingerprint"])
     assert stored["outreach_state"] == "drafted"
     assert stored["outreach_route"] == output["route"]
@@ -137,26 +134,29 @@ def test_outreach_worker_requires_explicit_authorization(tmp_path):
     assert stored["outreach_draft_body"] == output["body"]
 
 
-def test_follow_up_persists_observed_outcome_and_stop_state(tmp_path):
+def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     db = _db(tmp_path)
     lead = {
         "fingerprint": "follow-up-persistence-test",
         "company": "Acme",
         "outreach_route": "Thorio",
         "outreach_state": "drafted",
-        "outreach_history": [],
+        "outreach_history": [{"at": _recent(), "outcome": "sent"}],
         "outreach_attempt": 0,
     }
     db.insert_if_new(lead)
-    enqueue(db, "follow_up", {"lead": lead, "authorized": True, "outcome": "no_response"})
+    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response"})
     result = run_worker_once(db, "follow_up", worker_id="follow-up-worker")
     assert result["completed_count"] == 1
     assert result["failed_count"] == 0
+    output = result["results"][0]
+    assert output["autonomous"] is True
+    assert output["approval_required"] is False
     stored = db.get(lead["fingerprint"])
     assert stored["outreach_state"] == "ready"
     assert stored["outreach_attempt"] == 1
     assert stored["next_follow_up_at"] is not None
-    assert len(stored["outreach_history"]) == 1
+    assert len(stored["outreach_history"]) == 2
 
 
 def test_company_research_does_not_mark_observed_person_as_verified_decision_maker(tmp_path):
