@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from .batch_delivery import _run_batch_high_volume_sync, sync_pending_batched
+from .batch_delivery import _batch_upsert, _run_batch_high_volume_sync, sync_pending_batched
 from .database import LeadDB
 
 
@@ -17,6 +17,35 @@ def _lead(fingerprint: str, company: str = "Example Corp"):
         "lead_score": 70,
         "priority": "Warm",
     }
+
+
+def test_batch_upsert_enables_typecast_for_airtable_select_options():
+    response = {
+        "records": [
+            {
+                "id": "rec_typecast",
+                "fields": {"Duplicate Key": "typecast-001"},
+            }
+        ]
+    }
+
+    records = [{
+        "fields": {
+            "Duplicate Key": "typecast-001",
+            "Applicable Routes": ["Thorio"],
+        }
+    }]
+
+    with patch("lead_engine.batch_delivery._request", return_value=response) as mock_request:
+        result = _batch_upsert("lead_radar", "Duplicate Key", records)
+
+    assert result == response["records"]
+    payload = mock_request.call_args.args[2]
+    assert payload["typecast"] is True
+    assert payload["performUpsert"] == {
+        "fieldsToMergeOn": ["Duplicate Key"],
+    }
+    assert payload["records"] == records
 
 
 def test_high_volume_delivery_uses_airtable_batches():
