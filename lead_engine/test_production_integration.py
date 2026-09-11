@@ -10,12 +10,13 @@ class FailingSource(LeadSource):
         raise RuntimeError("source unavailable")
 
 
-def _lead(source_id, company="Integration Corp"):
+def _lead(source_id, company="Integration Corp", person="Alex"):
     return {
         "source": "integration",
         "source_id": source_id,
         "url": f"https://example.com/{source_id}",
         "company": company,
+        "person": person,
         "signal": "remote software engineer",
         "evidence": "Company is hiring a remote software engineer.",
     }
@@ -39,35 +40,44 @@ def test_production_path_processes_multiple_sources_and_preserves_isolation(tmp_
 def test_production_path_allows_unqualified_lead_to_be_rechecked(tmp_path):
     config = LeadEngineConfig(database_dir=str(tmp_path / "database"), sync_enabled=False, batch_size=50)
     application = LeadEngineApplication(config=config)
-    source = StaticLeadSource([_lead("integration-duplicate")])
-    first = application.run_sources([source])
-    second = application.run_sources([source])
+    first = application.run_sources([StaticLeadSource([_lead("integration-observation-1")])])
+    second = application.run_sources([StaticLeadSource([_lead("integration-observation-2")])])
     assert first["results"][0]["result"]["accepted_count"] == 1
     assert first["results"][0]["result"]["duplicate_count"] == 0
     assert second["results"][0]["result"]["accepted_count"] == 1
     assert second["results"][0]["result"]["duplicate_count"] == 0
-    fingerprint = application.db.conn.execute("SELECT fingerprint FROM leads LIMIT 1").fetchone()[0]
-    stored = application.db.get(fingerprint)
-    assert stored is not None
-    assert stored["qualification_status"] == "unverified"
+    assert application.status()["total_leads"] == 2
 
 
-def test_production_path_deduplicates_qualified_lead_across_separate_runs(tmp_path):
+def test_production_path_deduplicates_qualified_lead_only_at_finalization(tmp_path):
     config = LeadEngineConfig(database_dir=str(tmp_path / "database"), sync_enabled=False, batch_size=50)
     application = LeadEngineApplication(config=config)
-    source = StaticLeadSource([_lead("integration-qualified-duplicate")])
-    first = application.run_sources([source])
+    first = application.run_sources([StaticLeadSource([_lead("integration-qualified-1")])])
     assert first["results"][0]["result"]["accepted_count"] == 1
-    fingerprint = application.db.conn.execute("SELECT fingerprint FROM leads LIMIT 1").fetchone()[0]
-    qualified = application.service.runner.pipeline.qualify(fingerprint, qualified=True)
+    first_fingerprint = application.db.conn.execute("SELECT fingerprint FROM leads ORDER BY rowid LIMIT 1").fetchone()[0]
+    qualified = application.service.runner.pipeline.qualify(first_fingerprint, qualified=True, business_need="hire a remote software engineer")
     assert qualified["qualified"] is True
-    assert qualified["status"] == "Qualified"
-    second = application.run_sources([source])
-    assert second["results"][0]["result"]["accepted_count"] == 0
-    assert second["results"][0]["result"]["duplicate_count"] == 1
+
+    # This is deliberately a fresh observation. Discovery must accept it.
+    second = application.run_sources([StaticLeadSource([_lead("integration-qualified-2")])])
+    assert second["results"][0]["result"]["accepted_count"] == 1
+    assert second["results"][0]["result"]["duplicate_count"] == 0
+
+    rows = application.db.conn.execute("SELECT fingerprint FROM leads ORDER BY rowid").fetchall()
+    assert len(rows) == 2
+    second_fingerprint = rows[1][0]
+    second_qualified = application.service.runner.pipeline.qualify(second_fingerprint, qualified=True, business_need="hire a remote software engineer")
+    assert second_qualified["qualified"] is True
+
+    final = application.service.runner.pipeline.finalize(second_fingerprint)
+    assert final["status"] == "duplicate"
+    assert final["approved"] is False
+    assert final["duplicate"] is True
+    assert final["duplicate_of"] == first_fingerprint
+    assert final["reason"] == "exact_company_person_need_match"
+
     status = application.status()
-    assert status["total_leads"] == 1
-    assert status["pending_leads"] == 1
+    assert status["total_leads"] == 2
 
 
 def test_production_path_persists_database_across_application_instances(tmp_path):
