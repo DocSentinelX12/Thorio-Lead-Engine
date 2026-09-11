@@ -79,6 +79,18 @@ def test_remotive_uses_current_jobs_api():
     assert remotive.url_field == "url"
 
 
+def test_nodesk_uses_live_html_listing_instead_of_broken_rss():
+    catalog = _load_free_source_catalog()
+    nodesk = next(
+        definition
+        for definition in catalog
+        if definition.name == "NoDesk"
+    )
+
+    assert nodesk.collector_type == "html"
+    assert nodesk.url == "https://nodesk.co/remote-jobs/"
+
+
 def test_every_active_source_definition_is_unchanged():
     catalog = _load_free_source_catalog()
     definitions = {
