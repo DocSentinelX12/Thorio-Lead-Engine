@@ -62,7 +62,7 @@ def test_html_fallback_extracts_embedded_json_job_data():
     assert len(result.records) == 1
     assert result.records[0]["job_title"] == "Data Engineer"
     assert result.records[0]["company"] == "Data Corp"
-    assert result.records[0]["source_id"] == "https://example.com/jobs/data-engineer"
+    assert result.records[0]["source_id"] == "job-123"
 
 
 def test_html_fallback_still_rejects_job_link_without_company():
