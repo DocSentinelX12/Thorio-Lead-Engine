@@ -75,6 +75,20 @@ def test_source_runner_run_source_collects_and_processes_records():
     assert pipeline.process.call_count == 2
 
 
+def test_source_runner_batches_database_writes_for_one_source():
+    pipeline = Mock()
+    pipeline.process.return_value = {"accepted": True, "status": "accepted"}
+    batch = pipeline.db.batch_writes.return_value
+    runner = SourceRunner(pipeline)
+
+    result = runner.process([_record("web", "batch-001"), _record("web", "batch-002")])
+
+    assert result["accepted_count"] == 2
+    pipeline.db.batch_writes.assert_called_once_with()
+    assert batch.__enter__.call_count == 1
+    assert batch.__exit__.call_count == 1
+
+
 def test_source_runner_does_not_hide_internal_type_error():
     pipeline = Mock()
     source = Mock()
