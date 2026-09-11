@@ -130,6 +130,33 @@ def test_outreach_worker_requires_explicit_authorization(tmp_path):
     assert output["route"] in {"Thorio", "Shiftr"}
     assert output["evidence_refs"] == ["https://example.com/signal", "https://example.com/taylor"]
     assert "Acme is hiring a remote software engineer" in output["body"]
+    stored = db.get(lead["fingerprint"])
+    assert stored["outreach_state"] == "drafted"
+    assert stored["outreach_route"] == output["route"]
+    assert stored["outreach_draft_subject"] == output["subject"]
+    assert stored["outreach_draft_body"] == output["body"]
+
+
+def test_follow_up_persists_observed_outcome_and_stop_state(tmp_path):
+    db = _db(tmp_path)
+    lead = {
+        "fingerprint": "follow-up-persistence-test",
+        "company": "Acme",
+        "outreach_route": "Thorio",
+        "outreach_state": "drafted",
+        "outreach_history": [],
+        "outreach_attempt": 0,
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "follow_up", {"lead": lead, "authorized": True, "outcome": "no_response"})
+    result = run_worker_once(db, "follow_up", worker_id="follow-up-worker")
+    assert result["completed_count"] == 1
+    assert result["failed_count"] == 0
+    stored = db.get(lead["fingerprint"])
+    assert stored["outreach_state"] == "ready"
+    assert stored["outreach_attempt"] == 1
+    assert stored["next_follow_up_at"] is not None
+    assert len(stored["outreach_history"]) == 1
 
 
 def test_company_research_does_not_mark_observed_person_as_verified_decision_maker(tmp_path):
