@@ -28,6 +28,16 @@ _URL_HINTS = (
     "/positions/", "/career/", "/careers/",
 )
 
+# Some historical sources expose job detail links as /remote-jobs/... rather
+# than /jobs/... . Keep this source-specific so healthy sources are not
+# affected by a broader URL heuristic change.
+_SOURCE_URL_HINTS = {
+    "NoDesk": ("/remote-jobs/",),
+    "Remotive": ("/remote-jobs/",),
+    "We Work Remotely": ("/remote-jobs/",),
+    "FlexJobs": ("/remote-jobs/",),
+}
+
 
 class _Node:
     def __init__(self, tag: str, attrs: Dict[str, str]) -> None:
@@ -156,9 +166,16 @@ def _has_word(value: str, words: Tuple[str, ...]) -> bool:
     )
 
 
-def _looks_like_job_url(url: str) -> bool:
+def _looks_like_job_url(url: str, source: str = "") -> bool:
     lowered = url.lower()
-    return any(hint in lowered for hint in _URL_HINTS)
+    if any(hint in lowered for hint in _URL_HINTS):
+        return True
+
+    for hint in _SOURCE_URL_HINTS.get(source, ()):
+        if hint in lowered:
+            return True
+
+    return False
 
 
 def _clean(value: Any) -> str:
@@ -224,7 +241,7 @@ def _json_candidates(payloads: List[Any], base_url: str) -> List[Dict[str, Any]]
     return candidates
 
 
-def _html_candidates(parser: _HtmlJobParser, base_url: str) -> List[Dict[str, Any]]:
+def _html_candidates(parser: _HtmlJobParser, base_url: str, source: str) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
 
     for node in parser.nodes:
@@ -234,7 +251,7 @@ def _html_candidates(parser: _HtmlJobParser, base_url: str) -> List[Dict[str, An
         links = [
             (url, _clean(text))
             for url, text in node.links
-            if _looks_like_job_url(url) and _clean(text)
+            if _looks_like_job_url(url, source) and _clean(text)
         ]
         if not links:
             continue
@@ -287,7 +304,7 @@ def extract_html_job_records(
     parser.feed(html)
 
     candidates = _json_candidates(parser.json_payloads, source_url)
-    candidates.extend(_html_candidates(parser, source_url))
+    candidates.extend(_html_candidates(parser, source_url, source))
 
     records: List[Dict[str, Any]] = []
     for candidate in candidates:
