@@ -1,0 +1,45 @@
+name: Phase 6 fix 2
+
+on:
+  push:
+    paths:
+      - .github/workflows/phase6_fix2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          python -m pip install pytest pytest-timeout
+      - name: Apply the existing Phase 6 patch script
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+          workflow = Path('.github/workflows/phase6_fix.yml')
+          if not workflow.exists():
+              raise SystemExit('Phase 6 patch workflow is missing')
+          text = workflow.read_text()
+          marker = '          python - <<\'PY\'\n'
+          body = text.split(marker, 1)[1].split('\n          PY', 1)[0]
+          exec(textwrap.dedent(body), {'__name__': '__phase6_patch__'})
+          PY
+      - name: Run Phase 6 regression tests
+        run: python -m pytest -vv -ra --tb=short lead_engine/test_phase6_opportunity_dedupe.py
+      - name: Commit verified Phase 6 structure
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lead_engine .github/workflows/phase6_apply.yml .github/workflows/phase6_fix.yml .github/workflows/phase6_fix2.yml
+          git commit -m 'Enforce strict final opportunity deduplication' || exit 0
+          git push
