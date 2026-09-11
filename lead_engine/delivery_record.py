@@ -7,6 +7,18 @@ DELIVERY_FIELDS = (
     "delivery_route",
 )
 
+DELIVERY_STATES = {
+    "approved",
+    "rejected",
+    "review",
+    "queued",
+    "attempting",
+    "delivered",
+    "failed",
+    "retryable",
+    "permanently_failed",
+}
+
 
 def create_delivery_record(
     lead: Dict[str, Any],
@@ -14,33 +26,18 @@ def create_delivery_record(
     """
     Create a stable delivery record from a processed lead.
 
-    The delivery decision is copied into a dedicated structure so
-    downstream systems can persist and audit the exact decision
-    without changing the original lead.
+    Missing or unrecognized state is fail-closed as review. A route
+    alone is never sufficient evidence for approval.
     """
 
-    route = str(
-        lead.get("route", "")
-    ).strip()
+    route = str(lead.get("route", "") or "").strip()
+    delivery_status = str(lead.get("delivery_status", "") or "").strip().lower()
+    delivery_reason = str(lead.get("delivery_reason", "") or "").strip()
 
-    delivery_status = str(
-        lead.get("delivery_status", "")
-    ).strip()
-
-    delivery_reason = str(
-        lead.get("delivery_reason", "")
-    ).strip()
-
-    if delivery_status not in {
-        "approved",
-        "rejected",
-        "review",
-    }:
-        delivery_status = (
-            "approved"
-            if route in {"Shiftr", "Paxus", "Thorio"}
-            else "review"
-        )
+    if delivery_status not in DELIVERY_STATES:
+        delivery_status = "review"
+        if not delivery_reason:
+            delivery_reason = "delivery_status_missing_or_unrecognized"
 
     return {
         "delivery_status": delivery_status,
@@ -52,17 +49,8 @@ def create_delivery_record(
 def apply_delivery_record(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Return a copy of the lead with its delivery decision
-    normalized into persistent delivery fields.
-    """
+    """Return a copy of the lead with normalized persistent delivery fields."""
 
     result = dict(lead)
-
-    record = create_delivery_record(
-        result
-    )
-
-    result.update(record)
-
+    result.update(create_delivery_record(result))
     return result
