@@ -13,6 +13,10 @@ _SOURCE_OVERRIDES = {
         "url": "https://www.themuse.com/api/public/jobs?page=1",
         "page_start": 1,
     },
+    "EURES": {
+        "enabled": False,
+        "allowed_for_thorio": False,
+    },
     "RemoteJobs.org": {
         "collector_type": "json",
         "url": "https://remotejobs.org/api/v1/jobs?limit=50&offset=0",
