@@ -10,6 +10,12 @@ def test_orchestrator_drains_handoffs_created_by_specialists(tmp_path):
         "company": "Acme",
         "signal": "Acme is hiring a remote software engineer",
         "job_title": "Software Engineer",
+        "research_status": "complete",
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Jane Doe",
+            "decision_maker_evidence": "Verified company leadership page",
+        },
     }
     db.insert_if_new(lead)
     enqueue(db, "qualification_a", {"lead": lead}, priority=10)
@@ -31,6 +37,12 @@ def test_orchestrator_drain_round_limit_is_bounded(tmp_path, monkeypatch):
         "fingerprint": "orchestrator-bound-test",
         "company": "Acme",
         "signal": "Acme is hiring a remote software engineer",
+        "research_status": "complete",
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Jane Doe",
+            "decision_maker_evidence": "Verified company leadership page",
+        },
     }
     db.insert_if_new(lead)
     enqueue(db, "qualification_a", {"lead": lead}, priority=10)
