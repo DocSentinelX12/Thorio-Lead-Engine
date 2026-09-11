@@ -161,7 +161,7 @@ def social_research(agent: str, payload: Mapping[str, Any], db: Any = None) -> D
 
 
 def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
-    """Persist an evidence-grounded research packet and hand it to validation."""
+    """Persist an evidence-grounded research packet and hand it to qualification only when complete."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     events = _events(payload)
     social_findings = payload.get("social_findings", [])
@@ -183,10 +183,25 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         facts["decision_maker"] = person
         facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
         facts["decision_maker_verification_status"] = "observed_needs_role_verification"
+    existing = lead.get("company_research")
+    if isinstance(existing, Mapping):
+        prior = dict(existing)
+        prior_social = prior.get("social_findings") if isinstance(prior.get("social_findings"), list) else []
+        merged_social = list(prior_social)
+        for item in social_findings:
+            if item not in merged_social:
+                merged_social.append(item)
+        facts = {**prior, **facts}
+        facts["social_findings"] = merged_social
+        if merged_social:
+            facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in merged_social if isinstance(item, Mapping) and item.get("source")})
+            facts["social_evidence_count"] = len(merged_social)
     status = "complete" if facts["company_verified"] and facts.get("decision_maker") and facts.get("decision_maker_evidence") and facts.get("decision_maker_verification_status") == "verified" else "research_required"
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())]})
     if stored is None:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
+    if status == "complete":
+        enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": events, "research_result": {"status": status, "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
     return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": facts.get("decision_maker_verification_status") == "verified", "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_a" if status == "complete" else "research_required"}
 
 
