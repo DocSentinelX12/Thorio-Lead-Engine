@@ -23,6 +23,7 @@ class Lead:
     person: str = ""
     signal: str = ""
     signal_type: str = ""
+    business_need: str = ""
     source_url: str = ""
     job_title: str = ""
     discovered_at: str = ""
@@ -116,6 +117,7 @@ class Lead:
             "signal": self.signal,
             "job_title": self.job_title,
             "signal_type": self.signal_type,
+            "discovered_at": self.discovered_at,
         }
 
         self.fingerprint = lead_identity(identity_payload)

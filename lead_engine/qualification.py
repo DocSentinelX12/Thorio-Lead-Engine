@@ -172,10 +172,12 @@ def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     return updated
 
 
-def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "") -> Dict[str, object]:
+def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "", business_need: str = "") -> Dict[str, object]:
     if not isinstance(qualified, bool):
         raise ValueError("qualified must be explicitly True or False.")
     updated = dict(lead)
+    if business_need:
+        updated["business_need"] = str(business_need).strip()
     if qualified:
         updated["qualified"] = True
         updated["status"] = QUALIFIED

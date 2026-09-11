@@ -90,6 +90,15 @@ class LeadDB:
         self.conn.commit()
         return cursor.rowcount == 1
 
+    def all_leads(self):
+        rows = self.conn.execute("SELECT payload FROM leads ORDER BY rowid").fetchall()
+        result = []
+        for row in rows:
+            payload = json.loads(row[0])
+            if isinstance(payload, dict):
+                result.append(payload)
+        return result
+
     def get(self, fingerprint: str) -> Optional[Dict[str, Any]]:
         row = self.conn.execute("SELECT payload FROM leads WHERE fingerprint = ?", (fingerprint,)).fetchone()
         if not row:

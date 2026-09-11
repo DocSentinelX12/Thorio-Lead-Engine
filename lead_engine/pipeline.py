@@ -252,30 +252,8 @@ class LeadPipeline:
         # ---------------------------------------------------------
 
         if existing is not None:
-
-            if self._status_is_qualified(
-                existing
-            ):
-                return {
-                    "status": "duplicate",
-                    "accepted": False,
-                    "duplicate": True,
-                    "fingerprint": fingerprint,
-                    "lead": existing,
-                    "potential_routes": possible_routes,
-                    "lead_score": existing.get(
-                        "lead_score",
-                        scoring["lead_score"],
-                    ),
-                    "priority": existing.get(
-                        "priority",
-                        scoring["priority"],
-                    ),
-                    "sync_status": None,
-                    "sync_error": None,
-                    "airtable_record": None,
-                }
-
+            # Persistence collision only. This is NOT deduplication.
+            # The signal must remain eligible for research and qualification.
             stored = self.db.update_payload(
                 fingerprint,
                 payload,
@@ -377,6 +355,7 @@ class LeadPipeline:
         *,
         qualified: bool,
         reason: str = "",
+        business_need: str = "",
     ) -> Dict[str, Any]:
 
         lead = self.db.get(
@@ -392,6 +371,7 @@ class LeadPipeline:
             lead,
             qualified=qualified,
             reason=reason,
+            business_need=business_need,
         )
 
         if qualified:
@@ -574,15 +554,23 @@ class LeadPipeline:
                 f"Lead disappeared before finalization: {fingerprint}"
             )
 
-        # The existing record is the canonical record for this
-        # fingerprint. It has already passed qualification, so the
-        # finalization step must not reject the record as a duplicate
-        # of itself.
-        #
-        # Duplicate protection applies when another already-qualified
-        # canonical record exists for the same final identity.
-        #
-        # The database fingerprint remains authoritative.
+        # STRICT PHASE 6 FINAL DEDUPLICATION
+        # This is the first and only duplicate gate. It runs after research
+        # and explicit qualification. Identity, company, person, URL, domain,
+        # source, and prior observation never independently cause rejection.
+        # A duplicate requires the same company + same person + exact verified
+        # business need. If the need is missing or uncertain, keep the lead.
+        duplicate = self.dedupe.find_exact_duplicate(lead)
+        if duplicate is not None:
+            return {
+                "status": "duplicate",
+                "approved": False,
+                "duplicate": True,
+                "fingerprint": fingerprint,
+                "lead": lead,
+                "duplicate_of": duplicate.get("fingerprint"),
+                "reason": "exact_company_person_need_match",
+            }
 
         final_route = route(
             company=str(
