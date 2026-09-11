@@ -76,7 +76,7 @@ def _load_free_source_catalog() -> Tuple[SourceDefinition, ...]:
             raise RuntimeError(f"Duplicate free source URL: {url}")
         seen_names.add(normalized_name)
         seen_urls.add(normalized_url)
-        if not enabled:
+        if not enabled or entry.get("allowed_for_thorio", True) is False:
             continue
 
         provider = entry.get("provider", name)
