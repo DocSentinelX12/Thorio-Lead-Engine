@@ -226,7 +226,6 @@ def _json_candidates(payloads: List[Any], base_url: str) -> List[Dict[str, Any]]
 
 def _html_candidates(parser: _HtmlJobParser, base_url: str) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
-    seen_urls = set()
 
     for node in parser.nodes:
         if not _has_word(node.classes, _JOB_CONTAINER_WORDS):
@@ -263,9 +262,6 @@ def _html_candidates(parser: _HtmlJobParser, base_url: str) -> List[Dict[str, An
             continue
 
         for url, _ in links:
-            if url in seen_urls:
-                continue
-            seen_urls.add(url)
             candidates.append({
                 "title": title,
                 "company": company,
@@ -294,20 +290,14 @@ def extract_html_job_records(
     candidates.extend(_html_candidates(parser, source_url))
 
     records: List[Dict[str, Any]] = []
-    seen = set()
     for candidate in candidates:
         record = normalize_job_record(
             candidate,
             source=source,
             source_url=source_url,
         )
-        if record is None:
-            continue
-        key = record["url"]
-        if key in seen:
-            continue
-        seen.add(key)
-        records.append(record)
+        if record is not None:
+            records.append(record)
     return records
 
 
