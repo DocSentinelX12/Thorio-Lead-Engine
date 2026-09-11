@@ -117,7 +117,7 @@ def _humanize_signal(signal: str) -> str:
     text = signal.strip().rstrip(".!?")
     if not text:
         return "the need you mentioned"
-    return text[0].lower() + text[1:]
+    return text
 
 
 def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
