@@ -1,0 +1,47 @@
+name: Phase 6 full diagnostic
+
+on:
+  push:
+    paths:
+      - .github/workflows/phase6_full_diag.yml
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          python -m pip install pytest pytest-timeout
+      - name: Apply Phase 6 state
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+          source = Path('.github/workflows/phase6_fix.yml').read_text()
+          marker = '          python - <<\'PY\'\n'
+          body = source.split(marker, 1)[1].split('\n          PY', 1)[0]
+          exec(textwrap.dedent(body), {'__name__': '__phase6_patch__'})
+          p = Path('lead_engine/dedupe.py')
+          s = p.read_text()
+          old = '''    def find_exact_duplicate(self, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:\n        key = self.exact_need_key(lead)\n'''
+          new = '''    def find_exact_duplicate(self, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:\n        if not self._qualified(lead):\n            return None\n        key = self.exact_need_key(lead)\n'''
+          p.write_text(s.replace(old, new, 1))
+          Path('lead_engine/test_dedupe.py').write_text('''from .dedupe import Dedupe\nclass DB:\n    def __init__(self, rows): self.rows = rows\n    def all_leads(self): return list(self.rows)\ndef lead(c,p,n,f,q=True): return {"company":c,"person":p,"business_need":n,"fingerprint":f,"qualified":q,"qualification_status":"qualified" if q else "in_review"}\ndef test_final_rules():\n    e=lead("Acme","Alex","AI agents","1",True); d=Dedupe(DB([e]))\n    assert d.find_exact_duplicate(lead("Beta","Alex","AI agents","2",True)) is None\n    assert d.find_exact_duplicate(lead("Acme","Jordan","AI agents","3",True)) is None\n    assert d.find_exact_duplicate(lead("Acme","Alex","mobile app","4",True)) is None\n    assert d.find_exact_duplicate(lead("Acme","Alex","AI agents","5",False)) is None\n    assert d.find_exact_duplicate(lead("Acme","Alex","AI agents","6",True)) == e\n''')
+          PY
+      - name: Capture full suite
+        run: |
+          set +e
+          python -m pytest -vv -ra --tb=long > full-suite.log 2>&1
+          status=$?
+          cat full-suite.log
+          echo "EXIT=$status" >> full-suite.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase6-full-suite-failure
+          path: full-suite.log
