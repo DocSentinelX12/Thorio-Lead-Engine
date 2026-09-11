@@ -96,6 +96,7 @@ jobs:
           import json
           import os
           import urllib.error
+          import urllib.parse
           import urllib.request
 
           base_id = os.environ["AIRTABLE_BASE_ID"]
@@ -164,7 +165,7 @@ jobs:
                   raise SystemExit(1)
 
               selected = (label, token)
-              print(f"AIRTABlE CREDENTIAL VERIFIED: {label} can create a record using Applicable Routes=Thorio and can clean up the probe record.")
+              print(f"AIRTABLE CREDENTIAL VERIFIED: {label} can create a record using Applicable Routes=Thorio and can clean up the probe record.")
               break
 
           if selected is None:
