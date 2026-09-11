@@ -1,5 +1,8 @@
+import pytest
+
 from .agent_orchestrator import AgentOrchestrator
 from .agent_queue import enqueue, pending
+from .agent_registry import ALL_AGENT_ROLES
 from .database import LeadDB
 
 
@@ -56,12 +59,25 @@ def test_orchestrator_drain_round_limit_is_bounded(tmp_path, monkeypatch):
     assert result["remaining_queue_count"] > 0
 
 
+def test_orchestrator_execution_workers_support_large_production_ceiling(tmp_path, monkeypatch):
+    monkeypatch.setenv("THORIO_AGENT_EXECUTION_WORKERS", "128")
+    db = LeadDB(data_dir=tmp_path)
+    orchestrator = AgentOrchestrator(db)
+
+    assert orchestrator._execution_workers() == 128
+    assert sum(role.max_concurrency for role in ALL_AGENT_ROLES) >= 128
+
+
+def test_orchestrator_execution_workers_remain_hard_capped(tmp_path, monkeypatch):
+    monkeypatch.setenv("THORIO_AGENT_EXECUTION_WORKERS", "9999")
+    db = LeadDB(data_dir=tmp_path)
+    orchestrator = AgentOrchestrator(db)
+
+    assert orchestrator._execution_workers() == 128
+
+
 def test_orchestrator_rejects_non_positive_agent_limit(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     orchestrator = AgentOrchestrator(db)
-    try:
+    with pytest.raises(ValueError, match="limit_per_agent"):
         orchestrator.run_all_once(limit_per_agent=0)
-    except ValueError as exc:
-        assert "limit_per_agent" in str(exc)
-    else:
-        raise AssertionError("Expected ValueError for non-positive limit")
