@@ -203,7 +203,11 @@ def install() -> None:
         return
 
     def patched() -> Tuple[SourceDefinition, ...]:
-        return _apply_overrides(original())
+        return tuple(
+            definition
+            for definition in _apply_overrides(original())
+            if definition.enabled and definition.allowed_for_thorio
+        )
 
     patched._thorio_source_overrides = True
     source_registry._load_free_source_catalog = patched
