@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim, complete, enqueue, enqueue_many, heartbeat, pending
+from .agent_registry import agent_registry
 from .database import LeadDB
 
 
@@ -55,8 +56,7 @@ def test_concurrent_queue_claim_is_atomic_and_unique(tmp_path):
     )
     assert len(tasks) == 20
 
-    # Hold all claimers at the same point so the capacity check is genuinely
-    # concurrent. x_signal has a role capacity of five.
+    role_capacity = agent_registry()["x_signal"].max_concurrency
     barrier = Barrier(20)
 
     def claim_once(index):
@@ -79,10 +79,10 @@ def test_concurrent_queue_claim_is_atomic_and_unique(tmp_path):
         results = list(executor.map(claim_once, range(20)))
 
     claimed_ids = [item[0]["task_id"] for item in results if item]
-    assert len(claimed_ids) == 5
+    assert len(claimed_ids) == role_capacity
     assert len(set(claimed_ids)) == len(claimed_ids)
-    assert len({task["task_id"] for task in tasks} & set(claimed_ids)) == 5
-    assert len(pending(db, "x_signal")) == 15
+    assert len({task["task_id"] for task in tasks} & set(claimed_ids)) == role_capacity
+    assert len(pending(db, "x_signal")) == 20 - role_capacity
 
 
 def test_enqueue_many_uses_incremental_queue_persistence(tmp_path, monkeypatch):
