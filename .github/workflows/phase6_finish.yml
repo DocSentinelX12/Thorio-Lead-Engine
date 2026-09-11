@@ -21,111 +21,74 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
           python -m pip install pytest pytest-timeout
-      - name: Apply surgical Phase 6 fixes
+      - name: Apply Phase 6 implementation and surgical repairs
         run: |
           python - <<'PY'
           from pathlib import Path
           import re, textwrap
 
-          # Preserve the existing Phase 6 patch as a base, then correct the
-          # five concrete defects exposed by the last regression run.
+          # Start from the repository's existing Phase 6 implementation patch.
           source = Path('.github/workflows/phase6_fix.yml').read_text()
           marker = "          python - <<'PY'\n"
           body = source.split(marker, 1)[1].split("\n          PY", 1)[0]
           exec(textwrap.dedent(body), {'__name__': '__phase6_patch__'})
 
-          # 1/5: observation identity must include discovery time. This makes
-          # persistence identity an observation identity, not business dedupe.
-          p = Path('lead_engine/lead_identity.py')
-          p.write_text('''from __future__ import annotations\n\nimport hashlib\nimport re\nfrom typing import Any, Dict\n\n\ndef normalize_identity_value(value: Any) -> str:\n    text = str(value or "").strip().lower()\n    return re.sub(r"\\s+", " ", text)\n\n\ndef lead_identity(lead: Dict[str, Any]) -> str:\n    """Return the deterministic identity of one persisted observation."""\n    source = normalize_identity_value(lead.get("source"))\n    source_id = normalize_identity_value(lead.get("source_id"))\n    url = normalize_identity_value(lead.get("url") or lead.get("source_url"))\n    company = normalize_identity_value(lead.get("company"))\n    person = normalize_identity_value(lead.get("person") or lead.get("contact_name"))\n    job_title = normalize_identity_value(lead.get("job_title"))\n    signal_type = normalize_identity_value(lead.get("signal_type"))\n    discovered_at = normalize_identity_value(lead.get("discovered_at"))\n    raw_identity = (\n        f"source:{source}|source_id:{source_id}|url:{url}|"\n        f"company:{company}|person:{person}|job_title:{job_title}|"\n        f"signal_type:{signal_type}|discovered_at:{discovered_at}"\n    )\n    return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()\n\n\ndef add_lead_identity(lead: Dict[str, Any]) -> Dict[str, Any]:\n    result = dict(lead)\n    result["lead_identity"] = lead_identity(result)\n    return result\n''')
+          # Observation identity is persistence identity. Discovery time must
+          # distinguish separate observations, while business dedupe remains a
+          # separate finalization concern.
+          Path('lead_engine/lead_identity.py').write_text('''from __future__ import annotations\nimport hashlib\nimport re\nfrom typing import Any, Dict\n\ndef normalize_identity_value(value: Any) -> str:\n    return re.sub(r"\\s+", " ", str(value or "").strip().lower())\n\ndef lead_identity(lead: Dict[str, Any]) -> str:\n    parts = (\n        ("source", lead.get("source")),\n        ("source_id", lead.get("source_id")),\n        ("url", lead.get("url") or lead.get("source_url")),\n        ("company", lead.get("company")),\n        ("person", lead.get("person") or lead.get("contact_name")),\n        ("job_title", lead.get("job_title")),\n        ("signal_type", lead.get("signal_type")),\n        ("discovered_at", lead.get("discovered_at")),\n    )\n    raw = "|".join(f"{key}:{normalize_identity_value(value)}" for key, value in parts)\n    return hashlib.sha256(raw.encode("utf-8")).hexdigest()\n\ndef add_lead_identity(lead: Dict[str, Any]) -> Dict[str, Any]:\n    result = dict(lead)\n    result["lead_identity"] = lead_identity(result)\n    return result\n''')
 
-          # Ensure the Lead model feeds discovered_at into the observation key.
+          # The Lead model must include observation time in its fingerprint and
+          # carry the explicit qualification business need.
           p = Path('lead_engine/models.py')
           s = p.read_text()
-          old_identity = '''        identity_payload = {\n            "source": self.source,\n            "source_id": self.source_id,\n            "url": self.url,\n            "company": self.company,\n            "person": self.person,\n            "signal": self.signal,\n            "job_title": self.job_title,\n            "signal_type": self.signal_type,\n        }'''
-          new_identity = '''        identity_payload = {\n            "source": self.source,\n            "source_id": self.source_id,\n            "url": self.url,\n            "company": self.company,\n            "person": self.person,\n            "signal": self.signal,\n            "job_title": self.job_title,\n            "signal_type": self.signal_type,\n            "discovered_at": self.discovered_at,\n        }'''
-          if old_identity in s:
-              s = s.replace(old_identity, new_identity, 1)
           if '    business_need: str = ""' not in s:
               s = s.replace('    signal_type: str = ""\n', '    signal_type: str = ""\n    business_need: str = ""\n', 1)
+          if '"discovered_at": self.discovered_at' not in s:
+              s = s.replace('            "signal_type": self.signal_type,\n', '            "signal_type": self.signal_type,\n            "discovered_at": self.discovered_at,\n', 1)
           p.write_text(s)
 
-          # 2/5: Dedupe is only the final business-opportunity gate. The old
-          # accept() remains a persistence helper and never performs business
-          # duplicate logic.
-          p = Path('lead_engine/dedupe.py')
-          p.write_text('''from __future__ import annotations\n\nimport re\nfrom typing import Any, Dict, Optional\n\nfrom .models import Lead\n\nQUALIFIED_STATUSES = {"qualified", "approved", "accepted"}\n\n\ndef _norm(value: Any) -> str:\n    return re.sub(r"\\s+", " ", str(value or "").strip().lower())\n\n\nclass Dedupe:\n    """Final post-qualification exact business-opportunity dedupe."""\n\n    def __init__(self, db):\n        self.db = db\n\n    @staticmethod\n    def _qualified(payload: Dict[str, Any]) -> bool:\n        if payload.get("qualified") is True:\n            return True\n        return any(_norm(payload.get(key)) in QUALIFIED_STATUSES for key in ("qualification_status", "review_status", "status"))\n\n    @staticmethod\n    def exact_need_key(payload: Dict[str, Any]) -> str:\n        company = _norm(payload.get("company"))\n        person = _norm(payload.get("person") or payload.get("contact_name"))\n        need = _norm(payload.get("business_need"))\n        if not company or not person or not need:\n            return ""\n        return f"company:{company}|person:{person}|need:{need}"\n\n    def find_exact_duplicate(self, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:\n        # A candidate cannot be blocked until it has itself passed qualification.\n        if not self._qualified(lead):\n            return None\n        key = self.exact_need_key(lead)\n        if not key:\n            return None\n        current = str(lead.get("fingerprint") or "")\n        for existing in self.db.all_leads():\n            if not isinstance(existing, dict):\n                continue\n            if str(existing.get("fingerprint") or "") == current:\n                continue\n            if self._qualified(existing) and self.exact_need_key(existing) == key:\n                return existing\n        return None\n\n    def accept(self, lead: Lead) -> bool:\n        """Persist an observation by its observation fingerprint only."""\n        payload = lead.to_dict()\n        return self.db.insert_if_new(payload)\n''')
+          # Final gate: exact company + person + business_need, and only when
+          # both candidate and existing record are qualified.
+          Path('lead_engine/dedupe.py').write_text('''from __future__ import annotations\nimport re\nfrom typing import Any, Dict, Optional\n\nfrom .models import Lead\n\nQUALIFIED_STATUSES = {"qualified", "approved", "accepted"}\n\ndef _norm(value: Any) -> str:\n    return re.sub(r"\\s+", " ", str(value or "").strip().lower())\n\nclass Dedupe:\n    def __init__(self, db):\n        self.db = db\n\n    @staticmethod\n    def _qualified(payload: Dict[str, Any]) -> bool:\n        if payload.get("qualified") is True:\n            return True\n        return any(_norm(payload.get(key)) in QUALIFIED_STATUSES for key in ("qualification_status", "review_status", "status"))\n\n    @staticmethod\n    def exact_need_key(payload: Dict[str, Any]) -> str:\n        company = _norm(payload.get("company"))\n        person = _norm(payload.get("person") or payload.get("contact_name"))\n        need = _norm(payload.get("business_need"))\n        if not company or not person or not need:\n            return ""\n        return f"company:{company}|person:{person}|need:{need}"\n\n    def find_exact_duplicate(self, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:\n        if not self._qualified(lead):\n            return None\n        key = self.exact_need_key(lead)\n        if not key:\n            return None\n        current = str(lead.get("fingerprint") or "")\n        for existing in self.db.all_leads():\n            if not isinstance(existing, dict):\n                continue\n            if str(existing.get("fingerprint") or "") == current:\n                continue\n            if self._qualified(existing) and self.exact_need_key(existing) == key:\n                return existing\n        return None\n\n    def accept(self, lead: Lead) -> bool:\n        return self.db.insert_if_new(lead.to_dict())\n''')
 
-          # 3/5: final dedupe needs a complete local record scan.
           p = Path('lead_engine/database.py')
           s = p.read_text()
           if '    def all_leads(self):' not in s:
-              anchor = '    def pending(self, limit=50):\n'
-              method = '''    def all_leads(self):\n        rows = self.conn.execute("SELECT payload FROM leads ORDER BY rowid").fetchall()\n        result = []\n        for row in rows:\n            payload = json.loads(row[0])\n            if isinstance(payload, dict):\n                result.append(payload)\n        return result\n\n'''
-              s = s.replace(anchor, method + anchor, 1)
+              method = '''    def all_leads(self):\n        rows = self.conn.execute("SELECT payload FROM leads ORDER BY rowid").fetchall()\n        return [json.loads(row[0]) for row in rows if isinstance(json.loads(row[0]), dict)]\n\n'''
+              s = s.replace('    def pending(self, limit=50):\n', method + '    def pending(self, limit=50):\n', 1)
           p.write_text(s)
 
-          # 4/5: business_need is explicit qualification data, not discovery
-          # identity. Missing need remains non-deduplicable.
           p = Path('lead_engine/qualification.py')
           s = p.read_text()
           s = s.replace('def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "") -> Dict[str, object]:', 'def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "", business_need: str = "") -> Dict[str, object]:', 1)
-          target = '    updated = dict(lead)\n    if qualified:\n'
-          replacement = '    updated = dict(lead)\n    if business_need:\n        updated["business_need"] = str(business_need).strip()\n    if qualified:\n'
-          if target in s:
-              s = s.replace(target, replacement, 1)
+          if 'if business_need:' not in s:
+              s = s.replace('    updated = dict(lead)\n    if qualified:\n', '    updated = dict(lead)\n    if business_need:\n        updated["business_need"] = str(business_need).strip()\n    if qualified:\n', 1)
           p.write_text(s)
 
-          # Remove the forbidden discovery-time qualified duplicate branch.
+          # The Phase 6 patch already moves the pipeline duplicate gate to
+          # finalize(). Only add the missing public business_need argument if
+          # the patch did not do so.
           p = Path('lead_engine/pipeline.py')
           s = p.read_text()
-          old_block = '''        existing = self.db.get(\n            fingerprint\n        )\n\n        # ---------------------------------------------------------\n        # DISCOVERY PERSISTENCE\n        # ---------------------------------------------------------\n        #\n        # Discovery must NOT perform final qualification dedupe.\n        #\n        # Every discovered lead must remain available for explicit\n        # human qualification.\n        #\n        # Existing qualified records are preserved. Existing\n        # unqualified records may be refreshed.\n        # ---------------------------------------------------------\n\n        if existing is not None:\n\n            if self._status_is_qualified(\n                existing\n            ):\n                return {\n                    "status": "duplicate",\n                    "accepted": False,\n                    "duplicate": True,\n                    "fingerprint": fingerprint,\n                    "lead": existing,\n                    "potential_routes": possible_routes,\n                    "lead_score": existing.get(\n                        "lead_score",\n                        scoring["lead_score"],\n                    ),\n                    "priority": existing.get(\n                        "priority",\n                        scoring["priority"],\n                    ),\n                    "sync_status": None,\n                    "sync_error": None,\n                    "airtable_record": None,\n                }\n\n            stored = self.db.update_payload(\n                fingerprint,\n                payload,\n            )\n\n            if stored is None:\n                raise ValueError(\n                    f"Unable to refresh existing lead: {fingerprint}"\n                )\n\n            payload = stored\n\n        else:\n            inserted = self.db.insert_if_new(\n                payload\n            )\n\n            if not inserted:\n                existing = self.db.get(\n                    fingerprint\n                )\n\n                if existing is None:\n                    raise ValueError(\n                        f"Unable to persist lead: {fingerprint}"\n                    )\n\n                payload = existing\n'''
-          new_block = '''        # ---------------------------------------------------------\n        # DISCOVERY PERSISTENCE\n        # ---------------------------------------------------------\n        # Discovery never performs business-opportunity dedupe.\n        # The fingerprint identifies this observation only.\n        # ---------------------------------------------------------\n        inserted = self.db.insert_if_new(payload)\n        if not inserted:\n            existing = self.db.get(fingerprint)\n            if existing is None:\n                raise ValueError(f"Unable to persist lead: {fingerprint}")\n            payload = existing\n'''
-          if old_block not in s:
-              raise SystemExit('Expected discovery dedupe block was not found')
-          s = s.replace(old_block, new_block, 1)
-
-          # Carry business_need through the public qualification boundary.
-          s = s.replace('        reason: str = "",\n    ) -> Dict[str, Any]:', '        reason: str = "",\n        business_need: str = "",\n    ) -> Dict[str, Any]:', 1)
-          s = s.replace('            qualified=qualified,\n            reason=reason,\n        )', '            qualified=qualified,\n            reason=reason,\n            business_need=business_need,\n        )', 1)
-
-          # Final exact-opportunity gate must execute before final routing/delivery.
-          marker = '''        # The existing record is the canonical record for this\n        # fingerprint. It has already passed qualification, so the\n        # finalization step must not reject the record as a duplicate\n        # of itself.\n        #\n        # Duplicate protection applies when another already-qualified\n        # canonical record exists for the same final identity.\n        #\n        # The database fingerprint remains authoritative.\n'''
-          replacement = '''        duplicate = self.dedupe.find_exact_duplicate(lead)\n        if duplicate is not None:\n            return {\n                "status": "duplicate",\n                "approved": False,\n                "duplicate": True,\n                "fingerprint": fingerprint,\n                "lead": lead,\n                "duplicate_of": duplicate.get("fingerprint"),\n                "reason": "exact_company_person_need_match",\n            }\n\n'''
-          if marker not in s:
-              raise SystemExit('Expected finalization insertion point was not found')
-          s = s.replace(marker, replacement, 1)
+          if '        business_need: str = "",\n' not in s:
+              s = s.replace('        reason: str = "",\n    ) -> Dict[str, Any]:', '        reason: str = "",\n        business_need: str = "",\n    ) -> Dict[str, Any]:', 1)
+          if '            business_need=business_need,\n' not in s:
+              s = s.replace('            qualified=qualified,\n            reason=reason,\n        )', '            qualified=qualified,\n            reason=reason,\n            business_need=business_need,\n        )', 1)
           p.write_text(s)
 
-          # 5/5: migrate tests that still assert forbidden discovery-time dedupe.
-          p = Path('lead_engine/test_dedupe.py')
-          p.write_text('''from .database import LeadDB\nfrom .dedupe import Dedupe\nfrom .models import Lead\n\n\ndef test_observation_persistence_does_not_business_dedupe(tmp_path):\n    db = LeadDB(data_dir=str(tmp_path))\n    dedupe = Dedupe(db)\n    lead_one = Lead(source="test", source_id="duplicate-001", url="https://example.com/jobs/duplicate-001", company="Acme", signal="remote software engineer", evidence="Remote software engineer opening found.", discovered_at="2026-01-01T00:00:00+00:00")\n    lead_two = Lead(source="test", source_id="duplicate-001", url="https://example.com/jobs/duplicate-001", company="Acme", signal="remote software engineer", evidence="Remote software engineer opening found.", discovered_at="2026-01-01T00:00:01+00:00")\n    assert dedupe.accept(lead_one) is True\n    assert dedupe.accept(lead_two) is True\n    assert db.stats()[0] == 2\n''')
+          # Migrate the one legacy persistence test. This test verifies storage
+          # identity, not final business-opportunity deduplication.
+          Path('lead_engine/test_dedupe.py').write_text('''from .database import LeadDB\nfrom .dedupe import Dedupe\nfrom .models import Lead\n\ndef test_observation_persistence_does_not_business_dedupe(tmp_path):\n    db = LeadDB(data_dir=str(tmp_path))\n    dedupe = Dedupe(db)\n    first = Lead(source="test", source_id="same", url="https://example.com/same", company="Acme", signal="remote engineer", evidence="opening", discovered_at="2026-01-01T00:00:00+00:00")\n    second = Lead(source="test", source_id="same", url="https://example.com/same", company="Acme", signal="remote engineer", evidence="opening", discovered_at="2026-01-01T00:00:01+00:00")\n    assert dedupe.accept(first) is True\n    assert dedupe.accept(second) is True\n    assert db.stats()[0] == 2\n''')
 
-          # The focused pipeline fixture must expose all persisted observations.
+          # Add the DB seam required by the final dedupe unit test.
           p = Path('lead_engine/test_pipeline_delivery_boundary.py')
           s = p.read_text()
           if '    def all_leads(self):' not in s:
               s = s.replace('    def mark_synced(self, fingerprint):\n', '    def all_leads(self):\n        return list(self.records.values())\n\n    def mark_synced(self, fingerprint):\n', 1)
           p.write_text(s)
 
-          # Replace the old final-dedupe test if it still exists in the committed tree.
-          s = p.read_text()
-          s = re.sub(r'def test_qualified_duplicate_is_blocked_after_qualification\(\):.*?(?=\n\ndef )', '''def test_exact_duplicate_is_blocked_only_at_finalization_after_qualification():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    first = pipeline.process(source="test", source_id="qualified-duplicate-1", url="https://example.com/jobs/qualified-duplicate-1", company="Acme", person="Alex", signal="remote software engineer", evidence="Remote software engineer opening.")\n    pipeline.qualify(first["fingerprint"], qualified=True, reason="Human review approved", business_need="hire a remote software engineer")\n    second = pipeline.process(source="test", source_id="qualified-duplicate-2", url="https://example.com/jobs/qualified-duplicate-2", company="Acme", person="Alex", signal="remote software engineer", evidence="Remote software engineer opening.")\n    assert second["status"] == "accepted"\n    pipeline.qualify(second["fingerprint"], qualified=True, reason="Human review approved", business_need="hire a remote software engineer")\n    final = pipeline.finalize(second["fingerprint"])\n    assert final["status"] == "duplicate"\n    assert final["duplicate"] is True\n''', s, count=1, flags=re.S)
-          p.write_text(s)
-
-          # Update identity tests to the locked observation semantics.
-          p = Path('lead_engine/test_lead_fingerprint.py')
-          s = p.read_text()
-          s = re.sub(r'def test_same_source_identity_matches\(\):.*?(?=\n\ndef )', '''def test_same_source_identity_does_not_collapse_distinct_company_observations():\n    first = {"source": "linkedin", "source_id": "abc-123", "company": "Acme"}\n    second = {"source": "linkedin", "source_id": "abc-123", "company": "Different Name"}\n    assert not same_lead(first, second)\n''', s, count=1, flags=re.S)
-          s = re.sub(r'def test_fingerprint_uses_canonical_lead_identity\(\):.*?(?=\n\ndef )', '''def test_fingerprint_includes_observation_context():\n    first = {"source": "linkedin", "source_id": "ABC-123", "company": "Acme", "route": "Thorio", "discovered_at": "2026-01-01T00:00:00+00:00"}\n    second = {"source": "linkedin", "source_id": "ABC-123", "company": "Acme", "route": "Thorio", "discovered_at": "2026-01-01T00:00:01+00:00"}\n    assert lead_fingerprint(first) != lead_fingerprint(second)\n''', s, count=1, flags=re.S)
-          p.write_text(s)
-
-          p = Path('lead_engine/test_lead_identity.py')
-          s = p.read_text()
-          s = re.sub(r'def test_identity_uses_source_and_source_id\(\):.*?(?=\n\ndef )', '''def test_identity_includes_observation_context():\n    first = {"source": "linkedin", "source_id": "ABC-123", "company": "Acme", "discovered_at": "2026-01-01T00:00:00+00:00"}\n    second = {"source": "linkedin", "source_id": "ABC-123", "company": "Acme", "discovered_at": "2026-01-01T00:00:01+00:00"}\n    assert lead_identity(first) != lead_identity(second)\n''', s, count=1, flags=re.S)
-          p.write_text(s)
-
-          # Remove temporary Phase 6 workflow files only after all patches are in the tree.
+          # Temporary Phase 6 workflows are tooling, not production code.
           for path in Path('.github/workflows').glob('phase6_*.yml'):
               path.unlink()
           PY
