@@ -75,7 +75,15 @@ class LeadScheduler:
             value = int(raw)
         except ValueError:
             value = 1
-        return max(1, min(value, 40))
+        return max(1, min(value, 64))
+
+    def _agent_drain_rounds(self) -> int:
+        raw = os.environ.get("THORIO_AGENT_DRAIN_ROUNDS", "4").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 4
+        return max(1, min(value, 32))
 
     def _collect_source(self, source: LeadSource, checkpoint: str):
         try:
@@ -253,7 +261,7 @@ class LeadScheduler:
 
         A bounded production invocation is an explicit execution request, so persisted
         polling deadlines must not suppress the requested first cycle. Each cycle uses
-        one specialist drain round to keep the bounded path predictable.
+        the configured specialist drain rounds, bounded by the scheduler's hard cap.
         """
         source_list = list(sources)
         if interval_seconds < 0:
@@ -268,7 +276,7 @@ class LeadScheduler:
             for source in source_list:
                 key = self._source_key(source)
                 self._next_run_at[key] = 0.0
-            cycle_results.append(self.run(source_list, agent_max_rounds=1))
+            cycle_results.append(self.run(source_list, agent_max_rounds=self._agent_drain_rounds()))
             if cycle_index + 1 < max_cycles:
                 time.sleep(interval_seconds)
 
