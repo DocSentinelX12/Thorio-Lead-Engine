@@ -1,0 +1,62 @@
+name: Phase 6 finalize 3
+
+on:
+  push:
+    paths:
+      - .github/workflows/phase6_finalize3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+          python -m pip install pytest pytest-timeout
+      - name: Apply Phase 6 code state
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+          source = Path('.github/workflows/phase6_finalize2.yml').read_text()
+          marker = '          python - <<\'PY\'\n'
+          body = source.split(marker, 1)[1].split('\n          PY', 1)[0]
+          exec(textwrap.dedent(body), {'__name__': '__phase6_patch__'})
+
+          # Replace the legacy discovery-level Dedupe.accept test. Dedupe is now
+          # deliberately final-only, so this test must exercise the final gate.
+          Path('lead_engine/test_dedupe.py').write_text('''from .dedupe import Dedupe\n\nclass DB:\n    def __init__(self, rows): self.rows = rows\n    def all_leads(self): return list(self.rows)\n\ndef lead(company, person, need, fp, qualified=True):\n    return {"company": company, "person": person, "business_need": need, "fingerprint": fp, "qualified": qualified, "qualification_status": "qualified" if qualified else "in_review"}\n\ndef test_final_duplicate_requires_exact_company_person_need_and_qualification():\n    existing = lead("Acme", "Alex", "remote software engineer", "1", True)\n    dedupe = Dedupe(DB([existing]))\n    assert dedupe.find_exact_duplicate(lead("Beta", "Alex", "remote software engineer", "2", True)) is None\n    assert dedupe.find_exact_duplicate(lead("Acme", "Jordan", "remote software engineer", "3", True)) is None\n    assert dedupe.find_exact_duplicate(lead("Acme", "Alex", "mobile application", "4", True)) is None\n    assert dedupe.find_exact_duplicate(lead("Acme", "Alex", "remote software engineer", "5", False)) is None\n    assert dedupe.find_exact_duplicate(lead("Acme", "Alex", "remote software engineer", "6", True)) == existing\n''')
+
+          # Production discovery must not report a duplicate. The exact duplicate
+          # is verified explicitly through finalization after both candidates qualify.
+          p = Path('lead_engine/test_production_integration.py')
+          s = p.read_text()
+          old = '''    qualified = application.service.runner.pipeline.qualify(fingerprint, qualified=True)\n    assert qualified["qualified"] is True\n    assert qualified["status"] == "Qualified"\n    second = application.run_sources([source])\n    assert second["results"][0]["result"]["accepted_count"] == 1\n    assert second["results"][0]["result"]["duplicate_count"] == 1\n'''
+          new = '''    qualified = application.service.runner.pipeline.qualify(\n        fingerprint, qualified=True, business_need="remote software engineer hiring need"\n    )\n    assert qualified["qualified"] is True\n    assert qualified["status"] == "Qualified"\n    second = application.run_sources([source])\n    assert second["results"][0]["result"]["accepted_count"] == 1\n    assert second["results"][0]["result"]["duplicate_count"] == 0\n    second_fingerprint = application.db.conn.execute(\n        "SELECT fingerprint FROM leads WHERE fingerprint != ? LIMIT 1",\n        (fingerprint,),\n    ).fetchone()[0]\n    second_qualified = application.service.runner.pipeline.qualify(\n        second_fingerprint, qualified=True, business_need="remote software engineer hiring need"\n    )\n    assert second_qualified["qualified"] is True\n    final = application.service.runner.pipeline.finalize(second_fingerprint)\n    assert final["status"] == "duplicate"\n    assert final["duplicate"] is True\n'''
+          if old not in s:
+              raise SystemExit('Production duplicate test target not found')
+          p.write_text(s.replace(old, new, 1))
+
+          # Remove all temporary Phase 6 workflows.
+          for path in Path('.github/workflows').glob('phase6_*.yml'):
+              path.unlink()
+          PY
+      - name: Run Phase 6 regression suite
+        run: python -m pytest -q lead_engine/test_phase6_opportunity_dedupe.py lead_engine/test_dedupe.py lead_engine/test_lead_fingerprint.py lead_engine/test_lead_identity.py lead_engine/test_opportunity_identity_and_agents.py lead_engine/test_pipeline_delivery_boundary.py lead_engine/test_production_integration.py
+      - name: Run full test suite
+        run: python -m pytest -q
+      - name: Commit verified Phase 6 implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lead_engine .github/workflows
+          git commit -m 'Finalize strict post-qualification opportunity deduplication' || exit 0
+          git push
