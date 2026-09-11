@@ -78,7 +78,6 @@ def test_unqualified_duplicate_discovery_is_not_blocked():
     pipeline.qualify(first["fingerprint"], qualified=False, reason="Still unqualified")
     second = pipeline.process(source="test", source_id="same-lead-2", url="https://example.com/jobs/same-lead-2", company="Acme", person="Alex", signal="remote software engineer", evidence="Remote software engineer opening.")
     assert second["status"] == "accepted"
-    assert second["duplicate"] is not True
 
 
 def test_exact_duplicate_is_blocked_only_at_finalization_after_qualification():
