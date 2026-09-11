@@ -7,7 +7,10 @@ from .advanced_agent_logic import advanced_handler_registry
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim_task, complete, enqueue, pending, retry
 from .compute_worker import ComputeWorkerClient, ComputeWorkerError
 
-REMOTE_SAFE_AGENTS = frozenset(advanced_handler_registry())
+REMOTE_SAFE_AGENTS = frozenset(
+    agent for agent in advanced_handler_registry()
+    if agent not in {"outreach_closer", "follow_up"}
+)
 REMOTE_WORKER_PREFIX = "remote-compute:"
 
 
