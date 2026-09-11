@@ -65,6 +65,44 @@ def test_html_fallback_extracts_embedded_json_job_data():
     assert result.records[0]["source_id"] == "job-123"
 
 
+def test_html_fallback_preserves_distinct_leads_that_share_one_url():
+    html = b"""
+    <article class="job-card">
+      <a class="job-title" href="/jobs/openings">
+        Senior Software Engineer
+      </a>
+      <div class="company">Alpha Corp</div>
+    </article>
+    <article class="job-card">
+      <a class="job-title" href="/jobs/openings">
+        Data Engineer
+      </a>
+      <div class="company">Beta Corp</div>
+    </article>
+    """
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        side_effect=[html, html],
+    ):
+        adapter = HtmlSourceAdapter(
+            url="https://example.com/jobs",
+            source="Example Source",
+        )
+        result = adapter.collect()
+
+    assert len(result.records) == 2
+    assert [record["job_title"] for record in result.records] == [
+        "Senior Software Engineer",
+        "Data Engineer",
+    ]
+    assert [record["company"] for record in result.records] == [
+        "Alpha Corp",
+        "Beta Corp",
+    ]
+    assert all(record["url"] == "https://example.com/jobs/openings" for record in result.records)
+
+
 def test_html_fallback_still_rejects_job_link_without_company():
     html = b"""
     <article class="job-card">
