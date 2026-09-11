@@ -66,13 +66,13 @@ class AgentOrchestrator:
 
     @staticmethod
     def _execution_workers() -> int:
-        """Bound concurrent specialist execution without pretending capacity is infinite."""
-        raw = os.environ.get("THORIO_AGENT_EXECUTION_WORKERS", "40").strip()
+        """Bound concurrent specialist execution at a production-sized ceiling."""
+        raw = os.environ.get("THORIO_AGENT_EXECUTION_WORKERS", "128").strip()
         try:
             value = int(raw)
         except ValueError:
-            value = 40
-        return max(1, min(value, 80))
+            value = 128
+        return max(1, min(value, 128))
 
     def _run_role_slot(self, role_name: str, slot: int) -> Dict[str, Any]:
         """Run one claimed specialist slot with an isolated SQLite connection.
