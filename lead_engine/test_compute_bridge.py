@@ -54,4 +54,4 @@ def test_remote_bridge_persists_completed_specialist_evidence_before_local_compl
         stored = db.get("lead-1")
         assert stored["specialist_findings"]["ai_demand_discovery"]["matched_event_count"] == 1
         assert any(item["agent"] == "ai_demand_discovery" for item in stored["specialist_evidence_events"])
-        assert any(item["agent"] == "qualification_a" for item in pending(db))
+        assert any(item["agent"] == "company_research" for item in pending(db))
