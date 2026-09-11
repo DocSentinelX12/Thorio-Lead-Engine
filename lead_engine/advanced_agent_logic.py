@@ -175,6 +175,8 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
         raise ValueError("company_research requires lead fingerprint")
+    existing = lead.get("company_research")
+    prior = dict(existing) if isinstance(existing, Mapping) else {}
     facts: Dict[str, Any] = {"company_verified": bool(company), "company_identity_evidence": f"Observed company name: {company}" if company else "", "business_context": signal, "current_need_evidence": signal, "recent_activity_evidence": evidence, "source_url": source_url, "evidence_event_count": len(events), "social_findings": social_findings, "researched_at": datetime.now(timezone.utc).isoformat(), "fabricated_fields": []}
     if social_findings:
         facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in social_findings if isinstance(item, Mapping) and item.get("source")})
@@ -182,10 +184,11 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     if person:
         facts["decision_maker"] = person
         facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
-        facts["decision_maker_verification_status"] = "observed_needs_role_verification"
-    existing = lead.get("company_research")
-    if isinstance(existing, Mapping):
-        prior = dict(existing)
+        if prior.get("decision_maker_verification_status") != "verified":
+            facts["decision_maker_verification_status"] = "observed_needs_role_verification"
+        else:
+            facts["decision_maker_verification_status"] = "verified"
+    if prior:
         prior_social = prior.get("social_findings") if isinstance(prior.get("social_findings"), list) else []
         merged_social = list(prior_social)
         for item in social_findings:
