@@ -48,7 +48,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
-      AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT || secrets.AIRTABLE_API_KEY }}
       AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
       AIRTABLE_API_KEY_CANDIDATE: ${{ secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
@@ -174,6 +173,16 @@ jobs:
 
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
               env_file.write(f"AIRTABLE_API_KEY={selected[1]}\n")
+          PY
+      - name: Verify selected Airtable credential is available to production runtime
+        run: |
+          python - <<'PY'
+          import os
+          token = os.environ.get("AIRTABLE_API_KEY", "").strip()
+          if not token:
+              print("AIRTABLE RUNTIME CREDENTIAL FAILURE: selected credential was not propagated to the production runtime.")
+              raise SystemExit(1)
+          print("AIRTABLE RUNTIME CREDENTIAL VERIFIED: the credential selected by the write probe is available to subsequent production steps.")
           PY
       - name: Verify account authentication configuration
         run: |
