@@ -240,8 +240,8 @@ class LeadScheduler:
                 max_rounds=agent_max_rounds,
             )
         remote_after = self._bridge_remote()
-        sync_result = sync_pending(db)
         paxus_research = process_paxus_research_queue(db)
+        sync_result = sync_pending(db)
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
