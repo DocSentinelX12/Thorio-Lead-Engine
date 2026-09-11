@@ -8,8 +8,12 @@ from lead_engine.delivery_policy import (
 def valid_lead():
     return {
         "company": "Acme",
+        "person": "Jane Doe",
         "route": "Shiftr",
         "lead_score": MIN_DELIVERY_SCORE,
+        "qualified": True,
+        "qualification_status": "qualified",
+        "business_need": "Build a remote AI engineering team",
         "signal": "remote software engineer",
         "evidence": "Acme is hiring a remote software engineer.",
         "url": "https://example.com/jobs/123",
@@ -19,6 +23,38 @@ def valid_lead():
 def test_valid_lead_is_delivery_ready():
     assert is_delivery_ready(valid_lead()) is True
     assert delivery_rejection_reason(valid_lead()) == ""
+
+
+def test_unqualified_lead_is_rejected_before_route_checks():
+    lead = valid_lead()
+    lead["qualified"] = False
+
+    assert is_delivery_ready(lead) is False
+    assert delivery_rejection_reason(lead) == "lead_not_qualified"
+
+
+def test_qualified_flag_without_qualification_status_is_rejected():
+    lead = valid_lead()
+    lead["qualification_status"] = "review"
+
+    assert is_delivery_ready(lead) is False
+    assert delivery_rejection_reason(lead) == "lead_not_qualified"
+
+
+def test_missing_business_need_is_rejected():
+    lead = valid_lead()
+    lead["business_need"] = ""
+
+    assert is_delivery_ready(lead) is False
+    assert delivery_rejection_reason(lead) == "missing_business_need"
+
+
+def test_missing_contact_is_rejected():
+    lead = valid_lead()
+    lead["person"] = ""
+
+    assert is_delivery_ready(lead) is False
+    assert delivery_rejection_reason(lead) == "missing_contact"
 
 
 def test_review_route_is_not_delivery_ready():
