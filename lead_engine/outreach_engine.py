@@ -113,6 +113,25 @@ def _subject(route: str, signal: str) -> str:
     return f"Re: {short}" if short else f"A possible fit for {route}"
 
 
+def _humanize_signal(signal: str) -> str:
+    text = signal.strip().rstrip(".!?")
+    if not text:
+        return "the need you mentioned"
+    return text[0].lower() + text[1:]
+
+
+def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
+    need = _humanize_signal(signal)
+    offer = _offer(route)
+    return (
+        f"Hi {contact_name},\n\n"
+        f"I saw that {need}. If that is still a priority at {company}, I may be able to help.\n\n"
+        f"I work with {offer}. Based on what you shared, it looks worth a quick conversation to see whether there is a real fit.\n\n"
+        f"Would it be useful if I sent over the most relevant option?\n\n"
+        f"Best,\nThorio"
+    )
+
+
 def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] = None) -> OutreachDecision:
     if _text(lead.get("research_status")).lower() != "complete":
         raise OutreachContractError("Completed company research is required before outreach")
@@ -127,14 +146,7 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
         raise OutreachContractError("A demonstrated current need or recent inquiry is required")
     route = choose_route(lead)
     company = _text(lead.get("company") or research.get("company")) or "your team"
-    body = (
-        f"Hi {contact_name},\n\n"
-        f"I came across your recent signal about {signal}. "
-        f"That looks relevant to {company}'s current need.\n\n"
-        f"I work with { _offer(route) }. If this is still an active need, "
-        f"I can point you to the appropriate next step. If it is no longer relevant, no problem.\n\n"
-        f"Best,\nThorio"
-    )
+    body = _sales_body(route, contact_name, company, signal)
     current = _text(lead.get("outreach_state") or "ready").lower()
     if current in STOP_STATES:
         return OutreachDecision(route, contact_name, contact_email, "", "", _evidence_refs(lead), signal, current, None, current)
