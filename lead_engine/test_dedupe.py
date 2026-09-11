@@ -3,37 +3,11 @@ from .dedupe import Dedupe
 from .models import Lead
 
 
-def test_duplicate_lead_is_rejected(tmp_path):
-    db = LeadDB(
-        data_dir=str(tmp_path)
-    )
-
+def test_observation_persistence_does_not_business_dedupe(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
     dedupe = Dedupe(db)
-
-    lead_one = Lead(
-        source="test",
-        source_id="duplicate-001",
-        url="https://example.com/jobs/duplicate-001",
-        company="Acme",
-        signal="remote software engineer",
-        evidence="Remote software engineer opening found.",
-    )
-
-    lead_two = Lead(
-        source="test",
-        source_id="duplicate-001",
-        url="https://example.com/jobs/duplicate-001",
-        company="Acme",
-        signal="remote software engineer",
-        evidence="Remote software engineer opening found.",
-    )
-
-    first_accepted = dedupe.accept(lead_one)
-    second_accepted = dedupe.accept(lead_two)
-
-    assert first_accepted is True
-    assert second_accepted is False
-
-    stats = db.stats()
-
-    assert stats[0] == 1
+    first = Lead(source="test", source_id="same", url="https://example.com/same", company="Acme", signal="remote engineer", evidence="opening", discovered_at="2026-01-01T00:00:00+00:00")
+    second = Lead(source="test", source_id="same", url="https://example.com/same", company="Acme", signal="remote engineer", evidence="opening", discovered_at="2026-01-01T00:00:01+00:00")
+    assert dedupe.accept(first) is True
+    assert dedupe.accept(second) is True
+    assert db.stats()[0] == 2
