@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from .agent_queue import enqueue, pending
 from .agent_registry import ALL_AGENT_ROLES, agent_registry
 from .agent_specializations import get_specialization
 from .agent_workers import run_worker_once
+from .database import LeadDB
 
 
 class AgentOrchestrator:
@@ -62,12 +64,50 @@ class AgentOrchestrator:
             value = 8
         return max(1, min(value, 32))
 
+    @staticmethod
+    def _execution_workers() -> int:
+        """Bound concurrent specialist execution without pretending capacity is infinite."""
+        raw = os.environ.get("THORIO_AGENT_EXECUTION_WORKERS", "40").strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 40
+        return max(1, min(value, 80))
+
+    def _run_role_slot(self, role_name: str, slot: int) -> Dict[str, Any]:
+        """Run one claimed specialist slot with an isolated SQLite connection.
+
+        Production LeadDB connections are thread-affine. Each concurrent slot
+        therefore gets its own connection to the same WAL-backed database rather
+        than sharing a sqlite connection across threads. Lightweight test doubles
+        continue through the normal single-connection path in run_all_once.
+        """
+        if isinstance(self.db, LeadDB):
+            worker_db = LeadDB(data_dir=self.db.data_dir)
+            try:
+                worker = AgentOrchestrator(worker_db, worker_prefix=self.worker_prefix)
+                return worker.run_agent_once(
+                    role_name,
+                    worker_id=f"{self.worker_prefix}:{role_name}:{slot}:{uuid4().hex[:12]}",
+                    limit=1,
+                )
+            finally:
+                worker_db.close()
+        return self.run_agent_once(
+            role_name,
+            worker_id=f"{self.worker_prefix}:{role_name}:{slot}:{uuid4().hex[:12]}",
+            limit=1,
+        )
+
     def run_all_once(self, *, limit_per_agent: int = 1, max_rounds: int | None = None) -> Dict[str, Any]:
-        """Run specialist work in dependency rounds until the queue stops progressing.
+        """Run specialist work in dependency rounds with bounded real concurrency.
 
         ``max_rounds`` is an explicit per-invocation bound used by bounded
         production execution. When omitted, the normal environment-configured
-        drain limit is retained for continuous operation.
+        drain limit is retained for continuous operation. Within each round,
+        independent specialist slots execute concurrently up to the configured
+        execution-worker ceiling. Newly created downstream tasks remain for the
+        next dependency round, preserving ordering.
         """
         if limit_per_agent <= 0:
             raise ValueError("limit_per_agent must be greater than zero")
@@ -87,11 +127,24 @@ class AgentOrchestrator:
             if not queued_agents:
                 break
 
-            results: List[Dict[str, Any]] = []
+            jobs = []
+            registry = agent_registry()
             for role in ALL_AGENT_ROLES:
                 if role.name not in queued_agents:
                     continue
-                results.append(self.run_agent_once(role.name, limit=min(limit_per_agent, role.max_concurrency)))
+                slots = min(limit_per_agent, role.max_concurrency)
+                jobs.extend((role.name, slot) for slot in range(slots))
+
+            results: List[Dict[str, Any]] = []
+            max_workers = min(self._execution_workers(), max(1, len(jobs)))
+            if max_workers == 1:
+                for role_name, slot in jobs:
+                    results.append(self._run_role_slot(role_name, slot))
+            else:
+                with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="agent-worker") as executor:
+                    futures = [executor.submit(self._run_role_slot, role_name, slot) for role_name, slot in jobs]
+                    for future in as_completed(futures):
+                        results.append(future.result())
 
             claimed = sum(int(item.get("claimed_count", 0) or 0) for item in results)
             completed = sum(int(item.get("completed_count", 0) or 0) for item in results)
@@ -115,6 +168,7 @@ class AgentOrchestrator:
             "remaining_queue_count": len(remaining),
             "rounds": rounds,
             "agents": rounds[-1]["agents"] if rounds else [],
+            "execution_workers": self._execution_workers(),
         }
 
     def status(self) -> Dict[str, Any]:
