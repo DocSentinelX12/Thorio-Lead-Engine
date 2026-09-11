@@ -48,10 +48,10 @@ jobs:
     if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
     needs: test
     runs-on: ubuntu-latest
-    # Allow the full 60-minute production cycle plus setup, verification, and evidence capture.
     timeout-minutes: 75
     env:
-      AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT || secrets.AIRTABLE_API_KEY }}
+      AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
+      AIRTABLE_API_KEY_CANDIDATE: ${{ secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
       AIRTABLE_LEAD_TABLE: Lead Radar
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
@@ -85,6 +85,100 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Select and verify Airtable production credential
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          base_id = os.environ["AIRTABLE_BASE_ID"]
+          table = urllib.parse.quote(os.environ.get("AIRTABLE_LEAD_TABLE", "Lead Radar"), safe="")
+          url = f"https://api.airtable.com/v0/{base_id}/{table}"
+          candidates = [
+              ("AIRTABLE_PAT", os.environ.get("AIRTABLE_PAT_CANDIDATE", "").strip()),
+              ("AIRTABLE_API_KEY", os.environ.get("AIRTABLE_API_KEY_CANDIDATE", "").strip()),
+          ]
+          probe_id = f"__THORIO_CREDENTIAL_PROBE__{int(time.time())}"
+          probe_fields = {
+              "Lead": probe_id,
+              "Applicable Routes": ["Thorio"],
+          }
+          selected = None
+
+          for label, token in candidates:
+              if not token:
+                  print(f"{label}: not configured; skipping")
+                  continue
+              request = urllib.request.Request(
+                  url,
+                  data=json.dumps({"records": [{"fields": probe_fields}]}).encode("utf-8"),
+                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      status = response.status
+                      body = response.read().decode("utf-8", errors="replace")
+              except urllib.error.HTTPError as exc:
+                  status = exc.code
+                  body = exc.read().decode("utf-8", errors="replace")
+              except Exception as exc:
+                  print(f"{label}: write probe failed before HTTP response: {exc}")
+                  continue
+
+              if status not in (200, 201):
+                  print(f"{label}: write probe failed with HTTP {status}.")
+                  continue
+
+              try:
+                  payload = json.loads(body)
+              except json.JSONDecodeError:
+                  payload = {}
+              records = payload.get("records", []) if isinstance(payload, dict) else []
+              record_id = records[0].get("id") if records else None
+              if not record_id:
+                  print(f"{label}: write probe returned success without a record ID.")
+                  continue
+
+              selected = (label, token, record_id)
+              print(f"{label}: Thorio multiple-select write probe succeeded.")
+              break
+
+          if selected is None:
+              raise SystemExit("AIRTABLE CREDENTIAL FAILURE: no configured credential could perform the real Thorio route write probe.")
+
+          label, token, record_id = selected
+          delete_url = f"{url}/{urllib.parse.quote(record_id, safe='')}"
+          delete_request = urllib.request.Request(
+              delete_url,
+              headers={"Authorization": f"Bearer {token}"},
+              method="DELETE",
+          )
+          try:
+              with urllib.request.urlopen(delete_request, timeout=30) as response:
+                  if response.status not in (200, 202):
+                      raise SystemExit(f"AIRTABLE CREDENTIAL FAILURE: selected credential probe cleanup returned HTTP {response.status}.")
+          except urllib.error.HTTPError as exc:
+              raise SystemExit(f"AIRTABLE CREDENTIAL FAILURE: selected credential probe cleanup returned HTTP {exc.code}.")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"AIRTABLE_API_KEY={token}\n")
+              env_file.write(f"AIRTABLE_CREDENTIAL_SOURCE={label}\n")
+          print(f"AIRTABLE CREDENTIAL VERIFIED: {label} selected by a real Thorio route write and cleanup probe.")
+          PY
+      - name: Verify selected Airtable credential is available to production runtime
+        run: |
+          python - <<'PY'
+          import os
+          token = os.environ.get("AIRTABLE_API_KEY", "").strip()
+          source = os.environ.get("AIRTABLE_CREDENTIAL_SOURCE", "").strip()
+          if not token or not source:
+              raise SystemExit("AIRTABLE RUNTIME CREDENTIAL FAILURE: selected credential was not propagated to the production runtime.")
+          print(f"AIRTABLE RUNTIME CREDENTIAL VERIFIED: selected source={source}; secret value is not exposed.")
+          PY
       - name: Verify account authentication configuration
         run: |
           python - <<'PY'
@@ -163,12 +257,15 @@ jobs:
           position = 0
           while position < len(text):
               start = text.find("{", position)
-              if start == -1: break
-              try: candidate, end = decoder.raw_decode(text[start:])
+              if start == -1:
+                  break
+              try:
+                  candidate, end = decoder.raw_decode(text[start:])
               except json.JSONDecodeError:
                   position = start + 1
                   continue
-              if isinstance(candidate, dict): results.append(candidate)
+              if isinstance(candidate, dict):
+                  results.append(candidate)
               position = start + end
           if not results:
               print("PRODUCTION COLLECTION FAILURE: no valid Lead Engine result was found.")
@@ -187,6 +284,7 @@ jobs:
           sync_failed = 0
           sync_completed = 0
           sync_already_exists = 0
+          failures = []
           sync_evidence_found = False
           for result in results:
               sync = result.get("sync")
@@ -196,12 +294,18 @@ jobs:
               sync_failed += int(sync.get("failed_count", 0) or 0)
               sync_completed += int(sync.get("synced_count", 0) or 0)
               sync_already_exists += int(sync.get("already_exists_count", 0) or 0)
+              failed_items = sync.get("failed", [])
+              if isinstance(failed_items, list):
+                  failures.extend(item for item in failed_items if isinstance(item, dict))
 
           if not sync_evidence_found:
               print("AIRTABLE DELIVERY FAILURE: Lead Engine result did not contain synchronization evidence.")
               sys.exit(1)
           if sync_failed > 0:
               print(f"AIRTABLE DELIVERY FAILURE: {sync_failed} lead synchronization operation(s) failed and remain undelivered.")
+              for index, item in enumerate(failures[:20], 1):
+                  lead = item.get("lead") if isinstance(item.get("lead"), dict) else {}
+                  print(f"SYNC FAILURE {index}: fingerprint={lead.get('fingerprint', '')} company={lead.get('company', '')} route={lead.get('route', '')} error={item.get('error', '')}")
               sys.exit(1)
           if accepted_total > 0 and (sync_completed + sync_already_exists) <= 0:
               print(f"AIRTABLE DELIVERY FAILURE: accepted_total={accepted_total} but no successful or already-existing Airtable delivery was recorded.")
