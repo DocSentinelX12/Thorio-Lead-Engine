@@ -60,8 +60,9 @@ jobs:
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
       THORIO_FREE_ONLY: "1"
-      THORIO_SOURCE_COLLECTION_WORKERS: "40"
-      THORIO_AGENT_DRAIN_ROUNDS: "1"
+      THORIO_SOURCE_COLLECTION_WORKERS: "64"
+      THORIO_AGENT_EXECUTION_WORKERS: "128"
+      THORIO_AGENT_DRAIN_ROUNDS: "4"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
       THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
       THORIO_ACCOUNT_X_USERNAME: ${{ secrets.THORIO_ACCOUNT_X_USERNAME }}
@@ -92,6 +93,7 @@ jobs:
           import os
           import time
           import urllib.error
+          import urllib.parse
           import urllib.request
 
           base_id = os.environ["AIRTABLE_BASE_ID"]
@@ -102,10 +104,7 @@ jobs:
               ("AIRTABLE_API_KEY", os.environ.get("AIRTABLE_API_KEY_CANDIDATE", "").strip()),
           ]
           probe_id = f"__THORIO_CREDENTIAL_PROBE__{int(time.time())}"
-          probe_fields = {
-              "Lead": probe_id,
-              "Applicable Routes": ["Thorio"],
-          }
+          probe_fields = {"Lead": probe_id, "Applicable Routes": ["Thorio"]}
           selected = None
 
           for label, token in candidates:
@@ -128,11 +127,9 @@ jobs:
               except Exception as exc:
                   print(f"{label}: write probe failed before HTTP response: {exc}")
                   continue
-
               if status not in (200, 201):
                   print(f"{label}: write probe failed with HTTP {status}.")
                   continue
-
               try:
                   payload = json.loads(body)
               except json.JSONDecodeError:
@@ -142,7 +139,6 @@ jobs:
               if not record_id:
                   print(f"{label}: write probe returned success without a record ID.")
                   continue
-
               selected = (label, token, record_id)
               print(f"{label}: Thorio multiple-select write probe succeeded.")
               break
@@ -152,11 +148,7 @@ jobs:
 
           label, token, record_id = selected
           delete_url = f"{url}/{urllib.parse.quote(record_id, safe='')}"
-          delete_request = urllib.request.Request(
-              delete_url,
-              headers={"Authorization": f"Bearer {token}"},
-              method="DELETE",
-          )
+          delete_request = urllib.request.Request(delete_url, headers={"Authorization": f"Bearer {token}"}, method="DELETE")
           try:
               with urllib.request.urlopen(delete_request, timeout=30) as response:
                   if response.status not in (200, 202):
@@ -210,7 +202,8 @@ jobs:
               raise SystemExit(1)
           if missing:
               print("FREE SOURCE WIRING FAILURE: catalog entries missing from configured runtime sources:")
-              for name in missing: print(f"- {name}")
+              for name in missing:
+                  print(f"- {name}")
               raise SystemExit(1)
           print("FREE SOURCE WIRING VERIFIED: the complete enabled public catalog is handed to the runtime source registry in addition to discovery account layers.")
           PY
@@ -280,7 +273,6 @@ jobs:
           if not successful_source_counts or max(successful_source_counts) <= 0:
               print("PRODUCTION COLLECTION FAILURE: no configured source reported successful collection.")
               sys.exit(1)
-
           sync_failed = 0
           sync_completed = 0
           sync_already_exists = 0
@@ -297,7 +289,6 @@ jobs:
               failed_items = sync.get("failed", [])
               if isinstance(failed_items, list):
                   failures.extend(item for item in failed_items if isinstance(item, dict))
-
           if not sync_evidence_found:
               print("AIRTABLE DELIVERY FAILURE: Lead Engine result did not contain synchronization evidence.")
               sys.exit(1)
@@ -310,7 +301,6 @@ jobs:
           if accepted_total > 0 and (sync_completed + sync_already_exists) <= 0:
               print(f"AIRTABLE DELIVERY FAILURE: accepted_total={accepted_total} but no successful or already-existing Airtable delivery was recorded.")
               sys.exit(1)
-
           print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, successful_source_count={max(successful_source_counts)}")
           print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, failed_count={sync_failed}")
           PY
