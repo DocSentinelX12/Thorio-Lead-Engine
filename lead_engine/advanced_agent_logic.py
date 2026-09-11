@@ -96,8 +96,8 @@ def _source_signal(agent: str, payload: Mapping[str, Any], db: Any = None) -> Di
     normalized["provenance"] = provenance
     handoffs = []
     if fingerprint and lead is not None:
-        tasks = [{"agent": "qualification_a", "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, "priority": 1, "dedupe_key": f"qualification_a:{fingerprint}"}]
-        handoffs.append("qualification_a")
+        tasks = [{"agent": "company_research", "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, "priority": 7, "dedupe_key": f"company_research:{fingerprint}"}]
+        handoffs.append("company_research")
         for discovery_agent in DISCOVERY_TARGETS:
             tasks.append({"agent": discovery_agent, "payload": {"lead": dict(lead), "evidence_events": [normalized], "source_lane": agent}, "priority": 3, "dedupe_key": f"{discovery_agent}:{fingerprint}:{agent}"})
             handoffs.append(discovery_agent)
@@ -126,8 +126,8 @@ def discovery_finding(agent: str, payload: Mapping[str, Any], db: Any = None) ->
     handoff = None
     if findings and fingerprint and db is not None:
         stored_lead = db.get(fingerprint) or dict(lead)
-        enqueue(db, "qualification_a", {"lead": stored_lead, "evidence_events": events, "discovery_agent": agent, "discovery_findings": findings}, priority=4, dedupe_key=f"qualification_a:{fingerprint}")
-        handoff = "qualification_a"
+        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "discovery_agent": agent, "discovery_findings": findings}, priority=7, dedupe_key=f"company_research:{fingerprint}")
+        handoff = "company_research"
     return {"agent": agent, "role": "discovery_intelligence", "fingerprint": fingerprint, "target": agent.removesuffix("_discovery"), "matched_event_count": len(findings), "recent_event_count": recent_count, "findings": findings, "requires_verification": bool(findings), "no_match_is_not_rejection": True, "handoff": handoff}
 
 
@@ -187,8 +187,7 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())]})
     if stored is None:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
-    enqueue(ctx.db, "qualification_b", {"lead": stored, "prior_result": {"agent": "company_research", "research_status": status}, "evidence_events": events, "research_result": {"status": status, "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_b:{fingerprint}")
-    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": facts.get("decision_maker_verification_status") == "verified", "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_b"}
+    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": facts.get("decision_maker_verification_status") == "verified", "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_a" if status == "complete" else "research_required"}
 
 
 def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
