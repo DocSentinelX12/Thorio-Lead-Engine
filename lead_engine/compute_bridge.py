@@ -45,7 +45,14 @@ def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> No
         "social_inquiry_research",
         "social_company_context",
     }
-    if agent in research_agents:
+    discovery_agents = {
+        "engineering_demand_discovery",
+        "ai_demand_discovery",
+        "product_design_demand_discovery",
+        "contract_team_demand_discovery",
+        "recent_inquiry_discovery",
+    }
+    if agent in research_agents or agent in discovery_agents:
         enqueue(db, "company_research", {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent}, priority=7, dedupe_key=f"company_research:{fingerprint}")
 
 
