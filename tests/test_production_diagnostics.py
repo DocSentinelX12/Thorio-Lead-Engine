@@ -4,7 +4,7 @@ from lead_engine.cli import DEFAULT_PRODUCTION_MAX_SECONDS, _install_production_
 
 
 def test_production_diagnostics_has_bounded_default():
-    assert DEFAULT_PRODUCTION_MAX_SECONDS == 840.0
+    assert DEFAULT_PRODUCTION_MAX_SECONDS == 720.0
 
 
 def test_production_diagnostics_can_be_disabled(monkeypatch):
