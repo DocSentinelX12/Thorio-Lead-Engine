@@ -110,7 +110,7 @@ class LeadDB:
 
     def update_payload(self, fingerprint: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not isinstance(updates, dict):
-            raise ValueError("Lead updates must be an object.")
+            raise ValueError("Lead updates must be a dictionary.")
         current = self.get(fingerprint)
         if current is None:
             return None
@@ -243,13 +243,34 @@ class LeadDB:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def queue_claim(self, agent, worker_id, limit, lease_until, now_iso):
-        rows = self.conn.execute("SELECT task_id FROM agent_queue WHERE agent = ? AND status = 'queued' ORDER BY priority DESC, created_at LIMIT ?", (agent, limit)).fetchall()
-        claimed_ids = [row[0] for row in rows]
-        if claimed_ids:
+    def queue_claim(self, agent, worker_id, limit, capacity, lease_until, now_iso):
+        """Atomically claim up to the role's remaining capacity.
+
+        Selection and ownership update happen under one write transaction so
+        concurrent specialist slots cannot both observe the same queued task or
+        exceed the role concurrency limit.
+        """
+        if limit <= 0 or capacity <= 0:
+            return []
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            running = int(self.conn.execute("SELECT COUNT(*) FROM agent_queue WHERE agent = ? AND status = 'running'", (agent,)).fetchone()[0])
+            available = min(int(limit), max(0, int(capacity) - running))
+            if available <= 0:
+                self.conn.commit()
+                return []
+            rows = self.conn.execute("SELECT task_id FROM agent_queue WHERE agent = ? AND status = 'queued' ORDER BY priority DESC, created_at LIMIT ?", (agent, available)).fetchall()
+            claimed_ids = [row[0] for row in rows]
+            if not claimed_ids:
+                self.conn.commit()
+                return []
             self.conn.executemany("UPDATE agent_queue SET status = 'running', worker_id = ?, lease_until = ?, attempts = attempts + 1, updated_at = ? WHERE task_id = ? AND status = 'queued'", [(worker_id, lease_until, now_iso, task_id) for task_id in claimed_ids])
+            claimed = [task_id for task_id in claimed_ids if self.conn.execute("SELECT worker_id, status FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone() == (worker_id, "running")]
             self.conn.commit()
-        return [self.queue_get(task_id) for task_id in claimed_ids]
+            return [self.queue_get(task_id) for task_id in claimed]
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def queue_update(self, task_id, **updates):
         allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result"}
