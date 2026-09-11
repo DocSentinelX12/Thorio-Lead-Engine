@@ -84,52 +84,53 @@ class SourceRunner:
         agent_tasks_queued = 0
         queue_tasks = []
 
-        for record in records:
-            discovered += 1
-            if not isinstance(record, dict):
-                failed += 1
-                logger.error(
-                    "Lead pipeline rejected non-object source record: type=%s",
-                    type(record).__name__,
-                )
-                continue
-            try:
-                normalized_record = normalize_lead_input(record)
-                result = self.pipeline.process(**normalized_record)
-            except Exception:
-                failed += 1
-                source = str(record.get("source", "unknown"))
-                source_id = str(record.get("source_id", "unknown"))
-                logger.exception(
-                    "Lead pipeline failed while processing source record: source=%s source_id=%s",
-                    source,
-                    source_id,
-                )
-                continue
+        with self.pipeline.db.batch_writes():
+            for record in records:
+                discovered += 1
+                if not isinstance(record, dict):
+                    failed += 1
+                    logger.error(
+                        "Lead pipeline rejected non-object source record: type=%s",
+                        type(record).__name__,
+                    )
+                    continue
+                try:
+                    normalized_record = normalize_lead_input(record)
+                    result = self.pipeline.process(**normalized_record)
+                except Exception:
+                    failed += 1
+                    source = str(record.get("source", "unknown"))
+                    source_id = str(record.get("source_id", "unknown"))
+                    logger.exception(
+                        "Lead pipeline failed while processing source record: source=%s source_id=%s",
+                        source,
+                        source_id,
+                    )
+                    continue
 
-            if result.get("status") == "duplicate":
-                duplicates += 1
-            elif result.get("accepted") is True:
-                accepted += 1
-                fingerprint = str(result.get("fingerprint") or "").strip()
-                lead = result.get("lead")
-                if fingerprint and isinstance(lead, dict):
-                    agent = _discovery_agent(normalized_record)
-                    queue_tasks.append({
-                        "agent": agent,
-                        "payload": {
-                            "record": dict(normalized_record),
-                            "lead": dict(lead),
-                            "fingerprint": fingerprint,
-                        },
-                        "priority": _queue_priority(result.get("priority")),
-                        "dedupe_key": f"discovery:{agent}:{fingerprint}",
-                    })
+                if result.get("status") == "duplicate":
+                    duplicates += 1
+                elif result.get("accepted") is True:
+                    accepted += 1
+                    fingerprint = str(result.get("fingerprint") or "").strip()
+                    lead = result.get("lead")
+                    if fingerprint and isinstance(lead, dict):
+                        agent = _discovery_agent(normalized_record)
+                        queue_tasks.append({
+                            "agent": agent,
+                            "payload": {
+                                "record": dict(normalized_record),
+                                "lead": dict(lead),
+                                "fingerprint": fingerprint,
+                            },
+                            "priority": _queue_priority(result.get("priority")),
+                            "dedupe_key": f"discovery:{agent}:{fingerprint}",
+                        })
 
-            if result.get("qualification_status") == "qualified":
-                qualified += 1
-            if result.get("paxus_research_status") == "research_required":
-                research_queued += 1
+                if result.get("qualification_status") == "qualified":
+                    qualified += 1
+                if result.get("paxus_research_status") == "research_required":
+                    research_queued += 1
 
         if queue_tasks:
             enqueue_many(self.pipeline.db, queue_tasks)
