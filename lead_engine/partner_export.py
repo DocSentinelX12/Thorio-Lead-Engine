@@ -64,7 +64,7 @@ def build_partner_exports(
 
 
 def prepare_partner_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize a delivery-ready lead without dropping qualification context."""
+    """Normalize a delivery-ready lead without dropping qualification or delivery context."""
 
     return {
         "source": lead.get("source", ""),
@@ -84,6 +84,11 @@ def prepare_partner_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
         "approved_routes": lead.get("approved_routes", []),
         "qualified": lead.get("qualified") is True,
         "qualification_status": lead.get("qualification_status", ""),
+        "approval_status": lead.get("approval_status", ""),
+        "human_approved": lead.get("human_approved"),
+        "approval_required": lead.get("approval_required"),
+        "delivery_status": lead.get("delivery_status", ""),
+        "delivery_reason": lead.get("delivery_reason", ""),
         "lead_score": lead.get("lead_score", 0),
         "priority": lead.get("priority", ""),
         "status": lead.get("status", ""),
