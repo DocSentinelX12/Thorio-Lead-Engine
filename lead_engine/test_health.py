@@ -30,6 +30,34 @@ def test_database_recovers_from_corrupt_sqlite(tmp_path):
     assert list(tmp_path.glob("leads.sqlite3.corrupt-*"))
 
 
+def test_batch_writes_commit_successful_leads_once_after_processing(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+
+    with db.batch_writes():
+        assert db.insert_if_new({"fingerprint": "batch-001", "company": "One"}) is True
+        assert db.insert_if_new({"fingerprint": "batch-002", "company": "Two"}) is True
+        assert db.conn.in_transaction is True
+
+    assert db.conn.in_transaction is False
+    assert db.get("batch-001")["company"] == "One"
+    assert db.get("batch-002")["company"] == "Two"
+
+
+def test_batch_writes_preserve_per_record_failure_isolation(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+
+    with db.batch_writes():
+        assert db.insert_if_new({"fingerprint": "good-001", "company": "Good"}) is True
+        try:
+            db.insert_if_new({"company": "Missing Fingerprint"})
+        except ValueError:
+            pass
+        assert db.insert_if_new({"fingerprint": "good-002", "company": "Also Good"}) is True
+
+    assert db.get("good-001")["company"] == "Good"
+    assert db.get("good-002")["company"] == "Also Good"
+
+
 def test_configuration_health_is_healthy(tmp_path):
     config = LeadEngineConfig(
         database_dir=str(tmp_path),
