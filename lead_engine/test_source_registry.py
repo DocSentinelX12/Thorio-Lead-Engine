@@ -112,7 +112,7 @@ def test_restored_historical_sources_use_explicit_working_collectors():
     }
 
     expected_types = {
-        "NoDesk": "rss",
+        "NoDesk": "html",
         "Welcome to the Jungle": "html",
         "Remotive": "json",
         "Working Nomads": "json",
