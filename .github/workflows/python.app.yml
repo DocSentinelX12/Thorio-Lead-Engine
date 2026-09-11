@@ -20,9 +20,31 @@ permissions:
   actions: read
 
 jobs:
+  test:
+    name: Production Preflight Tests
+    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          python -m pip install pytest pytest-timeout
+      - name: Run pytest
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=900 --durations=25
+
   engine:
     name: Run Lead Engine
     if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -60,6 +82,42 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Verify account authentication configuration
+        run: |
+          python - <<'PY'
+          from lead_engine.account_auth import SUPPORTED_ACCOUNTS, auth_status
+          status = auth_status()
+          missing = [account for account in SUPPORTED_ACCOUNTS if not status[account]["configured"]]
+          if missing:
+              print("ACCOUNT AUTH CONFIGURATION FAILURE: missing credentials for " + ", ".join(missing))
+              raise SystemExit(1)
+          for account in SUPPORTED_ACCOUNTS:
+              item = status[account]
+              print(f"{account}: configured={item['configured']} username_configured={item['username_configured']} password_configured={item['password_configured']} storage_state_configured={item['storage_state_configured']} secrets_exposed={item['secrets_exposed']}")
+          print("ACCOUNT AUTH CONFIGURATION VERIFIED: all agreed accounts are available to the production runtime without exposing secret values.")
+          PY
+      - name: Verify complete free source catalog wiring
+        run: |
+          python - <<'PY'
+          from lead_engine.source_registry import _load_free_source_catalog, configured_sources
+          expected_minimum = 42
+          catalog = _load_free_source_catalog()
+          configured = configured_sources()
+          catalog_names = {definition.name for definition in catalog}
+          configured_names = {source.name for source in configured}
+          missing = sorted(catalog_names - configured_names)
+          print(f"Enabled free source definitions: {len(catalog)}")
+          print(f"Configured runtime sources: {len(configured)}")
+          if len(catalog) < expected_minimum:
+              print(f"FREE SOURCE UNIVERSE FAILURE: expected at least {expected_minimum} enabled public sources, found {len(catalog)}.")
+              raise SystemExit(1)
+          if missing:
+              print("FREE SOURCE WIRING FAILURE: catalog entries missing from configured runtime sources:")
+              for name in missing:
+                  print(f"- {name}")
+              raise SystemExit(1)
+          print("FREE SOURCE WIRING VERIFIED: the complete enabled public catalog is handed to the runtime source registry in addition to discovery account layers.")
+          PY
       - name: Find newest usable engine state
         id: previous_state
         env:
@@ -87,6 +145,69 @@ jobs:
         run: |
           set -o pipefail
           timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
+      - name: Verify active collection and Airtable delivery
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+          path = pathlib.Path("data/scheduled-run-output.txt")
+          if not path.exists():
+              print("PRODUCTION COLLECTION FAILURE: scheduled run output was not created.")
+              sys.exit(1)
+          text = path.read_text(encoding="utf-8")
+          decoder = json.JSONDecoder()
+          results = []
+          position = 0
+          while position < len(text):
+              start = text.find("{", position)
+              if start == -1:
+                  break
+              try:
+                  candidate, end = decoder.raw_decode(text[start:])
+              except json.JSONDecodeError:
+                  position = start + 1
+                  continue
+              if isinstance(candidate, dict):
+                  results.append(candidate)
+              position = start + end
+          if not results:
+              print("PRODUCTION COLLECTION FAILURE: no valid Lead Engine result was found.")
+              print(text)
+              sys.exit(1)
+          discovered_total = sum(int(result.get("discovered_count", 0) or 0) for result in results)
+          accepted_total = sum(int(result.get("accepted_count", 0) or 0) for result in results)
+          successful_source_counts = [int(result.get("successful_source_count", 0) or 0) for result in results]
+          if discovered_total <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no leads were discovered during the production cycle.")
+              sys.exit(1)
+          if not successful_source_counts or max(successful_source_counts) <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no configured source reported successful collection.")
+              sys.exit(1)
+          sync_failed = 0
+          sync_completed = 0
+          sync_already_exists = 0
+          sync_evidence_found = False
+          for result in results:
+              sync = result.get("sync")
+              if not isinstance(sync, dict):
+                  continue
+              sync_evidence_found = True
+              sync_failed += int(sync.get("failed_count", 0) or 0)
+              sync_completed += int(sync.get("synced_count", 0) or 0)
+              sync_already_exists += int(sync.get("already_exists_count", 0) or 0)
+          if not sync_evidence_found:
+              print("AIRTABLE DELIVERY FAILURE: Lead Engine result did not contain synchronization evidence.")
+              sys.exit(1)
+          if sync_failed > 0:
+              print(f"AIRTABLE DELIVERY FAILURE: {sync_failed} lead synchronization operation(s) failed and remain undelivered.")
+              sys.exit(1)
+          if accepted_total > 0 and (sync_completed + sync_already_exists) <= 0:
+              print(f"AIRTABLE DELIVERY FAILURE: accepted_total={accepted_total} but no successful or already-existing Airtable delivery was recorded.")
+              sys.exit(1)
+          print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, successful_source_count={max(successful_source_counts)}")
+          print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, failed_count={sync_failed}")
+          PY
       - name: Persist Lead Engine state
         if: always()
         uses: actions/upload-artifact@v6
