@@ -10,6 +10,7 @@ from .agent_specializations import AgentSpecialization, get_specialization
 from .agent_stateful_handlers import airtable_integrity, identity_resolution, routing, verification
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
+from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 
 
 class AgentContractError(ValueError):
@@ -166,25 +167,44 @@ def _priority(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> 
     return {"role": "priority", "priority_score": score, "lead": lead, "research_ready": research_ready, "decision_maker_ready": decision_maker_ready, "actionability": "ready" if research_ready and decision_maker_ready else "research_required", "inputs_used": ["evidence", "qualification", "freshness", "research", "decision_maker"]}
 
 
-def _outreach_closer(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
+def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
-    if payload.get("authorized") is not True:
-        raise AgentContractError("outreach_closer requires explicit authorized=True")
     if str(lead.get("research_status") or "").strip().lower() != "complete":
         raise AgentContractError("outreach_closer requires completed company research")
     research = lead.get("company_research")
     if not isinstance(research, Mapping) or not research.get("decision_maker") or not research.get("decision_maker_evidence"):
         raise AgentContractError("outreach_closer requires verified decision-maker research")
-    return {"role": "outreach_closer", "lead": lead, "authorized": True, "action": "prepare_authorized_outreach"}
+    try:
+        decision = build_outreach_decision(lead)
+    except OutreachContractError as exc:
+        raise AgentContractError(str(exc)) from exc
+    updated = dict(lead)
+    updated.update({
+        "outreach_route": decision.route,
+        "outreach_state": decision.next_state,
+        "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0),
+        "next_follow_up_at": decision.next_follow_up_at,
+        "outreach_draft_subject": decision.subject,
+        "outreach_draft_body": decision.body,
+    })
+    stored = _persist_lead(ctx.db, updated)
+    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "prepare_outreach", "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
 
 
-def _follow_up(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dict[str, Any]:
+def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
-    if payload.get("authorized") is not True:
-        raise AgentContractError("follow_up requires explicit authorized=True")
     if not lead.get("outreach_history"):
         raise AgentContractError("follow_up requires an existing outreach history")
-    return {"role": "follow_up", "lead": lead, "authorized": True, "action": "advance_follow_up_state"}
+    outcome = str(payload.get("outcome") or lead.get("outreach_state") or "").strip().lower()
+    if not outcome:
+        raise AgentContractError("follow_up requires an observed outreach outcome")
+    updated = apply_outcome(lead, outcome)
+    stored = _persist_lead(ctx.db, updated)
+    result: Dict[str, Any] = {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop" if stored.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_follow_up", "outcome_recorded": True}
+    objection = payload.get("objection")
+    if objection:
+        result["objection_response"] = objection_response(str(objection), str(stored.get("outreach_route") or "the selected service"))
+    return result
 
 
 def _monitoring(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
@@ -229,7 +249,10 @@ _PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {
 
 
 def handler_registry() -> Dict[str, Callable[..., Dict[str, Any]]]:
-    return {**_DISCOVERY, **_PROCESSORS, **advanced_handler_registry()}
+    advanced = advanced_handler_registry()
+    advanced.pop("outreach_closer", None)
+    advanced.pop("follow_up", None)
+    return {**_DISCOVERY, **_PROCESSORS, **advanced}
 
 
 def _validate_specialization(agent: str, handler: Callable[..., Dict[str, Any]]) -> AgentSpecialization:
