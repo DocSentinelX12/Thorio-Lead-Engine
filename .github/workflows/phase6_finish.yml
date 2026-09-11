@@ -26,50 +26,34 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import textwrap
-
           source = Path('.github/workflows/phase6_fix.yml').read_text()
           marker = "          python - <<'PY'\n"
           body = source.split(marker, 1)[1].split("\n          PY", 1)[0]
           exec(textwrap.dedent(body), {'__name__': '__phase6_patch__'})
-
-          # Observation identity includes discovery time. Business-opportunity
-          # dedupe remains a separate finalization concern.
           Path('lead_engine/lead_identity.py').write_text('''from __future__ import annotations\nimport hashlib\nimport re\nfrom typing import Any, Dict\n\ndef normalize_identity_value(value: Any) -> str:\n    return re.sub(r"\\s+", " ", str(value or "").strip().lower())\n\ndef lead_identity(lead: Dict[str, Any]) -> str:\n    parts = (("source", lead.get("source")), ("source_id", lead.get("source_id")), ("url", lead.get("url") or lead.get("source_url")), ("company", lead.get("company")), ("person", lead.get("person") or lead.get("contact_name")), ("job_title", lead.get("job_title")), ("signal_type", lead.get("signal_type")), ("discovered_at", lead.get("discovered_at")))\n    raw = "|".join(f"{key}:{normalize_identity_value(value)}" for key, value in parts)\n    return hashlib.sha256(raw.encode("utf-8")).hexdigest()\n\ndef add_lead_identity(lead: Dict[str, Any]) -> Dict[str, Any]:\n    result = dict(lead)\n    result["lead_identity"] = lead_identity(result)\n    return result\n''')
-
           p = Path('lead_engine/models.py')
           s = p.read_text()
-          if '    business_need: str = ""' not in s:
-              s = s.replace('    signal_type: str = ""\n', '    signal_type: str = ""\n    business_need: str = ""\n', 1)
-          if '"discovered_at": self.discovered_at' not in s:
-              s = s.replace('            "signal_type": self.signal_type,\n', '            "signal_type": self.signal_type,\n            "discovered_at": self.discovered_at,\n', 1)
+          if '    business_need: str = ""' not in s: s = s.replace('    signal_type: str = ""\n', '    signal_type: str = ""\n    business_need: str = ""\n', 1)
+          if '"discovered_at": self.discovered_at' not in s: s = s.replace('            "signal_type": self.signal_type,\n', '            "signal_type": self.signal_type,\n            "discovered_at": self.discovered_at,\n', 1)
           p.write_text(s)
-
-          Path('lead_engine/dedupe.py').write_text('''from __future__ import annotations\nimport re\nfrom typing import Any, Dict, Optional\nfrom .models import Lead\nQUALIFIED_STATUSES = {"qualified", "approved", "accepted"}\ndef _norm(value: Any) -> str:\n    return re.sub(r"\\s+", " ", str(value or "").strip().lower())\nclass Dedupe:\n    def __init__(self, db): self.db = db\n    @staticmethod\n    def _qualified(payload: Dict[str, Any]) -> bool:\n        if payload.get("qualified") is True: return True\n        return any(_norm(payload.get(key)) in QUALIFIED_STATUSES for key in ("qualification_status", "review_status", "status"))\n    @staticmethod\n    def exact_need_key(payload: Dict[str, Any]) -> str:\n        company, person, need = _norm(payload.get("company")), _norm(payload.get("person") or payload.get("contact_name")), _norm(payload.get("business_need"))\n        if not company or not person or not need: return ""\n        return f"company:{company}|person:{person}|need:{need}"\n    def find_exact_duplicate(self, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:\n        if not self._qualified(lead): return None\n        key = self.exact_need_key(lead)\n        if not key: return None\n        current = str(lead.get("fingerprint") or "")\n        for existing in self.db.all_leads():\n            if isinstance(existing, dict) and str(existing.get("fingerprint") or "") != current and self._qualified(existing) and self.exact_need_key(existing) == key:\n                return existing\n        return None\n    def accept(self, lead: Lead) -> bool:\n        return self.db.insert_if_new(lead.to_dict())\n''')
-
+          Path('lead_engine/dedupe.py').write_text('''from __future__ import annotations\nimport re\nfrom typing import Any, Dict, Optional\nfrom .models import Lead\nQUALIFIED_STATUSES = {"qualified", "approved", "accepted"}\ndef _norm(value: Any) -> str: return re.sub(r"\\s+", " ", str(value or "").strip().lower())\nclass Dedupe:\n    def __init__(self, db): self.db = db\n    @staticmethod\n    def _qualified(payload: Dict[str, Any]) -> bool:\n        if payload.get("qualified") is True: return True\n        return any(_norm(payload.get(key)) in QUALIFIED_STATUSES for key in ("qualification_status", "review_status", "status"))\n    @staticmethod\n    def exact_need_key(payload: Dict[str, Any]) -> str:\n        company, person, need = _norm(payload.get("company")), _norm(payload.get("person") or payload.get("contact_name")), _norm(payload.get("business_need"))\n        if not company or not person or not need: return ""\n        return f"company:{company}|person:{person}|need:{need}"\n    def find_exact_duplicate(self, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:\n        if not self._qualified(lead): return None\n        key = self.exact_need_key(lead)\n        if not key: return None\n        current = str(lead.get("fingerprint") or "")\n        for existing in self.db.all_leads():\n            if isinstance(existing, dict) and str(existing.get("fingerprint") or "") != current and self._qualified(existing) and self.exact_need_key(existing) == key: return existing\n        return None\n    def accept(self, lead: Lead) -> bool: return self.db.insert_if_new(lead.to_dict())\n''')
           p = Path('lead_engine/database.py')
           s = p.read_text()
           if '    def all_leads(self):' not in s:
               method = '''    def all_leads(self):\n        rows = self.conn.execute("SELECT payload FROM leads ORDER BY rowid").fetchall()\n        return [json.loads(row[0]) for row in rows if isinstance(json.loads(row[0]), dict)]\n\n'''
               s = s.replace('    def pending(self, limit=50):\n', method + '    def pending(self, limit=50):\n', 1)
           p.write_text(s)
-
           p = Path('lead_engine/qualification.py')
           s = p.read_text()
           s = s.replace('def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "") -> Dict[str, object]:', 'def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "", business_need: str = "") -> Dict[str, object]:', 1)
-          if 'if business_need:' not in s:
-              s = s.replace('    updated = dict(lead)\n    if qualified:\n', '    updated = dict(lead)\n    if business_need:\n        updated["business_need"] = str(business_need).strip()\n    if qualified:\n', 1)
+          if 'if business_need:' not in s: s = s.replace('    updated = dict(lead)\n    if qualified:\n', '    updated = dict(lead)\n    if business_need:\n        updated["business_need"] = str(business_need).strip()\n    if qualified:\n', 1)
           p.write_text(s)
-
           p = Path('lead_engine/pipeline.py')
           s = p.read_text()
-          if '        business_need: str = "",\n' not in s:
-              s = s.replace('        reason: str = "",\n    ) -> Dict[str, Any]:', '        reason: str = "",\n        business_need: str = "",\n    ) -> Dict[str, Any]:', 1)
-          if '            business_need=business_need,\n' not in s:
-              s = s.replace('            qualified=qualified,\n            reason=reason,\n        )', '            qualified=qualified,\n            reason=reason,\n            business_need=business_need,\n        )', 1)
+          if '        business_need: str = "",\n' not in s: s = s.replace('        reason: str = "",\n    ) -> Dict[str, Any]:', '        reason: str = "",\n        business_need: str = "",\n    ) -> Dict[str, Any]:', 1)
+          if '            business_need=business_need,\n' not in s: s = s.replace('            qualified=qualified,\n            reason=reason,\n        )', '            qualified=qualified,\n            reason=reason,\n            business_need=business_need,\n        )', 1)
           p.write_text(s)
-
-          for path in Path('.github/workflows').glob('phase6_*.yml'):
-              path.unlink()
+          for path in Path('.github/workflows').glob('phase6_*.yml'): path.unlink()
           PY
       - name: Run focused Phase 6 regression suite
         run: python -m pytest -q lead_engine/test_phase6_opportunity_dedupe.py lead_engine/test_dedupe.py lead_engine/test_lead_fingerprint.py lead_engine/test_lead_identity.py lead_engine/test_opportunity_identity_and_agents.py lead_engine/test_pipeline_delivery_boundary.py lead_engine/test_production_integration.py
