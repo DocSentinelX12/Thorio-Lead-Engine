@@ -15,3 +15,10 @@ from .source_overrides import install as _install_source_overrides
 
 _install_source_overrides()
 del _install_source_overrides
+
+# Install collectors only for the remaining dynamic sources whose current
+# public interfaces cannot be collected by the generic adapter.
+from .source_specific_collectors import install as _install_source_specific
+
+_install_source_specific()
+del _install_source_specific
