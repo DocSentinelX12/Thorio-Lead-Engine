@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .agent_registry import agent_registry
+
 
 class LeadDB:
     def __init__(self, data_dir="data"):
@@ -244,18 +246,15 @@ class LeadDB:
         return cursor.rowcount > 0
 
     def queue_claim(self, agent, worker_id, limit, capacity, lease_until, now_iso):
-        """Atomically claim up to the role's remaining capacity.
-
-        Selection and ownership update happen under one write transaction so
-        concurrent specialist slots cannot both observe the same queued task or
-        exceed the role concurrency limit.
-        """
+        """Atomically claim up to the role's remaining capacity."""
         if limit <= 0 or capacity <= 0:
             return []
+        role = agent_registry().get(agent)
+        role_capacity = int(role.max_concurrency) if role is not None else int(capacity)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             running = int(self.conn.execute("SELECT COUNT(*) FROM agent_queue WHERE agent = ? AND status = 'running'", (agent,)).fetchone()[0])
-            available = min(int(limit), max(0, int(capacity) - running))
+            available = min(int(limit), int(capacity), max(0, role_capacity - running))
             if available <= 0:
                 self.conn.commit()
                 return []
