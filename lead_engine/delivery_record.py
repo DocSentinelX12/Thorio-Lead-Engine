@@ -1,5 +1,7 @@
 from typing import Any, Dict
 
+from .delivery_state import DELIVERY_STATES
+
 
 DELIVERY_FIELDS = (
     "delivery_status",
@@ -7,28 +9,11 @@ DELIVERY_FIELDS = (
     "delivery_route",
 )
 
-DELIVERY_STATES = {
-    "approved",
-    "rejected",
-    "review",
-    "queued",
-    "attempting",
-    "delivered",
-    "failed",
-    "retryable",
-    "permanently_failed",
-}
-
 
 def create_delivery_record(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Create a stable delivery record from a processed lead.
-
-    Missing or unrecognized state is fail-closed as review. A route
-    alone is never sufficient evidence for approval.
-    """
+    """Create a stable, fail-closed delivery record."""
 
     route = str(lead.get("route", "") or "").strip()
     delivery_status = str(lead.get("delivery_status", "") or "").strip().lower()
