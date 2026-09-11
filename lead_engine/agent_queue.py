@@ -224,7 +224,7 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
         if available <= 0:
             return []
         now = _now()
-        rows = db.queue_claim(agent, worker_id, available, _iso(now + timedelta(seconds=lease_seconds)), _iso(now))
+        rows = db.queue_claim(agent, worker_id, available, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now))
         return [_row_to_task(row) for row in rows if row is not None]
     state = _load(db)
     changed = _recover_stale(state)
