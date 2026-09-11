@@ -191,17 +191,33 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": facts.get("decision_maker_verification_status") == "verified", "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_b"}
 
 
-def outreach_closing(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    """Prepare the next revenue action only after explicit user authorization."""
+def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
+    """Prepare and durably record the next revenue action after explicit authorization."""
     if payload.get("authorized") is not True:
         raise OutreachContractError("outreach_closer requires explicit authorized=True")
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     decision = build_outreach_decision(lead)
-    return {"role": "outreach_closer", "lead": dict(lead), "action": "prepare_authorized_outreach", "autonomous": True, "authorized": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
+    updated = dict(lead)
+    updated.update({
+        "outreach_route": decision.route,
+        "outreach_state": decision.next_state,
+        "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0),
+        "next_follow_up_at": decision.next_follow_up_at,
+        "outreach_draft_subject": decision.subject,
+        "outreach_draft_body": decision.body,
+    })
+    if ctx is not None:
+        fingerprint = str(updated.get("fingerprint") or "").strip()
+        if fingerprint:
+            stored = ctx.db.update_payload(fingerprint, updated)
+            if stored is None:
+                raise OutreachContractError(f"Lead not found for authorized outreach preparation: {fingerprint}")
+            updated = stored
+    return {"role": "outreach_closer", "lead": dict(updated), "action": "prepare_authorized_outreach", "autonomous": True, "authorized": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
 
 
-def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    """Advance an existing outreach state and determine whether contact stops or continues."""
+def follow_up_action(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
+    """Advance and durably record an existing outreach state from an observed outcome."""
     if payload.get("authorized") is not True:
         raise OutreachContractError("follow_up requires explicit authorized=True")
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
@@ -209,6 +225,13 @@ def follow_up_action(payload: Mapping[str, Any]) -> Dict[str, Any]:
     if not outcome:
         raise OutreachContractError("follow_up requires an observed outreach outcome")
     updated = apply_outcome(lead, outcome)
+    if ctx is not None:
+        fingerprint = str(updated.get("fingerprint") or "").strip()
+        if fingerprint:
+            stored = ctx.db.update_payload(fingerprint, updated)
+            if stored is None:
+                raise OutreachContractError(f"Lead not found for follow-up update: {fingerprint}")
+            updated = stored
     result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "authorized": True, "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_authorized_follow_up", "outcome_recorded": True}
     objection = payload.get("objection")
     if objection:
@@ -229,6 +252,6 @@ def advanced_handler_registry():
     handlers["verification"] = verification
     handlers["routing"] = routing
     handlers["airtable_integrity"] = airtable_integrity
-    handlers["outreach_closer"] = lambda _agent, payload, _ctx: outreach_closing(payload)
-    handlers["follow_up"] = lambda _agent, payload, _ctx: follow_up_action(payload)
+    handlers["outreach_closer"] = lambda _agent, payload, ctx: outreach_closing(payload, ctx)
+    handlers["follow_up"] = lambda _agent, payload, ctx: follow_up_action(payload, ctx)
     return handlers
