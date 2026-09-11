@@ -24,12 +24,13 @@ def test_scheduler_defers_airtable_until_after_bounded_specialist_pass(tmp_path)
     scheduler.agent_orchestrator.run_all_once.side_effect = lambda **kwargs: events.append(("specialists", pipeline.sync_enabled)) or {"processed_count": 0}
     scheduler._bridge_remote = lambda **kwargs: {"status": "disabled", "published_count": 0, "completed_count": 0, "retried_count": 0}
 
-    with patch("lead_engine.scheduler.sync_pending", side_effect=lambda db: events.append(("airtable_sync", pipeline.sync_enabled)) or {"synced": [], "already_exists": [], "failed": [], "synced_count": 0, "already_exists_count": 0, "failed_count": 0}):
+    with patch("lead_engine.scheduler.process_paxus_research_queue", side_effect=lambda db: events.append(("paxus_research", pipeline.sync_enabled)) or {"processed": 0, "failed": 0}), patch("lead_engine.scheduler.sync_pending", side_effect=lambda db: events.append(("airtable_sync", pipeline.sync_enabled)) or {"synced": [], "already_exists": [], "failed": [], "synced_count": 0, "already_exists_count": 0, "failed_count": 0}):
         scheduler.run([StaticLeadSource([])], agent_max_rounds=1)
 
     assert events == [
         ("collect_persist", False),
         ("specialists", True),
+        ("paxus_research", True),
         ("airtable_sync", True),
     ]
     assert pipeline.sync_enabled is True
