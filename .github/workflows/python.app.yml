@@ -49,6 +49,8 @@ jobs:
     timeout-minutes: 75
     env:
       AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_PAT || secrets.AIRTABLE_API_KEY }}
+      AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
+      AIRTABLE_API_KEY_CANDIDATE: ${{ secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
       AIRTABLE_LEAD_TABLE: Lead Radar
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
@@ -82,6 +84,96 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Verify Airtable record-write credential
+        env:
+          AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
+          AIRTABLE_API_KEY_CANDIDATE: ${{ secrets.AIRTABLE_API_KEY }}
+          AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
+          AIRTABLE_LEAD_TABLE: Lead Radar
+          AIRTABLE_PROBE_ID: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          base_id = os.environ["AIRTABLE_BASE_ID"]
+          table = urllib.parse.quote(os.environ["AIRTABLE_LEAD_TABLE"], safe="")
+          probe_lead = f"__THORIO_AIRTABLE_WRITE_PROBE__{os.environ['AIRTABLE_PROBE_ID']}"
+          candidates = [
+              ("AIRTABLE_PAT", os.environ.get("AIRTABLE_PAT_CANDIDATE", "").strip()),
+              ("AIRTABLE_API_KEY", os.environ.get("AIRTABLE_API_KEY_CANDIDATE", "").strip()),
+          ]
+
+          def request(token, method, url, payload=None):
+              data = None if payload is None else json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  },
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      body = response.read().decode("utf-8")
+                      return response.status, json.loads(body) if body else {}
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  return exc.code, body
+
+          selected = None
+          for label, token in candidates:
+              if not token:
+                  continue
+              status, body = request(
+                  token,
+                  "POST",
+                  f"https://api.airtable.com/v0/{base_id}/{table}",
+                  {
+                      "records": [
+                          {
+                              "fields": {
+                                  "Lead": probe_lead,
+                                  "Applicable Routes": ["Thorio"],
+                              }
+                          }
+                      ]
+                  },
+              )
+              if status not in (200, 201):
+                  print(f"{label}: write probe failed with HTTP {status}.")
+                  continue
+
+              records = body.get("records", []) if isinstance(body, dict) else []
+              record_id = records[0].get("id") if records else None
+              if not record_id:
+                  print(f"{label}: write probe returned no record ID.")
+                  continue
+
+              delete_status, _ = request(
+                  token,
+                  "DELETE",
+                  f"https://api.airtable.com/v0/{base_id}/{table}/{record_id}",
+              )
+              if delete_status not in (200, 204):
+                  print(f"{label}: write probe succeeded but cleanup failed with HTTP {delete_status}.")
+                  raise SystemExit(1)
+
+              selected = (label, token)
+              print(f"AIRTABlE CREDENTIAL VERIFIED: {label} can create a record using Applicable Routes=Thorio and can clean up the probe record.")
+              break
+
+          if selected is None:
+              print("AIRTABLE CREDENTIAL FAILURE: no configured Airtable credential can write the Thorio route to Lead Radar.")
+              raise SystemExit(1)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"AIRTABLE_API_KEY={selected[1]}\n")
+          PY
       - name: Verify account authentication configuration
         run: |
           python - <<'PY'
