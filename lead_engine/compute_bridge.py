@@ -37,7 +37,16 @@ def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> No
     stored = db.update_payload(fingerprint, updates)
     if stored is None:
         raise ComputeWorkerError(f"failed to persist remote {agent} result: {fingerprint}")
-    enqueue(db, "qualification_a", {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent}, priority=2, dedupe_key=f"qualification_a:{fingerprint}")
+    research_agents = {
+        "company_research",
+        "social_intelligence",
+        "social_hiring_research",
+        "social_decision_maker_research",
+        "social_inquiry_research",
+        "social_company_context",
+    }
+    if agent in research_agents:
+        enqueue(db, "company_research", {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent}, priority=7, dedupe_key=f"company_research:{fingerprint}")
 
 
 def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20) -> Dict[str, Any]:
