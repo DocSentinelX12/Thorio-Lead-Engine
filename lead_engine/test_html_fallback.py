@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from .html_fallback import extract_html_job_records
 from .source_adapters import HtmlSourceAdapter
 
 
@@ -28,6 +29,47 @@ def test_html_fallback_extracts_semantic_job_card():
     assert result.records[0]["job_title"] == "Senior Software Engineer"
     assert result.records[0]["company"] == "Example Corp"
     assert result.records[0]["url"] == "https://example.com/jobs/software-engineer"
+
+
+def test_html_fallback_supports_source_specific_remote_jobs_urls():
+    html = b"""
+    <article class="job-card">
+      <a class="job-title" href="/remote-jobs/software-engineer">
+        Senior Software Engineer
+      </a>
+      <div class="company">Remotive Corp</div>
+    </article>
+    """
+
+    records = extract_html_job_records(
+        html,
+        source="Remotive",
+        source_url="https://remotive.com/remote-jobs",
+    )
+
+    assert len(records) == 1
+    assert records[0]["job_title"] == "Senior Software Engineer"
+    assert records[0]["company"] == "Remotive Corp"
+    assert records[0]["url"] == "https://remotive.com/remote-jobs/software-engineer"
+
+
+def test_source_specific_remote_jobs_hint_does_not_apply_to_unknown_source():
+    html = b"""
+    <article class="job-card">
+      <a class="job-title" href="/remote-jobs/software-engineer">
+        Senior Software Engineer
+      </a>
+      <div class="company">Example Corp</div>
+    </article>
+    """
+
+    records = extract_html_job_records(
+        html,
+        source="Example Source",
+        source_url="https://example.com/remote-jobs",
+    )
+
+    assert records == []
 
 
 def test_html_fallback_extracts_embedded_json_job_data():
