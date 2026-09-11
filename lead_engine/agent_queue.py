@@ -219,12 +219,8 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
     capacity = min(int(limit), registry[agent].max_concurrency)
     if _queue_db(db):
         db.queue_recover_stale(_iso(_now()))
-        running = db.conn.execute("SELECT COUNT(*) FROM agent_queue WHERE agent = ? AND status = 'running'", (agent,)).fetchone()[0]
-        available = max(0, capacity - int(running))
-        if available <= 0:
-            return []
         now = _now()
-        rows = db.queue_claim(agent, worker_id, available, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now))
+        rows = db.queue_claim(agent, worker_id, capacity, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now))
         return [_row_to_task(row) for row in rows if row is not None]
     state = _load(db)
     changed = _recover_stale(state)
