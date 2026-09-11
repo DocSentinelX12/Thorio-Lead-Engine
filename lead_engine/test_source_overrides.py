@@ -24,9 +24,25 @@ _ACTIVE_SOURCES = {
     "Stripe",
 }
 
+_EXPECTED_BROKEN_SOURCE_OVERRIDES = {
+    "The Muse",
+    "Remotive",
+    "RemoteJobs.org",
+    "Remote First Jobs",
+    "Arbeitnow",
+    "Nomado24",
+    "Working Nomads",
+    "Landing Jobs",
+    "WorkWave",
+    "NoDesk",
+    "We Work Remotely",
+    "Jobspresso",
+    "EURES",
+}
+
 
 def test_only_explicit_broken_sources_are_overridden():
-    assert set(_SOURCE_OVERRIDES) == {"The Muse", "Remotive"}
+    assert set(_SOURCE_OVERRIDES) == _EXPECTED_BROKEN_SOURCE_OVERRIDES
     assert not (set(_SOURCE_OVERRIDES) & _ACTIVE_SOURCES)
 
 
@@ -48,7 +64,7 @@ def test_the_muse_uses_current_api_page_one():
     assert muse.url_field == "refs.landing_page"
 
 
-def test_remotive_uses_current_jobs_page():
+def test_remotive_uses_current_jobs_api():
     catalog = _load_free_source_catalog()
     remotive = next(
         definition
@@ -56,8 +72,11 @@ def test_remotive_uses_current_jobs_page():
         if definition.name == "Remotive"
     )
 
-    assert remotive.url == "https://remotive.com/remote-jobs"
-    assert remotive.collector_type == "html"
+    assert remotive.url == "https://remotive.com/api/remote-jobs"
+    assert remotive.collector_type == "json"
+    assert remotive.record_path == "jobs"
+    assert remotive.company_field == "company_name"
+    assert remotive.url_field == "url"
 
 
 def test_every_active_source_definition_is_unchanged():
