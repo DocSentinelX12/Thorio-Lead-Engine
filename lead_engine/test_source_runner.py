@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 from .source_runner import SourceRunner, _queue_priority
 
@@ -25,7 +25,7 @@ def _record(source, source_id):
 
 
 def test_source_runner_processes_all_records_independently():
-    pipeline = Mock()
+    pipeline = MagicMock()
     pipeline.process.side_effect = [
         {"accepted": True, "status": "accepted"},
         {"accepted": False, "status": "duplicate"},
@@ -39,7 +39,7 @@ def test_source_runner_processes_all_records_independently():
 
 
 def test_source_runner_runs_source_collection():
-    pipeline = Mock()
+    pipeline = MagicMock()
     pipeline.process.return_value = {"accepted": True, "status": "accepted"}
     source = Mock()
     source.collect.return_value = [_record("web", "001"), _record("web", "002")]
@@ -51,7 +51,7 @@ def test_source_runner_runs_source_collection():
 
 
 def test_source_runner_continues_after_pipeline_failure():
-    pipeline = Mock()
+    pipeline = MagicMock()
     pipeline.process.side_effect = [Exception("temporary failure"), {"accepted": True, "status": "accepted"}]
     runner = SourceRunner(pipeline)
     result = runner.process([_record("test", "failed"), _record("test", "successful")])
@@ -61,7 +61,7 @@ def test_source_runner_continues_after_pipeline_failure():
 
 
 def test_source_runner_run_source_collects_and_processes_records():
-    pipeline = Mock()
+    pipeline = MagicMock()
     pipeline.process.side_effect = [
         {"accepted": True, "status": "accepted"},
         {"accepted": False, "status": "duplicate"},
@@ -76,7 +76,7 @@ def test_source_runner_run_source_collects_and_processes_records():
 
 
 def test_source_runner_batches_database_writes_for_one_source():
-    pipeline = Mock()
+    pipeline = MagicMock()
     pipeline.process.return_value = {"accepted": True, "status": "accepted"}
     batch = pipeline.db.batch_writes.return_value
     runner = SourceRunner(pipeline)
@@ -90,7 +90,7 @@ def test_source_runner_batches_database_writes_for_one_source():
 
 
 def test_source_runner_does_not_hide_internal_type_error():
-    pipeline = Mock()
+    pipeline = MagicMock()
     source = Mock()
     source.collect.side_effect = TypeError("checkpoint data has invalid type")
     runner = SourceRunner(pipeline)
