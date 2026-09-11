@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim, complete, enqueue, enqueue_many, heartbeat, pending
 from .database import LeadDB
 
@@ -39,6 +42,47 @@ def test_queue_lease_heartbeat_and_completion(tmp_path):
     )
     assert finished["status"] == COMPLETE
     assert pending(db, "paxus_research") == []
+
+
+def test_concurrent_queue_claim_is_atomic_and_unique(tmp_path):
+    db = _db(tmp_path)
+    tasks = enqueue_many(
+        db,
+        [
+            {"agent": "x_signal", "payload": {"source_id": str(index)}}
+            for index in range(20)
+        ],
+    )
+    assert len(tasks) == 20
+
+    # Hold all claimers at the same point so the capacity check is genuinely
+    # concurrent. x_signal has a role capacity of five.
+    barrier = Barrier(20)
+
+    def claim_once(index):
+        worker_db = _db(tmp_path)
+        try:
+            claimed = claim(worker_db, "x_signal", worker_id=f"stress-{index}", limit=1)
+            barrier.wait(timeout=10)
+            if claimed:
+                complete(
+                    worker_db,
+                    claimed[0]["task_id"],
+                    worker_id=f"stress-{index}",
+                    result={"status": "stress-complete"},
+                )
+            return claimed
+        finally:
+            worker_db.close()
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        results = list(executor.map(claim_once, range(20)))
+
+    claimed_ids = [item[0]["task_id"] for item in results if item]
+    assert len(claimed_ids) == 5
+    assert len(set(claimed_ids)) == len(claimed_ids)
+    assert len({task["task_id"] for task in tasks} & set(claimed_ids)) == 5
+    assert len(pending(db, "x_signal")) == 15
 
 
 def test_enqueue_many_uses_incremental_queue_persistence(tmp_path, monkeypatch):
