@@ -13,6 +13,7 @@ from .source_adapters import AdapterResult, normalize_job_record
 
 
 _HTML_DETAIL_SOURCES = frozenset({
+    "NoDesk",
     "EU Remote Jobs",
     "AI Jobs",
     "Total",
@@ -105,6 +106,7 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
 
     candidates: List[str] = []
     source_hints = {
+        "NoDesk": ("/remote-jobs/",),
         "EU Remote Jobs": ("/job/",),
         "AI Jobs": ("/job/",),
         "Total": ("/jobs/", "/job/"),
