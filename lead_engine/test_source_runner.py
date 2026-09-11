@@ -14,7 +14,14 @@ def test_queue_priority_normalizes_numeric_and_named_values():
 
 
 def _record(source, source_id):
-    return {"source": source, "source_id": source_id, "url": f"https://example.com/{source_id}", "signal": "remote software engineer", "evidence": "Observed remote software engineer hiring signal."}
+    return {
+        "source": source,
+        "source_id": source_id,
+        "url": f"https://example.com/{source_id}",
+        "company": "Example Company",
+        "signal": "remote software engineer",
+        "evidence": "Observed remote software engineer hiring signal.",
+    }
 
 
 def test_source_runner_processes_all_records_independently():
