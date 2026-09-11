@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+from .agent_registry import ALL_AGENT_ROLES
 from .scheduler import LeadScheduler
 from .sources import StaticLeadSource
 
@@ -18,4 +19,7 @@ def test_bounded_scheduler_uses_one_agent_drain_round():
     with patch.object(scheduler.agent_orchestrator, "run_all_once", return_value={}) as run_agents:
         scheduler.run_bounded([source], interval_seconds=0, max_cycles=1)
 
-    run_agents.assert_called_once_with(limit_per_agent=5, max_rounds=1)
+    run_agents.assert_called_once_with(
+        limit_per_agent=max(role.max_concurrency for role in ALL_AGENT_ROLES),
+        max_rounds=1,
+    )
