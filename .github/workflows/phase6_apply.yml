@@ -1,0 +1,85 @@
+name: Phase 6 apply
+
+on:
+  push:
+    paths:
+      - .github/workflows/phase6_apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply strict opportunity deduplication changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          models = Path('lead_engine/models.py')
+          text = models.read_text()
+          if 'business_need: str = ""' not in text:
+              text = text.replace('    signal_type: str = ""\n    source_url: str = ""', '    signal_type: str = ""\n    # Explicit normalized business need used only by final opportunity dedupe.\n    # It is never used to block discovery or qualification.\n    business_need: str = ""\n    source_url: str = ""')
+          models.write_text(text)
+
+          identity = Path('lead_engine/lead_identity.py')
+          text = identity.read_text()
+          text = text.replace('''    """\n    Return a deterministic identity for one discovered opportunity.\n\n    Identity is intentionally opportunity-level, not company-level.\n\n    A company or person may generate many valid opportunities. When a\n    source provides a stable source_id, the source event remains the\n    primary identity, with URL and job title included when available so\n    feeds that reuse a coarse source_id cannot collapse distinct roles.\n\n    Without a source_id, normalized company + URL + job title + signal\n    type define the opportunity. The signal text itself is deliberately\n    excluded from the fallback identity so updated evidence for the same\n    opportunity does not create a new record.\n    """''', '''    """\n    Return a deterministic identity for one discovered signal.\n\n    This is discovery persistence identity, not final deduplication.\n    Company/person identity must never collapse distinct business needs.\n    The observed signal is therefore part of the identity, including when\n    a source reuses a coarse source_id or URL.\n    """''')
+          old = '''    if source and source_id:\n        raw_identity = (\n            f"source:{source}|"\n            f"source_id:{source_id}|"\n            f"url:{url}|"\n            f"job_title:{job_title}"\n        )\n    else:\n        company = normalize_identity_value(\n            lead.get("company")\n        )\n\n        raw_identity = (\n            f"company:{company}|"\n            f"url:{url}|"\n            f"job_title:{job_title}|"\n            f"signal_type:{signal_type}"\n        )'''
+          new = '''    company = normalize_identity_value(lead.get("company"))\n    person = normalize_identity_value(lead.get("person") or lead.get("contact_name"))\n    signal = normalize_identity_value(lead.get("signal"))\n\n    if source and source_id:\n        raw_identity = (\n            f"source:{source}|"\n            f"source_id:{source_id}|"\n            f"url:{url}|"\n            f"company:{company}|"\n            f"person:{person}|"\n            f"job_title:{job_title}|"\n            f"signal_type:{signal_type}|"\n            f"signal:{signal}"\n        )\n    else:\n        raw_identity = (\n            f"company:{company}|"\n            f"person:{person}|"\n            f"url:{url}|"\n            f"job_title:{job_title}|"\n            f"signal_type:{signal_type}|"\n            f"signal:{signal}"\n        )'''
+          if old not in text:
+              raise SystemExit('lead_identity.py expected identity block not found')
+          identity.write_text(text.replace(old, new))
+
+          helper = Path('lead_engine/opportunity_dedupe.py')
+          helper.write_text('''from __future__ import annotations\n\nimport hashlib\nimport json\nimport re\nfrom typing import Any, Dict, Iterable, Optional\n\n\ndef _norm(value: Any) -> str:\n    text = str(value or "").strip().lower()\n    return re.sub(r"\\s+", " ", text)\n\n\ndef opportunity_need_key(lead: Dict[str, Any]) -> str:\n    """Build a conservative exact-opportunity key for the final gate only.\n\n    Company and person are mandatory. The need uses an explicit business_need\n    when available, otherwise the observed signal plus role/type context.\n    Conservative matching is intentional: uncertainty must keep the lead.\n    """\n    company = _norm(lead.get("company"))\n    person = _norm(lead.get("person") or lead.get("contact_name"))\n    need = _norm(lead.get("business_need"))\n    if not need:\n        need = "|".join(\n            _norm(lead.get(key))\n            for key in ("signal", "job_title", "signal_type")\n        ).strip("|")\n    if not company or not person or not need:\n        return ""\n    raw = f"company:{company}|person:{person}|need:{need}"\n    return hashlib.sha256(raw.encode("utf-8")).hexdigest()\n\n\ndef _is_qualified(payload: Dict[str, Any]) -> bool:\n    if payload.get("qualified") is True:\n        return True\n    for key in ("qualification_status", "review_status", "status"):\n        value = _norm(payload.get(key))\n        if value in {"qualified", "approved", "accepted"}:\n            return True\n    return False\n\n\ndef _records(db) -> Iterable[Dict[str, Any]]:\n    records = getattr(db, "records", None)\n    if isinstance(records, dict):\n        return records.values()\n    conn = getattr(db, "conn", None)\n    if conn is None:\n        return ()\n    rows = conn.execute("SELECT payload FROM leads").fetchall()\n    result = []\n    for row in rows:\n        try:\n            payload = json.loads(row[0])\n        except (TypeError, ValueError):\n            continue\n        if isinstance(payload, dict):\n            result.append(payload)\n    return result\n\n\ndef find_exact_qualified_duplicate(db, lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:\n    """Return another qualified lead only for an exact company/person/need match."""\n    key = opportunity_need_key(lead)\n    if not key:\n        return None\n    fingerprint = str(lead.get("fingerprint") or "")\n    for existing in _records(db):\n        if not isinstance(existing, dict):\n            continue\n        if str(existing.get("fingerprint") or "") == fingerprint:\n            continue\n        if not _is_qualified(existing):\n            continue\n        if opportunity_need_key(existing) == key:\n            return existing\n    return None\n''')
+
+          pipeline = Path('lead_engine/pipeline.py')
+          text = pipeline.read_text()
+          if 'from .opportunity_dedupe import find_exact_qualified_duplicate' not in text:
+              text = text.replace('from .models import Lead\n', 'from .models import Lead\nfrom .opportunity_dedupe import find_exact_qualified_duplicate\n')
+
+          old_block = '''        if existing is not None:\n\n            if self._status_is_qualified(\n                existing\n            ):\n                return {\n                    "status": "duplicate",\n                    "accepted": False,\n                    "duplicate": True,\n                    "fingerprint": fingerprint,\n                    "lead": existing,\n                    "potential_routes": possible_routes,\n                    "lead_score": existing.get(\n                        "lead_score",\n                        scoring["lead_score"],\n                    ),\n                    "priority": existing.get(\n                        "priority",\n                        scoring["priority"],\n                    ),\n                    "sync_status": None,\n                    "sync_error": None,\n                    "airtable_record": None,\n                }\n\n            stored = self.db.update_payload(\n                fingerprint,\n                payload,\n            )'''
+          new_block = '''        if existing is not None:\n\n            # Discovery persistence is never a final duplicate decision.\n            # An existing record may be qualified, but the final duplicate\n            # gate runs only after this signal has completed qualification.\n            stored = self.db.update_payload(\n                fingerprint,\n                payload,\n            )'''
+          if old_block not in text:
+              raise SystemExit('pipeline.py expected early duplicate block not found')
+          text = text.replace(old_block, new_block)
+
+          marker = '''        existing = self.db.get(\n            fingerprint\n        )\n\n        if existing is None:\n            raise ValueError(\n                f"Lead disappeared before finalization: {fingerprint}"\n            )\n\n        # The existing record is the canonical record for this\n'''
+          replacement = '''        existing = self.db.get(\n            fingerprint\n        )\n\n        if existing is None:\n            raise ValueError(\n                f"Lead disappeared before finalization: {fingerprint}"\n            )\n\n        # STRICT PHASE 6 DEDUPLICATION:\n        # This is the first point where duplicate evaluation is allowed.\n        # Company, person, URL, domain, source, and identity alone are\n        # never sufficient. The only duplicate is an exact company +\n        # person + underlying business need match against another\n        # already-qualified lead. If any part is uncertain, keep the lead.\n        duplicate = find_exact_qualified_duplicate(\n            self.db,\n            lead,\n        )\n        if duplicate is not None:\n            return {\n                "status": "duplicate",\n                "approved": False,\n                "duplicate": True,\n                "fingerprint": fingerprint,\n                "lead": lead,\n                "duplicate_of": duplicate.get("fingerprint"),\n                "reason": "exact_company_person_need_match",\n            }\n\n        # The existing record is the canonical record for this\n'''
+          if marker not in text:
+              raise SystemExit('pipeline.py finalization marker not found')
+          text = text.replace(marker, replacement)
+          pipeline.write_text(text)
+
+          test = Path('lead_engine/test_phase6_opportunity_dedupe.py')
+          test.write_text('''from .pipeline import LeadPipeline\n\n\nclass FakeDB:\n    def __init__(self):\n        self.records = {}\n\n    def get(self, fingerprint):\n        return self.records.get(fingerprint)\n\n    def update_payload(self, fingerprint, payload):\n        self.records[fingerprint] = payload\n        return payload\n\n    def insert_if_new(self, payload):\n        fingerprint = payload["fingerprint"]\n        if fingerprint in self.records:\n            return False\n        self.records[fingerprint] = payload\n        return True\n\n    def mark_synced(self, fingerprint):\n        return None\n\n    def mark_error(self, fingerprint, error):\n        return None\n\n\ndef _process(pipeline, *, company, person, signal, source_id):\n    return pipeline.process(\n        source="test",\n        source_id=source_id,\n        url=f"https://example.com/{source_id}",\n        company=company,\n        person=person,\n        signal=signal,\n        evidence=signal,\n    )\n\n\ndef test_different_company_same_need_is_new_lead():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    a = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="a")\n    b = _process(pipeline, company="Beta", person="Alex", signal="need an AI development team", source_id="b")\n    assert a["accepted"] is True\n    assert b["accepted"] is True\n    assert a["fingerprint"] != b["fingerprint"]\n\n\ndef test_same_company_different_person_same_need_is_new_lead():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    a = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="a")\n    b = _process(pipeline, company="Acme", person="Jordan", signal="need an AI development team", source_id="b")\n    assert a["accepted"] is True\n    assert b["accepted"] is True\n    assert a["fingerprint"] != b["fingerprint"]\n\n\ndef test_same_company_same_person_different_need_is_new_lead():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    a = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="a")\n    b = _process(pipeline, company="Acme", person="Alex", signal="need a mobile application", source_id="b")\n    assert a["accepted"] is True\n    assert b["accepted"] is True\n    assert a["fingerprint"] != b["fingerprint"]\n\n\ndef test_exact_duplicate_is_not_rejected_before_qualification():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    first = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="a")\n    pipeline.qualify(first["fingerprint"], qualified=True, reason="verified")\n    second = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="b")\n    assert second["status"] != "duplicate"\n    assert second["accepted"] is True\n\n\ndef test_exact_duplicate_is_blocked_only_at_finalization_after_qualification():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    first = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="a")\n    pipeline.qualify(first["fingerprint"], qualified=True, reason="verified")\n    second = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="b")\n    pipeline.qualify(second["fingerprint"], qualified=True, reason="verified")\n    result = pipeline.finalize(second["fingerprint"])\n    assert result["status"] == "duplicate"\n    assert result["approved"] is False\n    assert result["reason"] == "exact_company_person_need_match"\n\n\ndef test_same_company_person_different_need_survives_finalization():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    first = _process(pipeline, company="Acme", person="Alex", signal="need an AI development team", source_id="a")\n    pipeline.qualify(first["fingerprint"], qualified=True, reason="verified")\n    second = _process(pipeline, company="Acme", person="Alex", signal="need a mobile application", source_id="b")\n    pipeline.qualify(second["fingerprint"], qualified=True, reason="verified")\n    result = pipeline.finalize(second["fingerprint"])\n    assert result["status"] == "finalized"\n    assert result["approved"] is True\n    assert result["duplicate"] is False\n\n\ndef test_missing_person_never_causes_duplicate_rejection():\n    db = FakeDB()\n    pipeline = LeadPipeline(db=db, sync_enabled=False)\n    first = _process(pipeline, company="Acme", person="", signal="need an AI development team", source_id="a")\n    pipeline.qualify(first["fingerprint"], qualified=True, reason="verified")\n    second = _process(pipeline, company="Acme", person="", signal="need an AI development team", source_id="b")\n    pipeline.qualify(second["fingerprint"], qualified=True, reason="verified")\n    result = pipeline.finalize(second["fingerprint"])\n    assert result["status"] == "finalized"\n    assert result["duplicate"] is False\n''')
+
+          # Update the old boundary test whose pre-Phase-6 expectation was
+          # that a qualified discovery could be blocked during process().
+          boundary = Path('lead_engine/test_pipeline_delivery_boundary.py')
+          text = boundary.read_text()
+          text = text.replace('''    assert second["status"] == "duplicate"\n    assert second["accepted"] is False\n    assert second["fingerprint"] == fingerprint\n''', '''    assert second["status"] != "duplicate"\n    assert second["accepted"] is True\n    assert second["fingerprint"] == fingerprint\n''')
+          boundary.write_text(text)
+
+          # Remove this one-shot workflow after applying the code changes.
+          workflow = Path('.github/workflows/phase6_apply.yml')
+          workflow.unlink()
+
+          print('Phase 6 strict opportunity dedupe changes applied.')
+          PY
+      - name: Run targeted Phase 6 tests
+        run: |
+          python -m pytest -q lead_engine/test_phase6_opportunity_dedupe.py lead_engine/test_pipeline_delivery_boundary.py
+      - name: Commit Phase 6 changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lead_engine .github/workflows/phase6_apply.yml
+          git commit -m 'Enforce strict post-qualification opportunity deduplication' || exit 0
+          git push
