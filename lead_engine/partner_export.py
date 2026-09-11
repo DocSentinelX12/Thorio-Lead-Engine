@@ -70,6 +70,7 @@ def prepare_partner_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
         "source": lead.get("source", ""),
         "source_id": lead.get("source_id", ""),
         "fingerprint": lead.get("fingerprint", ""),
+        "opportunity_id": lead.get("opportunity_id", ""),
         "url": lead.get("url", ""),
         "company": lead.get("company", ""),
         "person": lead.get("person", ""),
