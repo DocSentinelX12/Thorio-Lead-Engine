@@ -86,14 +86,7 @@ class LeadDB:
 
     @contextmanager
     def batch_writes(self):
-        """Defer lead-write commits until the enclosing source batch completes.
-
-        Each record still executes its own SQL statement, so duplicate and
-        update semantics are unchanged. Only the transaction commit is shared
-        across the source batch. Callers that handle per-record failures may
-        continue processing and the successful records remain durable when the
-        batch exits.
-        """
+        """Defer lead-write commits until the enclosing source batch completes."""
         self._batch_write_depth += 1
         try:
             yield self
@@ -280,3 +273,56 @@ class LeadDB:
             if available <= 0:
                 self.conn.commit()
                 return []
+            rows = self.conn.execute("SELECT task_id FROM agent_queue WHERE agent = ? AND status = 'queued' ORDER BY priority DESC, created_at LIMIT ?", (agent, available)).fetchall()
+            claimed_ids = [row[0] for row in rows]
+            if not claimed_ids:
+                self.conn.commit()
+                return []
+            self.conn.executemany("UPDATE agent_queue SET status = 'running', worker_id = ?, lease_until = ?, attempts = attempts + 1, updated_at = ? WHERE task_id = ? AND status = 'queued'", [(worker_id, lease_until, now_iso, task_id) for task_id in claimed_ids])
+            claimed = [task_id for task_id in claimed_ids if self.conn.execute("SELECT worker_id, status FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone() == (worker_id, "running")]
+            self.conn.commit()
+            return [self.queue_get(task_id) for task_id in claimed]
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def queue_update(self, task_id, **updates):
+        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result"}
+        unknown = set(updates) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
+        if not updates:
+            return
+        assignments = ", ".join(f"{field} = ?" for field in updates)
+        values = list(updates.values()) + [task_id]
+        self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
+        self.conn.commit()
+
+    def queue_all_rows(self):
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
+
+    def queue_pending_all_rows(self):
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
+
+    def queue_pending(self, agent=None):
+        if agent is None:
+            return self.queue_pending_all_rows()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
+
+    def stats(self):
+        return self.conn.execute("SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads").fetchone()
+
+    def close(self) -> None:
+        if self.conn is not None:
+            self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
+
+
+if __name__ == "__main__":
+    print("Lead database loaded. SQLite persistence is ready.")
