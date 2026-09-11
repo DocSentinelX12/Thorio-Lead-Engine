@@ -44,9 +44,10 @@ def test_configured_sources_includes_web_source():
 def test_free_source_catalog_has_exact_current_universe():
     catalog = _load_free_source_catalog()
 
-    assert len(catalog) == 42
-    assert len(available_free_sources()) == 42
+    assert len(catalog) == 41
+    assert len(available_free_sources()) == 41
     assert all(definition.enabled for definition in catalog)
+    assert "EURES" not in available_free_sources()
 
 
 def test_free_source_catalog_preserves_historical_public_sources():
@@ -55,7 +56,6 @@ def test_free_source_catalog_preserves_historical_public_sources():
     historical_sources = {
         "NoDesk",
         "Welcome to the Jungle",
-        "EURES",
         "Remotive",
         "Working Nomads",
         "We Work Remotely",
@@ -104,38 +104,37 @@ def test_free_source_catalog_preserves_historical_public_sources():
     assert current_sources <= names
 
 
-def test_restored_historical_sources_are_html_sources():
+def test_restored_historical_sources_use_explicit_working_collectors():
     catalog = _load_free_source_catalog()
     definitions = {
         definition.name: definition
         for definition in catalog
     }
 
-    restored = {
-        "NoDesk",
-        "Welcome to the Jungle",
-        "EURES",
-        "Remotive",
-        "Working Nomads",
-        "We Work Remotely",
-        "Jobspresso",
-        "Landing Jobs",
-        "EU Remote Jobs",
-        "WorkWave",
-        "AI Jobs",
-        "Total",
-        "FlexJobs",
-        "US Remotely",
-        "Rocketship",
-        "JobFill.AI",
-        "Remote Woman",
-        "Wellfound",
+    expected_types = {
+        "NoDesk": "rss",
+        "Welcome to the Jungle": "html",
+        "Remotive": "json",
+        "Working Nomads": "json",
+        "We Work Remotely": "rss",
+        "Jobspresso": "rss",
+        "Landing Jobs": "json",
+        "EU Remote Jobs": "html",
+        "WorkWave": "json",
+        "AI Jobs": "html",
+        "Total": "html",
+        "FlexJobs": "html",
+        "US Remotely": "html",
+        "Rocketship": "html",
+        "JobFill.AI": "html",
+        "Remote Woman": "html",
+        "Wellfound": "html",
     }
 
-    assert all(
-        definitions[name].collector_type == "html"
-        for name in restored
-    )
+    assert {
+        name: definitions[name].collector_type
+        for name in expected_types
+    } == expected_types
 
 
 def test_free_source_catalog_supports_all_public_collector_types():
@@ -223,7 +222,7 @@ def test_free_source_catalog_preserves_company_metadata():
 def test_available_free_sources_returns_catalog_names():
     names = available_free_sources()
 
-    assert len(names) == 42
+    assert len(names) == 41
     assert "Himalayas" in names
     assert "Jobicy" in names
     assert "RemoteJobs.org" in names
@@ -231,6 +230,7 @@ def test_available_free_sources_returns_catalog_names():
     assert "GitLab" in names
     assert "NoDesk" in names
     assert "We Work Remotely" in names
+    assert "EURES" not in names
 
 
 def test_configured_sources_loads_all_free_sources():
@@ -244,7 +244,7 @@ def test_configured_sources_loads_all_free_sources():
     ):
         sources = configured_sources()
 
-    assert len(sources) == 42
+    assert len(sources) == 41
 
     names = {
         source.name
