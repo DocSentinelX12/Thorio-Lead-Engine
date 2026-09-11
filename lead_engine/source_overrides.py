@@ -13,6 +13,9 @@ _SOURCE_OVERRIDES = {
         "url": "https://www.themuse.com/api/public/jobs?page=1",
         "page_start": 1,
     },
+    "Remotive": {
+        "url": "https://remotive.com/remote-jobs",
+    },
 }
 
 
