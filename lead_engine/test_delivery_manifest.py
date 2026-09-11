@@ -21,30 +21,22 @@ def make_lead(
         "contact_email": "jane@example.com",
         "signal": signal,
         "evidence": evidence,
+        "business_need": "Build a remote technical team",
         "route": route,
         "potential_routes": [route],
         "lead_score": 50,
         "priority": "High",
-        "status": "new",
+        "status": "qualified",
+        "qualified": True,
+        "qualification_status": "qualified",
     }
 
 
 def test_manifest_routes_approved_leads():
     leads = [
-        make_lead(
-            route="Shiftr",
-            signal="remote software engineer",
-        ),
-        make_lead(
-            route="Paxus",
-            signal="contract staffing recruiting",
-            evidence="Company needs contract staffing and recruiting support.",
-        ),
-        make_lead(
-            route="Thorio",
-            signal="remote product designer",
-            evidence="Company is hiring a remote product designer.",
-        ),
+        make_lead(route="Shiftr", signal="remote software engineer"),
+        make_lead(route="Paxus", signal="contract staffing recruiting", evidence="Company needs contract staffing and recruiting support."),
+        make_lead(route="Thorio", signal="remote product designer", evidence="Company is hiring a remote product designer."),
     ]
 
     manifest = build_delivery_manifest(leads)
@@ -53,40 +45,33 @@ def test_manifest_routes_approved_leads():
     assert len(manifest["Paxus"]) == 1
     assert len(manifest["Thorio"]) == 1
     assert len(manifest["Review"]) == 0
-
-    assert manifest["counts"]["Shiftr"] == 1
-    assert manifest["counts"]["Paxus"] == 1
-    assert manifest["counts"]["Thorio"] == 1
-    assert manifest["counts"]["Review"] == 0
+    assert manifest["counts"] == {"Shiftr": 1, "Paxus": 1, "Thorio": 1, "Review": 0}
 
 
 def test_manifest_sends_invalid_lead_to_review():
-    leads = [
-        make_lead(
-            route="Shiftr",
-            signal="office manager",
-            evidence="Company is hiring an office manager.",
-        )
-    ]
+    leads = [make_lead(route="Shiftr", signal="office manager", evidence="Company is hiring an office manager.")]
 
     manifest = build_delivery_manifest(leads)
 
     assert len(manifest["Shiftr"]) == 0
     assert len(manifest["Review"]) == 1
     assert manifest["Review"][0]["delivery_status"] == "review"
-    assert manifest["Review"][0]["delivery_reason"] in {
-        "route_evidence_mismatch",
-        "delivery_policy_rejected",
-    }
+    assert manifest["Review"][0]["delivery_reason"] in {"route_evidence_mismatch", "delivery_policy_rejected"}
+
+
+def test_unqualified_lead_never_enters_partner_queue():
+    lead = make_lead()
+    lead["qualified"] = False
+    lead["qualification_status"] = "review"
+
+    manifest = build_delivery_manifest([lead])
+
+    assert manifest["Shiftr"] == []
+    assert len(manifest["Review"]) == 1
 
 
 def test_manifest_rejects_unsupported_route():
-    leads = [
-        make_lead(
-            route="UnknownPartner",
-            signal="remote software engineer",
-        )
-    ]
+    leads = [make_lead(route="UnknownPartner", signal="remote software engineer")]
 
     manifest = build_delivery_manifest(leads)
 
@@ -97,25 +82,12 @@ def test_manifest_rejects_unsupported_route():
 
 def test_approved_partner_leads_returns_only_partner_queue():
     leads = [
-        make_lead(
-            route="Shiftr",
-            signal="software engineer",
-        ),
-        make_lead(
-            route="Paxus",
-            signal="contract staffing",
-            evidence="Company needs contract staffing.",
-        ),
-        make_lead(
-            route="Thorio",
-            signal="remote product designer",
-        ),
+        make_lead(route="Shiftr", signal="software engineer"),
+        make_lead(route="Paxus", signal="contract staffing", evidence="Company needs contract staffing."),
+        make_lead(route="Thorio", signal="remote product designer"),
     ]
 
-    shiftr = approved_partner_leads(
-        leads,
-        "Shiftr",
-    )
+    shiftr = approved_partner_leads(leads, "Shiftr")
 
     assert len(shiftr) == 1
     assert shiftr[0]["route"] == "Shiftr"
@@ -123,16 +95,5 @@ def test_approved_partner_leads_returns_only_partner_queue():
 
 
 def test_unsupported_partner_returns_empty_list():
-    leads = [
-        make_lead(
-            route="Shiftr",
-            signal="software engineer",
-        )
-    ]
-
-    result = approved_partner_leads(
-        leads,
-        "NotAPartner",
-    )
-
+    result = approved_partner_leads([make_lead()], "NotAPartner")
     assert result == []
