@@ -49,7 +49,8 @@ def test_social_source_discovery_handoffs_to_social_research(tmp_path):
     assert result["completed_count"] == 1
     queued = pending(db)
     agents = {task["agent"] for task in queued}
-    assert "qualification_a" in agents
+    assert "company_research" in agents
+    assert "qualification_a" not in agents
     assert "social_intelligence" in agents
     assert "social_hiring_research" in agents
     assert "social_decision_maker_research" in agents
@@ -66,7 +67,7 @@ def test_advanced_discovery_specialist_extracts_evidence_without_qualifying(tmp_
     finding = result["results"][0]
     assert finding["matched_event_count"] == 1
     assert finding["requires_verification"] is True
-    assert finding["handoff"] == "qualification_a"
+    assert finding["handoff"] == "company_research"
     assert task["agent"] == "engineering_demand_discovery"
 
 
@@ -85,9 +86,35 @@ def test_social_research_handoffs_to_company_research(tmp_path):
     assert any(task["agent"] == "company_research" for task in pending(db))
 
 
-def test_qualification_worker_applies_independent_company_routes(tmp_path):
+def test_qualification_worker_requires_completed_company_research(tmp_path):
     db = _db(tmp_path)
-    lead = {"fingerprint": "qualification-worker-test", "company": "Acme", "signal": "Acme is hiring a remote software engineer", "job_title": "Software Engineer", "need_at": _recent()}
+    lead = {"fingerprint": "qualification-research-gate", "company": "Acme", "signal": "Acme is hiring a remote software engineer"}
+    db.insert_if_new(lead)
+    enqueue(db, "qualification_a", {"lead": lead})
+    result = run_worker_once(db, "qualification_a", worker_id="qualification-a")
+    assert result["completed_count"] == 0
+    assert result["failed_count"] == 1
+    stored = db.get(lead["fingerprint"])
+    assert stored.get("qualification_results") is None
+
+
+def test_qualification_worker_applies_independent_company_routes_after_research(tmp_path):
+    db = _db(tmp_path)
+    lead = {
+        "fingerprint": "qualification-worker-test",
+        "company": "Acme",
+        "signal": "Acme is hiring a remote software engineer",
+        "job_title": "Software Engineer",
+        "need_at": _recent(),
+        "research_status": "complete",
+        "research_verified_fields": ["company_verified", "decision_maker", "decision_maker_evidence"],
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_verification_status": "verified",
+        },
+    }
     db.insert_if_new(lead)
     task = enqueue(db, "qualification_a", {"lead": lead})
     result = run_worker_once(db, "qualification_a", worker_id="qualification-a")
