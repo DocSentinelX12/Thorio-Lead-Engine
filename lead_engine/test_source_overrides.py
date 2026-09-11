@@ -26,7 +26,7 @@ _ACTIVE_SOURCES = {
 
 
 def test_only_explicit_broken_sources_are_overridden():
-    assert set(_SOURCE_OVERRIDES) == {"The Muse"}
+    assert set(_SOURCE_OVERRIDES) == {"The Muse", "Remotive"}
     assert not (set(_SOURCE_OVERRIDES) & _ACTIVE_SOURCES)
 
 
@@ -46,6 +46,18 @@ def test_the_muse_uses_current_api_page_one():
     assert muse.title_field == "name"
     assert muse.company_field == "company.name"
     assert muse.url_field == "refs.landing_page"
+
+
+def test_remotive_uses_current_jobs_page():
+    catalog = _load_free_source_catalog()
+    remotive = next(
+        definition
+        for definition in catalog
+        if definition.name == "Remotive"
+    )
+
+    assert remotive.url == "https://remotive.com/remote-jobs"
+    assert remotive.collector_type == "html"
 
 
 def test_every_active_source_definition_is_unchanged():
