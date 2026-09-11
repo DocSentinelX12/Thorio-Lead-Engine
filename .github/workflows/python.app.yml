@@ -58,8 +58,9 @@ jobs:
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
       THORIO_FREE_ONLY: "1"
-      THORIO_SOURCE_COLLECTION_WORKERS: "40"
-      THORIO_AGENT_DRAIN_ROUNDS: "1"
+      THORIO_SOURCE_COLLECTION_WORKERS: "64"
+      THORIO_AGENT_EXECUTION_WORKERS: "128"
+      THORIO_AGENT_DRAIN_ROUNDS: "4"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
       THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
       THORIO_ACCOUNT_X_USERNAME: ${{ secrets.THORIO_ACCOUNT_X_USERNAME }}
@@ -108,15 +109,7 @@ jobs:
 
           def request(token, method, url, payload=None):
               data = None if payload is None else json.dumps(payload).encode("utf-8")
-              req = urllib.request.Request(
-                  url,
-                  data=data,
-                  headers={
-                      "Authorization": f"Bearer {token}",
-                      "Content-Type": "application/json",
-                  },
-                  method=method,
-              )
+              req = urllib.request.Request(url, data=data, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method=method)
               try:
                   with urllib.request.urlopen(req, timeout=30) as response:
                       body = response.read().decode("utf-8")
@@ -129,40 +122,19 @@ jobs:
           for label, token in candidates:
               if not token:
                   continue
-              status, body = request(
-                  token,
-                  "POST",
-                  f"https://api.airtable.com/v0/{base_id}/{table}",
-                  {
-                      "records": [
-                          {
-                              "fields": {
-                                  "Lead": probe_lead,
-                                  "Applicable Routes": ["Thorio"],
-                              }
-                          }
-                      ]
-                  },
-              )
+              status, body = request(token, "POST", f"https://api.airtable.com/v0/{base_id}/{table}", {"records": [{"fields": {"Lead": probe_lead, "Applicable Routes": ["Thorio"]}}]})
               if status not in (200, 201):
                   print(f"{label}: write probe failed with HTTP {status}.")
                   continue
-
               records = body.get("records", []) if isinstance(body, dict) else []
               record_id = records[0].get("id") if records else None
               if not record_id:
                   print(f"{label}: write probe returned no record ID.")
                   continue
-
-              delete_status, _ = request(
-                  token,
-                  "DELETE",
-                  f"https://api.airtable.com/v0/{base_id}/{table}/{record_id}",
-              )
+              delete_status, _ = request(token, "DELETE", f"https://api.airtable.com/v0/{base_id}/{table}/{record_id}")
               if delete_status not in (200, 204):
                   print(f"{label}: write probe succeeded but cleanup failed with HTTP {delete_status}.")
                   raise SystemExit(1)
-
               selected = (label, token)
               print(f"AIRTABLE CREDENTIAL VERIFIED: {label} can create a record using Applicable Routes=Thorio and can clean up the probe record.")
               break
