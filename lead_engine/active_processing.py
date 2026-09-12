@@ -35,10 +35,33 @@ def priority(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]
 
 def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     result = _verification(agent, payload, ctx)
+    lead = _lead(payload)
+    fingerprint = lead["fingerprint"]
+
+    if result.get("decision_maker_verification") == "verified":
+        research = dict(lead.get("company_research") or {}) if isinstance(lead.get("company_research"), Mapping) else {}
+        research["decision_maker_verification_status"] = "verified"
+        if result.get("decision_maker_role_evidence"):
+            research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
+        updated = dict(lead)
+        updated["company_research"] = research
+        updated["research_status"] = "complete"
+        stored = ctx.db.update_payload(fingerprint, updated) or updated
+        enqueue(
+            ctx.db,
+            "qualification_a",
+            {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": stored.get("research_verified_fields", [])}},
+            priority=9,
+            dedupe_key=f"qualification_a_verified:{fingerprint}",
+        )
+        result["decision_maker_handoff"] = "qualification_a"
+        result["lead"] = stored
+
     if result.get("verified") is True:
-        lead = _lead(payload)
-        enqueue(ctx.db, "routing", {"lead": lead, "verified": True}, priority=7, dedupe_key=f"routing:{lead['fingerprint']}")
+        enqueue(ctx.db, "routing", {"lead": ctx.db.get(fingerprint) or lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}")
         result["handoff"] = "routing"
+    elif result.get("decision_maker_verification") == "verified":
+        result["handoff"] = "qualification_a"
     else:
         result["handoff"] = "review_required"
     return result
@@ -76,6 +99,8 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
     if not isinstance(research, Mapping):
         return False, "missing_company_research"
     if not research.get("decision_maker") or not research.get("decision_maker_evidence"):
+        return False, "decision_maker_not_verified"
+    if str(research.get("decision_maker_verification_status") or "").strip().lower() != "verified":
         return False, "decision_maker_not_verified"
     contact_email = str(lead.get("contact_email") or research.get("decision_maker_email") or "").strip()
     if not contact_email:
