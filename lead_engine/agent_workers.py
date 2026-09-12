@@ -229,9 +229,30 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
 
 def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    if not fingerprint:
+        raise AgentContractError("follow_up requires lead fingerprint")
+    snapshot = dict(lead)
+    current = ctx.db.get(fingerprint)
+    if current is None:
+        raise AgentContractError(f"follow_up lead not found: {fingerprint}")
+    lead = dict(current)
+    task_event_id = str(payload.get("inbound_event_id") or "").strip()
+    if task_event_id:
+        events = lead.get("conversation_events")
+        latest_event_id = ""
+        if isinstance(events, list) and events and isinstance(events[-1], Mapping):
+            latest_event_id = str(events[-1].get("event_id") or "").strip()
+        if latest_event_id and latest_event_id != task_event_id:
+            return {"role": "follow_up", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
+    outcome = str(payload.get("outcome") or lead.get("outreach_state") or "no_response").strip().lower()
+    if outcome == "no_response" and snapshot.get("next_follow_up_at") != lead.get("next_follow_up_at"):
+        return {"role": "follow_up", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
+    if str(lead.get("outreach_state") or "").strip().lower() in {"declined", "opted_out", "irrelevant", "converted", "exhausted"}:
+        stored = _persist_lead(ctx.db, lead)
+        return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": False}
     if not lead.get("outreach_history"):
         raise AgentContractError("follow_up requires an existing outreach history")
-    outcome = str(payload.get("outcome") or lead.get("outreach_state") or "no_response").strip().lower()
     if not outcome:
         raise AgentContractError("follow_up requires an observed outreach outcome")
     updated = apply_outcome(lead, outcome)
