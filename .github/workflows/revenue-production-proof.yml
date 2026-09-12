@@ -1,0 +1,42 @@
+name: Revenue Production Proof
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  revenue-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Run revenue lifecycle proof
+        run: |
+          pytest -q lead_engine/test_revenue_execution.py lead_engine/test_revenue_conversation.py lead_engine/test_revenue_scheduler_followup.py lead_engine/test_revenue_metrics.py lead_engine/test_revenue_production_proof.py
+      - name: Verify required revenue invariants
+        run: |
+          python - <<'PY'
+          from lead_engine.revenue_metrics import collect_revenue_metrics
+          from lead_engine.database import LeadDB
+          import tempfile
+          with tempfile.TemporaryDirectory() as directory:
+              db = LeadDB(directory)
+              metrics = collect_revenue_metrics(db)
+              required = {"discovered", "researched", "qualified", "sales_eligible", "sales_queued", "sales_active", "outreach_sent", "responses_received", "conversations_active", "followups_executed", "route_switches", "converted", "referred", "closed_lost", "disqualified", "orphaned_qualified"}
+              missing = sorted(required - set(metrics))
+              if missing:
+                  raise SystemExit(f"REVENUE METRICS FAILURE: missing={missing}")
+              if metrics["orphaned_qualified"] != 0:
+                  raise SystemExit(f"REVENUE ORPHAN FAILURE: orphaned_qualified={metrics['orphaned_qualified']}")
+              print("REVENUE PRODUCTION PROOF VERIFIED: metric contract present and orphan invariant is zero on the clean baseline.")
+          PY
