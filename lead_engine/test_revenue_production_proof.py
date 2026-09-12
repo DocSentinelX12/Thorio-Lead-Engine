@@ -52,9 +52,14 @@ def _drain(orchestrator, rounds=30):
 
 def _proof_debug(db, stored, first):
     return {
-        "lead": {key: stored.get(key) for key in ("qualified", "potential_routes", "qualification_results", "research_status", "company_research", "sales_eligibility", "sales_eligibility_reason", "revenue_lifecycle_state", "route", "eligible_routes")},
-        "pending": [(task.get("agent"), task.get("status"), task.get("error"), task.get("payload", {}).get("lead", {}).get("fingerprint")) for task in pending(db)],
-        "drain": first,
+        "sales_eligibility": stored.get("sales_eligibility"),
+        "sales_eligibility_reason": stored.get("sales_eligibility_reason"),
+        "potential_routes": stored.get("potential_routes"),
+        "qualification_status": stored.get("qualification_status"),
+        "research_status": stored.get("research_status"),
+        "decision_maker_verification": (stored.get("company_research") or {}).get("decision_maker_verification_status"),
+        "pending_agents": sorted({task.get("agent") for task in pending(db) if task.get("status") in {"queued", "running"}}),
+        "transport_calls": first.get("completed_count"),
     }
 
 
