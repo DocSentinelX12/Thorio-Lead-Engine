@@ -121,21 +121,23 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
     if not isinstance(routing_result, Mapping):
         routing_result = {}
 
+    if str(current_lead.get("sales_eligibility") or "").strip().lower() == "eligible":
+        result["sales_eligibility"] = "eligible"
+        result["sales_eligibility_reason"] = current_lead.get("sales_eligibility_reason") or "eligible"
+        result["handoff"] = "outreach_already_active" if current_lead.get("last_outreach_action_id") or str(current_lead.get("outreach_state") or "").lower() == "awaiting_response" else "sales_already_eligible"
+        enqueue(ctx.db, "audit", {"lead": current_lead, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}")
+        return result
+
     eligible, eligibility_reason = _sales_eligibility(current_lead, routing_result, result, ctx.db)
     if eligible:
-        already_active = bool(current_lead.get("last_outreach_action_id")) or str(current_lead.get("outreach_state") or "").lower() == "awaiting_response"
         updated = dict(current_lead)
-        if not already_active:
-            updated["revenue_lifecycle_state"] = "sales_eligible"
+        updated["revenue_lifecycle_state"] = "sales_eligible"
         updated.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "eligible_routes": list(routing_result.get("destinations", [])), "preserved_routes": list(routing_result.get("destinations", []))})
         stored = ctx.db.update_payload(fingerprint, updated) or updated
-        if not already_active:
-            enqueue(ctx.db, "outreach_closer", {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)}, priority=10, dedupe_key=f"sales:{fingerprint}")
-            result["handoff"] = "outreach_closer"
-        else:
-            result["handoff"] = "outreach_already_active"
+        enqueue(ctx.db, "outreach_closer", {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)}, priority=10, dedupe_key=f"sales:{fingerprint}")
         result["sales_eligibility"] = "eligible"
         result["sales_eligibility_reason"] = eligibility_reason
+        result["handoff"] = "outreach_closer"
     else:
         updated = dict(current_lead)
         if current_lead.get("qualified") is True:
