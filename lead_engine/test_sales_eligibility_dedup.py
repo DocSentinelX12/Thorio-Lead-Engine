@@ -17,6 +17,7 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
         "company_research": {
             "decision_maker": "Taylor",
             "decision_maker_evidence": "verified company evidence",
+            "decision_maker_verification_status": "verified",
             "decision_maker_email": "taylor@example.com",
         },
     }
