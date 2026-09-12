@@ -193,6 +193,15 @@ def _priority(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> 
 
 def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    if not fingerprint:
+        raise AgentContractError("outreach_closer requires lead fingerprint")
+    current = ctx.db.get(fingerprint)
+    if isinstance(current, Mapping):
+        current = dict(current)
+        if current.get("last_outreach_action_id") or str(current.get("outreach_state") or "").lower() == "awaiting_response":
+            return {"role": "outreach_closer", "lead": current, "autonomous": True, "approval_required": False, "action": "already_active", "delivery": dict(current.get("last_outreach_delivery") or {}), "action_id": current.get("last_outreach_action_id"), "conversation_id": current.get("conversation_id"), "next_state": current.get("outreach_state")}
+        lead = current
     if str(lead.get("sales_eligibility") or "").strip().lower() != "eligible":
         raise AgentContractError("outreach_closer requires a sales-eligible opportunity")
     if str(lead.get("research_status") or "").strip().lower() != "complete":
