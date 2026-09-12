@@ -56,18 +56,7 @@ def _route_switch(lead: Mapping[str, Any], suggested_route: Optional[str]) -> tu
     return None, None
 
 
-def record_inbound_event(
-    db: Any,
-    *,
-    opportunity_id: str,
-    conversation_id: str,
-    event_id: str,
-    text: str,
-    outcome: Optional[str] = None,
-    objection: Optional[str] = None,
-    suggested_route: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Record one provider event exactly once and queue the next closer action."""
+def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, event_id: str, text: str, outcome: Optional[str] = None, objection: Optional[str] = None, suggested_route: Optional[str] = None) -> Dict[str, Any]:
     opportunity_id = str(opportunity_id or "").strip()
     conversation_id = str(conversation_id or "").strip()
     event_id = str(event_id or "").strip()
@@ -93,13 +82,7 @@ def record_inbound_event(
 
     switched_route, switch_evidence = _route_switch(lead, suggested_route)
     updated = dict(lead)
-    updated["conversation_id"] = conversation_id
-    updated["conversation_events"] = list(conversation["events"])
-    updated["response_count"] = conversation["response_count"]
-    updated["last_response_at"] = event["at"]
-    updated["last_response_outcome"] = classified
-    updated["outreach_state"] = classified
-    updated["revenue_lifecycle_state"] = "conversation_active"
+    updated.update({"conversation_id": conversation_id, "conversation_events": list(conversation["events"]), "response_count": conversation["response_count"], "last_response_at": event["at"], "last_response_outcome": classified, "outreach_state": classified, "revenue_lifecycle_state": "conversation_active"})
     if switched_route:
         history = list(updated.get("route_switch_history") or []) if isinstance(updated.get("route_switch_history"), list) else []
         history.append({"at": event["at"], "from": updated.get("outreach_route"), "to": switched_route, "evidence": switch_evidence})
@@ -150,6 +133,18 @@ def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> li
         if when <= now:
             due.append(dict(lead))
     return due
+
+
+def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int = 100) -> int:
+    queued = 0
+    for lead in due_followups(db, now=now, limit=limit):
+        fingerprint = str(lead.get("fingerprint") or "").strip()
+        if not fingerprint:
+            continue
+        due_at = str(lead.get("next_follow_up_at") or "").strip()
+        enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True}, priority=10, dedupe_key=f"scheduled_followup:{fingerprint}:{due_at}")
+        queued += 1
+    return queued
 
 
 def objection_reply(text: str, route: str) -> str:
