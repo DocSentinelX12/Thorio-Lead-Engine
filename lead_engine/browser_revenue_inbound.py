@@ -2,7 +2,9 @@
 
 This adapter is configuration-driven. It never invents provider URLs,
 selectors, account names, or message identifiers. A target is usable only
-when the operator supplies the exact authenticated inbox/thread selectors.
+when the operator supplies the exact authenticated inbox selectors. The
+conversation thread URL is taken from the real outbound provider result that
+was persisted after a confirmed send.
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .account_auth import ensure_authenticated, login_credentials
+from .account_auth import ensure_authenticated
 from .revenue_conversation import record_inbound_event
 
 
@@ -28,7 +30,6 @@ class BrowserRevenueInboundTarget:
     channel: str
     account: str
     inbox_url: str
-    thread_url_template: str
     message_selector: str
     message_author_selector: str
     message_id_selector: str
@@ -43,7 +44,6 @@ class BrowserRevenueInboundTarget:
             "channel": self.channel,
             "account": self.account,
             "inbox_url": self.inbox_url,
-            "thread_url_template": self.thread_url_template,
             "message_selector": self.message_selector,
             "message_author_selector": self.message_author_selector,
             "message_id_selector": self.message_id_selector,
@@ -56,12 +56,11 @@ class BrowserRevenueInboundTarget:
             raise BrowserRevenueInboundConfigurationError(
                 f"inbound browser target missing required fields: {', '.join(missing)}"
             )
-        for name in ("inbox_url", "thread_url_template"):
-            value = str(getattr(self, name)).strip()
-            if not value.startswith(("https://", "http://")):
-                raise BrowserRevenueInboundConfigurationError(
-                    f"inbound browser {name} must be HTTP(S): {value!r}"
-                )
+        value = self.inbox_url.strip()
+        if not value.startswith(("https://", "http://")):
+            raise BrowserRevenueInboundConfigurationError(
+                f"inbound browser inbox_url must be HTTP(S): {value!r}"
+            )
 
 
 def _env(name: str, default: str = "") -> str:
@@ -93,7 +92,6 @@ def configured_browser_revenue_inbound_targets() -> dict[str, BrowserRevenueInbo
             channel=str(item.get("channel", "")).strip().lower(),
             account=str(item.get("account", "")).strip().lower().replace("-", "_").replace(" ", "_"),
             inbox_url=str(item.get("inbox_url", "")).strip(),
-            thread_url_template=str(item.get("thread_url_template", "")).strip(),
             message_selector=str(item.get("message_selector", "")).strip(),
             message_author_selector=str(item.get("message_author_selector", "")).strip(),
             message_id_selector=str(item.get("message_id_selector", "")).strip(),
@@ -221,20 +219,15 @@ class BrowserRevenueInboundObserver:
             raise BrowserRevenueInboundConfigurationError(
                 f"no real inbound browser target is configured for channel {channel!r}"
             )
-        thread_value = str(thread_url or "").strip()
-        if not thread_value:
+        destination = str(thread_url or "").strip()
+        if not destination:
             raise BrowserRevenueInboundConfigurationError(
-                f"{target.channel}: thread URL is required"
+                f"{target.channel}: real persisted thread URL is required"
             )
-        try:
-            destination = target.thread_url_template.format(
-                thread_url=thread_value,
-                thread=thread_value,
-            )
-        except KeyError as exc:
+        if not destination.startswith(("https://", "http://")):
             raise BrowserRevenueInboundConfigurationError(
-                f"{target.channel}: thread_url_template contains unsupported field {exc.args[0]!r}"
-            ) from exc
+                f"{target.channel}: persisted thread URL must be HTTP(S): {destination!r}"
+            )
 
         try:
             from playwright.sync_api import sync_playwright
