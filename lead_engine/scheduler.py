@@ -10,11 +10,11 @@ from .batch_delivery import sync_pending_batched
 from .compute_bridge import bridge_once
 from .compute_worker import ComputeWorkerClient
 from .database import LeadDB
+from .revenue_conversation import enqueue_due_followups
 from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
 from .sources import LeadSource
 
-# Compatibility seam retained for existing scheduler tests and integrations.
 sync_pending = sync_pending_batched
 
 
@@ -167,9 +167,7 @@ class LeadScheduler:
     def _run_sources_sequential(self, due_sources, results, failed):
         for source, previous_checkpoint, started_at, started_wall in due_sources:
             try:
-                result = dict(self._run_without_immediate_sync(
-                    lambda: self.checkpoint_runner.run(source=source, checkpoint=previous_checkpoint)
-                ))
+                result = dict(self._run_without_immediate_sync(lambda: self.checkpoint_runner.run(source=source, checkpoint=previous_checkpoint)))
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count != 0:
                     result["checkpoint"] = previous_checkpoint
@@ -183,10 +181,7 @@ class LeadScheduler:
         collected = {}
         workers = min(self._collection_workers(), max(1, len(due_sources)))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="source-collector") as executor:
-            futures = {
-                executor.submit(self._collect_source, source, previous_checkpoint): index
-                for index, (source, previous_checkpoint, _started_at, _started_wall) in enumerate(due_sources)
-            }
+            futures = {executor.submit(self._collect_source, source, previous_checkpoint): index for index, (source, previous_checkpoint, _started_at, _started_wall) in enumerate(due_sources)}
             for future in as_completed(futures):
                 index = futures[future]
                 try:
@@ -200,9 +195,7 @@ class LeadScheduler:
                 if isinstance(collected_value, Exception):
                     raise collected_value
                 records, next_checkpoint = collected_value
-                result = dict(self._run_without_immediate_sync(
-                    lambda: self.runner.process(records)
-                ))
+                result = dict(self._run_without_immediate_sync(lambda: self.runner.process(records)))
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count == 0:
                     current_checkpoint = "" if next_checkpoint is None else next_checkpoint
@@ -240,13 +233,11 @@ class LeadScheduler:
 
         db = self.runner.pipeline.db
         remote_before = self._bridge_remote()
+        due_followups = enqueue_due_followups(db)
         if agent_max_rounds is None:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
         else:
-            agent_result = self.agent_orchestrator.run_all_once(
-                limit_per_agent=self._agent_batch_limit(),
-                max_rounds=agent_max_rounds,
-            )
+            agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=agent_max_rounds)
         remote_after = self._bridge_remote()
         paxus_research = process_paxus_research_queue(db)
         sync_result = sync_pending(db)
@@ -254,15 +245,10 @@ class LeadScheduler:
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
-        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "remote_compute_before": remote_before, "agents": agent_result, "remote_compute_after": remote_after, "paxus_research": paxus_research}
+        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "due_followups_enqueued": due_followups, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 1) -> Dict[str, Any]:
-        """Run a finite production window and force each supplied source through its bounded cycles.
-
-        A bounded production invocation is an explicit execution request, so persisted
-        polling deadlines must not suppress the requested first cycle. Each cycle uses
-        the configured specialist drain rounds, bounded by the scheduler's hard cap.
-        """
+        """Run a finite production window and force each supplied source through its bounded cycles."""
         source_list = list(sources)
         if interval_seconds < 0:
             raise ValueError("interval_seconds must be greater than or equal to 0.")
@@ -270,7 +256,6 @@ class LeadScheduler:
             raise ValueError("max_cycles must be greater than or equal to 1.")
         if not source_list:
             return {"status": "completed", "cycles": 0, "results": [], "source_count": 0, "successful_source_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0}
-
         cycle_results = []
         for cycle_index in range(max_cycles):
             for source in source_list:
@@ -279,7 +264,6 @@ class LeadScheduler:
             cycle_results.append(self.run(source_list, agent_max_rounds=self._agent_drain_rounds()))
             if cycle_index + 1 < max_cycles:
                 time.sleep(interval_seconds)
-
         if len(cycle_results) == 1:
             result = dict(cycle_results[0])
         else:
@@ -296,8 +280,9 @@ class LeadScheduler:
                 "duplicate_count": sum(cycle["duplicate_count"] for cycle in cycle_results),
                 "processing_failed_count": sum(cycle["processing_failed_count"] for cycle in cycle_results),
                 "sync": [cycle["sync"] for cycle in cycle_results],
-                "remote_compute_before": [cycle["remote_compute_before"] for cycle in cycle_results],
                 "agents": [cycle["agents"] for cycle in cycle_results],
+                "due_followups_enqueued": sum(int(cycle.get("due_followups_enqueued", 0) or 0) for cycle in cycle_results),
+                "remote_compute_before": [cycle["remote_compute_before"] for cycle in cycle_results],
                 "remote_compute_after": [cycle["remote_compute_after"] for cycle in cycle_results],
                 "paxus_research": [cycle["paxus_research"] for cycle in cycle_results],
             }
@@ -315,7 +300,6 @@ class LeadScheduler:
             raise ValueError("agent_max_rounds must be greater than zero")
         if not source_list:
             return {"cycles": 0, "results": []}
-
         cycle_results = []
         cycles = 0
         while max_cycles is None or cycles < max_cycles:
