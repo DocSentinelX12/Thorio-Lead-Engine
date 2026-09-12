@@ -1,4 +1,4 @@
-"""Persistent handoffs for the qualification, verification, routing, and integrity chain."""
+"""Persistent handoffs for the qualification, verification, routing, and revenue chain."""
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping
@@ -52,14 +52,83 @@ def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     return result
 
 
+def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any], integrity_result: Mapping[str, Any]) -> tuple[bool, str]:
+    """Determine whether a verified opportunity may enter autonomous sales execution.
+
+    Qualification and communication are deliberately separate. In particular,
+    ``contact_communicated`` is an outcome of sales execution, never a
+    prerequisite for entering it.
+    """
+    destinations = routing_result.get("destinations")
+    if not isinstance(destinations, list) or not destinations:
+        return False, "no_supported_revenue_route"
+    if bool(routing_result.get("review_required")):
+        return False, "routing_requires_review"
+    if not (lead.get("qualified") or lead.get("potential_routes")):
+        return False, "not_qualified"
+    research = lead.get("company_research")
+    if not isinstance(research, Mapping):
+        return False, "missing_company_research"
+    if not research.get("decision_maker") or not research.get("decision_maker_evidence"):
+        return False, "decision_maker_not_verified"
+    contact_email = str(lead.get("contact_email") or research.get("decision_maker_email") or "").strip()
+    if not contact_email:
+        return False, "missing_contact_email"
+    if integrity_result.get("sync_error_present"):
+        # Airtable failure is a persistence retry condition, not a reason to
+        # discard a qualified opportunity. The durable LeadDB record remains
+        # authoritative while synchronization retries.
+        return True, "airtable_sync_retryable"
+    return True, "eligible"
+
+
 def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     result = _airtable_integrity(agent, payload, ctx)
     lead = _lead(payload)
     fingerprint = lead["fingerprint"]
-    # Integrity is the terminal persistence gate for the automated qualification
-    # chain. Once durable synchronization is verified, record an audit task so
-    # the system has an explicit post-route quality checkpoint. Outreach remains
-    # separately authorization-gated and is never implicitly sent here.
-    enqueue(ctx.db, "audit", {"lead": lead, "integrity_result": result, "routing_result": payload.get("routing_result", {})}, priority=4, dedupe_key=f"audit:{fingerprint}")
-    result["handoff"] = "audit"
+    routing_result = payload.get("routing_result", {})
+    if not isinstance(routing_result, Mapping):
+        routing_result = {}
+
+    eligible, eligibility_reason = _sales_eligibility(lead, routing_result, result)
+    if eligible:
+        updated = dict(lead)
+        updated.update({
+            "revenue_lifecycle_state": "sales_eligible",
+            "sales_eligibility": "eligible",
+            "sales_eligibility_reason": eligibility_reason,
+            "eligible_routes": list(routing_result.get("destinations", [])),
+            "preserved_routes": list(routing_result.get("destinations", [])),
+        })
+        stored = ctx.db.update_payload(fingerprint, updated) or updated
+        enqueue(
+            ctx.db,
+            "outreach_closer",
+            {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)},
+            priority=10,
+            dedupe_key=f"sales:{fingerprint}",
+        )
+        result["sales_eligibility"] = "eligible"
+        result["sales_eligibility_reason"] = eligibility_reason
+        result["handoff"] = "outreach_closer"
+    else:
+        updated = dict(lead)
+        if lead.get("qualified") or lead.get("potential_routes"):
+            updated.update({
+                "revenue_lifecycle_state": "qualified",
+                "sales_eligibility": "blocked",
+                "sales_eligibility_reason": eligibility_reason,
+            })
+            ctx.db.update_payload(fingerprint, updated)
+        result["sales_eligibility"] = "blocked"
+        result["sales_eligibility_reason"] = eligibility_reason
+        result["handoff"] = "audit"
+
+    enqueue(
+        ctx.db,
+        "audit",
+        {"lead": ctx.db.get(fingerprint) or lead, "integrity_result": result, "routing_result": routing_result},
+        priority=4,
+        dedupe_key=f"audit:{fingerprint}",
+    )
     return result
