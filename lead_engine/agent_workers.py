@@ -136,10 +136,7 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     if not fingerprint:
         raise AgentContractError("company_research requires lead fingerprint")
     existing = lead.get("company_research") if isinstance(lead.get("company_research"), Mapping) else {}
-    if supplied:
-        merged_research = {**dict(existing), **supplied}
-    else:
-        merged_research = dict(existing)
+    merged_research = {**dict(existing), **supplied} if supplied else dict(existing)
     if not merged_research:
         merged_research = {"company_verified": bool(lead.get("company")), "fabricated_fields": []}
         person = str(lead.get("person") or lead.get("contact_name") or "").strip()
@@ -215,7 +212,7 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
     updated = dict(lead)
     history = list(lead.get("outreach_history") or []) if isinstance(lead.get("outreach_history") or [], list) else []
     history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "provider_result": dict(action.provider_result or {})})
-    updated.update({"conversation_id": conversation_id, "revenue_lifecycle_state": "outreach_sent", "outreach_route": route, "outreach_state": "awaiting_response", "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0) + 1, "next_follow_up_at": decision.next_follow_up_at, "outreach_draft_subject": decision.subject, "outreach_draft_body": decision.body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {})})
+    updated.update({"conversation_id": conversation_id, "revenue_lifecycle_state": "outreach_sent", "outreach_route": route, "outreach_state": "awaiting_response", "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0) + 1, "next_follow_up_at": decision.next_follow_up_at, "follow_up_due": bool(decision.next_follow_up_at), "outreach_draft_subject": decision.subject, "outreach_draft_body": decision.body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {})})
     stored = _persist_lead(ctx.db, updated)
     return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_outreach", "route": route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": "awaiting_response", "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "truthfulness_guard": "evidence_only"}
 
@@ -262,11 +259,12 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
     conversation_id = str(updated.get("conversation_id") or f"conversation:{updated['fingerprint']}:{route}")
     transport = ctx.revenue_transport if ctx.revenue_transport is not None else configured_revenue_transport()
     attempt = int(updated.get("outreach_attempt", 0) or 0) + (0 if outcome == "no_response" else 1)
+    cadence = build_outreach_decision({**updated, "outreach_state": "ready", "outreach_attempt": attempt})
     action = execute_outbound(ctx.db, worker_capability=PRIVILEGED_CAPABILITY, opportunity_id=str(updated["fingerprint"]), conversation_id=conversation_id, channel=str(updated.get("outreach_channel") or "email"), recipient={"name": contact_name, "email": contact_email}, subject=subject, body=body, transport=transport, idempotency_key=f"followup:{updated['fingerprint']}:{conversation_id}:{attempt}")
     history = list(updated.get("outreach_history") or []) if isinstance(updated.get("outreach_history") or [], list) else []
     history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "kind": "follow_up", "provider_result": dict(action.provider_result or {})})
-    next_follow_up = updated.get("next_follow_up_at")
-    stored = _persist_lead(ctx.db, {**updated, "conversation_id": conversation_id, "revenue_lifecycle_state": "conversation_active", "outreach_state": "awaiting_response", "outreach_attempt": attempt, "follow_up_due": False, "outreach_draft_subject": subject, "outreach_draft_body": body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {}), "next_follow_up_at": next_follow_up})
+    next_follow_up = cadence.next_follow_up_at
+    stored = _persist_lead(ctx.db, {**updated, "conversation_id": conversation_id, "revenue_lifecycle_state": "conversation_active", "outreach_state": "awaiting_response", "outreach_attempt": attempt, "follow_up_due": bool(next_follow_up), "outreach_draft_subject": subject, "outreach_draft_body": body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {}), "next_follow_up_at": next_follow_up})
     return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": "awaiting_response", "next_follow_up_at": next_follow_up, "action": "send_follow_up", "outcome_recorded": True, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None}
 
 
