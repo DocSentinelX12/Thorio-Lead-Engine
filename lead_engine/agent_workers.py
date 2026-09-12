@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Mapping
 
 from .advanced_agent_logic import advanced_handler_registry
-from .agent_queue import claim, complete, enqueue, fail, heartbeat
+from .agent_queue import claim, complete, enqueue, fail, heartbeat, retry
 from .agent_specializations import AgentSpecialization, get_specialization
 from .agent_stateful_handlers import airtable_integrity, identity_resolution, routing, verification
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
+from .revenue_execution import PRIVILEGED_CAPABILITY, RevenueTransportUnavailable, configured_revenue_transport, execute_outbound
 
 
 class AgentContractError(ValueError):
@@ -21,6 +22,7 @@ class AgentContractError(ValueError):
 class AgentExecutionContext:
     db: Any
     worker_id: str
+    revenue_transport: Any = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,8 @@ def _priority(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> 
 
 def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
+    if str(lead.get("sales_eligibility") or "").strip().lower() != "eligible":
+        raise AgentContractError("outreach_closer requires a sales-eligible opportunity")
     if str(lead.get("research_status") or "").strip().lower() != "complete":
         raise AgentContractError("outreach_closer requires completed company research")
     research = lead.get("company_research")
@@ -189,17 +193,42 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
         decision = build_outreach_decision(lead)
     except OutreachContractError as exc:
         raise AgentContractError(str(exc)) from exc
+
+    route = str(decision.route or "").strip().lower()
+    if not route:
+        raise AgentContractError("outreach_closer requires a selected revenue route")
+    conversation_id = str(lead.get("conversation_id") or f"conversation:{lead['fingerprint']}:{route}")
+    transport = ctx.revenue_transport if ctx.revenue_transport is not None else configured_revenue_transport()
+    action = execute_outbound(
+        ctx.db,
+        worker_capability=PRIVILEGED_CAPABILITY,
+        opportunity_id=str(lead["fingerprint"]),
+        conversation_id=conversation_id,
+        channel=str(lead.get("outreach_channel") or "email"),
+        recipient={"name": decision.contact_name, "email": decision.contact_email},
+        subject=decision.subject,
+        body=decision.body,
+        transport=transport,
+        idempotency_key=f"outreach:{lead['fingerprint']}:{route}:{int(lead.get('outreach_attempt', 0) or 0) + 1}",
+    )
     updated = dict(lead)
+    history = list(lead.get("outreach_history") or []) if isinstance(lead.get("outreach_history") or [], list) else []
+    history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "provider_result": dict(action.provider_result or {})})
     updated.update({
-        "outreach_route": decision.route,
-        "outreach_state": decision.next_state,
-        "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0),
+        "conversation_id": conversation_id,
+        "revenue_lifecycle_state": "outreach_sent",
+        "outreach_route": route,
+        "outreach_state": "awaiting_response",
+        "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0) + 1,
         "next_follow_up_at": decision.next_follow_up_at,
         "outreach_draft_subject": decision.subject,
         "outreach_draft_body": decision.body,
+        "outreach_history": history,
+        "last_outreach_action_id": action.action_id,
+        "last_outreach_delivery": dict(action.provider_result or {}),
     })
     stored = _persist_lead(ctx.db, updated)
-    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "prepare_outreach", "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
+    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_outreach", "route": route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": "awaiting_response", "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "truthfulness_guard": "evidence_only"}
 
 
 def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
@@ -293,6 +322,9 @@ def execute_task(db, task: Mapping[str, Any], *, worker_id: str, heartbeat_befor
         result.setdefault("forbidden_actions", list(specialization.forbidden_actions))
         completed = complete(db, task_id, worker_id=worker_id, result=result)
         return AgentExecutionResult(agent=agent, task_id=task_id, status=completed["status"], result=result)
+    except RevenueTransportUnavailable as exc:
+        queued = retry(db, task_id, worker_id=worker_id, error=str(exc))
+        return AgentExecutionResult(agent=agent, task_id=task_id, status=queued["status"], result={"error": str(exc), "retryable": True})
     except Exception as exc:
         failed = fail(db, task_id, worker_id=worker_id, error=str(exc))
         return AgentExecutionResult(agent=agent, task_id=task_id, status=failed["status"], result={"error": str(exc)})
@@ -302,4 +334,4 @@ def run_worker_once(db, agent: str, *, worker_id: str, limit: int = 1) -> Dict[s
     get_specialization(agent)
     tasks = claim(db, agent, worker_id=worker_id, limit=limit)
     results = [execute_task(db, task, worker_id=worker_id) for task in tasks]
-    return {"agent": agent, "worker_id": worker_id, "claimed_count": len(tasks), "completed_count": sum(result.status == "complete" for result in results), "failed_count": sum(result.status == "failed" for result in results), "results": [result.result for result in results]}
+    return {"agent": agent, "worker_id": worker_id, "claimed_count": len(tasks), "completed_count": sum(result.status == "complete" for result in results), "failed_count": sum(result.status == "failed" for result in results), "retryable_count": sum(result.status == "queued" for result in results), "results": [result.result for result in results]}
