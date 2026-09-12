@@ -50,16 +50,16 @@ def _drain(orchestrator, rounds=30):
     return orchestrator.run_all_once(limit_per_agent=1, max_rounds=rounds)
 
 
-def _proof_debug(db, stored, first):
+def _proof_debug(db, stored, first, transport):
     return {
         "sales_eligibility": stored.get("sales_eligibility"),
-        "sales_eligibility_reason": stored.get("sales_eligibility_reason"),
-        "potential_routes": stored.get("potential_routes"),
-        "qualification_status": stored.get("qualification_status"),
-        "research_status": stored.get("research_status"),
-        "decision_maker_verification": (stored.get("company_research") or {}).get("decision_maker_verification_status"),
+        "revenue_lifecycle_state": stored.get("revenue_lifecycle_state"),
+        "outreach_state": stored.get("outreach_state"),
+        "outreach_attempt": stored.get("outreach_attempt"),
+        "last_action": stored.get("last_outreach_action_id"),
         "pending_agents": sorted({task.get("agent") for task in pending(db) if task.get("status") in {"queued", "running"}}),
-        "transport_calls": first.get("completed_count"),
+        "calls": [{"subject": call.get("subject"), "body": call.get("body"), "idempotency_key": call.get("idempotency_key")} for call in transport.calls],
+        "drain": second if False else first,
     }
 
 
@@ -77,7 +77,7 @@ def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportu
         stored = db.get(lead["fingerprint"])
         assert stored is not None
         assert stored["qualified"] is True
-        assert stored.get("sales_eligibility") == "eligible", _proof_debug(db, stored, first)
+        assert stored.get("sales_eligibility") == "eligible", _proof_debug(db, stored, first, transport)
         assert stored["revenue_lifecycle_state"] == "outreach_sent"
         assert stored["outreach_state"] == "awaiting_response"
         assert len(transport.calls) == 1
@@ -89,6 +89,7 @@ def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportu
         stored = db.get(lead["fingerprint"])
         assert second["failed_count"] == 0
         assert len(transport.calls) == 2
+        assert "following up" in str(transport.calls[1].get("body", "")).lower(), _proof_debug(db, stored, second, transport)
         assert stored["revenue_lifecycle_state"] == "conversation_active"
         assert stored["outreach_state"] == "awaiting_response"
         assert stored["follow_up_due"] is True
