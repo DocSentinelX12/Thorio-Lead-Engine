@@ -64,7 +64,7 @@ def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportu
         stored = db.get(lead["fingerprint"])
         assert stored is not None
         assert stored["qualified"] is True
-        assert stored["sales_eligibility"] == "eligible"
+        assert stored.get("sales_eligibility") == "eligible", stored
         assert stored["revenue_lifecycle_state"] == "outreach_sent"
         assert stored["outreach_state"] == "awaiting_response"
         assert len(transport.calls) == 1
@@ -78,7 +78,8 @@ def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportu
         assert len(transport.calls) == 2
         assert stored["revenue_lifecycle_state"] == "conversation_active"
         assert stored["outreach_state"] == "awaiting_response"
-        assert stored["follow_up_due"] is False
+        assert stored["follow_up_due"] is True
+        assert stored["next_follow_up_at"]
 
         orphaned = []
         for candidate in db.all_leads():
