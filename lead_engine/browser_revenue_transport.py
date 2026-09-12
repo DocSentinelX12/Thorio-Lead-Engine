@@ -15,13 +15,14 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .account_auth import ensure_authenticated
+from .revenue_execution import RevenueTransportUnavailable
 
 
 class BrowserRevenueConfigurationError(RuntimeError):
     """Raised when real browser revenue transport configuration is incomplete."""
 
 
-class BrowserRevenueUnavailable(RuntimeError):
+class BrowserRevenueUnavailable(RevenueTransportUnavailable):
     """Raised when the authorized browser cannot perform the requested send."""
 
 
