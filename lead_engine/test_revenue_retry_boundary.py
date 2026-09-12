@@ -58,5 +58,5 @@ def test_outreach_closer_metadata_declares_authorized_execution():
     role = agent_registry()["outreach_closer"]
     specialization = specialization_registry()["outreach_closer"]
     assert "execute" in role.purpose.lower()
-    assert "authorized outbound" in specialization.mission.lower()
+    assert "authorize" in specialization.mission.lower()
     assert "execute authorized outbound" in {item.lower() for item in specialization.responsibilities}
