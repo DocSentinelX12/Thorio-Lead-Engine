@@ -115,13 +115,14 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
     result = _airtable_integrity(agent, payload, ctx)
     lead = _lead(payload)
     fingerprint = lead["fingerprint"]
+    current_lead = ctx.db.get(fingerprint) or lead
     routing_result = payload.get("routing_result", {})
     if not isinstance(routing_result, Mapping):
         routing_result = {}
 
-    eligible, eligibility_reason = _sales_eligibility(lead, routing_result, result, ctx.db)
+    eligible, eligibility_reason = _sales_eligibility(current_lead, routing_result, result, ctx.db)
     if eligible:
-        updated = dict(lead)
+        updated = dict(current_lead)
         updated.update({"revenue_lifecycle_state": "sales_eligible", "sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "eligible_routes": list(routing_result.get("destinations", [])), "preserved_routes": list(routing_result.get("destinations", []))})
         stored = ctx.db.update_payload(fingerprint, updated) or updated
         if not stored.get("last_outreach_action_id") and str(stored.get("outreach_state") or "").lower() != "awaiting_response":
@@ -132,13 +133,13 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
         result["sales_eligibility"] = "eligible"
         result["sales_eligibility_reason"] = eligibility_reason
     else:
-        updated = dict(lead)
-        if lead.get("qualified") is True:
+        updated = dict(current_lead)
+        if current_lead.get("qualified") is True:
             updated.update({"revenue_lifecycle_state": "qualified" if eligibility_reason not in {"exact_duplicate"} else "closed_lost", "sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason})
             ctx.db.update_payload(fingerprint, updated)
         result["sales_eligibility"] = "blocked"
         result["sales_eligibility_reason"] = eligibility_reason
         result["handoff"] = "audit"
 
-    enqueue(ctx.db, "audit", {"lead": ctx.db.get(fingerprint) or lead, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}")
+    enqueue(ctx.db, "audit", {"lead": ctx.db.get(fingerprint) or current_lead, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}")
     return result
