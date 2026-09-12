@@ -64,7 +64,7 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
         return False, "no_supported_revenue_route"
     if bool(routing_result.get("review_required")):
         return False, "routing_requires_review"
-    if not (lead.get("qualified") or lead.get("potential_routes")):
+    if lead.get("qualified") is not True:
         return False, "not_qualified"
     research = lead.get("company_research")
     if not isinstance(research, Mapping):
@@ -113,7 +113,7 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
         result["handoff"] = "outreach_closer"
     else:
         updated = dict(lead)
-        if lead.get("qualified") or lead.get("potential_routes"):
+        if lead.get("qualified") is True:
             updated.update({
                 "revenue_lifecycle_state": "qualified",
                 "sales_eligibility": "blocked",
