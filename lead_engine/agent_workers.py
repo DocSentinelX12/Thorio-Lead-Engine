@@ -244,16 +244,15 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": True}
     execute = bool(payload.get("execute"))
     if not execute:
-        stored = _persist_lead(ctx.db, updated)
-        result: Dict[str, Any] = {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
+        result: Dict[str, Any] = {"role": "follow_up", "lead": dict(lead), "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
         if objection:
-            result["objection_response"] = objection_response(objection, str(stored.get("outreach_route") or "the selected service"))
+            result["objection_response"] = objection_response(objection, str(lead.get("outreach_route") or "the selected service"))
         return result
     research = updated.get("company_research")
     if not isinstance(research, Mapping):
         raise AgentContractError("follow_up requires company research")
     contact_name = str(research.get("decision_maker") or updated.get("contact_name") or "").strip()
-    contact_email = str(research.get("decision_maker_email") or updated.get("contact_email") or "").strip()
+    contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or updated.get("contact_email") or "").strip()
     if not contact_name or not contact_email:
         raise AgentContractError("follow_up requires verified contact details")
     route = str(updated.get("outreach_route") or "").strip()
