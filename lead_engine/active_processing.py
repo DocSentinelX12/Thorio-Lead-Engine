@@ -122,10 +122,13 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
 
     eligible, eligibility_reason = _sales_eligibility(current_lead, routing_result, result, ctx.db)
     if eligible:
+        already_active = bool(current_lead.get("last_outreach_action_id")) or str(current_lead.get("outreach_state") or "").lower() == "awaiting_response"
         updated = dict(current_lead)
-        updated.update({"revenue_lifecycle_state": "sales_eligible", "sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "eligible_routes": list(routing_result.get("destinations", [])), "preserved_routes": list(routing_result.get("destinations", []))})
+        if not already_active:
+            updated["revenue_lifecycle_state"] = "sales_eligible"
+        updated.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "eligible_routes": list(routing_result.get("destinations", [])), "preserved_routes": list(routing_result.get("destinations", []))})
         stored = ctx.db.update_payload(fingerprint, updated) or updated
-        if not stored.get("last_outreach_action_id") and str(stored.get("outreach_state") or "").lower() != "awaiting_response":
+        if not already_active:
             enqueue(ctx.db, "outreach_closer", {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)}, priority=10, dedupe_key=f"sales:{fingerprint}")
             result["handoff"] = "outreach_closer"
         else:
