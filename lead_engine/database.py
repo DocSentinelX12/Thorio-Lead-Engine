@@ -163,6 +163,13 @@ class LeadDB:
                     current[field] = before[field]
                 else:
                     current.pop(field, None)
+        prior_action = str(before.get("last_outreach_action_id") or "").strip()
+        incoming_action = str(updates.get("last_outreach_action_id") or "").strip()
+        if prior_action and not incoming_action and "outreach_state" in updates:
+            prior_response = str(before.get("last_response_at") or "").strip()
+            incoming_response = str(updates.get("last_response_at") or "").strip()
+            if not incoming_response or incoming_response <= prior_response:
+                current["outreach_state"] = before.get("outreach_state")
         if current == before:
             return current
         self.conn.execute("UPDATE leads SET payload = ?, synced = 0, last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?", (json.dumps(current, ensure_ascii=False), fingerprint))
