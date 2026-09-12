@@ -12,6 +12,7 @@ def _lead(qualified=True):
         "company_research": {
             "decision_maker": "Alex CTO",
             "decision_maker_evidence": "company leadership page",
+            "decision_maker_verification_status": "verified",
             "decision_maker_email": "alex@example.com",
         },
     }
