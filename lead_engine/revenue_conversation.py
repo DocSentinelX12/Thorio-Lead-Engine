@@ -136,6 +136,11 @@ def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> li
 
 
 def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int = 100) -> int:
+    # Poll configured real browser inboxes first. A newly observed reply must
+    # be persisted before scheduled no-response followups are evaluated.
+    from .browser_revenue_inbound import poll_browser_revenue_inbound
+
+    poll_browser_revenue_inbound(db, limit=limit)
     queued = 0
     for lead in due_followups(db, now=now, limit=limit):
         fingerprint = str(lead.get("fingerprint") or "").strip()
