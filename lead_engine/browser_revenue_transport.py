@@ -37,6 +37,7 @@ class BrowserRevenueTarget:
     subject_selector: str = ""
     authenticated_selector: str = ""
     login_url: str = ""
+    thread_url_selector: str = ""
 
     def __post_init__(self) -> None:
         required = {
@@ -96,6 +97,7 @@ def configured_browser_revenue_targets() -> dict[str, BrowserRevenueTarget]:
             subject_selector=str(item.get("subject_selector", "")).strip(),
             authenticated_selector=str(item.get("authenticated_selector", "")).strip(),
             login_url=str(item.get("login_url", "")).strip(),
+            thread_url_selector=str(item.get("thread_url_selector", "")).strip(),
         )
         if target.channel in targets:
             raise BrowserRevenueConfigurationError(
@@ -210,6 +212,27 @@ class BrowserRevenueTransport:
                 f"{target.channel}: browser session is not authenticated"
             )
 
+    @staticmethod
+    def _real_thread_url(page: Any, target: BrowserRevenueTarget, destination: str) -> str:
+        current_url = str(page.url or "").strip()
+        if current_url and current_url != destination and current_url.startswith(("https://", "http://")):
+            return current_url
+        if target.thread_url_selector:
+            link = page.locator(target.thread_url_selector)
+            if link.count() == 0:
+                raise BrowserRevenueUnavailable(
+                    f"{target.channel}: configured thread URL selector was not found"
+                )
+            href = str(link.first().get_attribute("href") or "").strip()
+            if href and href.startswith(("https://", "http://")):
+                return href
+            raise BrowserRevenueUnavailable(
+                f"{target.channel}: configured thread URL selector did not expose a real HTTP(S) URL"
+            )
+        raise BrowserRevenueUnavailable(
+            f"{target.channel}: send was confirmed but no real conversation thread URL was observed"
+        )
+
     def send(
         self,
         *,
@@ -288,13 +311,14 @@ class BrowserRevenueTransport:
                         f"{target.channel}: send control was clicked but configured sent confirmation was not observed"
                     ) from exc
 
+                thread_url = self._real_thread_url(page, target, destination)
                 return {
                     "transport": "browser",
                     "channel": target.channel,
                     "idempotency_key": idempotency_key,
                     "confirmed_by": "configured_sent_selector",
                     "destination": destination,
-                    "thread_url": str(page.url or destination),
+                    "thread_url": thread_url,
                 }
             finally:
                 if page is not None:
