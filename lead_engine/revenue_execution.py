@@ -101,16 +101,30 @@ def register_revenue_transport(transport: RevenueTransport | None) -> None:
 
 
 def configured_revenue_transport() -> RevenueTransport | None:
-    """Build the authorized runtime transport when configured."""
+    """Build the authorized runtime transport from explicit runtime configuration."""
     if _RUNTIME_TRANSPORT is not None:
         return _RUNTIME_TRANSPORT
+
+    mode = os.getenv("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
+    if mode == "browser":
+        from .browser_revenue_transport import BrowserRevenueTransport
+        return BrowserRevenueTransport()
+    if mode not in {"", "http"}:
+        raise RevenueTransportUnavailable(
+            f"unsupported THORIO_REVENUE_TRANSPORT_MODE: {mode}"
+        )
+
     url = os.getenv("THORIO_REVENUE_TRANSPORT_URL", "").strip()
     token = os.getenv("THORIO_REVENUE_TRANSPORT_TOKEN", "").strip()
-    if not url and not token:
-        return None
-    if not url or not token:
-        raise RevenueTransportUnavailable("THORIO_REVENUE_TRANSPORT_URL and THORIO_REVENUE_TRANSPORT_TOKEN must both be configured")
-    return HttpRevenueTransport(url, token)
+    if url or token:
+        if not url or not token:
+            raise RevenueTransportUnavailable("THORIO_REVENUE_TRANSPORT_URL and THORIO_REVENUE_TRANSPORT_TOKEN must both be configured")
+        return HttpRevenueTransport(url, token)
+
+    if mode == "" and os.getenv("THORIO_REVENUE_BROWSER_TARGETS", "").strip():
+        from .browser_revenue_transport import BrowserRevenueTransport
+        return BrowserRevenueTransport()
+    return None
 
 
 def _now() -> str:
