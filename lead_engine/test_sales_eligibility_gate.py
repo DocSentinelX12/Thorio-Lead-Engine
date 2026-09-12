@@ -3,6 +3,10 @@ from lead_engine.active_processing import _sales_eligibility
 
 def _lead(qualified=True):
     return {
+        "fingerprint": "sales-gate-test",
+        "company": "Acme",
+        "person": "Alex CTO",
+        "business_need": "remote software engineer hiring",
         "qualified": qualified,
         "potential_routes": ["thorio"],
         "company_research": {
