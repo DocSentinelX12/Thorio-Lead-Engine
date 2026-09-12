@@ -36,7 +36,7 @@ _DISCOVERY_INTELLIGENCE = {
 _SOCIAL_ROLES = {
     "social_intelligence": "correlate permitted social evidence across sources",
     "social_hiring_research": "verify current hiring intent and recency from social evidence",
-    "social_decision_maker_research": "resolve decision-maker identity and role from social evidence",
+    "social_decision_maker_research": "resolve decision-maker identity and role from permitted social evidence",
     "social_inquiry_research": "investigate recent inquiries and explicit need statements",
     "social_company_context": "build verified company context from social evidence",
 }
@@ -80,7 +80,7 @@ _PROCESSING = {
     "airtable_integrity": ("Verify durable Airtable synchronization and consistency.", ("check writes", "check identifiers", "detect partial sync", "produce recovery work")),
     "monitoring": ("Continuously detect worker, queue, scheduler, persistence, and delivery anomalies.", ("inspect leases", "detect stalled work", "detect queue growth", "surface failures")),
     "audit": ("Independently audit decisions, provenance, Paxus gates, and protected business invariants.", ("audit qualification", "audit dedupe", "audit routing", "audit provenance")),
-    "outreach_closer": ("Autonomously decide and prepare evidence-grounded revenue outreach actions.", ("understand prospect", "identify problem and buying signal", "select valid destination", "personalize from verified evidence", "handle objections", "choose cadence", "record conversion state")),
+    "outreach_closer": ("Autonomously decide, authorize, and execute evidence-grounded revenue outreach actions.", ("understand prospect", "identify problem and buying signal", "select valid destination", "personalize from verified evidence", "handle objections", "choose cadence", "execute authorized outbound", "record conversion state")),
     "follow_up": ("Autonomously advance outreach cadence and conversion tracking from observed outcomes.", ("review engagement", "handle objections", "schedule next step", "record outcomes", "enforce stop states")),
 }
 
