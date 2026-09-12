@@ -135,12 +135,24 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
         raise AgentContractError("company_research requires lead fingerprint")
-    verified_fields = tuple(key for key, value in supplied.items() if value not in (None, "", [], {}, ()))
-    research_complete = bool(supplied.get("company_verified") and supplied.get("decision_maker") and supplied.get("decision_maker_evidence"))
+    existing = lead.get("company_research") if isinstance(lead.get("company_research"), Mapping) else {}
+    if supplied:
+        merged_research = {**dict(existing), **supplied}
+    else:
+        merged_research = dict(existing)
+    if not merged_research:
+        merged_research = {"company_verified": bool(lead.get("company")), "fabricated_fields": []}
+        person = str(lead.get("person") or lead.get("contact_name") or "").strip()
+        if person:
+            merged_research["decision_maker"] = person
+            merged_research["decision_maker_evidence"] = str(lead.get("evidence") or lead.get("signal") or "").strip()
+            if merged_research["decision_maker_evidence"]:
+                merged_research["decision_maker_verification_status"] = "observed_needs_role_verification"
+    verified_fields = tuple(key for key, value in merged_research.items() if value not in (None, "", [], {}, ()))
+    research_complete = bool(merged_research.get("company_verified") and merged_research.get("decision_maker") and merged_research.get("decision_maker_evidence") and str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified")
     status = "complete" if research_complete else "research_required"
     merged = dict(lead)
-    if supplied:
-        merged["company_research"] = supplied
+    merged["company_research"] = merged_research
     merged["research_status"] = status
     merged["research_verified_fields"] = list(verified_fields)
     stored = _persist_lead(ctx.db, merged)
@@ -148,7 +160,7 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     if status == "complete":
         enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": status, "verified_fields": list(verified_fields)}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
         handoff = "qualification_a"
-    return {"role": "company_research", "lead": stored, "research": supplied, "research_status": status, "verified_fields": list(verified_fields), "decision_maker_verified": bool(supplied.get("decision_maker") and supplied.get("decision_maker_evidence")), "fabricated_fields": [], "handoff": handoff or "research_required"}
+    return {"role": "company_research", "lead": stored, "research": merged_research, "research_status": status, "verified_fields": list(verified_fields), "decision_maker_verified": str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified", "fabricated_fields": list(merged_research.get("fabricated_fields") or []), "handoff": handoff or "research_required"}
 
 
 def _paxus_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
@@ -223,7 +235,6 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
     if updated.get("outreach_state") in stop_states:
         stored = _persist_lead(ctx.db, updated)
         return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": True}
-
     execute = bool(payload.get("execute"))
     if not execute:
         stored = _persist_lead(ctx.db, updated)
@@ -231,7 +242,6 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         if objection:
             result["objection_response"] = objection_response(objection, str(stored.get("outreach_route") or "the selected service"))
         return result
-
     research = updated.get("company_research")
     if not isinstance(research, Mapping):
         raise AgentContractError("follow_up requires company research")
@@ -251,7 +261,7 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         subject = str(updated.get("outreach_draft_subject") or f"Re: {signal[:72]}")
     conversation_id = str(updated.get("conversation_id") or f"conversation:{updated['fingerprint']}:{route}")
     transport = ctx.revenue_transport if ctx.revenue_transport is not None else configured_revenue_transport()
-    attempt = int(updated.get("outreach_attempt", 0) or 0) + 1
+    attempt = int(updated.get("outreach_attempt", 0) or 0) + (0 if outcome == "no_response" else 1)
     action = execute_outbound(ctx.db, worker_capability=PRIVILEGED_CAPABILITY, opportunity_id=str(updated["fingerprint"]), conversation_id=conversation_id, channel=str(updated.get("outreach_channel") or "email"), recipient={"name": contact_name, "email": contact_email}, subject=subject, body=body, transport=transport, idempotency_key=f"followup:{updated['fingerprint']}:{conversation_id}:{attempt}")
     history = list(updated.get("outreach_history") or []) if isinstance(updated.get("outreach_history") or [], list) else []
     history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "kind": "follow_up", "provider_result": dict(action.provider_result or {})})
