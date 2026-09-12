@@ -7,6 +7,7 @@ from .agent_queue import enqueue
 from .agent_stateful_handlers import airtable_integrity as _airtable_integrity
 from .agent_stateful_handlers import routing as _routing
 from .agent_stateful_handlers import verification as _verification
+from .dedupe import Dedupe
 
 
 def _lead(payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -52,12 +53,11 @@ def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     return result
 
 
-def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any], integrity_result: Mapping[str, Any]) -> tuple[bool, str]:
+def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any], integrity_result: Mapping[str, Any], db: Any = None) -> tuple[bool, str]:
     """Determine whether a verified opportunity may enter autonomous sales execution.
 
-    Qualification and communication are deliberately separate. In particular,
-    ``contact_communicated`` is an outcome of sales execution, never a
-    prerequisite for entering it.
+    Qualification, exact-opportunity identification, and deduplication are
+    upstream gates. Communication is deliberately downstream of qualification.
     """
     destinations = routing_result.get("destinations")
     if not isinstance(destinations, list) or not destinations:
@@ -66,6 +66,12 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
         return False, "routing_requires_review"
     if lead.get("qualified") is not True:
         return False, "not_qualified"
+    if not str(lead.get("business_need") or "").strip():
+        return False, "missing_exact_opportunity"
+    if db is not None:
+        duplicate = Dedupe(db).find_exact_duplicate(dict(lead))
+        if duplicate is not None:
+            return False, "exact_duplicate"
     research = lead.get("company_research")
     if not isinstance(research, Mapping):
         return False, "missing_company_research"
@@ -75,9 +81,6 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
     if not contact_email:
         return False, "missing_contact_email"
     if integrity_result.get("sync_error_present"):
-        # Airtable failure is a persistence retry condition, not a reason to
-        # discard a qualified opportunity. The durable LeadDB record remains
-        # authoritative while synchronization retries.
         return True, "airtable_sync_retryable"
     return True, "eligible"
 
@@ -90,7 +93,7 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
     if not isinstance(routing_result, Mapping):
         routing_result = {}
 
-    eligible, eligibility_reason = _sales_eligibility(lead, routing_result, result)
+    eligible, eligibility_reason = _sales_eligibility(lead, routing_result, result, ctx.db)
     if eligible:
         updated = dict(lead)
         updated.update({
@@ -115,7 +118,7 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
         updated = dict(lead)
         if lead.get("qualified") is True:
             updated.update({
-                "revenue_lifecycle_state": "qualified",
+                "revenue_lifecycle_state": "qualified" if eligibility_reason not in {"exact_duplicate"} else "closed_lost",
                 "sales_eligibility": "blocked",
                 "sales_eligibility_reason": eligibility_reason,
             })
