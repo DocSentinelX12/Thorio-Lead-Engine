@@ -71,7 +71,43 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
     routes = lead.get("potential_routes", [])
     if routes is not None and not isinstance(routes, list):
         errors.append("invalid_potential_routes")
-    return {"role": "verification", "fingerprint": lead["fingerprint"], "errors": errors + evidence_errors, "verified": not errors and not evidence_errors, "evidence_count": len(evidence), "checked_routes": [route for route in routes if route in SUPPORTED_ROUTES] if isinstance(routes, list) else []}
+
+    research = lead.get("company_research")
+    decision_maker_verification = "not_required"
+    decision_maker_role_evidence = ""
+    if isinstance(research, Mapping) and research.get("decision_maker"):
+        current_status = str(research.get("decision_maker_verification_status") or "").strip().lower()
+        role_evidence = str(
+            research.get("decision_maker_role_evidence")
+            or research.get("decision_maker_title")
+            or research.get("job_title")
+            or lead.get("decision_maker_role_evidence")
+            or lead.get("job_title")
+            or ""
+        ).strip()
+        contact_email = str(
+            research.get("decision_maker_email")
+            or lead.get("contact_email")
+            or ""
+        ).strip()
+        if current_status == "verified":
+            decision_maker_verification = "verified"
+        elif role_evidence and contact_email:
+            decision_maker_verification = "verified"
+            decision_maker_role_evidence = role_evidence
+        else:
+            decision_maker_verification = "observed_needs_role_verification"
+
+    return {
+        "role": "verification",
+        "fingerprint": lead["fingerprint"],
+        "errors": errors + evidence_errors,
+        "verified": not errors and not evidence_errors,
+        "evidence_count": len(evidence),
+        "checked_routes": [route for route in routes if route in SUPPORTED_ROUTES] if isinstance(routes, list) else [],
+        "decision_maker_verification": decision_maker_verification,
+        "decision_maker_role_evidence": decision_maker_role_evidence,
+    }
 
 
 def routing(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
