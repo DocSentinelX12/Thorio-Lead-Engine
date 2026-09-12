@@ -77,7 +77,8 @@ def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path):
         stored = db.get(lead["fingerprint"])
         assert stored["revenue_lifecycle_state"] == "conversation_active"
         assert stored["outreach_state"] == "awaiting_response"
-        assert stored["follow_up_due"] is False
+        assert stored["follow_up_due"] is True
+        assert stored["next_follow_up_at"]
         assert len(stored["outreach_history"]) == 2
     finally:
         register_revenue_transport(None)
