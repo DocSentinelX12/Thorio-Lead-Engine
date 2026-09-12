@@ -46,7 +46,7 @@ def _lead():
     }
 
 
-def _drain(orchestrator, rounds=12):
+def _drain(orchestrator, rounds=30):
     return orchestrator.run_all_once(limit_per_agent=1, max_rounds=rounds)
 
 
