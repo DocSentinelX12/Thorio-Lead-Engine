@@ -131,7 +131,39 @@ class LeadDB:
         if current is None:
             return None
         before = dict(current)
+        current_state = str(current.get("revenue_lifecycle_state") or "").strip().lower()
+        incoming_state = str(updates.get("revenue_lifecycle_state") or "").strip().lower()
+        lifecycle_order = {
+            "": 0,
+            "discovered": 10,
+            "researching": 20,
+            "researched": 30,
+            "qualifying": 40,
+            "qualified": 50,
+            "opportunity_identified": 60,
+            "dedup_checked": 70,
+            "sales_eligible": 80,
+            "sales_queued": 90,
+            "sales_active": 100,
+            "outreach_sent": 110,
+            "conversation_active": 120,
+            "follow_up_due": 125,
+            "converted": 200,
+            "referred": 200,
+            "closed_lost": 200,
+            "disqualified": 200,
+            "stopped": 200,
+        }
+        current_rank = lifecycle_order.get(current_state, 0)
+        incoming_rank = lifecycle_order.get(incoming_state, current_rank if incoming_state else 0)
+        protected_revenue_fields = ("revenue_lifecycle_state", "sales_eligibility", "sales_eligibility_reason", "eligible_routes", "preserved_routes", "outreach_state", "outreach_attempt", "next_follow_up_at", "follow_up_due", "conversation_id", "outreach_route", "active_route", "outreach_history", "conversation_events", "response_count", "last_response_at", "last_outreach_action_id", "last_outreach_delivery", "route_switch_history", "outreach_stop_reason")
         current.update(updates)
+        if current_rank > incoming_rank and current_state:
+            for field in protected_revenue_fields:
+                if field in before:
+                    current[field] = before[field]
+                else:
+                    current.pop(field, None)
         if current == before:
             return current
         self.conn.execute("UPDATE leads SET payload = ?, synced = 0, last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?", (json.dumps(current, ensure_ascii=False), fingerprint))
@@ -148,9 +180,9 @@ class LeadDB:
 
     def pending_research(self, limit=50):
         if not isinstance(limit, int) or isinstance(limit, bool):
-            raise ValueError("Research limit must be an integer.")
+            raise ValueError("Pending limit must be an integer.")
         if limit <= 0:
-            raise ValueError("Research limit must be greater than zero.")
+            raise ValueError("Pending limit must be greater than zero.")
         state = self.get_state("paxus_research_queue") or {}
         items = state.get("items", {})
         if not isinstance(items, dict):
