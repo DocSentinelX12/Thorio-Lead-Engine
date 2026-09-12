@@ -14,11 +14,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-
 STOP_STATES = frozenset({"declined", "opted_out", "irrelevant", "exhausted", "converted"})
 ACTIVE_STATES = frozenset({"ready", "drafted", "sent", "replied", "interested", "objection"})
 CADENCE_DAYS = (0, 3, 7, 14)
-
 
 @dataclass(frozen=True)
 class OutreachDecision:
@@ -33,19 +31,15 @@ class OutreachDecision:
     next_follow_up_at: Optional[str]
     stop_reason: Optional[str]
 
-
 class OutreachContractError(ValueError):
     """Raised when outreach cannot be safely produced from the supplied evidence."""
-
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
 
-
 def _research(lead: Mapping[str, Any]) -> Mapping[str, Any]:
     value = lead.get("company_research")
     return value if isinstance(value, Mapping) else {}
-
 
 def _routes(lead: Mapping[str, Any]) -> list[str]:
     raw = lead.get("potential_routes")
@@ -55,7 +49,6 @@ def _routes(lead: Mapping[str, Any]) -> list[str]:
         raw = []
     allowed = {"Thorio", "Shiftr", "Paxus"}
     return [str(route).strip() for route in raw if str(route).strip() in allowed]
-
 
 def _signal(lead: Mapping[str, Any]) -> str:
     for key in ("current_need", "recent_inquiry", "signal", "evidence", "need"):
@@ -68,7 +61,6 @@ def _signal(lead: Mapping[str, Any]) -> str:
         if value:
             return value
     return ""
-
 
 def _evidence_refs(lead: Mapping[str, Any]) -> tuple[str, ...]:
     refs: list[str] = []
@@ -84,10 +76,12 @@ def _evidence_refs(lead: Mapping[str, Any]) -> tuple[str, ...]:
             refs.append(ref)
     return tuple(dict.fromkeys(refs))
 
-
 def choose_route(lead: Mapping[str, Any]) -> str:
     routes = _routes(lead)
     if not routes:
+        active_route = _text(lead.get("outreach_route"))
+        if active_route in {"Thorio", "Shiftr", "Paxus"}:
+            return active_route
         raise OutreachContractError("No verified outreach destination is available")
     paxus = (lead.get("qualification_results") or {}).get("Paxus", {})
     if "Paxus" in routes and isinstance(paxus, Mapping) and paxus.get("true_referral"):
@@ -97,14 +91,8 @@ def choose_route(lead: Mapping[str, Any]) -> str:
             return route
     raise OutreachContractError("No supported outreach destination is available")
 
-
 def _offer(route: str) -> str:
-    return {
-        "Thorio": "a verified remote tech hiring channel",
-        "Shiftr": "AI, software, engineering, or dedicated-team support through the appropriate partner",
-        "Paxus": "vetted remote technology talent through the appropriate referral process",
-    }[route]
-
+    return {"Thorio": "a verified remote tech hiring channel", "Shiftr": "AI, software, engineering, or dedicated-team support through the appropriate partner", "Paxus": "vetted remote technology talent through the appropriate referral process"}[route]
 
 def _subject(route: str, signal: str) -> str:
     short = signal.rstrip(".!?")
@@ -112,25 +100,14 @@ def _subject(route: str, signal: str) -> str:
         short = short[:69].rstrip() + "..."
     return f"Re: {short}" if short else f"A possible fit for {route}"
 
-
 def _humanize_signal(signal: str) -> str:
     text = signal.strip().rstrip(".!?")
-    if not text:
-        return "the need you mentioned"
-    return text
-
+    return text or "the need you mentioned"
 
 def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
     need = _humanize_signal(signal)
     offer = _offer(route)
-    return (
-        f"Hi {contact_name},\n\n"
-        f"I saw that {need}. If that is still a priority at {company}, I may be able to help.\n\n"
-        f"I work with {offer}. Based on what you shared, it looks worth a quick conversation to see whether there is a real fit.\n\n"
-        f"Would it be useful if I sent over the most relevant option?\n\n"
-        f"Best,\nThorio"
-    )
-
+    return (f"Hi {contact_name},\n\n" f"I saw that {need}. If that is still a priority at {company}, I may be able to help.\n\n" f"I work with {offer}. Based on what you shared, it looks worth a quick conversation to see whether there is a real fit.\n\n" f"Would it be useful if I sent over the most relevant option?\n\n" f"Best,\nThorio")
 
 def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] = None) -> OutreachDecision:
     if _text(lead.get("research_status")).lower() != "complete":
@@ -153,19 +130,7 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
     now = now or datetime.now(timezone.utc)
     attempt = int(lead.get("outreach_attempt", 0) or 0)
     next_at = None if attempt >= len(CADENCE_DAYS) - 1 else (now + timedelta(days=CADENCE_DAYS[attempt + 1])).isoformat()
-    return OutreachDecision(
-        route=route,
-        contact_name=contact_name,
-        contact_email=contact_email,
-        subject=_subject(route, signal),
-        body=body,
-        evidence_refs=_evidence_refs(lead),
-        buying_signal=signal,
-        next_state="drafted",
-        next_follow_up_at=next_at,
-        stop_reason=None,
-    )
-
+    return OutreachDecision(route=route, contact_name=contact_name, contact_email=contact_email, subject=_subject(route, signal), body=body, evidence_refs=_evidence_refs(lead), buying_signal=signal, next_state="drafted", next_follow_up_at=next_at, stop_reason=None)
 
 def objection_response(objection: str, route: str) -> str:
     text = _text(objection).lower()
@@ -176,7 +141,6 @@ def objection_response(objection: str, route: str) -> str:
     if any(token in text for token in ("later", "not now", "timing")):
         return "Understood. I can leave this here and follow up later rather than assume the timing is right."
     return "Thanks for the context. I will keep the response grounded in what you actually need rather than make assumptions."
-
 
 def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     outcome = _text(outcome).lower()
