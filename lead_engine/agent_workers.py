@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Mapping
 
+from .active_processing import airtable_integrity, routing, verification
 from .advanced_agent_logic import advanced_handler_registry
 from .agent_queue import claim, complete, enqueue, fail, heartbeat, retry
 from .agent_specializations import AgentSpecialization, get_specialization
-from .agent_stateful_handlers import airtable_integrity, identity_resolution, routing, verification
+from .agent_stateful_handlers import identity_resolution
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
