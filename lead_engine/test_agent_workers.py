@@ -7,6 +7,7 @@ from .agent_specializations import specialization_registry
 from .agent_workers import handler_registry, run_worker_once
 from .database import LeadDB
 from .agent_queue import enqueue, pending
+from .revenue_execution import register_revenue_transport
 
 
 def _db(tmp_path):
@@ -15,6 +16,15 @@ def _db(tmp_path):
 
 def _recent():
     return (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+
+
+class _FakeTransport:
+    def __init__(self):
+        self.calls = []
+
+    def send(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return {"provider": "test", "delivery_id": f"test-{len(self.calls)}", "status": "accepted"}
 
 
 def test_every_specialist_has_an_executable_handler():
@@ -27,10 +37,7 @@ def test_every_specialist_has_an_executable_handler():
 def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
     db = _db(tmp_path)
     orchestrator = AgentOrchestrator(db)
-    task = orchestrator.dispatch_discovery(
-        "x_signal",
-        {"source": "x", "signal": "Company is hiring a software engineer", "source_id": "1"},
-    )
+    task = orchestrator.dispatch_discovery("x_signal", {"source": "x", "signal": "Company is hiring a software engineer", "source_id": "1"})
     result = run_worker_once(db, "x_signal", worker_id="x-worker")
     assert result["completed_count"] == 1
     assert result["failed_count"] == 0
@@ -100,21 +107,7 @@ def test_qualification_worker_requires_completed_company_research(tmp_path):
 
 def test_qualification_worker_applies_independent_company_routes_after_research(tmp_path):
     db = _db(tmp_path)
-    lead = {
-        "fingerprint": "qualification-worker-test",
-        "company": "Acme",
-        "signal": "Acme is hiring a remote software engineer",
-        "job_title": "Software Engineer",
-        "need_at": _recent(),
-        "research_status": "complete",
-        "research_verified_fields": ["company_verified", "decision_maker", "decision_maker_evidence"],
-        "company_research": {
-            "company_verified": True,
-            "decision_maker": "Taylor",
-            "decision_maker_evidence": "https://example.com/taylor",
-            "decision_maker_verification_status": "verified",
-        },
-    }
+    lead = {"fingerprint": "qualification-worker-test", "company": "Acme", "signal": "Acme is hiring a remote software engineer", "job_title": "Software Engineer", "need_at": _recent(), "research_status": "complete", "research_verified_fields": ["company_verified", "decision_maker", "decision_maker_evidence"], "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified"}}
     db.insert_if_new(lead)
     task = enqueue(db, "qualification_a", {"lead": lead})
     result = run_worker_once(db, "qualification_a", worker_id="qualification-a")
@@ -125,52 +118,37 @@ def test_qualification_worker_applies_independent_company_routes_after_research(
     assert task["agent"] == "qualification_a"
 
 
-def test_outreach_worker_is_autonomous_after_research(tmp_path):
+def test_outreach_worker_sends_autonomously_after_sales_eligibility(tmp_path):
     db = _db(tmp_path)
-    lead = {
-        "fingerprint": "outreach-worker-test",
-        "company": "Acme",
-        "potential_routes": ["Thorio", "Shiftr"],
-        "signal": "Acme is hiring a remote software engineer",
-        "research_status": "complete",
-        "company_research": {
-            "decision_maker": "Taylor",
-            "decision_maker_evidence": "https://example.com/taylor",
-            "contact_email": "taylor@example.com",
-        },
-        "evidence_events": [{"source_id": "evt-1", "source_url": "https://example.com/signal"}],
-    }
+    lead = {"fingerprint": "outreach-worker-test", "company": "Acme", "potential_routes": ["Thorio", "Shiftr"], "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "research_status": "complete", "company_research": {"decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "contact_email": "taylor@example.com"}, "evidence_events": [{"source_id": "evt-1", "source_url": "https://example.com/signal", "signal": "Acme is hiring a remote software engineer"}]}
     db.insert_if_new(lead)
     enqueue(db, "outreach_closer", {"lead": lead})
-    result = run_worker_once(db, "outreach_closer", worker_id="outreach-autonomous")
+    transport = _FakeTransport()
+    register_revenue_transport(transport)
+    try:
+        result = run_worker_once(db, "outreach_closer", worker_id="outreach-autonomous")
+    finally:
+        register_revenue_transport(None)
     assert result["completed_count"] == 1
     assert result["failed_count"] == 0
     output = result["results"][0]
     assert output["autonomous"] is True
     assert output["approval_required"] is False
-    assert output["action"] == "prepare_outreach"
+    assert output["action"] == "send_outreach"
     assert output["route"] in {"Thorio", "Shiftr"}
-    assert output["evidence_refs"] == ["https://example.com/signal", "https://example.com/taylor"]
     assert "Acme" in output["body"]
     assert "remote software engineer" in output["body"]
     assert "Hi Taylor" in output["body"]
+    assert len(transport.calls) == 1
     stored = db.get(lead["fingerprint"])
-    assert stored["outreach_state"] == "drafted"
-    assert stored["outreach_route"] == output["route"]
-    assert stored["outreach_draft_subject"] == output["subject"]
-    assert stored["outreach_draft_body"] == output["body"]
+    assert stored["outreach_state"] == "awaiting_response"
+    assert stored["revenue_lifecycle_state"] == "outreach_sent"
+    assert stored["last_outreach_action_id"]
 
 
 def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     db = _db(tmp_path)
-    lead = {
-        "fingerprint": "follow-up-persistence-test",
-        "company": "Acme",
-        "outreach_route": "Thorio",
-        "outreach_state": "drafted",
-        "outreach_history": [{"at": _recent(), "outcome": "sent"}],
-        "outreach_attempt": 0,
-    }
+    lead = {"fingerprint": "follow-up-persistence-test", "company": "Acme", "outreach_route": "Thorio", "outreach_state": "drafted", "outreach_history": [{"at": _recent(), "outcome": "sent"}], "outreach_attempt": 0}
     db.insert_if_new(lead)
     enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response"})
     result = run_worker_once(db, "follow_up", worker_id="follow-up-worker")
