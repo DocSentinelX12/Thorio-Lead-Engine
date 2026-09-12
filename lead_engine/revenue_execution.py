@@ -17,6 +17,7 @@ import requests
 
 STATE_KEY = "revenue_execution"
 PRIVILEGED_CAPABILITY = "high_ticket_sales_closer"
+_RUNTIME_TRANSPORT: "RevenueTransport | None" = None
 
 
 class RevenueExecutionError(RuntimeError):
@@ -49,12 +50,7 @@ class RevenueAction:
 
 
 class HttpRevenueTransport:
-    """Call an operator-owned, authorized outbound transport gateway.
-
-    The gateway is deliberately outside the lead engine. It owns provider
-    credentials and channel-specific authentication/rate-limit rules. The
-    engine sends only the message envelope and a stable idempotency key.
-    """
+    """Call an operator-owned, authorized outbound transport gateway."""
 
     def __init__(self, url: str, token: str, timeout_seconds: float = 30.0) -> None:
         self.url = str(url or "").strip()
@@ -77,8 +73,16 @@ class HttpRevenueTransport:
         return dict(payload)
 
 
+def register_revenue_transport(transport: RevenueTransport | None) -> None:
+    """Install a runtime transport, primarily for controlled execution/tests."""
+    global _RUNTIME_TRANSPORT
+    _RUNTIME_TRANSPORT = transport
+
+
 def configured_revenue_transport() -> RevenueTransport | None:
     """Build the authorized runtime transport when configured."""
+    if _RUNTIME_TRANSPORT is not None:
+        return _RUNTIME_TRANSPORT
     url = os.getenv("THORIO_REVENUE_TRANSPORT_URL", "").strip()
     token = os.getenv("THORIO_REVENUE_TRANSPORT_TOKEN", "").strip()
     if not url and not token:
@@ -141,33 +145,14 @@ def execute_outbound(
     actions = state["actions"]
     existing = actions.get(idem)
     if isinstance(existing, Mapping) and str(existing.get("status") or "") == "sent":
-        return RevenueAction(
-            action_id=str(existing["action_id"]), opportunity_id=opportunity_id,
-            conversation_id=conversation_id, idempotency_key=idem, channel=channel,
-            status="sent", provider_result=existing.get("provider_result"), error=None,
-        )
+        return RevenueAction(action_id=str(existing["action_id"]), opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=existing.get("provider_result"), error=None)
 
     action_id = str(existing.get("action_id")) if isinstance(existing, Mapping) and existing.get("action_id") else uuid4().hex
-    actions[idem] = {
-        "action_id": action_id,
-        "opportunity_id": opportunity_id,
-        "conversation_id": conversation_id,
-        "idempotency_key": idem,
-        "channel": channel,
-        "status": "sending",
-        "created_at": str(existing.get("created_at")) if isinstance(existing, Mapping) else _now(),
-        "updated_at": _now(),
-    }
+    actions[idem] = {"action_id": action_id, "opportunity_id": opportunity_id, "conversation_id": conversation_id, "idempotency_key": idem, "channel": channel, "status": "sending", "created_at": str(existing.get("created_at")) if isinstance(existing, Mapping) else _now(), "updated_at": _now()}
     _save(db, state)
 
     try:
-        provider_result = dict(transport.send(
-            channel=channel,
-            recipient=dict(recipient),
-            subject=str(subject or ""),
-            body=str(body),
-            idempotency_key=idem,
-        ))
+        provider_result = dict(transport.send(channel=channel, recipient=dict(recipient), subject=str(subject or ""), body=str(body), idempotency_key=idem))
     except Exception as exc:
         state = _load(db)
         state["actions"][idem] = {**state["actions"].get(idem, {}), "status": "retryable", "error": str(exc)[:4000], "updated_at": _now()}
