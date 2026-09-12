@@ -36,6 +36,9 @@ class RevenueTransport(Protocol):
     def send(self, *, channel: str, recipient: Mapping[str, Any], subject: str, body: str, idempotency_key: str) -> Mapping[str, Any]:
         """Send one authorized message and return a provider result."""
 
+    def reconcile(self, *, idempotency_key: str) -> Mapping[str, Any] | None:
+        """Return an accepted provider result for an earlier idempotent send, if known."""
+
 
 @dataclass(frozen=True)
 class RevenueAction:
@@ -59,10 +62,13 @@ class HttpRevenueTransport:
         if not self.url or not self.token:
             raise RevenueTransportUnavailable("revenue transport URL and authorization token are required")
 
+    def _headers(self, idempotency_key: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}", "Idempotency-Key": idempotency_key, "Content-Type": "application/json"}
+
     def send(self, *, channel: str, recipient: Mapping[str, Any], subject: str, body: str, idempotency_key: str) -> Mapping[str, Any]:
         response = requests.post(
             self.url,
-            headers={"Authorization": f"Bearer {self.token}", "Idempotency-Key": idempotency_key, "Content-Type": "application/json"},
+            headers=self._headers(idempotency_key),
             json={"channel": channel, "recipient": dict(recipient), "subject": subject, "body": body, "idempotency_key": idempotency_key},
             timeout=self.timeout_seconds,
         )
@@ -70,6 +76,21 @@ class HttpRevenueTransport:
         payload = response.json()
         if not isinstance(payload, Mapping):
             raise RevenueExecutionError("revenue transport returned a non-object response")
+        return dict(payload)
+
+    def reconcile(self, *, idempotency_key: str) -> Mapping[str, Any] | None:
+        response = requests.get(
+            self.url,
+            headers=self._headers(idempotency_key),
+            params={"idempotency_key": idempotency_key},
+            timeout=self.timeout_seconds,
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, Mapping):
+            raise RevenueExecutionError("revenue reconciliation returned a non-object response")
         return dict(payload)
 
 
@@ -126,7 +147,7 @@ def execute_outbound(
     transport: RevenueTransport | None,
     idempotency_key: str | None = None,
 ) -> RevenueAction:
-    """Execute one outbound action with durable idempotency."""
+    """Execute one outbound action with durable idempotency and reconciliation."""
     _authorized(worker_capability)
     opportunity_id = str(opportunity_id or "").strip()
     conversation_id = str(conversation_id or "").strip()
@@ -146,6 +167,16 @@ def execute_outbound(
     existing = actions.get(idem)
     if isinstance(existing, Mapping) and str(existing.get("status") or "") == "sent":
         return RevenueAction(action_id=str(existing["action_id"]), opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=existing.get("provider_result"), error=None)
+
+    if isinstance(existing, Mapping) and str(existing.get("status") or "") in {"sending", "retryable"}:
+        reconcile = getattr(transport, "reconcile", None)
+        if callable(reconcile):
+            provider_result = reconcile(idempotency_key=idem)
+            if provider_result is not None:
+                action_id = str(existing.get("action_id") or uuid4().hex)
+                state["actions"][idem] = {**dict(existing), "action_id": action_id, "status": "sent", "provider_result": dict(provider_result), "updated_at": _now()}
+                _save(db, state)
+                return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=dict(provider_result), error=None)
 
     action_id = str(existing.get("action_id")) if isinstance(existing, Mapping) and existing.get("action_id") else uuid4().hex
     actions[idem] = {"action_id": action_id, "opportunity_id": opportunity_id, "conversation_id": conversation_id, "idempotency_key": idem, "channel": channel, "status": "sending", "created_at": str(existing.get("created_at")) if isinstance(existing, Mapping) else _now(), "updated_at": _now()}
