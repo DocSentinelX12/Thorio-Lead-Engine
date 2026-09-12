@@ -141,13 +141,13 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     return {"companies": results, "qualified_companies": [company_name for company_name in ROUTES if results[company_name]["qualified"]], "paxus_true_referral": paxus_referral["passed"], "research_status": "research_required" if paxus["qualified"] and paxus.get("referral_status") == "research_required" else "complete"}
 
 
-def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
-    updated = dict(lead)
-    evaluation = evaluate_company_qualification(updated)
+def _apply_primary_result(updated: Dict[str, Any], evaluation: Dict[str, Any]) -> Dict[str, Any]:
     updated["qualification_results"] = evaluation["companies"]
     updated["research_status"] = evaluation["research_status"]
     updated["potential_routes"] = evaluation["qualified_companies"]
     updated["qualified"] = bool(evaluation["qualified_companies"])
+    updated["qualification_review_stage"] = "primary"
+    updated["qualification_primary_routes"] = list(evaluation["qualified_companies"])
     if evaluation["qualified_companies"]:
         updated["status"] = QUALIFIED
         updated["review_status"] = "Qualified"
@@ -170,6 +170,81 @@ def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
             updated["review_state"] = "review"
             updated["reason_not_qualified"] = "No current qualification decision is available; additional evidence is required."
     return updated
+
+
+def _independent_review(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Challenge Qualification A without rerunning the same evaluator.
+
+    Qualification B consumes A's recorded evidence as a claim and independently
+    checks the critical predicates: the route claim must be category-backed,
+    the intent evidence must contain a recent observed timestamp, and the
+    decision cannot rely on a route that A did not actually qualify.
+    """
+    prior = lead.get("qualification_results")
+    if not isinstance(prior, dict):
+        return {"qualified_companies": [], "disagreements": ["missing_primary_qualification_results"], "checked_routes": []}
+
+    primary_routes = [str(route) for route in lead.get("potential_routes", []) if str(route).strip()]
+    independent_routes = []
+    disagreements = []
+    checked = []
+    for route in primary_routes:
+        result = prior.get(route)
+        checked.append(route)
+        if not isinstance(result, dict):
+            disagreements.append(f"{route}:missing_primary_result")
+            continue
+        if result.get("qualified") is not True:
+            disagreements.append(f"{route}:primary_claim_not_qualified")
+            continue
+        if result.get("matched_category") is not True or int(result.get("category_score", 0) or 0) <= 0:
+            disagreements.append(f"{route}:category_evidence_failed")
+            continue
+        current_need = result.get("current_need") if isinstance(result.get("current_need"), dict) else {}
+        recent_inquiry = result.get("recent_inquiry") if isinstance(result.get("recent_inquiry"), dict) else {}
+        intent_ok = bool(current_need.get("qualified") and current_need.get("observed_at")) or bool(recent_inquiry.get("qualified") and recent_inquiry.get("observed_at"))
+        if not intent_ok:
+            disagreements.append(f"{route}:intent_evidence_failed")
+            continue
+        independent_routes.append(route)
+
+    return {"qualified_companies": independent_routes, "disagreements": disagreements, "checked_routes": checked}
+
+
+def _apply_independent_result(updated: Dict[str, Any]) -> Dict[str, Any]:
+    review = _independent_review(updated)
+    routes = review["qualified_companies"]
+    updated["qualification_b_result"] = {
+        "qualified_companies": list(routes),
+        "disagreements": list(review["disagreements"]),
+        "checked_routes": list(review["checked_routes"]),
+        "independent": True,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    updated["potential_routes"] = list(routes)
+    updated["qualified"] = bool(routes)
+    updated["qualification_review_stage"] = "validated"
+    if routes:
+        updated["status"] = QUALIFIED
+        updated["review_status"] = "Qualified"
+        updated["qualification_status"] = "qualified"
+        updated["review_state"] = "qualified"
+        updated["reason_not_qualified"] = ""
+    else:
+        updated["status"] = IN_REVIEW
+        updated["review_status"] = "Review"
+        updated["qualification_status"] = "in_review"
+        updated["review_state"] = "review"
+        updated["reason_not_qualified"] = "Qualification B independently rejected all primary route claims."
+    return updated
+
+
+def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(lead)
+    if updated.get("qualification_review_stage") == "primary":
+        return _apply_independent_result(updated)
+    evaluation = evaluate_company_qualification(updated)
+    return _apply_primary_result(updated, evaluation)
 
 
 def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "", business_need: str = "") -> Dict[str, object]:
