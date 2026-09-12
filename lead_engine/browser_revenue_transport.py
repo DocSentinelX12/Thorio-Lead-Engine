@@ -59,8 +59,8 @@ class BrowserRevenueTarget:
             )
 
 
-def _env(name: str) -> str:
-    return os.getenv(name, "").strip()
+def _env(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
 
 
 def configured_browser_revenue_targets() -> dict[str, BrowserRevenueTarget]:
@@ -294,6 +294,7 @@ class BrowserRevenueTransport:
                     "idempotency_key": idempotency_key,
                     "confirmed_by": "configured_sent_selector",
                     "destination": destination,
+                    "thread_url": str(page.url or destination),
                 }
             finally:
                 if page is not None:
