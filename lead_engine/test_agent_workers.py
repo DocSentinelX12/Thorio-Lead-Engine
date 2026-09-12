@@ -148,19 +148,27 @@ def test_outreach_worker_sends_autonomously_after_sales_eligibility(tmp_path):
 
 def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     db = _db(tmp_path)
-    lead = {"fingerprint": "follow-up-persistence-test", "company": "Acme", "outreach_route": "Thorio", "outreach_state": "drafted", "outreach_history": [{"at": _recent(), "outcome": "sent"}], "outreach_attempt": 0}
+    lead = {"fingerprint": "follow-up-persistence-test", "company": "Acme", "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "business_need": "remote software engineer hiring", "research_status": "complete", "company_research": {"decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_email": "taylor@example.com", "decision_maker_verification_status": "verified"}, "outreach_route": "Thorio", "outreach_state": "awaiting_response", "outreach_history": [{"at": _recent(), "outcome": "sent"}], "outreach_attempt": 1, "conversation_id": "conversation:follow-up-persistence-test:thorio", "contact_email": "taylor@example.com"}
     db.insert_if_new(lead)
-    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response"})
-    result = run_worker_once(db, "follow_up", worker_id="follow-up-worker")
+    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True})
+    transport = _FakeTransport()
+    register_revenue_transport(transport)
+    try:
+        result = run_worker_once(db, "follow_up", worker_id="follow-up-worker")
+    finally:
+        register_revenue_transport(None)
     assert result["completed_count"] == 1
     assert result["failed_count"] == 0
     output = result["results"][0]
     assert output["autonomous"] is True
     assert output["approval_required"] is False
+    assert output["action"] == "send_follow_up"
+    assert len(transport.calls) == 1
     stored = db.get(lead["fingerprint"])
-    assert stored["outreach_state"] == "ready"
-    assert stored["outreach_attempt"] == 1
+    assert stored["outreach_state"] == "awaiting_response"
+    assert stored["outreach_attempt"] == 2
     assert stored["next_follow_up_at"] is not None
+    assert stored["follow_up_due"] is True
     assert len(stored["outreach_history"]) == 2
 
 
