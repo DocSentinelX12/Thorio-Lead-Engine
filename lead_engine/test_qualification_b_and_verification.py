@@ -68,8 +68,8 @@ def test_verification_identifies_role_verification_from_existing_role_evidence()
 def test_verification_does_not_promote_observed_person_without_role_and_contact_evidence():
     lead = _primary_lead()
     lead["company_research"]["decision_maker_verification_status"] = "observed_needs_role_verification"
-    lead["company_research"].pop("decision_maker_title")
-    lead["company_research"].pop("decision_maker_email")
+    lead["company_research"].pop("decision_maker_title", None)
+    lead["company_research"].pop("decision_maker_email", None)
     lead.pop("contact_email", None)
     result = verification("verification", {"lead": lead, "evidence_events": []}, None)
     assert result["decision_maker_verification"] == "observed_needs_role_verification"
