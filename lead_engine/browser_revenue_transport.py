@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .account_auth import ensure_authenticated, login_credentials
+from .account_auth import ensure_authenticated
 
 
 class BrowserRevenueConfigurationError(RuntimeError):
@@ -177,18 +177,11 @@ class BrowserRevenueTransport:
         return not any(marker in url for marker in ("/login", "/signin", "/sign-in", "authwall", "/checkpoint"))
 
     def _login(self, page: Any, target: BrowserRevenueTarget, credentials: Any) -> None:
-        username_selector = _env(
-            f"THORIO_ACCOUNT_{target.account.upper()}_USERNAME_SELECTOR"
-        )
-        password_selector = _env(
-            f"THORIO_ACCOUNT_{target.account.upper()}_PASSWORD_SELECTOR"
-        )
-        submit_selector = _env(
-            f"THORIO_ACCOUNT_{target.account.upper()}_SUBMIT_SELECTOR"
-        )
-        login_url = target.login_url or _env(
-            f"THORIO_ACCOUNT_{target.account.upper()}_LOGIN_URL"
-        )
+        prefix = f"THORIO_ACCOUNT_{target.account.upper()}"
+        username_selector = _env(prefix + "_USERNAME_SELECTOR")
+        password_selector = _env(prefix + "_PASSWORD_SELECTOR")
+        submit_selector = _env(prefix + "_SUBMIT_SELECTOR")
+        login_url = target.login_url or _env(prefix + "_LOGIN_URL")
         if not all((login_url, username_selector, password_selector, submit_selector)):
             raise BrowserRevenueConfigurationError(
                 f"{target.channel}: normal authorized login configuration is incomplete"
@@ -207,10 +200,6 @@ class BrowserRevenueTransport:
             )
 
     def _ensure_authenticated(self, page: Any, target: BrowserRevenueTarget) -> None:
-        try:
-            credentials = login_credentials(target.account)
-        except Exception:
-            credentials = None
         ensure_authenticated(
             target.account,
             lambda: self._session_is_valid(page, target),
@@ -235,15 +224,20 @@ class BrowserRevenueTransport:
             raise BrowserRevenueConfigurationError(
                 f"no real browser revenue target is configured for channel {channel!r}"
             )
-        recipient_url = str(recipient.get("url") or recipient.get("profile_url") or "").strip()
-        if not recipient_url:
+        recipient_value = str(
+            recipient.get("url")
+            or recipient.get("profile_url")
+            or recipient.get("email")
+            or ""
+        ).strip()
+        if not recipient_value:
             raise BrowserRevenueConfigurationError(
-                f"{target.channel}: recipient must include an explicit url or profile_url"
+                f"{target.channel}: recipient must include an explicit url, profile_url, or email"
             )
         try:
             destination = target.recipient_url_template.format(
-                recipient_url=recipient_url,
-                recipient=recipient_url,
+                recipient_url=recipient_value,
+                recipient=recipient_value,
             )
         except KeyError as exc:
             raise BrowserRevenueConfigurationError(
