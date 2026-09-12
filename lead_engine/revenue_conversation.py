@@ -97,6 +97,7 @@ def record_inbound_event(
     updated["conversation_events"] = list(conversation["events"])
     updated["response_count"] = conversation["response_count"]
     updated["last_response_at"] = event["at"]
+    updated["last_response_outcome"] = classified
     updated["outreach_state"] = classified
     updated["revenue_lifecycle_state"] = "conversation_active"
     if switched_route:
@@ -116,6 +117,7 @@ def record_inbound_event(
     elif classified in {"interested", "replied", "objection"}:
         updated["next_follow_up_at"] = _now()
         updated["follow_up_due"] = True
+        updated["outreach_state"] = "awaiting_response"
         enqueue(db, "follow_up", {"lead": updated, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
 
     stored = db.update_payload(opportunity_id, updated) or updated
@@ -148,19 +150,3 @@ def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> li
         if when <= now:
             due.append(dict(lead))
     return due
-
-
-def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int = 100) -> int:
-    count = 0
-    for lead in due_followups(db, now=now, limit=limit):
-        fingerprint = str(lead.get("fingerprint") or "").strip()
-        conversation_id = str(lead.get("conversation_id") or "").strip()
-        if not fingerprint or not conversation_id:
-            continue
-        enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "conversation_id": conversation_id, "execute": True}, priority=10, dedupe_key=f"due_followup:{fingerprint}:{lead.get('next_follow_up_at')}")
-        count += 1
-    return count
-
-
-def objection_reply(text: str, route: str) -> str:
-    return objection_response(text, route)
