@@ -46,11 +46,12 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
     result = _verification(agent, verification_payload, ctx)
 
     if result.get("decision_maker_verification") == "verified":
-        research = dict(lead.get("company_research") or {}) if isinstance(lead.get("company_research"), Mapping) else {}
+        current_lead = ctx.db.get(fingerprint) or lead
+        research = dict(current_lead.get("company_research") or {}) if isinstance(current_lead.get("company_research"), Mapping) else {}
         research["decision_maker_verification_status"] = "verified"
         if result.get("decision_maker_role_evidence"):
             research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
-        updated = dict(lead)
+        updated = dict(current_lead)
         updated["company_research"] = research
         updated["research_status"] = "complete"
         stored = ctx.db.update_payload(fingerprint, updated) or updated
