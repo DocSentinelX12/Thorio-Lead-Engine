@@ -79,7 +79,7 @@ def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path):
         assert stored["outreach_state"] == "awaiting_response"
         assert stored["follow_up_due"] is True
         assert stored["next_follow_up_at"]
-        assert len(stored["outreach_history"]) == 2
+        assert len(stored["outreach_history"]) == 3
     finally:
         register_revenue_transport(None)
 
