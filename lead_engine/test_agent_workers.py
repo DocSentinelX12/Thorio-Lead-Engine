@@ -169,7 +169,9 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     assert stored["outreach_attempt"] == 2
     assert stored["next_follow_up_at"] is not None
     assert stored["follow_up_due"] is True
-    assert len(stored["outreach_history"]) == 2
+    assert len(stored["outreach_history"]) == 3
+    assert stored["outreach_history"][-1]["kind"] == "follow_up"
+    assert stored["outreach_history"][-1]["status"] == "sent"
 
 
 def test_company_research_does_not_mark_observed_person_as_verified_decision_maker(tmp_path):
