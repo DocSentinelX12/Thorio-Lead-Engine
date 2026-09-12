@@ -219,19 +219,11 @@ class BrowserRevenueTransport:
             return current_url
         if target.thread_url_selector:
             link = page.locator(target.thread_url_selector)
-            if link.count() == 0:
-                raise BrowserRevenueUnavailable(
-                    f"{target.channel}: configured thread URL selector was not found"
-                )
-            href = str(link.first().get_attribute("href") or "").strip()
-            if href and href.startswith(("https://", "http://")):
-                return href
-            raise BrowserRevenueUnavailable(
-                f"{target.channel}: configured thread URL selector did not expose a real HTTP(S) URL"
-            )
-        raise BrowserRevenueUnavailable(
-            f"{target.channel}: send was confirmed but no real conversation thread URL was observed"
-        )
+            if link.count() > 0:
+                href = str(link.first().get_attribute("href") or "").strip()
+                if href and href.startswith(("https://", "http://")):
+                    return href
+        return ""
 
     def send(
         self,
