@@ -17,6 +17,28 @@ class FakeTransport:
         self.calls.append(dict(kwargs))
         return {"provider": "fake", "delivery_id": f"delivery-{len(self.calls)}", "status": "accepted"}
 
+    def reconcile(self, *, idempotency_key):
+        return None
+
+
+class CrashAfterAcceptanceTransport(FakeTransport):
+    def __init__(self):
+        super().__init__()
+        self.accepted = {}
+        self.crash_once = True
+
+    def send(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        result = {"provider": "fake", "delivery_id": f"delivery-{len(self.calls)}", "status": "accepted"}
+        self.accepted[kwargs["idempotency_key"]] = result
+        if self.crash_once:
+            self.crash_once = False
+            raise RuntimeError("connection lost after provider acceptance")
+        return result
+
+    def reconcile(self, *, idempotency_key):
+        return self.accepted.get(idempotency_key)
+
 
 def _lead(fingerprint="revenue-lifecycle-test"):
     return {
@@ -42,9 +64,7 @@ def _lead(fingerprint="revenue-lifecycle-test"):
             "Thorio": {"qualified": True},
             "Shiftr": {"qualified": True},
         },
-        "evidence_events": [
-            {"source_url": "https://example.com/signal", "signal": "Acme is hiring a remote software engineer"}
-        ],
+        "evidence_events": [{"source_url": "https://example.com/signal", "signal": "Acme is hiring a remote software engineer"}],
     }
 
 
@@ -52,20 +72,7 @@ def test_sales_eligible_opportunity_is_handed_to_closer_without_manual_injection
     db = LeadDB(data_dir=tmp_path)
     lead = _lead()
     db.insert_if_new(lead)
-
-    result = airtable_integrity(
-        "airtable_integrity",
-        {
-            "lead": lead,
-            "routing_result": {
-                "destinations": ["Thorio", "Shiftr"],
-                "review_required": False,
-                "multi_route": True,
-            },
-        },
-        type("Ctx", (), {"db": db})(),
-    )
-
+    result = airtable_integrity("airtable_integrity", {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}}, type("Ctx", (), {"db": db})())
     assert result["sales_eligibility"] == "eligible"
     assert result["handoff"] == "outreach_closer"
     queued = pending(db, "outreach_closer")
@@ -78,17 +85,7 @@ def test_general_capability_cannot_send_outbound(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     transport = FakeTransport()
     with pytest.raises(RevenueAuthorizationError):
-        execute_outbound(
-            db,
-            worker_capability="researcher",
-            opportunity_id="opportunity-1",
-            conversation_id="conversation-1",
-            channel="email",
-            recipient={"email": "taylor@example.com"},
-            subject="Hello",
-            body="Hello Taylor",
-            transport=transport,
-        )
+        execute_outbound(db, worker_capability="researcher", opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport)
     assert transport.calls == []
 
 
@@ -97,30 +94,8 @@ def test_privileged_closer_sends_once_and_persists_delivery(tmp_path):
     transport = FakeTransport()
     register_revenue_transport(transport)
     try:
-        result = execute_outbound(
-            db,
-            worker_capability="high_ticket_sales_closer",
-            opportunity_id="opportunity-1",
-            conversation_id="conversation-1",
-            channel="email",
-            recipient={"email": "taylor@example.com"},
-            subject="Hello",
-            body="Hello Taylor",
-            transport=transport,
-            idempotency_key="outreach:opportunity-1:conversation-1:1",
-        )
-        replay = execute_outbound(
-            db,
-            worker_capability="high_ticket_sales_closer",
-            opportunity_id="opportunity-1",
-            conversation_id="conversation-1",
-            channel="email",
-            recipient={"email": "taylor@example.com"},
-            subject="Hello",
-            body="Hello Taylor",
-            transport=transport,
-            idempotency_key="outreach:opportunity-1:conversation-1:1",
-        )
+        result = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1")
+        replay = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1")
         assert result.status == "sent"
         assert replay.action_id == result.action_id
         assert len(transport.calls) == 1
@@ -130,6 +105,18 @@ def test_privileged_closer_sends_once_and_persists_delivery(tmp_path):
         register_revenue_transport(None)
 
 
+def test_provider_acceptance_is_reconciled_without_duplicate_send(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    transport = CrashAfterAcceptanceTransport()
+    key = "outreach:crash-safe:conversation-1:1"
+    with pytest.raises(RuntimeError):
+        execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key)
+    result = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key)
+    assert result.status == "sent"
+    assert len(transport.calls) == 1
+    assert db.get_state("revenue_execution")["actions"][key]["status"] == "sent"
+
+
 def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("production-closer-test")
@@ -137,11 +124,7 @@ def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
     transport = FakeTransport()
     register_revenue_transport(transport)
     try:
-        airtable_integrity(
-            "airtable_integrity",
-            {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}},
-            type("Ctx", (), {"db": db })(),
-        )
+        airtable_integrity("airtable_integrity", {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}}, type("Ctx", (), {"db": db})())
         result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
         assert result["completed_count"] == 1
         assert result["failed_count"] == 0
