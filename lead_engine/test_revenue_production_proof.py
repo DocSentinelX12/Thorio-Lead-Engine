@@ -50,6 +50,14 @@ def _drain(orchestrator, rounds=30):
     return orchestrator.run_all_once(limit_per_agent=1, max_rounds=rounds)
 
 
+def _proof_debug(db, stored, first):
+    return {
+        "lead": {key: stored.get(key) for key in ("qualified", "potential_routes", "qualification_results", "research_status", "company_research", "sales_eligibility", "sales_eligibility_reason", "revenue_lifecycle_state", "route", "eligible_routes")},
+        "pending": [(task.get("agent"), task.get("status"), task.get("error"), task.get("payload", {}).get("lead", {}).get("fingerprint")) for task in pending(db)],
+        "drain": first,
+    }
+
+
 def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportunity(tmp_path, monkeypatch):
     monkeypatch.setenv("THORIO_AGENT_EXECUTION_WORKERS", "1")
     db = LeadDB(data_dir=tmp_path)
@@ -64,7 +72,7 @@ def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportu
         stored = db.get(lead["fingerprint"])
         assert stored is not None
         assert stored["qualified"] is True
-        assert stored.get("sales_eligibility") == "eligible", stored
+        assert stored.get("sales_eligibility") == "eligible", _proof_debug(db, stored, first)
         assert stored["revenue_lifecycle_state"] == "outreach_sent"
         assert stored["outreach_state"] == "awaiting_response"
         assert len(transport.calls) == 1
