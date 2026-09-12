@@ -1,16 +1,19 @@
 """Privileged, durable boundary between the sales closer and outbound transports.
 
 The closer never receives provider credentials and never calls a provider directly.
-A transport implementation is injected by the runtime. Every action receives a
+A transport implementation is supplied by the runtime. Every action receives a
 stable idempotency key and is persisted before/after transport execution so a
 crash can be reconciled without blindly sending the same message twice.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol
 from uuid import uuid4
+
+import requests
 
 STATE_KEY = "revenue_execution"
 PRIVILEGED_CAPABILITY = "high_ticket_sales_closer"
@@ -43,6 +46,46 @@ class RevenueAction:
     status: str
     provider_result: Mapping[str, Any] | None = None
     error: str | None = None
+
+
+class HttpRevenueTransport:
+    """Call an operator-owned, authorized outbound transport gateway.
+
+    The gateway is deliberately outside the lead engine. It owns provider
+    credentials and channel-specific authentication/rate-limit rules. The
+    engine sends only the message envelope and a stable idempotency key.
+    """
+
+    def __init__(self, url: str, token: str, timeout_seconds: float = 30.0) -> None:
+        self.url = str(url or "").strip()
+        self.token = str(token or "").strip()
+        self.timeout_seconds = float(timeout_seconds)
+        if not self.url or not self.token:
+            raise RevenueTransportUnavailable("revenue transport URL and authorization token are required")
+
+    def send(self, *, channel: str, recipient: Mapping[str, Any], subject: str, body: str, idempotency_key: str) -> Mapping[str, Any]:
+        response = requests.post(
+            self.url,
+            headers={"Authorization": f"Bearer {self.token}", "Idempotency-Key": idempotency_key, "Content-Type": "application/json"},
+            json={"channel": channel, "recipient": dict(recipient), "subject": subject, "body": body, "idempotency_key": idempotency_key},
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, Mapping):
+            raise RevenueExecutionError("revenue transport returned a non-object response")
+        return dict(payload)
+
+
+def configured_revenue_transport() -> RevenueTransport | None:
+    """Build the authorized runtime transport when configured."""
+    url = os.getenv("THORIO_REVENUE_TRANSPORT_URL", "").strip()
+    token = os.getenv("THORIO_REVENUE_TRANSPORT_TOKEN", "").strip()
+    if not url and not token:
+        return None
+    if not url or not token:
+        raise RevenueTransportUnavailable("THORIO_REVENUE_TRANSPORT_URL and THORIO_REVENUE_TRANSPORT_TOKEN must both be configured")
+    return HttpRevenueTransport(url, token)
 
 
 def _now() -> str:
@@ -79,13 +122,7 @@ def execute_outbound(
     transport: RevenueTransport | None,
     idempotency_key: str | None = None,
 ) -> RevenueAction:
-    """Execute one outbound action with durable idempotency.
-
-    The durable action is written before transport execution. A completed
-    provider result is authoritative on retry. An action left in ``sending``
-    after a crash must be reconciled by the transport using the same
-    idempotency key rather than issuing a new key.
-    """
+    """Execute one outbound action with durable idempotency."""
     _authorized(worker_capability)
     opportunity_id = str(opportunity_id or "").strip()
     conversation_id = str(conversation_id or "").strip()
@@ -103,14 +140,12 @@ def execute_outbound(
     state = _load(db)
     actions = state["actions"]
     existing = actions.get(idem)
-    if isinstance(existing, Mapping):
-        status = str(existing.get("status") or "")
-        if status == "sent":
-            return RevenueAction(
-                action_id=str(existing["action_id"]), opportunity_id=opportunity_id,
-                conversation_id=conversation_id, idempotency_key=idem, channel=channel,
-                status="sent", provider_result=existing.get("provider_result"), error=None,
-            )
+    if isinstance(existing, Mapping) and str(existing.get("status") or "") == "sent":
+        return RevenueAction(
+            action_id=str(existing["action_id"]), opportunity_id=opportunity_id,
+            conversation_id=conversation_id, idempotency_key=idem, channel=channel,
+            status="sent", provider_result=existing.get("provider_result"), error=None,
+        )
 
     action_id = str(existing.get("action_id")) if isinstance(existing, Mapping) and existing.get("action_id") else uuid4().hex
     actions[idem] = {
@@ -135,30 +170,11 @@ def execute_outbound(
         ))
     except Exception as exc:
         state = _load(db)
-        state["actions"][idem] = {
-            **state["actions"].get(idem, {}),
-            "status": "retryable",
-            "error": str(exc)[:4000],
-            "updated_at": _now(),
-        }
+        state["actions"][idem] = {**state["actions"].get(idem, {}), "status": "retryable", "error": str(exc)[:4000], "updated_at": _now()}
         _save(db, state)
         raise
 
     state = _load(db)
-    state["actions"][idem] = {
-        **state["actions"].get(idem, {}),
-        "status": "sent",
-        "provider_result": provider_result,
-        "updated_at": _now(),
-    }
+    state["actions"][idem] = {**state["actions"].get(idem, {}), "status": "sent", "provider_result": provider_result, "updated_at": _now()}
     _save(db, state)
-    action = state["actions"][idem]
-    return RevenueAction(
-        action_id=action_id,
-        opportunity_id=opportunity_id,
-        conversation_id=conversation_id,
-        idempotency_key=idem,
-        channel=channel,
-        status="sent",
-        provider_result=provider_result,
-    )
+    return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=provider_result)
