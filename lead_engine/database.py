@@ -86,7 +86,6 @@ class LeadDB:
 
     @contextmanager
     def batch_writes(self):
-        """Defer lead-write commits until the enclosing source batch completes."""
         self._batch_write_depth += 1
         try:
             yield self
@@ -155,7 +154,7 @@ class LeadDB:
             "stopped": 200,
         }
         current_rank = lifecycle_order.get(current_state, 0)
-        incoming_rank = lifecycle_order.get(incoming_state, current_rank if incoming_state else 0)
+        incoming_rank = lifecycle_order.get(incoming_state, 0) if incoming_state else 0
         protected_revenue_fields = ("revenue_lifecycle_state", "sales_eligibility", "sales_eligibility_reason", "eligible_routes", "preserved_routes", "outreach_state", "outreach_attempt", "next_follow_up_at", "follow_up_due", "conversation_id", "outreach_route", "active_route", "outreach_history", "conversation_events", "response_count", "last_response_at", "last_outreach_action_id", "last_outreach_delivery", "route_switch_history", "outreach_stop_reason")
         current.update(updates)
         if current_rank > incoming_rank and current_state:
@@ -232,7 +231,6 @@ class LeadDB:
             if not isinstance(value, dict):
                 raise ValueError("Stored state value must be an object.")
             return value
-
         if key == "agent_work_queue":
             rows = self.queue_all_rows()
             items = {str(row[0]): self._queue_row_to_dict(row) for row in rows}
@@ -293,7 +291,6 @@ class LeadDB:
         return cursor.rowcount > 0
 
     def queue_claim(self, agent, worker_id, limit, capacity, lease_until, now_iso):
-        """Atomically claim up to the role's remaining capacity."""
         if limit <= 0 or capacity <= 0:
             return []
         role = agent_registry().get(agent)
