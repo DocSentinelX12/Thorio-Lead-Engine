@@ -26,6 +26,7 @@ def _lead(fingerprint="revenue-lifecycle-test"):
         "contact_email": "taylor@example.com",
         "signal": "Acme is hiring a remote software engineer",
         "job_title": "Software Engineer",
+        "business_need": "remote software engineer hiring",
         "need_at": datetime.now(timezone.utc).isoformat(),
         "qualified": True,
         "potential_routes": ["Thorio", "Shiftr"],
@@ -139,7 +140,7 @@ def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
         airtable_integrity(
             "airtable_integrity",
             {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}},
-            type("Ctx", (), {"db": db})(),
+            type("Ctx", (), {"db": db })(),
         )
         result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
         assert result["completed_count"] == 1
