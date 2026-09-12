@@ -150,3 +150,7 @@ def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> li
         if when <= now:
             due.append(dict(lead))
     return due
+
+
+def objection_reply(text: str, route: str) -> str:
+    return objection_response(text, route)
