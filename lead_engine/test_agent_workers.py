@@ -120,7 +120,7 @@ def test_qualification_worker_applies_independent_company_routes_after_research(
 
 def test_outreach_worker_sends_autonomously_after_sales_eligibility(tmp_path):
     db = _db(tmp_path)
-    lead = {"fingerprint": "outreach-worker-test", "company": "Acme", "potential_routes": ["Thorio", "Shiftr"], "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "research_status": "complete", "company_research": {"decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "contact_email": "taylor@example.com"}, "evidence_events": [{"source_id": "evt-1", "source_url": "https://example.com/signal", "signal": "Acme is hiring a remote software engineer"}]}
+    lead = {"fingerprint": "outreach-worker-test", "company": "Acme", "potential_routes": ["Thorio", "Shiftr"], "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "research_status": "complete", "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "contact_email": "taylor@example.com", "decision_maker_verification_status": "verified"}, "evidence_events": [{"source_id": "evt-1", "source_url": "https://example.com/signal", "signal": "Acme is hiring a remote software engineer"}]}
     db.insert_if_new(lead)
     enqueue(db, "outreach_closer", {"lead": lead})
     transport = _FakeTransport()
