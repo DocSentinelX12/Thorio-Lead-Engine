@@ -202,4 +202,4 @@ def research_public_web(lead: Mapping[str, Any]) -> Dict[str, Any]:
     collected = [page for page in pages if page.get("status") == "collected"]
     classified = _classify(pages)
     sources = [{"url": page.get("url"), "observed_at": page.get("observed_at"), "status": page.get("status"), "robots_status": page.get("robots_status"), "http_status": page.get("http_status")} for page in pages]
-    return {"status": "evidence_found" if collected else "no_public_evidence", "research_method": "public_web_http", "researched_at": _now(), "pages_attempted": len(pages), "pages_collected": len(collected), "sources": sources, "facts": classified, "verified_fields": [], "fabricated_fields": []}
+    return {"status": "evidence_found" if collected else "no_public_evidence", "research_method": "public_web_http", "researched_at": _now(), "pages_attempted": len(pages), "pages_collected": len(collected), "sources": sources, "facts": classified, "raw_pages": pages, "verified_fields": [], "fabricated_fields": []}
