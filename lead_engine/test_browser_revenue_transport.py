@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from .browser_revenue_transport import (
     BrowserRevenueConfigurationError,
     BrowserRevenueTarget,
