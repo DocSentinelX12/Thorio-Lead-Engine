@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
-from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
+from .outreach_engine import OutreachContractError, build_outreach_decision
 from .agent_queue import enqueue, enqueue_many
 from .active_processing import airtable_integrity, priority, routing, verification
 from .public_research import research_public_web
@@ -261,29 +261,6 @@ def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, A
     return {"role": "outreach_closer", "lead": dict(updated), "action": "prepare_authorized_outreach", "autonomous": True, "authorized": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "evidence_only"}
 
 
-def follow_up_action(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
-    """Advance and durably record an existing outreach state from an observed outcome."""
-    if payload.get("authorized") is not True:
-        raise OutreachContractError("follow_up requires explicit authorized=True")
-    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
-    outcome = str(payload.get("outcome") or lead.get("outreach_state") or "").strip().lower()
-    if not outcome:
-        raise OutreachContractError("follow_up requires an observed outreach outcome")
-    updated = apply_outcome(lead, outcome)
-    if ctx is not None:
-        fingerprint = str(updated.get("fingerprint") or "").strip()
-        if fingerprint:
-            stored = ctx.db.update_payload(fingerprint, updated)
-            if stored is None:
-                raise OutreachContractError(f"Lead not found for follow-up update: {fingerprint}")
-            updated = stored
-    result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "authorized": True, "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_authorized_follow_up", "outcome_recorded": True}
-    objection = payload.get("objection")
-    if objection:
-        result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"))
-    return result
-
-
 def advanced_handler_registry():
     handlers = {}
     for agent in _SOURCE_SIGNAL_ALIASES:
@@ -298,5 +275,4 @@ def advanced_handler_registry():
     handlers["routing"] = routing
     handlers["airtable_integrity"] = airtable_integrity
     handlers["outreach_closer"] = lambda _agent, payload, ctx: outreach_closing(payload, ctx)
-    handlers["follow_up"] = lambda _agent, payload, ctx: follow_up_action(payload, ctx)
     return handlers
