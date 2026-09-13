@@ -22,3 +22,10 @@ from .source_specific_collectors import install as _install_source_specific
 
 _install_source_specific()
 del _install_source_specific
+
+# Install the research and revenue-quality upgrade without changing the
+# established worker graph, source lanes, or persistence model.
+from .revenue_research_overrides import install as _install_revenue_research
+
+_install_revenue_research()
+del _install_revenue_research
