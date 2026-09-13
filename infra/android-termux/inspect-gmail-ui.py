@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Inspect the live Gmail UI through Chromium CDP without screenshots or message contents.
-
-This is intentionally dependency-free so it works even when Playwright is unavailable on
-Android. It reads only DOM metadata needed to configure the real Gmail outreach controls.
-It never reads input values, message bodies, cookies, localStorage, or passwords.
-"""
+"""Inspect the live Gmail UI through Chromium CDP without screenshots or message contents."""
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import re
@@ -30,7 +24,6 @@ def _get_json(path: str) -> Any:
 
 def _websocket_connect(url: str) -> socket.socket:
     from urllib.parse import urlsplit
-
     parsed = urlsplit(url)
     if parsed.scheme != "ws":
         raise RuntimeError(f"unsupported CDP websocket scheme: {parsed.scheme}")
@@ -105,7 +98,6 @@ def _recv_text(sock: socket.socket) -> str:
         if opcode == 0x8:
             raise RuntimeError("CDP websocket closed")
         if opcode == 0x9:
-            _send_text(sock, payload.decode("utf-8"))
             continue
         if opcode in (0x1, 0x0):
             fragments.append(payload)
@@ -127,10 +119,7 @@ def _cdp(sock: socket.socket, method: str, params: dict[str, Any] | None = None,
 
 INSPECT_JS = r"""
 (() => {
-  const clean = value => {
-    if (!value) return "";
-    return String(value).replace(/\\s+/g, " ").trim().slice(0, 240);
-  };
+  const clean = value => value ? String(value).replace(/\s+/g, " ").trim().slice(0, 240) : "";
   const visible = el => {
     const style = getComputedStyle(el);
     const rect = el.getBoundingClientRect();
@@ -154,28 +143,27 @@ INSPECT_JS = r"""
   });
   const all = Array.from(document.querySelectorAll("input, textarea, [contenteditable=\"true\"], button, [role=button], [role=combobox], [role=textbox]"));
   const elements = all.filter(visible).map(attrs);
-  const keywords = /compose|send|recipient|subject|message|body|to/i;
+  const keywords = /compose|send|recipient|subject|message|body|to|sent|delivered|message sent|saved/i;
   const relevant = elements.filter(item => Object.values(item).some(value => typeof value === "string" && keywords.test(value)));
+
+  const textNodes = Array.from(document.querySelectorAll("body *"))
+    .filter(visible)
+    .map(el => clean(el.innerText || el.textContent || ""))
+    .filter(text => text && /sent|delivered|message sent|saved|recipient|compose|send/i.test(text) && text.length <= 240)
+    .slice(-80);
+
   return {
-    page: {
-      origin: location.origin,
-      path: location.pathname,
-      title: document.title
-    },
-    counts: {
-      visible_interactive: elements.length,
-      relevant: relevant.length
-    },
+    page: { origin: location.origin, path: location.pathname, title: document.title },
+    counts: { visible_interactive: elements.length, relevant: relevant.length, status_text_candidates: textNodes.length },
     relevant,
-    visible_interactive: elements
+    status_text_candidates: [...new Set(textNodes)]
   };
 })()
 """
 
 
 def _redact(value: str) -> str:
-    value = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[email-redacted]", value)
-    return value
+    return re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[email-redacted]", value)
 
 
 def _selector_candidates(item: dict[str, Any]) -> list[str]:
@@ -203,17 +191,18 @@ def _print_compact_report(value: dict[str, Any]) -> None:
     print(f"TITLE: {_redact(str(page.get('title', '')))}")
     print(f"VISIBLE_INTERACTIVE: {counts.get('visible_interactive', 0)}")
     print(f"RELEVANT: {counts.get('relevant', 0)}")
+    print(f"STATUS_TEXT_CANDIDATES: {counts.get('status_text_candidates', 0)}")
     print("CONTROLS:")
     for index, item in enumerate(value.get("relevant", []), 1):
-        summary = {
-            key: _redact(str(item.get(key, "")))
-            for key in ("tag", "type", "role", "aria_label", "name", "placeholder", "title", "id", "data_testid", "contenteditable")
-            if item.get(key, "") not in ("", False)
-        }
+        summary = {key: _redact(str(item.get(key, ""))) for key in ("tag", "type", "role", "aria_label", "name", "placeholder", "title", "id", "data_testid", "contenteditable") if item.get(key, "") not in ("", False)}
         print(f"{index}. {json.dumps(summary, ensure_ascii=False, separators=(',', ':'))}")
         selectors = _selector_candidates(item)
         if selectors:
             print(f"   SELECTORS: {' | '.join(_redact(s) for s in selectors)}")
+    if value.get("status_text_candidates"):
+        print("STATUS_TEXT:")
+        for text in value["status_text_candidates"]:
+            print(f"- {_redact(text)}")
     print("=== END REPORT ===\n")
 
 
@@ -226,31 +215,21 @@ def main() -> int:
     websocket_url = str(page.get("webSocketDebuggerUrl", "")).strip()
     if not websocket_url:
         raise SystemExit("The live Gmail tab did not expose a CDP websocket endpoint.")
-
     sock = _websocket_connect(websocket_url)
     try:
         result = _cdp(sock, "Runtime.evaluate", {"expression": INSPECT_JS, "returnByValue": True, "awaitPromise": True})
     finally:
         sock.close()
-
     value = result.get("result", {}).get("value")
     if not isinstance(value, dict):
         raise SystemExit("Gmail DOM inspection returned no structured result.")
-
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "cdp_endpoint": CDP_HTTP,
         "tab_type": page.get("type"),
         "gmail_url": "https://mail.google.com/",
         "inspection": value,
-        "privacy": {
-            "message_contents_read": False,
-            "input_values_read": False,
-            "cookies_read": False,
-            "local_storage_read": False,
-            "passwords_read": False,
-            "screenshots_taken": False,
-        },
+        "privacy": {"message_contents_read": False, "input_values_read": False, "cookies_read": False, "local_storage_read": False, "passwords_read": False, "screenshots_taken": False},
     }
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
