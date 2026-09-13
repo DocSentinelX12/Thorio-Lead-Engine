@@ -63,10 +63,6 @@ class BrowserRevenueTarget:
             raise BrowserRevenueConfigurationError(
                 f"revenue browser recipient_url_template must be HTTP(S): {self.recipient_url_template!r}"
             )
-        if self.recipient_commit_key and len(self.recipient_commit_key) != 1:
-            raise BrowserRevenueConfigurationError(
-                "recipient_commit_key must be exactly one keyboard character"
-            )
 
 
 def _env(name: str, default: str = "") -> str:
