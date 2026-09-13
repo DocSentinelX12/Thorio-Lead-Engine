@@ -67,7 +67,7 @@ def _allowed(url: str) -> tuple[bool, str]:
             return False, f"robots_fetch_failed:{type(exc).__name__}"
     if parser is not None and not parser.can_fetch(USER_AGENT, url):
         return False, "robots_disallowed"
-    return True, robots_status if False else status
+    return True, status
 
 
 def _throttle(domain: str) -> None:
