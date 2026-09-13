@@ -68,21 +68,23 @@ cat <<'EOF'
 THORIO ONE-TIME BROWSER AUTHORIZATION
 
 Chromium is now running with the dedicated Thorio profile.
-Log into these six accounts there normally:
+Log into these accounts there normally:
   1. LinkedIn
   2. X
   3. Threads
   4. Facebook
   5. Hacker News
   6. Indie Hackers
+  7. Gmail (outreach only)
 
+Gmail is used only for authorized outbound outreach. It is not a collection source.
 Complete any normal MFA or verification requested by the sites.
 Do not bypass CAPTCHA, MFA, rate limits, or other security controls.
 
-When all six accounts are authorized, return to Termux and press Enter.
+When all seven accounts are authorized, return to Termux and press Enter.
 EOF
 
-read -r -p "Press Enter after the six accounts are authorized... " _
+read -r -p "Press Enter after the six collection accounts and Gmail are authorized... " _
 
 # The persistent service owns the browser after authorization.
 sv up thorio-browser
