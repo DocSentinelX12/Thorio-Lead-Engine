@@ -8,6 +8,7 @@ from .agent_stateful_handlers import airtable_integrity as _airtable_integrity
 from .agent_stateful_handlers import routing as _routing
 from .agent_stateful_handlers import verification as _verification
 from .dedupe import Dedupe
+from .research_sync import sync_research
 
 
 def _lead(payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -55,9 +56,14 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
         updated["company_research"] = research
         updated["research_status"] = "complete"
         stored = ctx.db.update_payload(fingerprint, updated) or updated
+        try:
+            research_sync_result = sync_research(stored)
+        except Exception as exc:
+            research_sync_result = {"status": "failed", "error": str(exc)}
         enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a_verified:{fingerprint}")
         result["decision_maker_handoff"] = "qualification_a"
         result["lead"] = stored
+        result["research_sync"] = research_sync_result
 
     if result.get("verified") is True:
         enqueue(ctx.db, "routing", {"lead": ctx.db.get(fingerprint) or lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}")
