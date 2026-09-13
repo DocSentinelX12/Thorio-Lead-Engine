@@ -36,9 +36,13 @@ class BrowserRevenueTarget:
     send_selector: str
     sent_selector: str
     subject_selector: str = ""
+    recipient_selector: str = ""
     authenticated_selector: str = ""
     login_url: str = ""
     thread_url_selector: str = ""
+    open_composer: bool = False
+    recipient_commit_key: str = ""
+    sent_text: str = ""
 
     def __post_init__(self) -> None:
         required = {
@@ -58,6 +62,10 @@ class BrowserRevenueTarget:
         if not self.recipient_url_template.startswith(("https://", "http://")):
             raise BrowserRevenueConfigurationError(
                 f"revenue browser recipient_url_template must be HTTP(S): {self.recipient_url_template!r}"
+            )
+        if self.recipient_commit_key and len(self.recipient_commit_key) != 1:
+            raise BrowserRevenueConfigurationError(
+                "recipient_commit_key must be exactly one keyboard character"
             )
 
 
@@ -96,9 +104,13 @@ def configured_browser_revenue_targets() -> dict[str, BrowserRevenueTarget]:
             send_selector=str(item.get("send_selector", "")).strip(),
             sent_selector=str(item.get("sent_selector", "")).strip(),
             subject_selector=str(item.get("subject_selector", "")).strip(),
+            recipient_selector=str(item.get("recipient_selector", "")).strip(),
             authenticated_selector=str(item.get("authenticated_selector", "")).strip(),
             login_url=str(item.get("login_url", "")).strip(),
             thread_url_selector=str(item.get("thread_url_selector", "")).strip(),
+            open_composer=bool(item.get("open_composer", False)),
+            recipient_commit_key=str(item.get("recipient_commit_key", "")),
+            sent_text=str(item.get("sent_text", "")).strip(),
         )
         if target.channel in targets:
             raise BrowserRevenueConfigurationError(
@@ -286,6 +298,19 @@ class BrowserRevenueTransport:
                     raise BrowserRevenueUnavailable(
                         f"{target.channel}: configured composer selector was not found"
                     )
+                if target.open_composer:
+                    composer.first().click()
+
+                if target.recipient_selector:
+                    recipient_node = page.locator(target.recipient_selector)
+                    if recipient_node.count() == 0:
+                        raise BrowserRevenueUnavailable(
+                            f"{target.channel}: configured recipient selector was not found"
+                        )
+                    recipient_node.first().fill(recipient_value)
+                    if target.recipient_commit_key:
+                        recipient_node.first().press(target.recipient_commit_key)
+
                 if target.subject_selector:
                     subject_node = page.locator(target.subject_selector)
                     if subject_node.count() == 0:
@@ -293,12 +318,32 @@ class BrowserRevenueTransport:
                             f"{target.channel}: configured subject selector was not found"
                         )
                     subject_node.first().fill(str(subject or ""))
-                page.locator(target.body_selector).fill(str(body))
-                page.locator(target.send_selector).click()
+
+                body_node = page.locator(target.body_selector)
+                if body_node.count() == 0:
+                    raise BrowserRevenueUnavailable(
+                        f"{target.channel}: configured body selector was not found"
+                    )
+                body_node.first().fill(str(body))
+
+                send_node = page.locator(target.send_selector)
+                if send_node.count() == 0:
+                    raise BrowserRevenueUnavailable(
+                        f"{target.channel}: configured send selector was not found"
+                    )
+                send_node.first().click()
 
                 sent = page.locator(target.sent_selector)
                 try:
                     sent.first().wait_for(state="visible", timeout=self._navigation_timeout())
+                    if target.sent_text:
+                        sent_text = sent.first().inner_text(timeout=self._navigation_timeout())
+                        if target.sent_text not in sent_text:
+                            raise BrowserRevenueUnavailable(
+                                f"{target.channel}: sent confirmation element appeared but did not contain the configured confirmation text"
+                            )
+                except BrowserRevenueUnavailable:
+                    raise
                 except Exception as exc:
                     raise BrowserRevenueUnavailable(
                         f"{target.channel}: send control was clicked but configured sent confirmation was not observed"
