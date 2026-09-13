@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from .browser_revenue_transport import (
     BrowserRevenueConfigurationError,
     BrowserRevenueTarget,
@@ -80,15 +78,15 @@ def test_browser_revenue_targets_reject_duplicate_channels(monkeypatch):
         configured_browser_revenue_targets()
 
 
-def test_recipient_commit_key_must_be_one_character():
-    with pytest.raises(BrowserRevenueConfigurationError, match="one keyboard character"):
-        BrowserRevenueTarget(
-            channel="gmail",
-            account="gmail",
-            recipient_url_template="https://mail.google.com/mail/u/0/#inbox",
-            composer_selector="[data-test=compose]",
-            body_selector="[data-test=body]",
-            send_selector="[data-test=send]",
-            sent_selector="[data-test=sent]",
-            recipient_commit_key="Enter",
-        )
+def test_recipient_commit_key_accepts_playwright_named_keys():
+    target = BrowserRevenueTarget(
+        channel="gmail",
+        account="gmail",
+        recipient_url_template="https://mail.google.com/mail/u/0/#inbox",
+        composer_selector="[data-test=compose]",
+        body_selector="[data-test=body]",
+        send_selector="[data-test=send]",
+        sent_selector="[data-test=sent]",
+        recipient_commit_key="Enter",
+    )
+    assert target.recipient_commit_key == "Enter"
