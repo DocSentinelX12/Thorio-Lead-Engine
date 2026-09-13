@@ -9,7 +9,7 @@ from .compute_worker import ComputeWorkerClient, ComputeWorkerError
 
 REMOTE_SAFE_AGENTS = frozenset(
     agent for agent in advanced_handler_registry()
-    if agent not in {"outreach_closer", "follow_up"}
+    if agent != "outreach_closer"
 )
 REMOTE_WORKER_PREFIX = "remote-compute:"
 
