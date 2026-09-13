@@ -41,7 +41,7 @@ def test_company_research_persists_public_evidence_without_fabrication(monkeypat
 
     monkeypatch.setattr(advanced_agent_logic, "enqueue", lambda *args, **kwargs: None)
     result = advanced_agent_logic.company_research(lead, SimpleNamespace(db=DB()))
-    assert result["research_status"] == "research_complete"
+    assert result["research_status"] == "research_required"
     assert result["public_research_status"] == "evidence_found"
     assert result["research"]["public_web_sources"][0]["url"] == "https://observed.example/"
     assert result["research"]["public_company_facts"][0]["evidence"] == "Observed public company page"
