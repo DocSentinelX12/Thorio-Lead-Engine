@@ -1,10 +1,4 @@
-"""Surgical runtime upgrades for research fidelity and revenue copy.
-
-These overrides preserve the existing worker graph and only strengthen two
-boundaries: company research incorporates the bounded public-web collector,
-and the closer uses the verified research package when composing outreach.
-No fact is synthesized when evidence is absent.
-"""
+"""Surgical runtime upgrades for research fidelity and revenue copy."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -34,8 +28,6 @@ def _evidence_lines(research: Mapping[str, Any], keys: tuple[str, ...]) -> list[
 
 
 def _research_handler(original):
-    from .agent_queue import enqueue
-
     def handler(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         result = original(agent, payload, ctx)
         lead = result.get("lead")
@@ -45,8 +37,6 @@ def _research_handler(original):
         existing = lead.get("company_research")
         research = dict(existing) if isinstance(existing, Mapping) else {}
 
-        # Resolve the collector at execution time so tests and future source
-        # corrections can replace the public collector without stale bindings.
         from .public_research import research_public_web
         public = research_public_web(lead)
         research["public_web_research"] = public
@@ -69,23 +59,30 @@ def _research_handler(original):
         research["research_last_attempt_at"] = datetime.now(timezone.utc).isoformat()
         gaps = list(research.get("research_gaps") or []) if isinstance(research.get("research_gaps"), list) else []
 
+        # Preserve discovery separately from verification. A person may be a
+        # useful discovered contact even when the evidence is not sufficient
+        # for a verified status. Never infer verification from a name alone.
         person = _text(research.get("decision_maker") or lead.get("person") or lead.get("contact_name"))
         role_evidence = _text(research.get("decision_maker_role_evidence") or research.get("decision_maker_title") or lead.get("contact_title"))
         contact_evidence = _text(research.get("decision_maker_evidence"))
         verified_status = _text(research.get("decision_maker_verification_status")).lower()
 
-        # Observed identity is never promoted to verified without explicit role
-        # and evidence support already present in the lead/research packet.
-        if person and role_evidence and contact_evidence and verified_status != "verified":
-            research["decision_maker_verification_status"] = "verified"
-            verified_status = "verified"
-        elif not person:
+        if person and not _text(research.get("decision_maker")):
+            research["decision_maker"] = person
+            research["decision_maker_status"] = "discovered"
+        if role_evidence and not _text(research.get("decision_maker_role_evidence")):
+            research["decision_maker_role_evidence"] = role_evidence
+        if person and role_evidence and contact_evidence and verified_status == "verified":
+            research["decision_maker_status"] = "verified"
+        elif person and role_evidence:
+            research["decision_maker_status"] = "role_verified"
+        elif person:
+            research["decision_maker_status"] = "discovered"
+        else:
             if "decision_maker" not in gaps:
                 gaps.append("decision_maker")
-        elif not role_evidence:
-            if "decision_maker_role" not in gaps:
-                gaps.append("decision_maker_role")
-        if not _text(research.get("business_context")):
+
+        if not _text(research.get("business_context")) and not research.get("public_business_need_facts"):
             if "business_context" not in gaps:
                 gaps.append("business_context")
         if not research.get("public_web_sources"):
@@ -95,12 +92,11 @@ def _research_handler(original):
         research["research_gaps"] = gaps
         research["fabricated_fields"] = []
         verified_fields = [key for key, value in research.items() if value not in (None, "", [], {}, ())]
-        complete = bool(
-            research.get("company_verified") is True
-            and person
-            and contact_evidence
-            and verified_status == "verified"
-        )
+
+        # Research completion is about completion of the research task, not
+        # requiring every individual fact to be fully verified. Qualification
+        # remains responsible for applying route-specific evidence thresholds.
+        complete = bool(research.get("company_verified") is True and research.get("public_web_sources"))
 
         lead["company_research"] = research
         lead["research_status"] = "complete" if complete else "research_required"
@@ -109,22 +105,13 @@ def _research_handler(original):
         if stored is None:
             raise ValueError(f"Lead not found for company research: {lead.get('fingerprint')}")
 
-        if complete:
-            fingerprint = str(stored.get("fingerprint") or "")
-            enqueue(
-                ctx.db,
-                "qualification_a",
-                {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": verified_fields}},
-                priority=9,
-                dedupe_key=f"qualification_a:{fingerprint}",
-            )
-
         result.update({
             "lead": stored,
             "research": research,
             "research_status": stored["research_status"],
             "verified_fields": verified_fields,
-            "decision_maker_verified": verified_status == "verified",
+            "decision_maker_verified": research.get("decision_maker_status") == "verified",
+            "decision_maker_status": research.get("decision_maker_status", "unknown"),
             "fabricated_fields": [],
             "public_research_status": public.get("status") if isinstance(public, Mapping) else None,
             "handoff": "qualification_a" if complete else "research_required",
@@ -137,7 +124,6 @@ def _research_handler(original):
 def _install_sales_upgrade(agent_workers: Any, outreach_engine: Any) -> None:
     if getattr(outreach_engine.build_outreach_decision, "_thorio_sales_upgrade", False):
         return
-
     original_build = outreach_engine.build_outreach_decision
 
     def sales_body(route: str, contact_name: str, company: str, signal: str, research: Mapping[str, Any] | None = None) -> str:
@@ -187,18 +173,14 @@ def _install_sales_upgrade(agent_workers: Any, outreach_engine: Any) -> None:
 
     build_decision._thorio_sales_upgrade = True
     outreach_engine.build_outreach_decision = build_decision
-    # agent_workers imported this function directly before package installation,
-    # so update that existing alias as well. No worker graph changes.
     agent_workers.build_outreach_decision = build_decision
 
 
 def install() -> None:
     from . import agent_workers, outreach_engine
-
     processor = agent_workers._PROCESSORS.get("company_research")
     if processor is not None and not getattr(processor, "_thorio_research_upgrade", False):
         patched = _research_handler(processor)
         patched._thorio_research_upgrade = True
         agent_workers._PROCESSORS["company_research"] = patched
-
     _install_sales_upgrade(agent_workers, outreach_engine)
