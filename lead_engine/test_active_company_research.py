@@ -29,10 +29,13 @@ def test_company_research_persists_observed_person_and_handoff(tmp_path):
     # evidence before research can be marked complete.
     assert result["research_status"] == "research_required"
     assert result["decision_maker_verified"] is False
-    assert stored["company_research"]["company_verified"] is True
-    assert stored["company_research"]["decision_maker"] == "Jane Doe"
-    assert stored["company_research"]["decision_maker_evidence"]
-    assert stored["company_research"]["decision_maker_verification_status"] == "observed_needs_role_verification"
+    research = stored["company_research"]
+    assert "company_verified" not in research
+    assert research["observed_input"]["company"] == "ExampleCo"
+    assert research["observed_decision_maker"] == "Jane Doe"
+    assert research["observed_decision_maker_evidence"]
+    assert "decision_maker" not in research
+    assert research["decision_maker_verification_status"] == "observed_needs_role_verification"
     assert stored["research_status"] == "research_required"
     db.close()
 
