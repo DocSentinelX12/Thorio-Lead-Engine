@@ -139,15 +139,19 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     existing = lead.get("company_research") if isinstance(lead.get("company_research"), Mapping) else {}
     merged_research = {**dict(existing), **supplied} if supplied else dict(existing)
     if not merged_research:
-        merged_research = {"company_verified": bool(lead.get("company")), "fabricated_fields": []}
-        person = str(lead.get("person") or lead.get("contact_name") or "").strip()
-        if person:
-            merged_research["decision_maker"] = person
-            merged_research["decision_maker_evidence"] = str(lead.get("evidence") or lead.get("signal") or "").strip()
-            if merged_research["decision_maker_evidence"]:
-                merged_research["decision_maker_verification_status"] = "observed_needs_role_verification"
-    verified_fields = tuple(key for key, value in merged_research.items() if value not in (None, "", [], {}, ()))
-    research_complete = bool(merged_research.get("company_verified") and merged_research.get("decision_maker") and merged_research.get("decision_maker_evidence") and str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified")
+        merged_research = {"fabricated_fields": []}
+    verified_fields = tuple(
+        key
+        for key, value in merged_research.items()
+        if value not in (None, "", [], {}, ())
+        and key not in {"fabricated_fields", "observed_input", "social_findings", "social_evidence_sources", "social_evidence_count", "observed_decision_maker", "observed_decision_maker_evidence", "public_web_research", "public_web_sources", "public_company_facts", "public_product_facts", "public_hiring_facts", "public_decision_maker_facts", "public_business_need_facts", "public_commercial_facts", "researched_at"}
+    )
+    research_complete = bool(
+        merged_research.get("company_verified")
+        and merged_research.get("decision_maker")
+        and merged_research.get("decision_maker_evidence")
+        and str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified"
+    )
     status = "complete" if research_complete else "research_required"
     merged = dict(lead)
     merged["company_research"] = merged_research
@@ -207,7 +211,9 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
     if str(lead.get("research_status") or "").strip().lower() != "complete":
         raise AgentContractError("outreach_closer requires completed company research")
     research = lead.get("company_research")
-    if not isinstance(research, Mapping) or not research.get("decision_maker") or not research.get("decision_maker_evidence"):
+    if not isinstance(research, Mapping) or not research.get("company_verified"):
+        raise AgentContractError("outreach_closer requires verified company research")
+    if not research.get("decision_maker") or not research.get("decision_maker_evidence") or str(research.get("decision_maker_verification_status") or "").strip().lower() != "verified":
         raise AgentContractError("outreach_closer requires verified decision-maker research")
     try:
         decision = build_outreach_decision(lead)
@@ -314,8 +320,8 @@ def _audit(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> Dic
         violations.append("global_qualified_without_route_evidence")
     if lead.get("research_status") == "complete":
         research = lead.get("company_research")
-        if not isinstance(research, Mapping) or not research.get("decision_maker") or not research.get("decision_maker_evidence"):
-            violations.append("research_complete_without_verified_decision_maker")
+        if not isinstance(research, Mapping) or not research.get("company_verified") or not research.get("decision_maker") or not research.get("decision_maker_evidence") or str(research.get("decision_maker_verification_status") or "").strip().lower() != "verified":
+            violations.append("research_complete_without_verified_research")
     return {"role": "audit", "lead": lead, "violations": violations, "passed": not violations}
 
 
