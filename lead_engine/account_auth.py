@@ -39,6 +39,10 @@ SUPPORTED_ACCOUNTS = (
     "indie_hackers",
 )
 
+# Gmail is an outreach channel only. Keep it out of the collection account
+# registry so adding Gmail cannot change source discovery or its preflight.
+SUPPORTED_OUTREACH_ACCOUNTS = ("gmail",)
+
 
 def _env(name: str) -> str:
     return os.getenv(name, "").strip()
@@ -48,7 +52,7 @@ def _prefix(account: str) -> str:
     normalized = account.strip().lower().replace("-", "_").replace(" ", "_")
     if not normalized:
         raise AccountAuthConfigurationError("account name is required")
-    if normalized not in SUPPORTED_ACCOUNTS:
+    if normalized not in SUPPORTED_ACCOUNTS + SUPPORTED_OUTREACH_ACCOUNTS:
         raise AccountAuthConfigurationError(f"unsupported account: {normalized}")
     return "THORIO_ACCOUNT_" + normalized.upper()
 
