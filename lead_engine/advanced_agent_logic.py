@@ -171,8 +171,6 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     company = str(lead.get("company") or "").strip()
     source_url = str(lead.get("source_url") or lead.get("url") or "").strip()
     person = str(lead.get("contact_name") or lead.get("person") or "").strip()
-    signal = str(lead.get("signal") or lead.get("evidence") or "").strip()
-    evidence = str(lead.get("evidence") or "").strip()
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
         raise ValueError("company_research requires lead fingerprint")
@@ -180,14 +178,16 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     prior = dict(existing) if isinstance(existing, Mapping) else {}
     public_research = research_public_web(lead)
     public_facts = public_research.get("facts", {}) if isinstance(public_research, Mapping) else {}
-    facts: Dict[str, Any] = {
-        "company_verified": bool(company),
-        "company_identity_evidence": f"Observed company name: {company}" if company else "",
-        "business_context": signal,
-        "current_need_evidence": signal,
-        "recent_activity_evidence": evidence,
+    observed_input = {
+        "company": company,
         "source_url": source_url,
+        "signal": str(lead.get("signal") or "").strip(),
+        "evidence": str(lead.get("evidence") or "").strip(),
         "evidence_event_count": len(events),
+        "provenance": [dict(event.get("provenance") or {}) for event in events if isinstance(event.get("provenance"), Mapping)],
+    }
+    facts: Dict[str, Any] = {
+        "observed_input": observed_input,
         "social_findings": social_findings,
         "researched_at": datetime.now(timezone.utc).isoformat(),
         "public_web_research": public_research,
@@ -204,12 +204,14 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in social_findings if isinstance(item, Mapping) and item.get("source")})
         facts["social_evidence_count"] = len(social_findings)
     if person:
-        facts["decision_maker"] = person
-        facts["decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
-        if prior.get("decision_maker_verification_status") != "verified":
-            facts["decision_maker_verification_status"] = "observed_needs_role_verification"
-        else:
+        facts["observed_decision_maker"] = person
+        facts["observed_decision_maker_evidence"] = f"Named person was directly observed in collector evidence: {person}."
+        if prior.get("decision_maker_verification_status") == "verified":
+            facts["decision_maker"] = person
+            facts["decision_maker_evidence"] = prior.get("decision_maker_evidence") or facts["observed_decision_maker_evidence"]
             facts["decision_maker_verification_status"] = "verified"
+        else:
+            facts["decision_maker_verification_status"] = "observed_needs_role_verification"
     if prior:
         prior_social = prior.get("social_findings") if isinstance(prior.get("social_findings"), list) else []
         merged_social = list(prior_social)
@@ -227,7 +229,11 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         and str(facts.get("decision_maker_verification_status") or "").strip().lower() == "verified"
     )
     status = "research_complete" if company and decision_maker_verified else "research_required"
-    verified_fields = [key for key, value in facts.items() if value not in (None, "", [], {}, ())]
+    verification_exclusions = {"observed_input", "researched_at", "public_web_research", "public_web_sources", "fabricated_fields", "social_findings", "social_evidence_sources", "social_evidence_count", "observed_decision_maker", "observed_decision_maker_evidence", "decision_maker_verification_status"}
+    verified_fields = [
+        key for key, value in facts.items()
+        if key not in verification_exclusions and value not in (None, "", [], {}, ())
+    ]
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": verified_fields})
     if stored is None:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
