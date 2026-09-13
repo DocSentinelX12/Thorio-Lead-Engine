@@ -36,6 +36,33 @@ def test_browser_revenue_targets_are_loaded_without_platform_defaults(monkeypatc
     targets = configured_browser_revenue_targets()
     assert set(targets) == {"linkedin"}
     assert targets["linkedin"].recipient_url_template == "https://example.invalid/{recipient}"
+    assert targets["linkedin"].recipient_selector == ""
+    assert targets["linkedin"].open_composer is False
+
+
+def test_gmail_revenue_target_can_require_real_recipient_entry_and_confirmation_text(monkeypatch):
+    payload = [{
+        "channel": "gmail",
+        "account": "gmail",
+        "recipient_url_template": "https://mail.google.com/mail/u/0/#inbox",
+        "composer_selector": "[data-test=operator-verified-compose]",
+        "recipient_selector": "[data-test=operator-verified-to]",
+        "subject_selector": "[data-test=operator-verified-subject]",
+        "body_selector": "[data-test=operator-verified-body]",
+        "send_selector": "[data-test=operator-verified-send]",
+        "sent_selector": "[data-test=operator-verified-sent]",
+        "sent_text": "Message sent",
+        "open_composer": True,
+        "recipient_commit_key": "Enter",
+    }]
+    monkeypatch.setenv("THORIO_REVENUE_BROWSER_TARGETS", json.dumps(payload))
+    targets = configured_browser_revenue_targets()
+    target = targets["gmail"]
+    assert target.recipient_selector == "[data-test=operator-verified-to]"
+    assert target.subject_selector == "[data-test=operator-verified-subject]"
+    assert target.open_composer is True
+    assert target.recipient_commit_key == "Enter"
+    assert target.sent_text == "Message sent"
 
 
 def test_browser_revenue_targets_reject_duplicate_channels(monkeypatch):
@@ -51,3 +78,17 @@ def test_browser_revenue_targets_reject_duplicate_channels(monkeypatch):
     monkeypatch.setenv("THORIO_REVENUE_BROWSER_TARGETS", json.dumps([target, target]))
     with pytest.raises(BrowserRevenueConfigurationError, match="duplicate"):
         configured_browser_revenue_targets()
+
+
+def test_recipient_commit_key_must_be_one_character():
+    with pytest.raises(BrowserRevenueConfigurationError, match="one keyboard character"):
+        BrowserRevenueTarget(
+            channel="gmail",
+            account="gmail",
+            recipient_url_template="https://mail.google.com/mail/u/0/#inbox",
+            composer_selector="[data-test=compose]",
+            body_selector="[data-test=body]",
+            send_selector="[data-test=send]",
+            sent_selector="[data-test=sent]",
+            recipient_commit_key="Enter",
+        )
