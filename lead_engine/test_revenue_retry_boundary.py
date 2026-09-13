@@ -27,6 +27,7 @@ def _lead(fingerprint="browser-retry-boundary"):
         "signal": "Acme is hiring a remote software engineer",
         "research_status": "complete",
         "company_research": {
+            "company_verified": True,
             "decision_maker": "Taylor",
             "decision_maker_evidence": "https://example.com/taylor",
             "contact_email": "taylor@example.com",
