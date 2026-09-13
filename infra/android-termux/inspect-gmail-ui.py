@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import socket
 import struct
 import time
@@ -172,6 +173,50 @@ INSPECT_JS = r"""
 """
 
 
+def _redact(value: str) -> str:
+    value = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[email-redacted]", value)
+    return value
+
+
+def _selector_candidates(item: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    if item.get("id"):
+        candidates.append(f"#{item['id']}")
+    if item.get("data_testid"):
+        candidates.append(f"[data-testid={json.dumps(item['data_testid'])}]")
+    if item.get("aria_label"):
+        candidates.append(f"[aria-label={json.dumps(item['aria_label'])}]")
+    if item.get("name"):
+        candidates.append(f"[name={json.dumps(item['name'])}]")
+    if item.get("placeholder"):
+        candidates.append(f"[placeholder={json.dumps(item['placeholder'])}]")
+    if item.get("role") and item.get("aria_label"):
+        candidates.append(f"[role={json.dumps(item['role'])}][aria-label={json.dumps(item['aria_label'])}]")
+    return candidates[:4]
+
+
+def _print_compact_report(value: dict[str, Any]) -> None:
+    page = value.get("page", {})
+    counts = value.get("counts", {})
+    print("\n=== THORIO LIVE GMAIL UI REPORT ===")
+    print(f"URL: {_redact(str(page.get('origin', '')) + str(page.get('path', '')))}")
+    print(f"TITLE: {_redact(str(page.get('title', '')))}")
+    print(f"VISIBLE_INTERACTIVE: {counts.get('visible_interactive', 0)}")
+    print(f"RELEVANT: {counts.get('relevant', 0)}")
+    print("CONTROLS:")
+    for index, item in enumerate(value.get("relevant", []), 1):
+        summary = {
+            key: _redact(str(item.get(key, "")))
+            for key in ("tag", "type", "role", "aria_label", "name", "placeholder", "title", "id", "data_testid", "contenteditable")
+            if item.get(key, "") not in ("", False)
+        }
+        print(f"{index}. {json.dumps(summary, ensure_ascii=False, separators=(',', ':'))}")
+        selectors = _selector_candidates(item)
+        if selectors:
+            print(f"   SELECTORS: {' | '.join(_redact(s) for s in selectors)}")
+    print("=== END REPORT ===\n")
+
+
 def main() -> int:
     pages = _get_json("/json/list")
     gmail_pages = [p for p in pages if str(p.get("url", "")).lower().startswith("https://mail.google.com/")]
@@ -210,8 +255,7 @@ def main() -> int:
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     print(f"Gmail UI diagnostic written to {REPORT}")
-    print(f"Visible interactive controls inspected: {value['counts']['visible_interactive']}")
-    print(f"Relevant controls found: {value['counts']['relevant']}")
+    _print_compact_report(value)
     return 0
 
 
