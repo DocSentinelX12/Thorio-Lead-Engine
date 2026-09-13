@@ -70,7 +70,8 @@ def test_batch_delivery_marks_local_state_only_after_all_downstream_work_succeed
          patch("lead_engine.batch_delivery.sync_outreach"), \
          patch("lead_engine.batch_delivery.sync_followup"), \
          patch("lead_engine.batch_delivery.sync_paxus_referral_state"), \
-         patch("lead_engine.batch_delivery.sync_commission", return_value=None):
+         patch("lead_engine.batch_delivery.sync_commission", return_value=None), \
+         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}):
         mock_batch.return_value = None
         result = sync_pending_batched(db, limit=10)
 
@@ -92,10 +93,12 @@ def test_batch_delivery_falls_back_to_single_record_sync_on_batch_failure(tmp_pa
     }
 
     with patch("lead_engine.batch_delivery._run_batch_high_volume_sync", side_effect=RuntimeError("batch rejected")), \
-         patch("lead_engine.sync_worker.sync_one", return_value=fallback_result) as mock_single:
+         patch("lead_engine.sync_worker.sync_one", return_value=fallback_result) as mock_single, \
+         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}) as mock_research:
         result = sync_pending_batched(db, limit=10)
 
     assert result["synced_count"] == 1
     assert result["failed_count"] == 0
     mock_single.assert_called_once_with(lead)
+    mock_research.assert_called_once_with(lead)
     assert db.get_sync_state("batch-fallback-001")["synced"] is True
