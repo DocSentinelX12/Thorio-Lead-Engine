@@ -18,7 +18,9 @@ def test_public_research_records_real_page_provenance(monkeypatch):
     public_research._PAGE_CACHE.clear()
     result = public_research.research_public_web({"company": "Acme", "website": "https://acme.example/"})
     assert result["status"] == "evidence_found"
-    assert result["pages_collected"] == 1
+    assert 1 <= result["pages_collected"] <= public_research.MAX_PAGES
+    assert result["pages_attempted"] == result["pages_collected"]
+    assert len(result["sources"]) == result["pages_attempted"]
     assert result["sources"][0]["url"].startswith("https://acme.example/")
     assert any(fact["field"] == "page_title" for fact in result["raw_pages"][0]["facts"])
     assert result["facts"]["hiring"]
