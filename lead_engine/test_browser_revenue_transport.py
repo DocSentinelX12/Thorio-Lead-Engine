@@ -95,7 +95,40 @@ def test_recipient_commit_key_accepts_playwright_named_keys():
     assert target.recipient_commit_key == "Enter"
 
 
-def test_confirmation_signature_distinguishes_fresh_visible_state():
-    assert BrowserRevenueTransport._confirmation_signature
-    assert (1, ("Message sent",)) != (0, ())
-    assert (1, ("Message sent",)) == (1, ("Message sent",))
+class _FakeConfirmationNode:
+    def __init__(self, visible: bool, text: str):
+        self.visible = visible
+        self.text = text
+
+    def is_visible(self):
+        return self.visible
+
+    def inner_text(self, timeout):
+        return self.text
+
+
+class _FakeConfirmationLocator:
+    def __init__(self, nodes):
+        self.nodes = nodes
+
+    def count(self):
+        return len(self.nodes)
+
+    def nth(self, index):
+        return self.nodes[index]
+
+
+def test_confirmation_signature_uses_only_new_visible_confirmation_state():
+    hidden_before = _FakeConfirmationLocator([
+        _FakeConfirmationNode(False, "Message sent"),
+    ])
+    visible_after = _FakeConfirmationLocator([
+        _FakeConfirmationNode(True, "Message sent"),
+    ])
+    same_visible = _FakeConfirmationLocator([
+        _FakeConfirmationNode(True, "Message sent"),
+    ])
+
+    assert BrowserRevenueTransport._confirmation_signature(hidden_before) == (0, ())
+    assert BrowserRevenueTransport._confirmation_signature(visible_after) == (1, ("Message sent",))
+    assert BrowserRevenueTransport._confirmation_signature(same_visible) == (1, ("Message sent",))
