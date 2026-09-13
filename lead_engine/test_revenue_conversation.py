@@ -59,7 +59,9 @@ def test_inbound_response_is_durable_and_idempotent(tmp_path):
     stored = db.get(lead["fingerprint"])
     assert stored["response_count"] == 1
     assert stored["revenue_lifecycle_state"] == "conversation_active"
-    assert len(pending(db, "follow_up")) == 1
+    queued = pending(db, "outreach_closer")
+    assert len(queued) == 1
+    assert queued[0]["payload"]["revenue_action"] == "follow_up"
 
 
 def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path):
@@ -70,7 +72,7 @@ def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path):
     register_revenue_transport(transport)
     try:
         record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-2", text="What does this cost?", outcome="objection", objection="What does this cost?")
-        result = run_worker_once(db, "follow_up", worker_id="followup-worker")
+        result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
         assert result["completed_count"] == 1
         assert result["failed_count"] == 0
         assert len(transport.calls) == 1
@@ -92,7 +94,7 @@ def test_opt_out_is_terminal_and_never_sends(tmp_path):
     register_revenue_transport(transport)
     try:
         record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-3", text="Please stop contacting me", outcome="opted_out")
-        assert pending(db, "follow_up") == []
+        assert pending(db, "outreach_closer") == []
         stored = db.get(lead["fingerprint"])
         assert stored["revenue_lifecycle_state"] == "closed_lost"
         assert stored["next_follow_up_at"] is None
