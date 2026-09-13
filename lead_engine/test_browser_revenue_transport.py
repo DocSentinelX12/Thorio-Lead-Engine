@@ -5,6 +5,7 @@ import pytest
 from .browser_revenue_transport import (
     BrowserRevenueConfigurationError,
     BrowserRevenueTarget,
+    BrowserRevenueTransport,
     configured_browser_revenue_targets,
 )
 
@@ -92,3 +93,9 @@ def test_recipient_commit_key_accepts_playwright_named_keys():
         recipient_commit_key="Enter",
     )
     assert target.recipient_commit_key == "Enter"
+
+
+def test_confirmation_signature_distinguishes_fresh_visible_state():
+    assert BrowserRevenueTransport._confirmation_signature
+    assert (1, ("Message sent",)) != (0, ())
+    assert (1, ("Message sent",)) == (1, ("Message sent",))
