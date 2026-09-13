@@ -24,6 +24,9 @@ jobs:
       - name: Run revenue lifecycle proof
         run: |
           python -m pytest -q lead_engine/test_revenue_execution.py lead_engine/test_revenue_conversation.py lead_engine/test_revenue_scheduler_followup.py lead_engine/test_revenue_metrics.py lead_engine/test_revenue_lifecycle_persistence.py lead_engine/test_revenue_production_proof.py
+      - name: Run research acquisition and Airtable handoff proof
+        run: |
+          python -m pytest -q lead_engine/test_public_research.py lead_engine/test_company_research_public_handoff.py lead_engine/test_research_sync.py lead_engine/test_research_handoff.py
       - name: Verify required revenue invariants
         run: |
           python - <<'PY'
