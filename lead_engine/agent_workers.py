@@ -192,6 +192,11 @@ def _priority(_: str, payload: Mapping[str, Any], __: AgentExecutionContext) -> 
 
 
 def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
+    revenue_action = str(payload.get("revenue_action") or "initial_outreach").strip().lower()
+    if revenue_action == "follow_up":
+        return _closer_follow_up(_, payload, ctx)
+    if revenue_action != "initial_outreach":
+        raise AgentContractError(f"outreach_closer received unsupported revenue_action: {revenue_action!r}")
     lead = _lead_payload(payload)
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
@@ -227,15 +232,15 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
     return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_outreach", "route": route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": "awaiting_response", "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "truthfulness_guard": "evidence_only"}
 
 
-def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
+def _closer_follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
     fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint:
-        raise AgentContractError("follow_up requires lead fingerprint")
+        raise AgentContractError("outreach_closer follow-up requires lead fingerprint")
     snapshot = dict(lead)
     current = ctx.db.get(fingerprint)
     if current is None:
-        raise AgentContractError(f"follow_up lead not found: {fingerprint}")
+        raise AgentContractError(f"outreach_closer follow-up lead not found: {fingerprint}")
     lead = dict(current)
     task_event_id = str(payload.get("inbound_event_id") or "").strip()
     if task_event_id:
@@ -244,17 +249,17 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         if isinstance(events, list) and events and isinstance(events[-1], Mapping):
             latest_event_id = str(events[-1].get("event_id") or "").strip()
         if latest_event_id and latest_event_id != task_event_id:
-            return {"role": "follow_up", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
+            return {"role": "outreach_closer", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
     outcome = str(payload.get("outcome") or lead.get("outreach_state") or "no_response").strip().lower()
     if outcome == "no_response" and snapshot.get("next_follow_up_at") != lead.get("next_follow_up_at"):
-        return {"role": "follow_up", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
+        return {"role": "outreach_closer", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
     if str(lead.get("outreach_state") or "").strip().lower() in {"declined", "opted_out", "irrelevant", "converted", "exhausted"}:
         stored = _persist_lead(ctx.db, lead)
-        return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": False}
+        return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": False}
     if not lead.get("outreach_history"):
-        raise AgentContractError("follow_up requires an existing outreach history")
+        raise AgentContractError("outreach_closer follow-up requires an existing outreach history")
     if not outcome:
-        raise AgentContractError("follow_up requires an observed outreach outcome")
+        raise AgentContractError("outreach_closer follow-up requires an observed outreach outcome")
     updated = apply_outcome(lead, outcome)
     objection = str(payload.get("objection") or "").strip()
     if objection and outcome not in {"opted_out", "declined", "irrelevant", "converted", "exhausted"}:
@@ -262,23 +267,23 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
     stop_states = {"declined", "opted_out", "irrelevant", "exhausted", "converted"}
     if updated.get("outreach_state") in stop_states:
         stored = _persist_lead(ctx.db, updated)
-        return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": True}
+        return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": True}
     execute = bool(payload.get("execute"))
     if not execute:
-        result: Dict[str, Any] = {"role": "follow_up", "lead": dict(lead), "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
+        result: Dict[str, Any] = {"role": "outreach_closer", "lead": dict(lead), "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
         if objection:
             result["objection_response"] = objection_response(objection, str(lead.get("outreach_route") or "the selected service"))
         return result
     research = updated.get("company_research")
     if not isinstance(research, Mapping):
-        raise AgentContractError("follow_up requires company research")
+        raise AgentContractError("outreach_closer follow-up requires company research")
     contact_name = str(research.get("decision_maker") or updated.get("contact_name") or "").strip()
     contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or updated.get("contact_email") or "").strip()
     if not contact_name or not contact_email:
-        raise AgentContractError("follow_up requires verified contact details")
+        raise AgentContractError("outreach_closer follow-up requires verified contact details")
     route = str(updated.get("outreach_route") or "").strip()
     if not route:
-        raise AgentContractError("follow_up requires an active revenue route")
+        raise AgentContractError("outreach_closer follow-up requires an active revenue route")
     signal = str(updated.get("current_need") or updated.get("business_need") or updated.get("signal") or updated.get("evidence") or "the need you described").strip()
     if objection:
         body = objection_response(objection, route)
@@ -295,7 +300,7 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
     history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "kind": "follow_up", "provider_result": dict(action.provider_result or {})})
     next_follow_up = cadence.next_follow_up_at
     stored = _persist_lead(ctx.db, {**updated, "conversation_id": conversation_id, "revenue_lifecycle_state": "conversation_active", "outreach_state": "awaiting_response", "outreach_attempt": attempt, "follow_up_due": bool(next_follow_up), "outreach_draft_subject": subject, "outreach_draft_body": body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {}), "next_follow_up_at": next_follow_up})
-    return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": "awaiting_response", "next_follow_up_at": next_follow_up, "action": "send_follow_up", "outcome_recorded": True, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None}
+    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": "awaiting_response", "next_follow_up_at": next_follow_up, "action": "send_follow_up", "outcome_recorded": True, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None}
 
 
 def _monitoring(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
@@ -333,7 +338,6 @@ _PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "routing": routing,
     "airtable_integrity": airtable_integrity,
     "outreach_closer": _outreach_closer,
-    "follow_up": _follow_up,
     "monitoring": _monitoring,
     "audit": _audit,
 }
@@ -342,7 +346,6 @@ _PROCESSORS: Dict[str, Callable[..., Dict[str, Any]]] = {
 def handler_registry() -> Dict[str, Callable[..., Dict[str, Any]]]:
     advanced = advanced_handler_registry()
     advanced.pop("outreach_closer", None)
-    advanced.pop("follow_up", None)
     return {**_DISCOVERY, **_PROCESSORS, **advanced}
 
 
