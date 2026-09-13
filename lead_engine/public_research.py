@@ -67,7 +67,7 @@ def _allowed(url: str) -> tuple[bool, str]:
             return False, f"robots_fetch_failed:{type(exc).__name__}"
     if parser is not None and not parser.can_fetch(USER_AGENT, url):
         return False, "robots_disallowed"
-    return True, status
+    return True, robots_status if False else status
 
 
 def _throttle(domain: str) -> None:
@@ -132,9 +132,10 @@ def _fetch(url: str) -> Dict[str, Any]:
 
 
 def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
-    raw = [lead.get("website"), lead.get("company_url"), lead.get("source_url"), lead.get("url")]
-    roots: list[str] = []
-    for value in raw:
+    verified_company_urls = [lead.get("website"), lead.get("company_url")]
+    company_domains: set[str] = set()
+    raw_roots: list[str] = []
+    for value in verified_company_urls:
         if not value:
             continue
         value = str(value).strip()
@@ -142,11 +143,15 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
             continue
         parsed = urlparse(value)
         if parsed.netloc:
-            roots.append(f"{parsed.scheme}://{parsed.netloc}/")
-            roots.append(value)
+            company_domains.add(_domain(value))
+            raw_roots.append(f"{parsed.scheme}://{parsed.netloc}/")
+            raw_roots.append(value)
+    source_url = str(lead.get("source_url") or lead.get("url") or "").strip()
+    if source_url.startswith(("http://", "https://")) and _domain(source_url) in company_domains:
+        raw_roots.append(source_url)
     ordered: list[str] = []
     seen: set[str] = set()
-    for root in roots:
+    for root in raw_roots:
         base = root.rstrip("/") + "/"
         paths = ["", "about", "company", "team", "product", "careers", "jobs"] if root.endswith("/") else [""]
         for path in paths:
@@ -181,12 +186,12 @@ def _classify(pages: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
             for category, terms in patterns.items():
                 matches = [term for term in terms if term in lower]
                 if matches:
-                    result[category].append({"url": url, "matches": matches, "evidence": text[:3000], "observed_at": page.get("observed_at")})
+                    result[category].append({"url": url, "matches": matches, "evidence": text[:3000], "observed_at": page.get("observed_at"), "verification_status": "observed_evidence"})
     return result
 
 
 def research_public_web(lead: Mapping[str, Any]) -> Dict[str, Any]:
-    """Collect a bounded set of real public company pages and return only observed facts."""
+    """Collect bounded public evidence only from the company's verified domain inputs."""
     urls = _candidate_urls(lead)
     pages = []
     for url in urls:
@@ -197,4 +202,4 @@ def research_public_web(lead: Mapping[str, Any]) -> Dict[str, Any]:
     collected = [page for page in pages if page.get("status") == "collected"]
     classified = _classify(pages)
     sources = [{"url": page.get("url"), "observed_at": page.get("observed_at"), "status": page.get("status"), "robots_status": page.get("robots_status"), "http_status": page.get("http_status")} for page in pages]
-    return {"status": "evidence_found" if collected else "no_public_evidence", "research_method": "public_web_http", "researched_at": _now(), "pages_attempted": len(pages), "pages_collected": len(collected), "sources": sources, "facts": classified, "raw_pages": pages, "fabricated_fields": []}
+    return {"status": "evidence_found" if collected else "no_public_evidence", "research_method": "public_web_http", "researched_at": _now(), "pages_attempted": len(pages), "pages_collected": len(collected), "sources": sources, "facts": classified, "verified_fields": [], "fabricated_fields": []}
