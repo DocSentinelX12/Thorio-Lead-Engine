@@ -221,7 +221,12 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         if merged_social:
             facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in merged_social if isinstance(item, Mapping) and item.get("source")})
             facts["social_evidence_count"] = len(merged_social)
-    status = "research_complete" if company and (public_research.get("status") == "evidence_found" or events or social_findings) else "research_required"
+    decision_maker_verified = (
+        bool(facts.get("decision_maker"))
+        and bool(facts.get("decision_maker_evidence"))
+        and str(facts.get("decision_maker_verification_status") or "").strip().lower() == "verified"
+    )
+    status = "research_complete" if company and decision_maker_verified else "research_required"
     verified_fields = [key for key, value in facts.items() if value not in (None, "", [], {}, ())]
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": verified_fields})
     if stored is None:
