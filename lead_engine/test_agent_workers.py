@@ -31,7 +31,9 @@ def test_every_specialist_has_an_executable_handler():
     specializations = specialization_registry()
     handlers = handler_registry()
     assert set(specializations) == set(handlers)
-    assert len(handlers) == 34
+    assert len(handlers) == 33
+    assert "follow_up" not in specializations
+    assert "follow_up" not in handlers
 
 
 def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
@@ -150,16 +152,18 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     db = _db(tmp_path)
     lead = {"fingerprint": "follow-up-persistence-test", "company": "Acme", "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "business_need": "remote software engineer hiring", "research_status": "complete", "company_research": {"decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_email": "taylor@example.com", "decision_maker_verification_status": "verified"}, "outreach_route": "Thorio", "outreach_state": "awaiting_response", "outreach_history": [{"at": _recent(), "outcome": "sent"}], "outreach_attempt": 1, "conversation_id": "conversation:follow-up-persistence-test:thorio", "contact_email": "taylor@example.com"}
     db.insert_if_new(lead)
-    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True})
+    task = enqueue(db, "outreach_closer", {"lead": lead, "revenue_action": "follow_up", "outcome": "no_response", "execute": True})
     transport = _FakeTransport()
     register_revenue_transport(transport)
     try:
-        result = run_worker_once(db, "follow_up", worker_id="follow-up-worker")
+        result = run_worker_once(db, "outreach_closer", worker_id="closer-follow-up-worker")
     finally:
         register_revenue_transport(None)
+    assert task["agent"] == "outreach_closer"
     assert result["completed_count"] == 1
     assert result["failed_count"] == 0
     output = result["results"][0]
+    assert output["role"] == "outreach_closer"
     assert output["autonomous"] is True
     assert output["approval_required"] is False
     assert output["action"] == "send_follow_up"
@@ -169,7 +173,7 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     assert stored["outreach_attempt"] == 2
     assert stored["next_follow_up_at"] is not None
     assert stored["follow_up_due"] is True
-    assert len(stored["outreach_history"]) == 3
+    assert len(stored["outreach_history"]) == 2
     assert stored["outreach_history"][-1]["kind"] == "follow_up"
     assert stored["outreach_history"][-1]["status"] == "sent"
 
