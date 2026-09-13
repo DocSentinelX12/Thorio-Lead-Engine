@@ -35,6 +35,7 @@ from .airtable_sync import (
 )
 from .master_tracker_sync import sync_commission
 from .paxus_referral_adapter import lead_to_paxus_referral
+from .research_sync import sync_research
 
 BATCH_SIZE = 10
 
@@ -84,12 +85,6 @@ def _batch_upsert(
     payload = {
         "performUpsert": {"fieldsToMergeOn": [merge_field]},
         "records": records,
-        # Airtable returns INVALID_MULTIPLE_CHOICE_OPTIONS when a select value
-        # is not yet present and the write omits typecast. Production Lead Radar
-        # uses Applicable Routes for the canonical Thorio/Shiftr/Paxus routing.
-        # The verified production credential is authorized to create select
-        # options, so batch upserts must enable the same behavior as record
-        # writes rather than failing the entire delivery batch.
         "typecast": True,
     }
     result = _request("PATCH", _master_table_url(table_key), payload)
@@ -106,13 +101,7 @@ def _resilient_batch_upsert(
     merge_field: str,
     records: List[Dict[str, Any]],
 ) -> None:
-    """Deliver a batch while isolating bad records without exploding requests.
-
-    A rejected batch is recursively split into smaller batches. This preserves
-    the normal high-volume path when the service is healthy, isolates a malformed
-    or otherwise rejected record to the smallest possible unit, and only uses a
-    single-record request when a single record itself must be isolated.
-    """
+    """Deliver a batch while isolating bad records without exploding requests."""
     if not records:
         return
     try:
@@ -194,14 +183,7 @@ def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
 
 
 def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
-    """Synchronize pending leads with batch-first, durable delivery.
-
-    High-volume tables are sent in 10-record upserts. Route-specific lifecycle
-    records remain on the existing single-record adapters because they are
-    lower-volume and have stricter state transitions. A high-volume batch is
-    recursively isolated on rejection so one bad record does not force the
-    entire batch back through the per-record compatibility path.
-    """
+    """Synchronize pending leads with batch-first, durable delivery."""
     rows = db.pending(limit=limit)
     valid: List[tuple[str, Dict[str, Any]]] = []
     failed: List[Dict[str, Any]] = []
@@ -230,12 +212,16 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
         try:
             _run_batch_high_volume_sync(leads)
         except Exception as batch_exc:
-            # Only a record that remains individually undeliverable reaches the
-            # compatibility path. Successful subsets remain batched.
             from .sync_worker import sync_one
             for fingerprint, lead in chunk:
                 result = sync_one(lead)
                 if result.get("status") in {"synced", "already_exists"}:
+                    try:
+                        sync_research(lead)
+                    except Exception as research_exc:
+                        db.mark_error(fingerprint, str(research_exc))
+                        failed.append({**result, "status": "failed", "error": str(research_exc)})
+                        continue
                     db.mark_synced(fingerprint)
                     if result.get("status") == "already_exists":
                         already_exists.append(result)
@@ -277,6 +263,10 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
                 commission_result = sync_commission(lead)
                 if commission_result is not None and commission_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
                     raise AirtableSyncError(commission_result.get("error") or "Commission synchronization failed")
+
+                research_result = sync_research(lead)
+                if research_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
+                    raise AirtableSyncError(research_result.get("error") or "Research synchronization failed")
 
                 db.mark_synced(fingerprint)
                 synced.append({
