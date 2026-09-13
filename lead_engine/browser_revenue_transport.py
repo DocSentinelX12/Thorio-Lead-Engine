@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -234,6 +235,51 @@ class BrowserRevenueTransport:
                     return href
         return ""
 
+    @staticmethod
+    def _confirmation_signature(locator: Any) -> tuple[int, tuple[str, ...]]:
+        """Capture only visible confirmation state so an old element cannot confirm a new send."""
+        visible_texts: list[str] = []
+        try:
+            count = min(locator.count(), 20)
+        except Exception:
+            return (0, ())
+        visible_count = 0
+        for index in range(count):
+            node = locator.nth(index)
+            try:
+                if not node.is_visible():
+                    continue
+                visible_count += 1
+                visible_texts.append(str(node.inner_text(timeout=1_000)).strip())
+            except Exception:
+                continue
+        return visible_count, tuple(visible_texts)
+
+    def _wait_for_fresh_confirmation(
+        self,
+        page: Any,
+        target: BrowserRevenueTarget,
+        before: tuple[int, tuple[str, ...]],
+    ) -> None:
+        sent = page.locator(target.sent_selector)
+        deadline = time.monotonic() + (self._navigation_timeout() / 1000)
+        last_signature = before
+        while time.monotonic() < deadline:
+            last_signature = self._confirmation_signature(sent)
+            if last_signature != before and last_signature[0] > 0:
+                if target.sent_text:
+                    combined = "\n".join(last_signature[1])
+                    if target.sent_text not in combined:
+                        time.sleep(0.1)
+                        continue
+                return
+            time.sleep(0.1)
+        if target.sent_text:
+            detail = "fresh confirmation did not appear with the configured confirmation text"
+        else:
+            detail = "fresh confirmation did not appear"
+        raise BrowserRevenueUnavailable(f"{target.channel}: {detail}")
+
     def send(
         self,
         *,
@@ -327,30 +373,17 @@ class BrowserRevenueTransport:
                     raise BrowserRevenueUnavailable(
                         f"{target.channel}: configured send selector was not found"
                     )
-                send_node.first().click()
-
                 sent = page.locator(target.sent_selector)
-                try:
-                    sent.first().wait_for(state="visible", timeout=self._navigation_timeout())
-                    if target.sent_text:
-                        sent_text = sent.first().inner_text(timeout=self._navigation_timeout())
-                        if target.sent_text not in sent_text:
-                            raise BrowserRevenueUnavailable(
-                                f"{target.channel}: sent confirmation element appeared but did not contain the configured confirmation text"
-                            )
-                except BrowserRevenueUnavailable:
-                    raise
-                except Exception as exc:
-                    raise BrowserRevenueUnavailable(
-                        f"{target.channel}: send control was clicked but configured sent confirmation was not observed"
-                    ) from exc
+                before_confirmation = self._confirmation_signature(sent)
+                send_node.first().click()
+                self._wait_for_fresh_confirmation(page, target, before_confirmation)
 
                 thread_url = self._real_thread_url(page, target, destination)
                 return {
                     "transport": "browser",
                     "channel": target.channel,
                     "idempotency_key": idempotency_key,
-                    "confirmed_by": "configured_sent_selector",
+                    "confirmed_by": "fresh_configured_sent_selector",
                     "destination": destination,
                     "thread_url": thread_url,
                 }
