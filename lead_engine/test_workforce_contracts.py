@@ -7,7 +7,7 @@ def test_every_registered_agent_has_a_specialized_handler_and_distinct_queue():
     handlers = handler_registry()
     queues = set()
 
-    assert len(ALL_AGENT_ROLES) == 34
+    assert len(ALL_AGENT_ROLES) == 33
     assert len(handlers) >= len(ALL_AGENT_ROLES)
 
     for role in ALL_AGENT_ROLES:
@@ -55,5 +55,17 @@ def test_processing_workforce_contains_all_required_specialists():
         "social_inquiry_research", "social_company_context",
         "qualification_a", "qualification_b", "company_research", "paxus_research", "identity_resolution",
         "duplicate_resolution", "verification", "priority", "routing", "airtable_integrity", "monitoring",
-        "audit", "outreach_closer", "follow_up",
+        "audit", "outreach_closer",
     }
+
+
+def test_follow_up_is_not_a_revenue_agent_identity():
+    names = {role.name for role in ALL_AGENT_ROLES}
+    assert "follow_up" not in names
+    assert "follow_up" not in handler_registry()
+    try:
+        get_specialization("follow_up")
+    except ValueError as exc:
+        assert "No professional specialization" in str(exc)
+    else:
+        raise AssertionError("follow_up must not have a specialist identity")
