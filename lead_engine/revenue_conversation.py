@@ -101,7 +101,7 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         updated["next_follow_up_at"] = _now()
         updated["follow_up_due"] = True
         updated["outreach_state"] = "awaiting_response"
-        enqueue(db, "follow_up", {"lead": updated, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
+        enqueue(db, "outreach_closer", {"lead": updated, "revenue_action": "follow_up", "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
 
     stored = db.update_payload(opportunity_id, updated) or updated
     conversation["outreach_route"] = stored.get("outreach_route")
@@ -147,7 +147,7 @@ def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int
         if not fingerprint:
             continue
         due_at = str(lead.get("next_follow_up_at") or "").strip()
-        enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True}, priority=10, dedupe_key=f"scheduled_followup:{fingerprint}:{due_at}")
+        enqueue(db, "outreach_closer", {"lead": lead, "revenue_action": "follow_up", "outcome": "no_response", "execute": True}, priority=10, dedupe_key=f"scheduled_followup:{fingerprint}:{due_at}")
         queued += 1
     return queued
 
