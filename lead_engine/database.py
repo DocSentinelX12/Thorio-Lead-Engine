@@ -55,6 +55,7 @@ class LeadDB:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
         self.conn.commit()
         self._migrate_agent_queue_state()
+        self._migrate_revenue_follow_up_tasks()
 
     def _connect_with_recovery(self):
         if not self.path.exists():
@@ -270,6 +271,19 @@ class LeadDB:
             self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             self.conn.commit()
 
+    def _migrate_revenue_follow_up_tasks(self):
+        rows = self.conn.execute("SELECT task_id, payload FROM agent_queue WHERE agent = ?", ("follow_up",)).fetchall()
+        if not rows:
+            return
+        for task_id, raw_payload in rows:
+            try:
+                payload = json.loads(raw_payload) if isinstance(raw_payload, str) else dict(raw_payload or {})
+            except (TypeError, ValueError):
+                payload = {}
+            payload.setdefault("revenue_action", "follow_up")
+            self.conn.execute("UPDATE agent_queue SET agent = ?, queue = ?, payload = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?", ("outreach_closer", "revenue.outreach", json.dumps(payload, ensure_ascii=False), task_id))
+        self.conn.commit()
+
     def _get_state_raw(self, key):
         row = self.conn.execute("SELECT value FROM state WHERE key = ?", (key,)).fetchone()
         if not row:
@@ -341,9 +355,7 @@ class LeadDB:
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
 
     def queue_pending(self, agent=None):
-        if agent is None:
-            return self.queue_pending_all_rows()
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall() if agent is not None else self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
 
     def stats(self):
         return self.conn.execute("SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads").fetchone()
