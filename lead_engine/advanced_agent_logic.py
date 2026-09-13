@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, Mapping
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .agent_queue import enqueue, enqueue_many
 from .active_processing import airtable_integrity, priority, routing, verification
+from .public_research import research_public_web
 
 DISCOVERY_TARGETS = {
     "engineering_demand_discovery": ("software", "engineer", "developer", "backend", "frontend", "full stack", "devops", "platform", "engineering"),
@@ -161,7 +162,7 @@ def social_research(agent: str, payload: Mapping[str, Any], db: Any = None) -> D
 
 
 def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
-    """Persist an evidence-grounded research packet and hand it to qualification only when complete."""
+    """Acquire real public evidence, merge it with observed evidence, and persist the research packet."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     events = _events(payload)
     social_findings = payload.get("social_findings", [])
@@ -177,7 +178,28 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         raise ValueError("company_research requires lead fingerprint")
     existing = lead.get("company_research")
     prior = dict(existing) if isinstance(existing, Mapping) else {}
-    facts: Dict[str, Any] = {"company_verified": bool(company), "company_identity_evidence": f"Observed company name: {company}" if company else "", "business_context": signal, "current_need_evidence": signal, "recent_activity_evidence": evidence, "source_url": source_url, "evidence_event_count": len(events), "social_findings": social_findings, "researched_at": datetime.now(timezone.utc).isoformat(), "fabricated_fields": []}
+    public_research = research_public_web(lead)
+    public_facts = public_research.get("facts", {}) if isinstance(public_research, Mapping) else {}
+    facts: Dict[str, Any] = {
+        "company_verified": bool(company),
+        "company_identity_evidence": f"Observed company name: {company}" if company else "",
+        "business_context": signal,
+        "current_need_evidence": signal,
+        "recent_activity_evidence": evidence,
+        "source_url": source_url,
+        "evidence_event_count": len(events),
+        "social_findings": social_findings,
+        "researched_at": datetime.now(timezone.utc).isoformat(),
+        "public_web_research": public_research,
+        "public_web_sources": public_research.get("sources", []) if isinstance(public_research, Mapping) else [],
+        "public_company_facts": public_facts.get("company", []) if isinstance(public_facts, Mapping) else [],
+        "public_product_facts": public_facts.get("product", []) if isinstance(public_facts, Mapping) else [],
+        "public_hiring_facts": public_facts.get("hiring", []) if isinstance(public_facts, Mapping) else [],
+        "public_decision_maker_facts": public_facts.get("decision_maker", []) if isinstance(public_facts, Mapping) else [],
+        "public_business_need_facts": public_facts.get("business_need", []) if isinstance(public_facts, Mapping) else [],
+        "public_commercial_facts": public_facts.get("commercial", []) if isinstance(public_facts, Mapping) else [],
+        "fabricated_fields": [],
+    }
     if social_findings:
         facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in social_findings if isinstance(item, Mapping) and item.get("source")})
         facts["social_evidence_count"] = len(social_findings)
@@ -199,13 +221,14 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         if merged_social:
             facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in merged_social if isinstance(item, Mapping) and item.get("source")})
             facts["social_evidence_count"] = len(merged_social)
-    status = "complete" if facts["company_verified"] and facts.get("decision_maker") and facts.get("decision_maker_evidence") and facts.get("decision_maker_verification_status") == "verified" else "research_required"
-    stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": [key for key, value in facts.items() if value not in (None, "", [], {}, ())]})
+    status = "research_complete" if company and (public_research.get("status") == "evidence_found" or events or social_findings) else "research_required"
+    verified_fields = [key for key, value in facts.items() if value not in (None, "", [], {}, ())]
+    stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": verified_fields})
     if stored is None:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
-    if status == "complete":
-        enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": events, "research_result": {"status": status, "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
-    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": facts.get("decision_maker_verification_status") == "verified", "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "handoff": "qualification_a" if status == "complete" else "research_required"}
+    if status == "research_complete":
+        enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": events, "research_result": {"status": status, "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
+    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": facts.get("decision_maker_verification_status") == "verified", "verified_fields": stored.get("research_verified_fields", []), "fabricated_fields": [], "public_research_status": public_research.get("status"), "handoff": "verification" if status == "research_complete" else "research_required"}
 
 
 def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
