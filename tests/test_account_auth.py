@@ -6,6 +6,7 @@ import pytest
 from lead_engine.account_auth import (
     AccountAuthConfigurationError,
     SUPPORTED_ACCOUNTS,
+    SUPPORTED_OUTREACH_ACCOUNTS,
     authenticated_accounts,
     auth_status,
     configured_accounts,
@@ -142,7 +143,22 @@ def test_ensure_authenticated_treats_session_check_error_as_logout(monkeypatch):
     assert len(called) == 1
 
 
-def test_only_agreed_accounts_are_supported():
+def test_gmail_is_supported_only_for_outreach_auth(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "runtime-secret")
+
+    credentials = credentials_for("gmail")
+
+    assert credentials is not None
+    assert credentials.account == "gmail"
+    assert credentials.username == "thorio.partners@gmail.com"
+    assert SUPPORTED_OUTREACH_ACCOUNTS == ("gmail",)
+    assert "gmail" not in SUPPORTED_ACCOUNTS
+    assert "gmail" not in auth_status()
+    assert configured_accounts() == ()
+
+
+def test_only_collection_accounts_remain_in_collection_auth_registry():
     assert SUPPORTED_ACCOUNTS == (
         "linkedin",
         "x",
@@ -152,3 +168,4 @@ def test_only_agreed_accounts_are_supported():
         "indie_hackers",
     )
     assert "email" not in SUPPORTED_ACCOUNTS
+    assert "gmail" not in SUPPORTED_ACCOUNTS
