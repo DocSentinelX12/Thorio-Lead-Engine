@@ -29,7 +29,7 @@ def test_discovery_gate_does_not_qualify_raw_company_signal():
     gated = apply_discovery_gate(pipeline, result, qualify=True)
     lead = gated["lead"]
 
-    assert gated["qualification_status"] == "unverified"
+    assert gated["qualification_status"] == "in_review"
     assert gated["review_state"] == "review"
     assert lead["qualified"] is False
     assert lead.get("potential_routes", []) == []
@@ -49,7 +49,7 @@ def test_discovery_gate_does_not_mark_old_or_undated_discovery_as_not_qualified(
 
     gated = apply_discovery_gate(pipeline, result, qualify=True)
 
-    assert gated["qualification_status"] == "unverified"
+    assert gated["qualification_status"] == "in_review"
     assert gated["review_state"] == "review"
     assert gated["lead"]["qualified"] is False
 
