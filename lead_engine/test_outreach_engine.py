@@ -10,12 +10,25 @@ def lead(**overrides):
         "fingerprint": "o1",
         "company": "Acme",
         "potential_routes": ["Thorio", "Shiftr"],
-        "signal": "Acme needs a remote software engineer",
+        "signal": "UNTRUSTED DISCOVERY TEXT THAT MUST NOT DRIVE OUTREACH",
         "research_status": "complete",
+        "research_verified_fields": ["current_intent_research"],
         "company_research": {
+            "company_verified": True,
             "decision_maker": "Taylor",
             "decision_maker_evidence": "https://example.com/taylor",
-            "contact_email": "taylor@example.com",
+            "decision_maker_verification_status": "verified",
+            "decision_maker_email": "taylor@example.com",
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "verified need from research",
+            "evidence_url": "https://example.com/researched-need",
+        },
+        "qualification_results": {
+            "Thorio": {"qualified": True},
+            "Shiftr": {"qualified": True},
         },
         "evidence_events": [{"source_url": "https://example.com/signal"}],
     }
@@ -23,30 +36,52 @@ def lead(**overrides):
     return value
 
 
-def test_decision_uses_verified_signal_and_contact_evidence():
+def test_decision_uses_verified_research_not_raw_signal():
     decision = build_outreach_decision(lead(), now=datetime(2026, 9, 9, tzinfo=timezone.utc))
     assert decision.route == "Thorio"
     assert decision.contact_name == "Taylor"
-    assert "Acme needs a remote software engineer" in decision.body
-    assert decision.evidence_refs == ("https://example.com/signal", "https://example.com/taylor")
+    assert "verified need from research" in decision.body
+    assert "UNTRUSTED DISCOVERY TEXT" not in decision.body
+    assert "https://example.com/taylor" in decision.evidence_refs
+    assert "https://example.com/researched-need" in decision.evidence_refs
     assert decision.next_state == "drafted"
 
 
 def test_paxus_wins_route_selection_only_when_true_referral_is_verified():
-    value = lead(potential_routes=["Thorio", "Paxus"], qualification_results={"Paxus": {"true_referral": True}})
+    value = lead(potential_routes=["Thorio", "Paxus"], qualification_results={"Paxus": {"qualified": True, "true_referral": True}})
     assert choose_route(value) == "Paxus"
-    value["qualification_results"] = {"Paxus": {"true_referral": False}}
+    value["qualification_results"] = {"Paxus": {"qualified": True, "true_referral": False}, "Thorio": {"qualified": True}}
     assert choose_route(value) == "Thorio"
+
+
+def test_missing_researched_need_blocks_outreach_even_when_raw_signal_exists():
+    value = lead(current_intent_research={}, research_verified_fields=[])
+    with pytest.raises(OutreachContractError):
+        build_outreach_decision(value)
 
 
 def test_missing_evidence_blocks_outreach():
     value = lead(signal="")
+    value["current_intent_research"] = {"verified": True, "verification_status": "verified", "current_need": "verified need"}
     with pytest.raises(OutreachContractError):
         build_outreach_decision(value)
 
 
 def test_no_decision_maker_evidence_blocks_outreach():
-    value = lead(company_research={"decision_maker": "Taylor"})
+    value = lead(company_research={"company_verified": True, "decision_maker": "Taylor", "decision_maker_verification_status": "verified"})
+    with pytest.raises(OutreachContractError):
+        build_outreach_decision(value)
+
+
+def test_unverified_company_blocks_outreach():
+    value = lead(company_research={"decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified", "decision_maker_email": "taylor@example.com"})
+    with pytest.raises(OutreachContractError):
+        build_outreach_decision(value)
+
+
+def test_unverified_decision_maker_blocks_outreach():
+    value = lead()
+    value["company_research"]["decision_maker_verification_status"] = "observed_needs_role_verification"
     with pytest.raises(OutreachContractError):
         build_outreach_decision(value)
 
