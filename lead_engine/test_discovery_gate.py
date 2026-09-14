@@ -13,7 +13,7 @@ def _pipeline():
     return LeadPipeline(db=LeadDB(data_dir=":memory:"), sync_enabled=False)
 
 
-def test_discovery_gate_qualifies_matching_company_without_destroying_other_routes():
+def test_discovery_gate_does_not_qualify_raw_company_signal():
     pipeline = _pipeline()
     result = pipeline.process(
         source="test",
@@ -29,10 +29,10 @@ def test_discovery_gate_qualifies_matching_company_without_destroying_other_rout
     gated = apply_discovery_gate(pipeline, result, qualify=True)
     lead = gated["lead"]
 
-    assert gated["qualification_status"] == "qualified"
-    assert "Paxus" in lead["qualification_results"]
-    assert lead["potential_routes"]
-    assert lead["review_state"] == "qualified"
+    assert gated["qualification_status"] == "unverified"
+    assert gated["review_state"] == "review"
+    assert lead["qualified"] is False
+    assert lead.get("potential_routes", []) == []
 
 
 def test_discovery_gate_does_not_mark_old_or_undated_discovery_as_not_qualified():
