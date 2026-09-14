@@ -44,16 +44,10 @@ def _primary_lead():
                 "Thorio": {
                     "verified": True,
                     "verification_status": "verified",
-                    "evidence": "Acme has a current software engineering hiring need suitable for Thorio."
+                    "evidence": "Acme has a current software engineering hiring need suitable for Thorio.",
                 },
-                "Shiftr": {
-                    "verified": False,
-                    "evidence": ""
-                },
-                "Paxus": {
-                    "verified": False,
-                    "evidence": ""
-                },
+                "Shiftr": {"verified": False, "evidence": ""},
+                "Paxus": {"verified": False, "evidence": ""},
             },
         },
         "potential_routes": ["Thorio"],
@@ -81,12 +75,11 @@ def test_qualification_b_is_independent_and_preserves_valid_route():
 
 def test_qualification_b_rejects_tampered_primary_route_claim():
     lead = _primary_lead()
-    lead["qualification_results"]["Thorio"]["matched_category"] = False
+    lead["qualification_results"]["Thorio"]["route_research"]["verified"] = False
     result = apply_company_qualification(lead)
     assert result["qualification_review_stage"] == "validated"
     assert result["qualified"] is False
-    assert "Thorio:category_evidence_failed" not in result["qualification_b_result"]["disagreements"]
-    assert "Thorio:primary_claim_not_qualified" in result["qualification_b_result"]["disagreements"]
+    assert "Thorio:route_research_not_verified" in result["qualification_b_result"]["disagreements"]
 
 
 def test_verification_does_not_promote_role_evidence_and_email_to_verified():
