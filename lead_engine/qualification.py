@@ -10,49 +10,17 @@ UNVERIFIED = "Unverified"
 IN_REVIEW = "In Review"
 QUALIFIED = "Qualified"
 NOT_QUALIFIED = "Not Qualified"
-
 VALID_STATUSES = {UNVERIFIED, IN_REVIEW, QUALIFIED, NOT_QUALIFIED}
 CURRENT_NEED_DAYS = 30
 RECENT_INQUIRY_DAYS = 30
 
-INQUIRY_CONTEXT = re.compile(
-    r"\b(?:inquir(?:y|ed|ies)|requested information|requested a quote|"
-    r"requested pricing|requested a proposal|asked about|contacted us|"
-    r"reached out|submitted an inquiry|submitted a request|"
-    r"expressed interest|interested in|evaluating|considering|exploring)\b",
-    re.IGNORECASE,
-)
-
-CURRENT_NEED_CONTEXT = re.compile(
-    r"\b(?:hiring|hire|hiring for|recruiting|recruit|open(?:ing| role)?|"
-    r"looking to hire|seeking (?:a |an )?(?:developer|engineer|designer|"
-    r"product manager|data scientist|ai|ml|contractor|developer|engineer)|"
-    r"need(?:s|ed)? (?:help )?(?:building|developing|integrating|creating)\b|"
-    r"need(?:s|ed)? (?:a |an )?(?:developer|engineer|designer|product manager|"
-    r"data scientist|ai|ml|contractor|developer|engineer|development team|"
-    r"engineering team|software team)|staffing|recruitment support|"
-    r"technology recruitment|development contractor|building (?:our|the) team|"
-    r"growing (?:our|the) team|staff augmentation|outsourcing|outsource|"
-    r"llm integration|ai agents?|saas development|mobile development)\b",
-    re.IGNORECASE,
-)
-
-SHIFTR_SERVICE_NEED_CONTEXT = re.compile(
-    r"\b(?:need(?:s|ed)?|want(?:s|ed)?|looking for|seeking|help with)\b"
-    r".{0,80}\b(?:build(?:ing)?|develop(?:ing|ment)?|integrat(?:e|ing|ion)|"
-    r"ai agents?|llm(?: integration)?|mobile development|saas development|"
-    r"software development|development team|engineering team|staff augmentation|"
-    r"outsourc(?:e|ed|ing)?)\b",
-    re.IGNORECASE,
-)
+INQUIRY_CONTEXT = re.compile(r"\b(?:inquir(?:y|ed|ies)|requested information|requested a quote|requested pricing|requested a proposal|asked about|contacted us|reached out|submitted an inquiry|submitted a request|expressed interest|interested in|evaluating|considering|exploring)\b", re.I)
+CURRENT_NEED_CONTEXT = re.compile(r"\b(?:hiring|hire|hiring for|recruiting|recruit|opening|open role|looking to hire|seeking|staffing|recruitment support|technology recruitment|development contractor|staff augmentation|outsourcing|outsource|llm integration|ai agents?|saas development|mobile development|software development|engineering team|development team)\b", re.I)
+SHIFTR_SERVICE_NEED_CONTEXT = re.compile(r"\b(?:need(?:s|ed)?|want(?:s|ed)?|looking for|seeking|help with)\b.{0,120}\b(?:build(?:ing)?|develop(?:ing|ment)?|integrat(?:e|ing|ion)|ai agents?|llm(?: integration)?|mobile development|saas development|software development|development team|engineering team|staff augmentation|outsourc(?:e|ed|ing)?)\b", re.I)
 
 
 def validate_status(status: str) -> bool:
     return status in VALID_STATUSES
-
-
-def _text(lead: Dict[str, Any]) -> str:
-    return " ".join(str(lead.get(key) or "") for key in ("company", "person", "signal", "signal_type", "job_title", "evidence"))
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -67,160 +35,182 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _recent_timestamp(lead: Dict[str, Any], *, days: int, fields: tuple[str, ...]) -> str | None:
+def _recent_timestamp(value: Any, days: int) -> str | None:
+    parsed = _parse_datetime(value)
+    if parsed is None:
+        return None
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=days)
-    for key in fields:
-        parsed = _parse_datetime(lead.get(key))
-        if parsed and cutoff <= parsed <= now:
-            return parsed.isoformat()
+    if now - timedelta(days=days) <= parsed <= now:
+        return parsed.isoformat()
     return None
 
 
-def _observed_signal_timestamp(lead: Dict[str, Any]) -> str | None:
-    return _recent_timestamp(lead, days=max(CURRENT_NEED_DAYS, RECENT_INQUIRY_DAYS), fields=("discovery_timestamp", "observed_at", "collected_at"))
+def _research_sections(lead: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Return only explicit research sections, never discovery fields."""
+    sections: Dict[str, Dict[str, Any]] = {}
+    for key in (
+        "business_need_research",
+        "current_intent_research",
+        "technical_product_hiring_research",
+        "commercial_research",
+        "route_research",
+    ):
+        value = lead.get(key)
+        if isinstance(value, dict):
+            sections[key] = value
+    return sections
 
 
-def _current_need(lead: Dict[str, Any], route_scores: Dict[str, int]) -> Dict[str, Any]:
-    text = _text(lead)
-    has_need_language = bool(CURRENT_NEED_CONTEXT.search(text))
-    observed_at = _recent_timestamp(lead, days=CURRENT_NEED_DAYS, fields=("need_at", "current_need_at", "hiring_need_at"))
-    if has_need_language and observed_at is None:
-        observed_at = _observed_signal_timestamp(lead)
-    qualified = has_need_language and observed_at is not None
-    return {"qualified": qualified, "observed_at": observed_at, "evidence": text.strip() if qualified else "", "reason": "Recent explicit current-need evidence was verified." if qualified else "No recent explicit current-need evidence was verified."}
+def _section_verified(section: Dict[str, Any]) -> bool:
+    status = str(section.get("verification_status") or section.get("status") or "").strip().lower()
+    return section.get("verified") is True or status in {"verified", "research_verified", "complete"}
 
 
-def _recent_inquiry(lead: Dict[str, Any]) -> Dict[str, Any]:
-    text = _text(lead)
-    has_inquiry_language = bool(INQUIRY_CONTEXT.search(text))
-    observed_at = _recent_timestamp(lead, days=RECENT_INQUIRY_DAYS, fields=("inquiry_at", "inquired_at", "last_inquiry_at", "intent_at"))
-    if has_inquiry_language and observed_at is None:
-        observed_at = _observed_signal_timestamp(lead)
-    qualified = has_inquiry_language and observed_at is not None
-    return {"qualified": qualified, "observed_at": observed_at, "evidence": text.strip() if qualified else "", "reason": "Recent inquiry/intent evidence was verified." if qualified else "No recent inquiry/intent evidence was verified."}
+def _verified_research_text(lead: Dict[str, Any]) -> str:
+    sections = _research_sections(lead)
+    verified_parts = []
+    for section in sections.values():
+        if _section_verified(section):
+            for key in ("business_need", "current_need", "recent_inquiry", "need", "service_need", "requirement", "role", "description"):
+                value = section.get(key)
+                if isinstance(value, str) and value.strip():
+                    verified_parts.append(value.strip())
+    return " ".join(verified_parts)
+
+
+def _verified_intent(lead: Dict[str, Any]) -> Dict[str, Any]:
+    sections = _research_sections(lead)
+    candidates = []
+    for key in ("current_intent_research", "business_need_research", "route_research"):
+        section = sections.get(key)
+        if not section or not _section_verified(section):
+            continue
+        for field in ("current_need", "recent_inquiry", "business_need", "need", "intent"):
+            value = section.get(field)
+            if isinstance(value, str) and value.strip():
+                candidates.append((field, value.strip(), section))
+    for field, value, section in candidates:
+        timestamp = None
+        for key in ("observed_at", "need_at", "current_need_at", "hiring_need_at", "inquiry_at", "inquired_at", "last_inquiry_at", "intent_at"):
+            timestamp = _recent_timestamp(section.get(key), CURRENT_NEED_DAYS)
+            if timestamp:
+                break
+        if timestamp:
+            return {"qualified": True, "observed_at": timestamp, "evidence": value, "source_section": field, "reason": "Recent intent is explicitly researched and verified."}
+    return {"qualified": False, "observed_at": None, "evidence": "", "source_section": None, "reason": "No recent intent is explicitly researched and verified."}
+
+
+def _route_research(lead: Dict[str, Any], route: str) -> Dict[str, Any]:
+    sections = _research_sections(lead)
+    section = sections.get("route_research")
+    if not section or not _section_verified(section):
+        return {"verified": False, "evidence": "", "reason": f"{route} route research is not explicitly verified."}
+    routes = section.get("routes")
+    route_item = routes.get(route) if isinstance(routes, dict) else section.get(route)
+    if isinstance(route_item, dict):
+        verified = _section_verified(route_item)
+        evidence = str(route_item.get("evidence") or route_item.get("business_need") or route_item.get("need") or "").strip()
+        return {"verified": verified and bool(evidence), "evidence": evidence, "reason": f"{route} route research verified." if verified and evidence else f"{route} route research is incomplete."}
+    return {"verified": True, "evidence": str(section.get("evidence") or section.get("business_need") or "").strip(), "reason": "Route research section verified."} if str(section.get("route") or "").strip() == route and _section_verified(section) else {"verified": False, "evidence": "", "reason": f"{route} route research is not explicitly verified."}
 
 
 def _paxus_referral_checks(lead: Dict[str, Any], paxus_qualified: bool) -> Dict[str, Any]:
+    research = lead.get("company_research") if isinstance(lead.get("company_research"), dict) else {}
+    dm_verified = str(research.get("decision_maker_verification_status") or "").strip().lower() == "verified"
+    company_verified = research.get("company_verified") is True
+    named_contact = str(research.get("decision_maker") or "").strip()
     checks = {
-        "paxus_base_qualification": {"passed": paxus_qualified, "reason": "Paxus category plus current/recent intent requirement passed." if paxus_qualified else "Paxus base qualification did not pass."},
-        "company_verified": {"passed": bool(str(lead.get("company") or "").strip()), "reason": "Company is present." if lead.get("company") else "Company still requires research/verification."},
-        "named_hiring_contact": {"passed": bool(str(lead.get("contact_name") or lead.get("person") or "").strip()), "reason": "Named contact is present." if (lead.get("contact_name") or lead.get("person")) else "Relevant contact still requires research."},
+        "paxus_base_qualification": {"passed": paxus_qualified, "reason": "Paxus base qualification passed." if paxus_qualified else "Paxus base qualification did not pass."},
+        "company_verified": {"passed": company_verified, "reason": "Company research is explicitly verified." if company_verified else "Company research still requires verification."},
+        "named_hiring_contact": {"passed": bool(named_contact and dm_verified), "reason": "Decision maker is explicitly verified." if named_contact and dm_verified else "Decision maker still requires research and verification."},
         "contact_communication": {"passed": lead.get("contact_communicated") is True, "reason": "Contact communication is recorded." if lead.get("contact_communicated") is True else "Contact communication has not been verified."},
         "contact_consent": {"passed": lead.get("contact_consent") is True, "reason": "Contact consent is recorded." if lead.get("contact_consent") is True else "Contact consent has not been verified."},
     }
     failures = [name for name, result in checks.items() if not result["passed"]]
     research_items = [name for name in ("company_verified", "named_hiring_contact") if not checks[name]["passed"]]
     verification_items = [name for name in ("contact_communication", "contact_consent") if not checks[name]["passed"]]
-    return {"checks": checks, "passed": paxus_qualified and not failures, "failures": failures, "research_required": research_items, "verification_required": verification_items, "reason": "All Paxus referral gates passed." if paxus_qualified and not failures else "Paxus is not yet a true referral; missing/failed checks are preserved for research or verification."}
+    return {"checks": checks, "passed": paxus_qualified and not failures, "failures": failures, "research_required": research_items, "verification_required": verification_items, "reason": "All Paxus referral gates passed." if paxus_qualified and not failures else "Paxus is not yet a true referral; missing or failed checks remain."}
 
 
 def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(lead, dict):
         raise ValueError("lead must be a dictionary")
-    company = str(lead.get("company") or "")
-    signal = str(lead.get("signal") or "")
-    evidence = str(lead.get("evidence") or "")
-    text = _text(lead)
-    scores = score_routes(company=company, signal=signal, evidence=evidence)
-    current_need = _current_need(lead, scores)
-    recent_inquiry = _recent_inquiry(lead)
-    intent_passed = current_need["qualified"] or recent_inquiry["qualified"]
+    company_research = lead.get("company_research")
+    if not isinstance(company_research, dict) or company_research.get("company_verified") is not True:
+        return {"companies": {route: {"qualified": False, "category_score": 0, "matched_category": False, "current_need": {"qualified": False, "observed_at": None, "evidence": "", "reason": "Verified research required."}, "recent_inquiry": {"qualified": False, "observed_at": None, "evidence": "", "reason": "Verified research required."}, "route_research": {"verified": False, "evidence": "", "reason": "Verified company research required."}, "reason": "Verified company research is required before qualification."} for route in ROUTES}, "qualified_companies": [], "paxus_true_referral": False, "research_status": "research_required"}
+    intent = _verified_intent(lead)
+    research_text = _verified_research_text(lead)
+    if not research_text:
+        return {"companies": {route: {"qualified": False, "category_score": 0, "matched_category": False, "current_need": intent, "recent_inquiry": intent, "route_research": _route_research(lead, route), "reason": "No complete verified business-need research is available."} for route in ROUTES}, "qualified_companies": [], "paxus_true_referral": False, "research_status": "research_required"}
+    scores = score_routes(company=str(lead.get("company") or ""), signal=research_text, evidence=research_text)
     results: Dict[str, Any] = {}
-    for company_name in ROUTES:
-        category_score = scores.get(company_name, 0)
-        if company_name == "Shiftr" and SHIFTR_SERVICE_NEED_CONTEXT.search(text):
+    for route in ROUTES:
+        category_score = int(scores.get(route, 0) or 0)
+        if route == "Shiftr" and SHIFTR_SERVICE_NEED_CONTEXT.search(research_text):
             category_score = max(category_score, 1)
-        qualified = category_score > 0 and intent_passed
-        results[company_name] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": current_need, "recent_inquiry": recent_inquiry, "reason": "Matched an existing category and has current/recent intent evidence." if qualified else "Did not satisfy both an existing category and current/recent intent evidence.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
+        route_research = _route_research(lead, route)
+        qualified = category_score > 0 and intent["qualified"] and route_research["verified"]
+        results[route] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": intent, "recent_inquiry": intent, "route_research": route_research, "reason": "Verified research supports this route and recent intent." if qualified else "Route-specific verified research and recent intent are incomplete." , "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
     paxus = results["Paxus"]
     paxus_referral = _paxus_referral_checks(lead, paxus["qualified"])
     paxus["true_referral"] = paxus_referral["passed"]
-    paxus["referral_status"] = "true_referral" if paxus_referral["passed"] else "research_required" if paxus["qualified"] and (paxus_referral["research_required"] or paxus_referral["verification_required"]) else "not_ready"
+    paxus["referral_status"] = "true_referral" if paxus_referral["passed"] else "research_required" if paxus["qualified"] else "not_ready"
     paxus["referral_checklist"] = paxus_referral
-    return {"companies": results, "qualified_companies": [company_name for company_name in ROUTES if results[company_name]["qualified"]], "paxus_true_referral": paxus_referral["passed"], "research_status": "research_required" if paxus["qualified"] and paxus.get("referral_status") == "research_required" else "complete"}
+    qualified_routes = [route for route in ROUTES if results[route]["qualified"]]
+    return {"companies": results, "qualified_companies": qualified_routes, "paxus_true_referral": paxus_referral["passed"], "research_status": "complete" if qualified_routes else "research_required"}
 
 
 def _apply_primary_result(updated: Dict[str, Any], evaluation: Dict[str, Any]) -> Dict[str, Any]:
     updated["qualification_results"] = evaluation["companies"]
     updated["research_status"] = evaluation["research_status"]
-    updated["potential_routes"] = evaluation["qualified_companies"]
+    updated["potential_routes"] = list(evaluation["qualified_companies"])
     updated["qualified"] = bool(evaluation["qualified_companies"])
     updated["qualification_review_stage"] = "primary"
     updated["qualification_primary_routes"] = list(evaluation["qualified_companies"])
-    if evaluation["qualified_companies"]:
+    if updated["qualified"]:
         updated["status"] = QUALIFIED
         updated["review_status"] = "Qualified"
         updated["qualification_status"] = "qualified"
         updated["review_state"] = "qualified"
         updated["reason_not_qualified"] = ""
     else:
-        has_observed_evidence = bool(evaluation["companies"] and any(company_result["current_need"]["observed_at"] or company_result["recent_inquiry"]["observed_at"] for company_result in evaluation["companies"].values()))
-        updated["qualified"] = False
-        if has_observed_evidence:
-            updated["status"] = IN_REVIEW
-            updated["review_status"] = "Review"
-            updated["qualification_status"] = "in_review"
-            updated["review_state"] = "review"
-            updated["reason_not_qualified"] = "Evidence exists but no company currently satisfies all qualification gates."
-        else:
-            updated["status"] = UNVERIFIED
-            updated["review_status"] = "Review"
-            updated["qualification_status"] = "unverified"
-            updated["review_state"] = "review"
-            updated["reason_not_qualified"] = "No current qualification decision is available; additional evidence is required."
+        updated["status"] = IN_REVIEW
+        updated["review_status"] = "Review"
+        updated["qualification_status"] = "in_review"
+        updated["review_state"] = "review"
+        updated["reason_not_qualified"] = "Verified research is incomplete or no route currently satisfies all gates."
     return updated
 
 
 def _independent_review(lead: Dict[str, Any]) -> Dict[str, Any]:
-    """Challenge Qualification A without rerunning the same evaluator.
-
-    Qualification B consumes A's recorded evidence as a claim and independently
-    checks the critical predicates: the route claim must be category-backed,
-    the intent evidence must contain a recent observed timestamp, and the
-    decision cannot rely on a route that A did not actually qualify.
-    """
     prior = lead.get("qualification_results")
     if not isinstance(prior, dict):
         return {"qualified_companies": [], "disagreements": ["missing_primary_qualification_results"], "checked_routes": []}
-
-    primary_routes = [str(route) for route in lead.get("potential_routes", []) if str(route).strip()]
-    independent_routes = []
+    independent = []
     disagreements = []
     checked = []
-    for route in primary_routes:
-        result = prior.get(route)
+    for route in [str(item) for item in lead.get("potential_routes", []) if str(item).strip()]:
         checked.append(route)
-        if not isinstance(result, dict):
-            disagreements.append(f"{route}:missing_primary_result")
-            continue
-        if result.get("qualified") is not True:
+        result = prior.get(route)
+        if not isinstance(result, dict) or result.get("qualified") is not True:
             disagreements.append(f"{route}:primary_claim_not_qualified")
             continue
-        if result.get("matched_category") is not True or int(result.get("category_score", 0) or 0) <= 0:
-            disagreements.append(f"{route}:category_evidence_failed")
+        route_research = result.get("route_research") if isinstance(result.get("route_research"), dict) else {}
+        if route_research.get("verified") is not True:
+            disagreements.append(f"{route}:route_research_not_verified")
             continue
-        current_need = result.get("current_need") if isinstance(result.get("current_need"), dict) else {}
-        recent_inquiry = result.get("recent_inquiry") if isinstance(result.get("recent_inquiry"), dict) else {}
-        intent_ok = bool(current_need.get("qualified") and current_need.get("observed_at")) or bool(recent_inquiry.get("qualified") and recent_inquiry.get("observed_at"))
-        if not intent_ok:
-            disagreements.append(f"{route}:intent_evidence_failed")
+        intent = result.get("current_need") if isinstance(result.get("current_need"), dict) else {}
+        if not (intent.get("qualified") is True and intent.get("observed_at") and intent.get("evidence")):
+            disagreements.append(f"{route}:intent_research_not_verified")
             continue
-        independent_routes.append(route)
-
-    return {"qualified_companies": independent_routes, "disagreements": disagreements, "checked_routes": checked}
+        independent.append(route)
+    return {"qualified_companies": independent, "disagreements": disagreements, "checked_routes": checked}
 
 
 def _apply_independent_result(updated: Dict[str, Any]) -> Dict[str, Any]:
     review = _independent_review(updated)
     routes = review["qualified_companies"]
-    updated["qualification_b_result"] = {
-        "qualified_companies": list(routes),
-        "disagreements": list(review["disagreements"]),
-        "checked_routes": list(review["checked_routes"]),
-        "independent": True,
-        "reviewed_at": datetime.now(timezone.utc).isoformat(),
-    }
+    updated["qualification_b_result"] = {"qualified_companies": list(routes), "disagreements": list(review["disagreements"]), "checked_routes": list(review["checked_routes"]), "independent": True, "reviewed_at": datetime.now(timezone.utc).isoformat()}
     updated["potential_routes"] = list(routes)
     updated["qualified"] = bool(routes)
     updated["qualification_review_stage"] = "validated"
@@ -235,7 +225,7 @@ def _apply_independent_result(updated: Dict[str, Any]) -> Dict[str, Any]:
         updated["review_status"] = "Review"
         updated["qualification_status"] = "in_review"
         updated["review_state"] = "review"
-        updated["reason_not_qualified"] = "Qualification B independently rejected all primary route claims."
+        updated["reason_not_qualified"] = "Qualification B rejected all route claims."
     return updated
 
 
@@ -243,8 +233,7 @@ def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     updated = dict(lead)
     if updated.get("qualification_review_stage") == "primary":
         return _apply_independent_result(updated)
-    evaluation = evaluate_company_qualification(updated)
-    return _apply_primary_result(updated, evaluation)
+    return _apply_primary_result(updated, evaluate_company_qualification(updated))
 
 
 def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "", business_need: str = "") -> Dict[str, object]:
