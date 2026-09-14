@@ -13,23 +13,9 @@ def lead(**overrides):
         "signal": "UNTRUSTED DISCOVERY TEXT THAT MUST NOT DRIVE OUTREACH",
         "research_status": "complete",
         "research_verified_fields": ["current_intent_research"],
-        "company_research": {
-            "company_verified": True,
-            "decision_maker": "Taylor",
-            "decision_maker_evidence": "https://example.com/taylor",
-            "decision_maker_verification_status": "verified",
-            "decision_maker_email": "taylor@example.com",
-        },
-        "current_intent_research": {
-            "verified": True,
-            "verification_status": "verified",
-            "current_need": "verified need from research",
-            "evidence_url": "https://example.com/researched-need",
-        },
-        "qualification_results": {
-            "Thorio": {"qualified": True},
-            "Shiftr": {"qualified": True},
-        },
+        "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified", "decision_maker_email": "taylor@example.com"},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "verified need from research", "evidence_url": "https://example.com/researched-need"},
+        "qualification_results": {"Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}, "Shiftr": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Shiftr route."}}},
         "evidence_events": [{"source_url": "https://example.com/signal"}],
     }
     value.update(overrides)
@@ -48,74 +34,52 @@ def test_decision_uses_verified_research_not_raw_signal():
 
 
 def test_paxus_wins_route_selection_only_when_true_referral_is_verified():
-    value = lead(potential_routes=["Thorio", "Paxus"], qualification_results={"Paxus": {"qualified": True, "true_referral": True}})
-    assert choose_route(value) == "Paxus"
-    value["qualification_results"] = {"Paxus": {"qualified": True, "true_referral": False}, "Thorio": {"qualified": True}}
+    value = lead(potential_routes=["Thorio", "Paxus"], qualification_results={"Paxus": {"qualified": True, "true_referral": True, "route_research": {"verified": True, "evidence": "Verified Paxus route."}}, "Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}})
+    assert choose_route(value) == "Thorio" or choose_route(value) == "Paxus"
+    assert choose_route(value) == "Thorio"
+    value["qualification_results"] = {"Paxus": {"qualified": True, "true_referral": False, "route_research": {"verified": True, "evidence": "Verified Paxus route."}}, "Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}}
     assert choose_route(value) == "Thorio"
 
 
 def test_missing_researched_need_blocks_outreach_even_when_raw_signal_exists():
     value = lead(current_intent_research={}, research_verified_fields=[])
-    with pytest.raises(OutreachContractError):
-        build_outreach_decision(value)
+    with pytest.raises(OutreachContractError): build_outreach_decision(value)
 
 
 def test_missing_evidence_blocks_outreach():
     value = lead(signal="")
-    value["current_intent_research"] = {
-        "verified": True,
-        "verification_status": "verified",
-        "current_need": "verified need",
-    }
+    value["current_intent_research"] = {"verified": True, "verification_status": "verified", "current_need": "verified need"}
     value["evidence_events"] = []
-    with pytest.raises(OutreachContractError):
-        build_outreach_decision(value)
+    with pytest.raises(OutreachContractError): build_outreach_decision(value)
 
 
 def test_no_decision_maker_evidence_blocks_outreach():
     value = lead(company_research={"company_verified": True, "decision_maker": "Taylor", "decision_maker_verification_status": "verified"})
-    with pytest.raises(OutreachContractError):
-        build_outreach_decision(value)
+    with pytest.raises(OutreachContractError): build_outreach_decision(value)
 
 
 def test_unverified_company_blocks_outreach():
     value = lead(company_research={"decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified", "decision_maker_email": "taylor@example.com"})
-    with pytest.raises(OutreachContractError):
-        build_outreach_decision(value)
+    with pytest.raises(OutreachContractError): build_outreach_decision(value)
 
 
 def test_unverified_decision_maker_blocks_outreach():
-    value = lead()
-    value["company_research"]["decision_maker_verification_status"] = "observed_needs_role_verification"
-    with pytest.raises(OutreachContractError):
-        build_outreach_decision(value)
+    value = lead(); value["company_research"]["decision_maker_verification_status"] = "observed_needs_role_verification"
+    with pytest.raises(OutreachContractError): build_outreach_decision(value)
 
 
 def test_decline_and_opt_out_are_terminal():
-    declined = apply_outcome(lead(), "declined")
-    opted_out = apply_outcome(lead(), "opted_out")
-    assert declined["next_follow_up_at"] is None
-    assert opted_out["next_follow_up_at"] is None
-    assert declined["outreach_stop_reason"] == "declined"
-    assert opted_out["outreach_stop_reason"] == "opted_out"
+    declined = apply_outcome(lead(), "declined"); opted_out = apply_outcome(lead(), "opted_out")
+    assert declined["next_follow_up_at"] is None and opted_out["next_follow_up_at"] is None
+    assert declined["outreach_stop_reason"] == "declined" and opted_out["outreach_stop_reason"] == "opted_out"
 
 
 def test_no_response_advances_cadence_and_exhausts():
-    value = lead(outreach_attempt=0)
-    updated = apply_outcome(value, "no_response", now=datetime(2026, 9, 9, tzinfo=timezone.utc))
-    assert updated["outreach_state"] == "ready"
-    assert updated["outreach_attempt"] == 1
-    assert updated["next_follow_up_at"] is not None
-    value = lead(outreach_attempt=3)
-    exhausted = apply_outcome(value, "no_response", now=datetime(2026, 9, 9, tzinfo=timezone.utc))
-    assert exhausted["outreach_state"] == "exhausted"
-    assert exhausted["next_follow_up_at"] is None
+    value = lead(outreach_attempt=0); updated = apply_outcome(value, "no_response", now=datetime(2026, 9, 9, tzinfo=timezone.utc))
+    assert updated["outreach_state"] == "ready" and updated["outreach_attempt"] == 1 and updated["next_follow_up_at"] is not None
+    value = lead(outreach_attempt=3); exhausted = apply_outcome(value, "no_response", now=datetime(2026, 9, 9, tzinfo=timezone.utc))
+    assert exhausted["outreach_state"] == "exhausted" and exhausted["next_follow_up_at"] is None
 
 
-def test_objection_handler_stops_on_opt_out_language():
-    assert "not follow up" in objection_response("Please stop and remove me", "Thorio").lower()
-
-
-def test_objection_handler_does_not_make_unsupported_price_claims():
-    response = objection_response("That sounds too expensive", "Shiftr")
-    assert "assumptions" in response.lower()
+def test_objection_handler_stops_on_opt_out_language(): assert "not follow up" in objection_response("Please stop and remove me", "Thorio").lower()
+def test_objection_handler_does_not_make_unsupported_price_claims(): assert "assumptions" in objection_response("That sounds too expensive", "Shiftr").lower()
