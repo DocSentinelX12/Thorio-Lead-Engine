@@ -70,7 +70,11 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
         result["lead"] = stored
         result["research_sync"] = research_sync_result
 
-    if result.get("verified") is True:
+    verified_research = (ctx.db.get(fingerprint) or lead).get("company_research")
+    company_verified = isinstance(verified_research, Mapping) and verified_research.get("company_verified") is True
+    dm_verified = isinstance(verified_research, Mapping) and bool(verified_research.get("decision_maker")) and bool(verified_research.get("decision_maker_evidence")) and str(verified_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"
+    research_complete = str((ctx.db.get(fingerprint) or lead).get("research_status") or "").strip().lower() == "complete"
+    if result.get("verified") is True and research_complete and company_verified and dm_verified:
         enqueue(ctx.db, "routing", {"lead": ctx.db.get(fingerprint) or lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}")
         result["handoff"] = "routing"
     elif result.get("decision_maker_verification") == "verified":
@@ -89,12 +93,25 @@ def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     return result
 
 
-def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any], integrity_result: Mapping[str, Any], db: Any = None) -> tuple[bool, str]:
-    """Determine whether a verified opportunity may enter autonomous sales execution.
+def _has_verified_need(lead: Mapping[str, Any]) -> bool:
+    for key in ("business_need_research", "current_intent_research", "route_research"):
+        value = lead.get(key)
+        if not isinstance(value, Mapping):
+            continue
+        status = str(value.get("verification_status") or value.get("status") or "").strip().lower()
+        if value.get("verified") is not True and status not in {"verified", "research_verified", "complete"}:
+            continue
+        if any(str(value.get(field) or "").strip() for field in ("business_need", "current_need", "need", "service_need", "requirement", "intent")):
+            return True
+        if key == "route_research" and isinstance(value.get("routes"), Mapping):
+            for route_item in value["routes"].values():
+                if isinstance(route_item, Mapping) and (route_item.get("verified") is True or str(route_item.get("verification_status") or "").lower() == "verified") and any(str(route_item.get(field) or "").strip() for field in ("business_need", "current_need", "need", "service_need", "requirement", "evidence")):
+                    return True
+    return False
 
-    Qualification, exact-opportunity identification, and deduplication are
-    upstream gates. Communication is deliberately downstream of qualification.
-    """
+
+def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any], integrity_result: Mapping[str, Any], db: Any = None) -> tuple[bool, str]:
+    """Determine whether a verified opportunity may enter autonomous sales execution."""
     destinations = routing_result.get("destinations")
     if not isinstance(destinations, list) or not destinations:
         return False, "no_supported_revenue_route"
@@ -102,8 +119,8 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
         return False, "routing_requires_review"
     if lead.get("qualified") is not True:
         return False, "not_qualified"
-    if not str(lead.get("business_need") or "").strip():
-        return False, "missing_exact_opportunity"
+    if not _has_verified_need(lead):
+        return False, "missing_verified_researched_need"
     if db is not None:
         duplicate = Dedupe(db).find_exact_duplicate(dict(lead))
         if duplicate is not None:
