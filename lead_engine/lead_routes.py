@@ -15,16 +15,25 @@ def _get_routes(lead: Dict[str, Any]) -> List[str]:
     return [route] if route in SUPPORTED_ROUTES else []
 
 
+def _route_independently_verified(lead: Dict[str, Any], route: str) -> bool:
+    qualification = lead.get("qualification_results")
+    if not isinstance(qualification, dict):
+        return False
+    result = qualification.get(route)
+    if not isinstance(result, dict) or result.get("qualified") is not True:
+        return False
+    route_research = result.get("route_research")
+    if not isinstance(route_research, dict) or route_research.get("verified") is not True:
+        return False
+    if route == "Paxus" and result.get("true_referral") is not True:
+        return False
+    return True
+
+
 def _final_routes(lead: Dict[str, Any]) -> List[str]:
     routes = _get_routes(lead)
-    # A legacy explicit route is already a final human/system assignment.
-    # The new potential_routes path is the one that must enforce Paxus's
-    # additional true-referral gate.
     if isinstance(lead.get("potential_routes"), list):
-        qualification = lead.get("qualification_results")
-        paxus = qualification.get("Paxus", {}) if isinstance(qualification, dict) else {}
-        if "Paxus" in routes and paxus.get("true_referral") is not True:
-            routes.remove("Paxus")
+        routes = [route for route in routes if _route_independently_verified(lead, route)]
     return routes
 
 
@@ -45,15 +54,17 @@ def route_state(lead: Dict[str, Any]) -> Dict[str, Any]:
     potential = _get_routes(lead)
     final = _final_routes(lead)
     qualification = lead.get("qualification_results")
-    paxus = qualification.get("Paxus", {}) if isinstance(qualification, dict) else {}
+    qualification = qualification if isinstance(qualification, dict) else {}
     states: Dict[str, Dict[str, Any]] = {}
     for route in SUPPORTED_ROUTES:
-        if route == "Paxus" and route in potential and route not in final:
-            state = "paxus_research_required" if paxus.get("qualified") else "not_qualified"
+        result = qualification.get(route) if isinstance(qualification.get(route), dict) else {}
+        if route in potential and route not in final:
+            if route == "Paxus" and result.get("qualified") is True and result.get("true_referral") is not True:
+                state = "paxus_research_required"
+            else:
+                state = "route_research_required" if result.get("qualified") is True else "not_qualified"
         elif route in final:
             state = "ready_for_human_action"
-        elif route in potential:
-            state = "qualified_pending_final_verification"
         else:
             state = "not_qualified"
         states[route] = {"matched": route in potential, "final": route in final, "state": state}
