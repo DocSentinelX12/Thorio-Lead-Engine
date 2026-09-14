@@ -9,6 +9,14 @@ def _lead(qualified=True):
         "business_need": "remote software engineer hiring",
         "qualified": qualified,
         "potential_routes": ["thorio"],
+        "research_status": "complete",
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "remote software engineer hiring",
+            "observed_at": "2026-09-14T00:00:00+00:00",
+            "evidence_url": "https://example.com/need",
+        },
         "company_research": {
             "company_verified": True,
             "decision_maker": "Alex CTO",
@@ -36,8 +44,6 @@ def test_explicit_qualification_allows_sales_eligibility():
 
 
 def test_qualified_opportunity_survives_airtable_sync_failure():
-    eligible, reason = _sales_eligibility(
-        _lead(qualified=True), _routing(), {"sync_error_present": True}
-    )
+    eligible, reason = _sales_eligibility(_lead(qualified=True), _routing(), {"sync_error_present": True})
     assert eligible is True
     assert reason == "airtable_sync_retryable"
