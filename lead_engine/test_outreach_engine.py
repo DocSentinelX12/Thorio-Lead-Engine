@@ -62,7 +62,12 @@ def test_missing_researched_need_blocks_outreach_even_when_raw_signal_exists():
 
 def test_missing_evidence_blocks_outreach():
     value = lead(signal="")
-    value["current_intent_research"] = {"verified": True, "verification_status": "verified", "current_need": "verified need"}
+    value["current_intent_research"] = {
+        "verified": True,
+        "verification_status": "verified",
+        "current_need": "verified need",
+    }
+    value["evidence_events"] = []
     with pytest.raises(OutreachContractError):
         build_outreach_decision(value)
 
