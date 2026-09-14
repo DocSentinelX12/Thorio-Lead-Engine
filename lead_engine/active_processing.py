@@ -49,6 +49,11 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
     if result.get("decision_maker_verification") == "verified":
         current_lead = ctx.db.get(fingerprint) or lead
         research = dict(current_lead.get("company_research") or {}) if isinstance(current_lead.get("company_research"), Mapping) else {}
+        if not research.get("company_verified"):
+            result["decision_maker_handoff"] = "research_required"
+            result["research_verification_blocked"] = "company_not_verified"
+            result["handoff"] = "review_required"
+            return result
         research["decision_maker_verification_status"] = "verified"
         if result.get("decision_maker_role_evidence"):
             research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
@@ -106,6 +111,8 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
     research = lead.get("company_research")
     if not isinstance(research, Mapping):
         return False, "missing_company_research"
+    if not research.get("company_verified"):
+        return False, "company_not_verified"
     if not research.get("decision_maker") or not research.get("decision_maker_evidence"):
         return False, "decision_maker_not_verified"
     if str(research.get("decision_maker_verification_status") or "").strip().lower() != "verified":
