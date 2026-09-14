@@ -1,12 +1,15 @@
 from .lead_routes import route_leads, route_state
 
 
+def _route_result(qualified=True, true_referral=None):
+    result = {"qualified": qualified, "route_research": {"verified": True, "evidence": "Independently verified route evidence."}}
+    if true_referral is not None:
+        result["true_referral"] = true_referral
+    return result
+
+
 def test_paxus_base_match_waits_for_true_referral():
-    lead = {
-        "fingerprint": "paxus-gate",
-        "potential_routes": ["Shiftr", "Paxus", "Thorio"],
-        "qualification_results": {"Paxus": {"qualified": True, "true_referral": False}},
-    }
+    lead = {"fingerprint": "paxus-gate", "potential_routes": ["Shiftr", "Paxus", "Thorio"], "qualification_results": {"Shiftr": _route_result(), "Paxus": _route_result(true_referral=False), "Thorio": _route_result()}}
     routed = route_leads([lead])
     assert len(routed["Shiftr"]) == 1
     assert len(routed["Thorio"]) == 1
@@ -18,11 +21,7 @@ def test_paxus_base_match_waits_for_true_referral():
 
 
 def test_paxus_true_referral_reaches_human_action():
-    lead = {
-        "fingerprint": "paxus-ready",
-        "potential_routes": ["Paxus"],
-        "qualification_results": {"Paxus": {"qualified": True, "true_referral": True}},
-    }
+    lead = {"fingerprint": "paxus-ready", "potential_routes": ["Paxus"], "qualification_results": {"Paxus": _route_result(true_referral=True)}}
     routed = route_leads([lead])
     assert len(routed["Paxus"]) == 1
     assert routed["Review"] == []
