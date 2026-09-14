@@ -9,10 +9,13 @@ def test_public_research_records_real_page_provenance(monkeypatch):
         encoding = "utf-8"
         headers = {"content-type": "text/html"}
         text = "User-agent: *\nAllow: /"
+        is_redirect = False
+        is_permanent_redirect = False
 
         def iter_content(self, chunk_size=16384):
             yield b"<html><head><title>Acme Platform</title><meta name='description' content='Enterprise software platform'></head><body><a href='/careers'>Careers</a><p>Acme builds software for enterprise customers and is hiring engineers.</p></body></html>"
 
+    monkeypatch.setattr(public_research, "_public_host", lambda url: (True, "public_address"))
     monkeypatch.setattr(public_research.requests, "get", lambda *args, **kwargs: Response())
     public_research._ROBOTS_CACHE.clear()
     public_research._PAGE_CACHE.clear()
@@ -31,7 +34,11 @@ def test_public_research_does_not_claim_access_when_robots_disallow(monkeypatch)
     class Response:
         status_code = 200
         text = "User-agent: ThorioLeadResearch\nDisallow: /"
+        headers = {"content-type": "text/plain"}
+        is_redirect = False
+        is_permanent_redirect = False
 
+    monkeypatch.setattr(public_research, "_public_host", lambda url: (True, "public_address"))
     monkeypatch.setattr(public_research.requests, "get", lambda *args, **kwargs: Response())
     public_research._ROBOTS_CACHE.clear()
     public_research._PAGE_CACHE.clear()
