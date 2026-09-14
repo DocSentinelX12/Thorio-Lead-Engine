@@ -7,6 +7,7 @@ class _DB:
             "fingerprint": "handoff-test",
             "company": "Acme",
             "company_research": {
+                "company_verified": True,
                 "decision_maker": "Taylor",
                 "decision_maker_evidence": "https://example.com/taylor",
             },
