@@ -20,6 +20,7 @@ class FakeTransport:
 
 
 def _lead(fingerprint="conversation-test"):
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "fingerprint": fingerprint,
         "company": "Acme",
@@ -31,18 +32,39 @@ def _lead(fingerprint="conversation-test"):
         "preserved_routes": ["Shiftr", "Paxus"],
         "eligible_routes": ["Shiftr", "Paxus"],
         "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
         "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
             "decision_maker_evidence": "https://example.com/taylor",
             "decision_maker_email": "taylor@example.com",
             "decision_maker_verification_status": "verified",
+            "company_verification_evidence": ["https://example.com/company"],
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "remote engineering team",
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {
+                "Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Acme needs a remote engineering team."},
+                "Paxus": {"verified": True, "verification_status": "verified", "evidence": "Acme has a current technology staffing need."},
+            },
+        },
+        "qualification_results": {
+            "Shiftr": {"qualified": True},
+            "Paxus": {"qualified": True, "true_referral": True},
         },
         "outreach_route": "Shiftr",
         "outreach_state": "awaiting_response",
         "outreach_attempt": 1,
         "outreach_history": [{"action_id": "a1"}],
-        "conversation_id": "conversation:conversation-test:shiftr",
+        "conversation_id": f"conversation:{fingerprint}:shiftr",
     }
 
 
@@ -60,6 +82,7 @@ def test_inbound_response_is_durable_and_idempotent(tmp_path):
     assert stored["response_count"] == 1
     assert stored["revenue_lifecycle_state"] == "conversation_active"
     assert len(pending(db, "follow_up")) == 1
+    assert pending(db, "follow_up")[0]["payload"]["authorized_by_role"] == "high_ticket_sales_closer"
 
 
 def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path):
