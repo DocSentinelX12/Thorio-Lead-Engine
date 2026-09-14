@@ -15,6 +15,7 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
         "potential_routes": ["Thorio"],
         "need_at": datetime.now(timezone.utc).isoformat(),
         "company_research": {
+            "company_verified": True,
             "decision_maker": "Taylor",
             "decision_maker_evidence": "verified company evidence",
             "decision_maker_verification_status": "verified",
