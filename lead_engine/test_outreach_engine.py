@@ -6,18 +6,7 @@ from .outreach_engine import OutreachContractError, apply_outcome, build_outreac
 
 
 def lead(**overrides):
-    value = {
-        "fingerprint": "o1",
-        "company": "Acme",
-        "potential_routes": ["Thorio", "Shiftr"],
-        "signal": "UNTRUSTED DISCOVERY TEXT THAT MUST NOT DRIVE OUTREACH",
-        "research_status": "complete",
-        "research_verified_fields": ["current_intent_research"],
-        "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified", "decision_maker_email": "taylor@example.com"},
-        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "verified need from research", "evidence_url": "https://example.com/researched-need"},
-        "qualification_results": {"Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}, "Shiftr": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Shiftr route."}}},
-        "evidence_events": [{"source_url": "https://example.com/signal"}],
-    }
+    value = {"fingerprint": "o1", "company": "Acme", "potential_routes": ["Thorio", "Shiftr"], "signal": "UNTRUSTED DISCOVERY TEXT THAT MUST NOT DRIVE OUTREACH", "research_status": "complete", "research_verified_fields": ["current_intent_research"], "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified", "decision_maker_email": "taylor@example.com"}, "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "verified need from research", "evidence_url": "https://example.com/researched-need"}, "qualification_results": {"Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}, "Shiftr": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Shiftr route."}}}, "evidence_events": [{"source_url": "https://example.com/signal"}]}
     value.update(overrides)
     return value
 
@@ -34,9 +23,8 @@ def test_decision_uses_verified_research_not_raw_signal():
 
 
 def test_paxus_wins_route_selection_only_when_true_referral_is_verified():
-    value = lead(potential_routes=["Thorio", "Paxus"], qualification_results={"Paxus": {"qualified": True, "true_referral": True, "route_research": {"verified": True, "evidence": "Verified Paxus route."}}, "Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}})
-    assert choose_route(value) == "Thorio" or choose_route(value) == "Paxus"
-    assert choose_route(value) == "Thorio"
+    value = lead(potential_routes=["Thorio", "Paxus"], qualification_results={"Paxus": {"qualified": True, "true_referral": True, "route_research": {"verified": True, "evidence": "Verified Paxus route."}}, "Thorio": {"qualified": False, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}})
+    assert choose_route(value) == "Paxus"
     value["qualification_results"] = {"Paxus": {"qualified": True, "true_referral": False, "route_research": {"verified": True, "evidence": "Verified Paxus route."}}, "Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Verified Thorio route."}}}
     assert choose_route(value) == "Thorio"
 
