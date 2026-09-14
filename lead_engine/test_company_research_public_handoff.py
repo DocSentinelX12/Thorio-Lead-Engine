@@ -22,6 +22,7 @@ def test_company_research_persists_public_evidence_without_fabrication(monkeypat
             "status": "evidence_found",
             "researched_at": "2026-09-13T00:00:00+00:00",
             "sources": [{"url": "https://observed.example/", "observed_at": "2026-09-13T00:00:00+00:00", "status": "collected"}],
+            "raw_pages": [],
             "facts": {"company": [{"url": "https://observed.example/", "evidence": "Observed public company page"}]},
             "fabricated_fields": [],
         },
@@ -45,5 +46,6 @@ def test_company_research_persists_public_evidence_without_fabrication(monkeypat
     assert result["public_research_status"] == "evidence_found"
     assert result["research"]["public_web_sources"][0]["url"] == "https://observed.example/"
     assert result["research"]["public_company_facts"][0]["evidence"] == "Observed public company page"
+    assert result["research"]["company_verified"] is False
     assert result["research"]["fabricated_fields"] == []
-    assert captured["updates"]["research_verified_fields"]
+    assert captured["updates"]["research_verified_fields"] == []
