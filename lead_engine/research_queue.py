@@ -10,6 +10,7 @@ from .qualification import evaluate_company_qualification
 STATE_KEY = "paxus_research_queue"
 RESEARCH_REQUIRED = "research_required"
 COMPLETE = "complete"
+NOT_QUALIFIED = "not_qualified"
 
 
 def _now() -> str:
@@ -147,7 +148,8 @@ def process_paxus_research_queue(db, limit: int = 50) -> Dict[str, Any]:
                         "enrichment_status": enriched.get("enrichment_status", "pending"),
                         "qualification_results": evaluation["companies"],
                         "potential_routes": evaluation["qualified_companies"],
-                        "research_status": "complete",
+                        "research_status": NOT_QUALIFIED,
+                        "research_queue": None,
                     },
                 )
                 processed.append(fingerprint)
@@ -172,7 +174,7 @@ def process_paxus_research_queue(db, limit: int = 50) -> Dict[str, Any]:
             if is_complete:
                 queue.pop(fingerprint, None)
                 completed.append(fingerprint)
-                research_status = "complete"
+                research_status = COMPLETE
             else:
                 queue[fingerprint] = updated_queue_item
                 still_required.append(fingerprint)
