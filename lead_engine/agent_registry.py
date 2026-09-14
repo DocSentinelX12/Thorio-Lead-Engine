@@ -8,7 +8,6 @@ scaled more aggressively because they are the largest continuous workloads.
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-
 @dataclass(frozen=True)
 class AgentRole:
     name: str
@@ -16,7 +15,6 @@ class AgentRole:
     purpose: str
     max_concurrency: int = 1
     kind: str = "processing"
-
 
 DISCOVERY_AGENT_ROLES: Tuple[AgentRole, ...] = (
     AgentRole("x_signal", "discovery.x", "Discover permitted X signals.", 8, "discovery"),
@@ -58,23 +56,19 @@ PROCESSING_AGENT_ROLES: Tuple[AgentRole, ...] = (
     AgentRole("monitoring", "system.monitoring", "Detect stalled workers, failures, and queue anomalies.", 4),
     AgentRole("audit", "system.audit", "Audit agent decisions and protected business invariants.", 4),
     AgentRole("outreach_closer", "revenue.outreach", "Autonomously decide, authorize, and execute evidence-grounded revenue outreach actions.", 4),
-    AgentRole("follow_up", "revenue.follow_up", "Advance outreach cadence and record outcomes without fabricating engagement.", 4),
+    AgentRole("follow_up", "revenue.follow_up", "Record observed outreach outcomes for closer-authorized cadence only; never originate or send revenue messaging.", 4),
 )
 
 ALL_AGENT_ROLES: Tuple[AgentRole, ...] = DISCOVERY_AGENT_ROLES + SOCIAL_RESEARCH_AGENT_ROLES + PROCESSING_AGENT_ROLES
 
-
 def agent_registry() -> Dict[str, AgentRole]:
     return {role.name: role for role in ALL_AGENT_ROLES}
-
 
 def discovery_roles() -> Tuple[AgentRole, ...]:
     return DISCOVERY_AGENT_ROLES
 
-
 def social_research_roles() -> Tuple[AgentRole, ...]:
     return SOCIAL_RESEARCH_AGENT_ROLES
-
 
 def processing_roles() -> Tuple[AgentRole, ...]:
     return PROCESSING_AGENT_ROLES
