@@ -1,6 +1,8 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from .agent_queue import pending
+import pytest
+
+from .agent_queue import pending, enqueue
 from .agent_workers import run_worker_once
 from .database import LeadDB
 from .revenue_conversation import record_inbound_event
@@ -41,31 +43,24 @@ def _lead(fingerprint="conversation-test"):
             "decision_maker_verification_status": "verified",
             "company_verification_evidence": ["https://example.com/company"],
         },
-        "current_intent_research": {
-            "verified": True,
-            "verification_status": "verified",
-            "current_need": "remote engineering team",
-            "observed_at": now,
-            "evidence_url": "https://example.com/need",
-        },
-        "route_research": {
-            "verified": True,
-            "verification_status": "verified",
-            "routes": {
-                "Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Acme needs a remote engineering team."},
-                "Paxus": {"verified": True, "verification_status": "verified", "evidence": "Acme has a current technology staffing need."},
-            },
-        },
-        "qualification_results": {
-            "Shiftr": {"qualified": True},
-            "Paxus": {"qualified": True, "true_referral": True},
-        },
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote engineering team", "observed_at": now, "evidence_url": "https://example.com/need"},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Acme needs a remote engineering team."}, "Paxus": {"verified": True, "verification_status": "verified", "evidence": "Acme has a current technology staffing need."}}},
+        "qualification_results": {"Shiftr": {"qualified": True}, "Paxus": {"qualified": True, "true_referral": True}},
         "outreach_route": "Shiftr",
         "outreach_state": "awaiting_response",
         "outreach_attempt": 1,
         "outreach_history": [{"action_id": "a1"}],
         "conversation_id": f"conversation:{fingerprint}:shiftr",
     }
+
+
+def test_follow_up_cannot_be_queued_without_closer_authorization(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("authorization-test")
+    db.insert_if_new(lead)
+    with pytest.raises(ValueError, match="high_ticket_sales_closer"):
+        enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True})
+    assert pending(db, "follow_up") == []
 
 
 def test_inbound_response_is_durable_and_idempotent(tmp_path):
