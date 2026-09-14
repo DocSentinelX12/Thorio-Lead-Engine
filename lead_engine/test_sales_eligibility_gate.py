@@ -10,6 +10,7 @@ def _lead(qualified=True):
         "qualified": qualified,
         "potential_routes": ["thorio"],
         "company_research": {
+            "company_verified": True,
             "decision_maker": "Alex CTO",
             "decision_maker_evidence": "company leadership page",
             "decision_maker_verification_status": "verified",
