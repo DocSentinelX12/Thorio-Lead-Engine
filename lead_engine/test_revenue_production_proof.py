@@ -5,6 +5,7 @@ from .agent_queue import pending
 from .database import LeadDB
 from .revenue_conversation import record_inbound_event
 from .revenue_execution import register_revenue_transport
+from . import advanced_agent_logic
 
 
 class FakeTransport:
@@ -34,6 +35,10 @@ def _lead():
         "observed_at": now,
         "need_at": now,
         "business_need": "remote software engineer hiring",
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote software engineer hiring", "observed_at": now, "evidence_url": "https://example.com/need"},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current remote software engineering hiring need."}}},
         "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor CTO",
@@ -59,12 +64,26 @@ def _proof_debug(db, stored, first, transport):
         "last_action": stored.get("last_outreach_action_id"),
         "pending_agents": sorted({task.get("agent") for task in pending(db) if task.get("status") in {"queued", "running"}}),
         "calls": [{"subject": call.get("subject"), "body": call.get("body"), "idempotency_key": call.get("idempotency_key")} for call in transport.calls],
-        "drain": second if False else first,
+        "drain": first,
     }
 
 
 def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportunity(tmp_path, monkeypatch):
     monkeypatch.setenv("THORIO_AGENT_EXECUTION_WORKERS", "1")
+    monkeypatch.setattr(
+        advanced_agent_logic,
+        "research_public_web",
+        lambda value: {
+            "status": "evidence_found",
+            "researched_at": "2026-09-14T00:00:00+00:00",
+            "pages_attempted": 1,
+            "pages_collected": 1,
+            "sources": [{"url": "https://acme.example/", "observed_at": "2026-09-14T00:00:00+00:00", "status": "collected"}],
+            "facts": {"company": [{"url": "https://acme.example/", "evidence": "Acme public company page"}], "hiring": [], "product": [], "decision_maker": [], "business_need": [], "commercial": []},
+            "raw_pages": [{"url": "https://acme.example/", "status": "collected", "facts": [{"field": "page_text", "value": "Acme public company page", "evidence_url": "https://acme.example/"}]}],
+            "fabricated_fields": [],
+        },
+    )
     db = LeadDB(data_dir=tmp_path)
     lead = _lead()
     assert db.insert_if_new(lead) is True
