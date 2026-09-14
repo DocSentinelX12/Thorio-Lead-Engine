@@ -9,8 +9,13 @@ def test_research_payload_preserves_research_and_raw_lead():
         "company": "Acme",
         "research_status": "complete",
         "research_verified_fields": ["company_verified", "decision_maker"],
-        "company_research": {"company_verified": True, "decision_maker": "Taylor"},
-        "business_need_research": {"need": "engineering expansion"},
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_verification_status": "verified",
+        },
+        "business_need_research": {"need": "engineering expansion", "verified": True, "verification_status": "verified"},
         "evidence_events": [{"source": "https://example.com", "observed_at": "2026-09-13"}],
         "unknown_field": "must survive in raw package",
     }
@@ -32,7 +37,12 @@ def test_sync_research_updates_existing_record_without_dropping_fields(monkeypat
         "fingerprint": "research-test-2",
         "company": "Acme",
         "research_status": "complete",
-        "company_research": {"company_verified": True},
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_verification_status": "verified",
+        },
     }
     existing = [{"id": "recResearch"}]
     updated = {"records": [{"id": "recResearch", "fields": {"Research Key": "research-test-2"}}]}
