@@ -30,7 +30,7 @@ def test_company_research_persists_observed_person_and_handoff(tmp_path):
     assert result["research_status"] == "research_required"
     assert result["decision_maker_verified"] is False
     research = stored["company_research"]
-    assert "company_verified" not in research
+    assert research["company_verified"] is False
     assert research["observed_input"]["company"] == "ExampleCo"
     assert research["observed_decision_maker"] == "Jane Doe"
     assert research["observed_decision_maker_evidence"]
