@@ -56,13 +56,13 @@ def test_qualification_b_rejects_tampered_primary_route_claim():
     assert "Thorio:category_evidence_failed" in result["qualification_b_result"]["disagreements"]
 
 
-def test_verification_identifies_role_verification_from_existing_role_evidence():
+def test_verification_does_not_promote_role_evidence_and_email_to_verified():
     lead = _primary_lead()
     lead["company_research"]["decision_maker_verification_status"] = "observed_needs_role_verification"
     lead["company_research"]["decision_maker_title"] = "Chief Technology Officer"
     result = verification("verification", {"lead": lead, "evidence_events": []}, None)
-    assert result["decision_maker_verification"] == "verified"
-    assert result["decision_maker_role_evidence"] == "Chief Technology Officer"
+    assert result["decision_maker_verification"] == "observed_needs_role_verification"
+    assert result["decision_maker_role_evidence"] == ""
 
 
 def test_verification_does_not_promote_observed_person_without_role_and_contact_evidence():
