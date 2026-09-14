@@ -1,13 +1,9 @@
 """Evidence-grounded autonomous outreach decisioning.
 
-This module owns the revenue-stage decision model: route selection, evidence-
-grounded personalization, objection handling, cadence, stop states, and outcome
-tracking. It never invents facts or silently changes a lead's qualification.
-Transport adapters remain outside this module so the same decision engine can
-be exercised deterministically in tests and by the runtime's permitted account
-connectors.
+Revenue communication may use only the completed, explicitly verified research
+package. Discovery signal and raw evidence are provenance inputs, never a
+fallback source for buying claims or personalization.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,6 +13,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 STOP_STATES = frozenset({"declined", "opted_out", "irrelevant", "exhausted", "converted"})
 ACTIVE_STATES = frozenset({"ready", "drafted", "sent", "replied", "interested", "objection"})
 CADENCE_DAYS = (0, 3, 7, 14)
+ROUTES = frozenset({"Thorio", "Shiftr", "Paxus"})
 
 @dataclass(frozen=True)
 class OutreachDecision:
@@ -32,7 +29,7 @@ class OutreachDecision:
     stop_reason: Optional[str]
 
 class OutreachContractError(ValueError):
-    """Raised when outreach cannot be safely produced from the supplied evidence."""
+    """Raised when outreach cannot be safely produced from verified research."""
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
@@ -47,49 +44,73 @@ def _routes(lead: Mapping[str, Any]) -> list[str]:
         raw = [raw]
     if not isinstance(raw, Iterable) or isinstance(raw, Mapping):
         raw = []
-    allowed = {"Thorio", "Shiftr", "Paxus"}
-    return [str(route).strip() for route in raw if str(route).strip() in allowed]
+    return list(dict.fromkeys(str(route).strip() for route in raw if str(route).strip() in ROUTES))
 
-def _signal(lead: Mapping[str, Any]) -> str:
-    for key in ("current_need", "recent_inquiry", "signal", "evidence", "need"):
-        value = _text(lead.get(key))
+def _verified_research_mapping(lead: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    value = lead.get(key)
+    return value if isinstance(value, Mapping) else {}
+
+def _verified_buying_signal(lead: Mapping[str, Any]) -> str:
+    """Return only an explicitly verified researched need or intent.
+
+    Raw lead signal/evidence is deliberately excluded. A populated research
+    mapping is not sufficient by itself: the lead must explicitly list the
+    corresponding research key as verified.
+    """
+    verified = lead.get("research_verified_fields")
+    verified_set = {str(item).strip() for item in verified} if isinstance(verified, (list, tuple, set)) else set()
+    candidates = (
+        ("current_intent_research", "current_need"),
+        ("business_need_research", "business_need"),
+        ("business_need_research", "current_need"),
+        ("route_research", "business_need"),
+    )
+    for mapping_key, field in candidates:
+        if mapping_key not in verified_set:
+            continue
+        research = _verified_research_mapping(lead, mapping_key)
+        value = _text(research.get(field))
         if value:
             return value
-    research = _research(lead)
-    for key in ("current_need", "recent_inquiry", "hiring_signal", "business_problem"):
-        value = _text(research.get(key))
-        if value:
-            return value
-    return ""
+    raise OutreachContractError("A current need or recent inquiry must be explicitly researched and verified before outreach")
 
 def _evidence_refs(lead: Mapping[str, Any]) -> tuple[str, ...]:
     refs: list[str] = []
+    research = _research(lead)
+    for key in ("decision_maker_evidence", "company_verification_evidence"):
+        ref = _text(research.get(key))
+        if ref:
+            refs.append(ref)
+    for mapping_key in ("current_intent_research", "business_need_research", "route_research"):
+        mapping = _verified_research_mapping(lead, mapping_key)
+        for key in ("evidence_url", "source_url", "evidence_ref", "source_id"):
+            ref = _text(mapping.get(key))
+            if ref:
+                refs.append(ref)
+    # Evidence events are retained as provenance, but only after the research
+    # contract has already been satisfied. They never establish qualification.
     for event in lead.get("evidence_events", []) if isinstance(lead.get("evidence_events"), list) else []:
         if isinstance(event, Mapping):
             ref = _text(event.get("source_url") or event.get("url") or event.get("source_id"))
             if ref:
                 refs.append(ref)
-    research = _research(lead)
-    for key in ("decision_maker_evidence", "evidence_url", "source_url"):
-        ref = _text(research.get(key))
-        if ref:
-            refs.append(ref)
     return tuple(dict.fromkeys(refs))
 
 def choose_route(lead: Mapping[str, Any]) -> str:
     routes = _routes(lead)
     if not routes:
         active_route = _text(lead.get("outreach_route"))
-        if active_route in {"Thorio", "Shiftr", "Paxus"}:
+        if active_route in ROUTES:
             return active_route
         raise OutreachContractError("No verified outreach destination is available")
-    paxus = (lead.get("qualification_results") or {}).get("Paxus", {})
-    if "Paxus" in routes and isinstance(paxus, Mapping) and paxus.get("true_referral"):
-        return "Paxus"
-    for route in ("Thorio", "Shiftr", "Paxus"):
-        if route in routes:
+    qualification = lead.get("qualification_results")
+    for route in routes:
+        result = qualification.get(route) if isinstance(qualification, Mapping) else None
+        if isinstance(result, Mapping) and result.get("qualified") is True:
+            if route == "Paxus" and result.get("true_referral") is not True:
+                continue
             return route
-    raise OutreachContractError("No supported outreach destination is available")
+    raise OutreachContractError("No route has an independently verified qualification result")
 
 def _offer(route: str) -> str:
     return {"Thorio": "a verified remote tech hiring channel", "Shiftr": "AI, software, engineering, or dedicated-team support through the appropriate partner", "Paxus": "vetted remote technology talent through the appropriate referral process"}[route]
@@ -102,27 +123,42 @@ def _subject(route: str, signal: str) -> str:
 
 def _humanize_signal(signal: str) -> str:
     text = signal.strip().rstrip(".!?")
-    return text or "the need you mentioned"
+    return text
 
 def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
     need = _humanize_signal(signal)
     offer = _offer(route)
-    return (f"Hi {contact_name},\n\n" f"I saw that {need}. If that is still a priority at {company}, I may be able to help.\n\n" f"I work with {offer}. Based on what you shared, it looks worth a quick conversation to see whether there is a real fit.\n\n" f"Would it be useful if I sent over the most relevant option?\n\n" f"Best,\nThorio")
+    return (f"Hi {contact_name},\n\n"
+            f"I saw that {need}. If that is still a priority at {company}, I may be able to help.\n\n"
+            f"I work with {offer}. Based on the researched need, it looks worth a quick conversation to see whether there is a real fit.\n\n"
+            f"Would it be useful if I sent over the most relevant option?\n\n"
+            f"Best,\nThorio")
+
+def _require_research_contract(lead: Mapping[str, Any]) -> Mapping[str, Any]:
+    if _text(lead.get("research_status")).lower() not in {"complete", "research_complete"}:
+        raise OutreachContractError("Completed research is required before outreach")
+    research = _research(lead)
+    if not research:
+        raise OutreachContractError("Completed company research is required before outreach")
+    if research.get("company_verified") is not True:
+        raise OutreachContractError("Verified company research is required before outreach")
+    if not _text(research.get("decision_maker")) or not _text(research.get("decision_maker_evidence")):
+        raise OutreachContractError("Verified decision-maker identity and evidence are required")
+    if _text(research.get("decision_maker_verification_status")).lower() != "verified":
+        raise OutreachContractError("Decision-maker verification must be explicitly verified")
+    return research
 
 def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] = None) -> OutreachDecision:
-    if _text(lead.get("research_status")).lower() != "complete":
-        raise OutreachContractError("Completed company research is required before outreach")
-    research = _research(lead)
-    contact_name = _text(research.get("decision_maker") or lead.get("contact_name"))
-    contact_email = _text(research.get("contact_email") or lead.get("contact_email"))
-    contact_evidence = _text(research.get("decision_maker_evidence"))
-    if not contact_name or not contact_evidence:
-        raise OutreachContractError("Verified decision-maker identity and evidence are required")
-    signal = _signal(lead)
-    if not signal:
-        raise OutreachContractError("A demonstrated current need or recent inquiry is required")
+    research = _require_research_contract(lead)
+    contact_name = _text(research.get("decision_maker"))
+    contact_email = _text(research.get("decision_maker_email") or research.get("contact_email") or lead.get("contact_email"))
+    if not contact_email:
+        raise OutreachContractError("Verified decision-maker contact email is required")
+    signal = _verified_buying_signal(lead)
     route = choose_route(lead)
-    company = _text(lead.get("company") or research.get("company")) or "your team"
+    company = _text(lead.get("company"))
+    if not company:
+        raise OutreachContractError("Verified company identity is required")
     body = _sales_body(route, contact_name, company, signal)
     current = _text(lead.get("outreach_state") or "ready").lower()
     if current in STOP_STATES:
@@ -130,17 +166,17 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
     now = now or datetime.now(timezone.utc)
     attempt = int(lead.get("outreach_attempt", 0) or 0)
     next_at = None if attempt >= len(CADENCE_DAYS) - 1 else (now + timedelta(days=CADENCE_DAYS[attempt + 1])).isoformat()
-    return OutreachDecision(route=route, contact_name=contact_name, contact_email=contact_email, subject=_subject(route, signal), body=body, evidence_refs=_evidence_refs(lead), buying_signal=signal, next_state="drafted", next_follow_up_at=next_at, stop_reason=None)
+    return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None)
 
 def objection_response(objection: str, route: str) -> str:
     text = _text(objection).lower()
     if any(token in text for token in ("not interested", "no thanks", "stop", "remove me")):
         return "Understood. I will not follow up further."
     if "price" in text or "cost" in text:
-        return f"Understood. I do not want to guess at fit or pricing. I can share the {route} option only if it matches the need you described."
+        return f"Understood. I do not want to guess at fit or pricing. I can share the {route} option only if it matches the researched need."
     if any(token in text for token in ("later", "not now", "timing")):
         return "Understood. I can leave this here and follow up later rather than assume the timing is right."
-    return "Thanks for the context. I will keep the response grounded in what you actually need rather than make assumptions."
+    return "Thanks for the context. I will keep the response grounded in the verified research rather than make assumptions."
 
 def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     outcome = _text(outcome).lower()
