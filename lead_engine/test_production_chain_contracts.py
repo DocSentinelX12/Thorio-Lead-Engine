@@ -16,13 +16,12 @@ def _db():
     return directory, db
 
 
+def _route_result():
+    return {"qualified": True, "route_research": {"verified": True, "evidence": "Independently verified route evidence."}}
+
+
 def test_routing_preserves_all_matching_destinations():
-    lead = {
-        "fingerprint": "multi-route",
-        "potential_routes": ["Shiftr", "Paxus", "Thorio"],
-        "qualification_results": {"Paxus": {"qualified": True, "true_referral": True}},
-        "verified": True,
-    }
+    lead = {"fingerprint": "multi-route", "potential_routes": ["Shiftr", "Paxus", "Thorio"], "qualification_results": {"Shiftr": _route_result(), "Paxus": {**_route_result(), "true_referral": True}, "Thorio": _route_result()}, "verified": True}
     routed = route_leads([lead])
     assert [len(routed[name]) for name in ("Shiftr", "Paxus", "Thorio")] == [1, 1, 1]
     assert not routed["Review"]
