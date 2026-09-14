@@ -5,6 +5,7 @@ from .database import LeadDB
 
 
 def _lead(fingerprint, business_need="remote software engineer hiring"):
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "fingerprint": fingerprint,
         "company": "Acme",
@@ -13,7 +14,7 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
         "contact_email": "taylor@example.com",
         "qualified": True,
         "potential_routes": ["Thorio"],
-        "need_at": datetime.now(timezone.utc).isoformat(),
+        "need_at": now,
         "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
@@ -21,6 +22,14 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
             "decision_maker_verification_status": "verified",
             "decision_maker_email": "taylor@example.com",
         },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": business_need,
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "research_status": "complete",
     }
 
 
