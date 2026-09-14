@@ -107,20 +107,67 @@ def test_qualification_worker_requires_completed_company_research(tmp_path):
 
 def test_qualification_worker_applies_independent_company_routes_after_research(tmp_path):
     db = _db(tmp_path)
-    lead = {"fingerprint": "qualification-worker-test", "company": "Acme", "signal": "Acme is hiring a remote software engineer", "job_title": "Software Engineer", "need_at": _recent(), "research_status": "complete", "research_verified_fields": ["company_verified", "decision_maker", "decision_maker_evidence"], "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified"}}
+    now = _recent()
+    lead = {
+        "fingerprint": "qualification-worker-test",
+        "company": "Acme",
+        "signal": "Acme is hiring a remote software engineer",
+        "job_title": "Software Engineer",
+        "need_at": now,
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_verification_status": "verified",
+            "decision_maker_email": "taylor@example.com",
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "Acme is hiring a remote software engineer and is looking for an engineering team to develop software.",
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {
+                "Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current engineering hiring need."},
+                "Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Current need for an engineering team to develop software."},
+                "Paxus": {"verified": False, "evidence": ""},
+            },
+        },
+    }
     db.insert_if_new(lead)
     task = enqueue(db, "qualification_a", {"lead": lead})
     result = run_worker_once(db, "qualification_a", worker_id="qualification-a")
     assert result["completed_count"] == 1
     stored = db.get(lead["fingerprint"])
     assert "Thorio" in stored["potential_routes"]
-    assert stored["qualification_results"]["Shiftr"]["qualified"] is True
+    assert "Shiftr" in stored["potential_routes"]
     assert task["agent"] == "qualification_a"
 
 
 def test_outreach_worker_sends_autonomously_after_sales_eligibility(tmp_path):
     db = _db(tmp_path)
-    lead = {"fingerprint": "outreach-worker-test", "company": "Acme", "potential_routes": ["Thorio", "Shiftr"], "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "research_status": "complete", "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "contact_email": "taylor@example.com", "decision_maker_verification_status": "verified"}, "evidence_events": [{"source_id": "evt-1", "source_url": "https://example.com/signal", "signal": "Acme is hiring a remote software engineer"}]}
+    now = _recent()
+    lead = {
+        "fingerprint": "outreach-worker-test",
+        "company": "Acme",
+        "potential_routes": ["Thorio", "Shiftr"],
+        "qualified": True,
+        "sales_eligibility": "eligible",
+        "signal": "Acme is hiring a remote software engineer",
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "contact_email": "taylor@example.com", "decision_maker_verification_status": "verified"},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote software engineer hiring", "observed_at": now, "evidence_url": "https://example.com/need"},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current software engineering hiring need."}, "Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Current engineering support need."}}},
+        "qualification_results": {"Thorio": {"qualified": True}, "Shiftr": {"qualified": True}},
+        "evidence_events": [{"source_id": "evt-1", "source_url": "https://example.com/signal", "signal": "Acme is hiring a remote software engineer"}],
+    }
     db.insert_if_new(lead)
     enqueue(db, "outreach_closer", {"lead": lead})
     transport = _FakeTransport()
@@ -148,9 +195,29 @@ def test_outreach_worker_sends_autonomously_after_sales_eligibility(tmp_path):
 
 def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     db = _db(tmp_path)
-    lead = {"fingerprint": "follow-up-persistence-test", "company": "Acme", "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "business_need": "remote software engineer hiring", "research_status": "complete", "company_research": {"decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_email": "taylor@example.com", "decision_maker_verification_status": "verified"}, "outreach_route": "Thorio", "outreach_state": "awaiting_response", "outreach_history": [{"at": _recent(), "outcome": "sent"}], "outreach_attempt": 1, "conversation_id": "conversation:follow-up-persistence-test:thorio", "contact_email": "taylor@example.com"}
+    now = _recent()
+    lead = {
+        "fingerprint": "follow-up-persistence-test",
+        "company": "Acme",
+        "qualified": True,
+        "sales_eligibility": "eligible",
+        "signal": "Acme is hiring a remote software engineer",
+        "business_need": "remote software engineer hiring",
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_email": "taylor@example.com", "decision_maker_verification_status": "verified"},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote software engineer hiring", "observed_at": now, "evidence_url": "https://example.com/need"},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current software engineering hiring need."}}},
+        "qualification_results": {"Thorio": {"qualified": True}},
+        "outreach_route": "Thorio",
+        "outreach_state": "awaiting_response",
+        "outreach_history": [{"at": _recent(), "outcome": "sent"}],
+        "outreach_attempt": 1,
+        "conversation_id": "conversation:follow-up-persistence-test:thorio",
+        "contact_email": "taylor@example.com",
+    }
     db.insert_if_new(lead)
-    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True})
+    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True, "authorized": True, "authorized_by_role": "high_ticket_sales_closer"})
     transport = _FakeTransport()
     register_revenue_transport(transport)
     try:
