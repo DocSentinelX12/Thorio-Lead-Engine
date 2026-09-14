@@ -18,6 +18,7 @@ class _BrowserUnavailableTransport:
 
 
 def _lead(fingerprint="browser-retry-boundary"):
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "fingerprint": fingerprint,
         "company": "Acme",
@@ -26,6 +27,7 @@ def _lead(fingerprint="browser-retry-boundary"):
         "potential_routes": ["Thorio"],
         "signal": "Acme is hiring a remote software engineer",
         "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
         "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
@@ -33,8 +35,23 @@ def _lead(fingerprint="browser-retry-boundary"):
             "contact_email": "taylor@example.com",
             "decision_maker_verification_status": "verified",
         },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "remote software engineer hiring",
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {
+                "Thorio": {"verified": True, "verification_status": "verified", "evidence": "Acme has a current software engineering hiring need."},
+            },
+        },
+        "qualification_results": {"Thorio": {"qualified": True}},
         "evidence_events": [{"source_url": "https://example.com/signal"}],
-        "need_at": datetime.now(timezone.utc).isoformat(),
+        "need_at": now,
     }
 
 
