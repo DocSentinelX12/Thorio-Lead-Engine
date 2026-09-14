@@ -41,6 +41,7 @@ class CrashAfterAcceptanceTransport(FakeTransport):
 
 
 def _lead(fingerprint="revenue-lifecycle-test"):
+    now = datetime.now(timezone.utc).isoformat()
     return {
         "fingerprint": fingerprint,
         "company": "Acme",
@@ -49,16 +50,32 @@ def _lead(fingerprint="revenue-lifecycle-test"):
         "signal": "Acme is hiring a remote software engineer",
         "job_title": "Software Engineer",
         "business_need": "remote software engineer hiring",
-        "need_at": datetime.now(timezone.utc).isoformat(),
+        "need_at": now,
         "qualified": True,
         "potential_routes": ["Thorio", "Shiftr"],
         "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
         "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
             "decision_maker_evidence": "https://example.com/taylor",
             "contact_email": "taylor@example.com",
             "decision_maker_verification_status": "verified",
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "remote software engineer hiring",
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {
+                "Thorio": {"verified": True, "verification_status": "verified", "evidence": "Acme has a current software engineering hiring need."},
+                "Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Acme has a current engineering need suitable for Shiftr."},
+            },
         },
         "qualification_results": {
             "Thorio": {"qualified": True},
