@@ -1,7 +1,9 @@
 """Bounded public-web research with provenance and no synthetic facts."""
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 import threading
 import time
 from collections import defaultdict
@@ -37,13 +39,37 @@ def _clean(text: str) -> str:
 
 
 def _domain(url: str) -> str:
-    return urlparse(url).netloc.lower().split(":", 1)[0]
+    return urlparse(url).hostname.lower() if urlparse(url).hostname else ""
+
+
+def _public_host(url: str) -> tuple[bool, str]:
+    """Allow only globally routable host addresses for outbound research."""
+    host = urlparse(url).hostname
+    if not host:
+        return False, "missing_host"
+    try:
+        literal = ipaddress.ip_address(host)
+        addresses = [literal]
+    except ValueError:
+        try:
+            addresses = [ipaddress.ip_address(item[4][0]) for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)]
+        except (OSError, ValueError):
+            return False, "dns_resolution_failed"
+    if not addresses:
+        return False, "dns_resolution_failed"
+    for address in addresses:
+        if not address.is_global:
+            return False, "non_public_address"
+    return True, "public_address"
 
 
 def _allowed(url: str) -> tuple[bool, str]:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False, "invalid_public_url"
+    public, public_status = _public_host(url)
+    if not public:
+        return False, public_status
     domain = _domain(url)
     now = time.time()
     cached = _ROBOTS_CACHE.get(domain)
@@ -52,7 +78,7 @@ def _allowed(url: str) -> tuple[bool, str]:
     else:
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
         try:
-            response = requests.get(robots_url, headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT)
+            response = requests.get(robots_url, headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT, allow_redirects=False)
             if response.status_code == 404:
                 parser, status = None, "robots_not_found"
             elif response.status_code >= 400:
@@ -67,7 +93,7 @@ def _allowed(url: str) -> tuple[bool, str]:
             return False, f"robots_fetch_failed:{type(exc).__name__}"
     if parser is not None and not parser.can_fetch(USER_AGENT, url):
         return False, "robots_disallowed"
-    return True, status
+    return True, f"{status}:{public_status}"
 
 
 def _throttle(domain: str) -> None:
@@ -91,7 +117,21 @@ def _fetch(url: str) -> Dict[str, Any]:
     domain = _domain(url)
     _throttle(domain)
     try:
-        response = requests.get(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}, timeout=REQUEST_TIMEOUT, stream=True)
+        response = requests.get(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}, timeout=REQUEST_TIMEOUT, stream=True, allow_redirects=False)
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            if not location:
+                base.update({"status": "not_collected", "http_status": response.status_code, "reason": "redirect_without_location"})
+                return base
+            redirected = urljoin(url, location)
+            if _domain(redirected) != domain:
+                base.update({"status": "not_collected", "http_status": response.status_code, "reason": "cross_domain_redirect_blocked"})
+                return base
+            redirect_allowed, redirect_reason = _allowed(redirected)
+            if not redirect_allowed:
+                base.update({"status": "not_collected", "http_status": response.status_code, "reason": f"redirect_blocked:{redirect_reason}"})
+                return base
+            response = requests.get(redirected, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}, timeout=REQUEST_TIMEOUT, stream=True, allow_redirects=False)
         if response.status_code >= 400:
             base.update({"status": "not_collected", "http_status": response.status_code, "reason": f"http_{response.status_code}"})
             return base
@@ -143,6 +183,9 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
             continue
         parsed = urlparse(value)
         if parsed.netloc:
+            public, _ = _public_host(value)
+            if not public:
+                continue
             company_domains.add(_domain(value))
             raw_roots.append(f"{parsed.scheme}://{parsed.netloc}/")
             raw_roots.append(value)
@@ -166,14 +209,7 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
 
 def _classify(pages: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
     result: Dict[str, list[Dict[str, Any]]] = {"company": [], "product": [], "hiring": [], "decision_maker": [], "business_need": [], "commercial": []}
-    patterns = {
-        "company": ("about", "company", "mission", "customers", "team"),
-        "product": ("product", "platform", "saas", "software", "technology", "api"),
-        "hiring": ("career", "careers", "jobs", "hiring", "open roles", "join our team"),
-        "decision_maker": ("ceo", "cto", "founder", "co-founder", "leadership", "executive"),
-        "business_need": ("need", "problem", "solution", "customers", "scale", "growth", "automation"),
-        "commercial": ("pricing", "plans", "enterprise", "contact sales", "budget"),
-    }
+    patterns = {"company": ("about", "company", "mission", "customers", "team"), "product": ("product", "platform", "saas", "software", "technology", "api"), "hiring": ("career", "careers", "jobs", "hiring", "open roles", "join our team"), "decision_maker": ("ceo", "cto", "founder", "co-founder", "leadership", "executive"), "business_need": ("need", "problem", "solution", "customers", "scale", "growth", "automation"), "commercial": ("pricing", "plans", "enterprise", "contact sales", "budget")}
     for page in pages:
         if page.get("status") != "collected":
             continue
@@ -191,7 +227,7 @@ def _classify(pages: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
 
 
 def research_public_web(lead: Mapping[str, Any]) -> Dict[str, Any]:
-    """Collect bounded public evidence only from the company's verified domain inputs."""
+    """Collect bounded public evidence only from the company's public, globally routable domain inputs."""
     urls = _candidate_urls(lead)
     pages = []
     for url in urls:
