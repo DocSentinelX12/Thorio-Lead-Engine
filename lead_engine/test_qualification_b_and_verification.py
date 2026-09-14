@@ -25,14 +25,46 @@ def _primary_lead():
             "decision_maker_verification_status": "verified",
             "decision_maker_email": "alex@example.com",
         },
+        "business_need_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "business_need": "Acme is hiring software engineers",
+            "observed_at": now,
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "Acme is hiring software engineers",
+            "observed_at": now,
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {
+                "Thorio": {
+                    "verified": True,
+                    "verification_status": "verified",
+                    "evidence": "Acme has a current software engineering hiring need suitable for Thorio."
+                },
+                "Shiftr": {
+                    "verified": False,
+                    "evidence": ""
+                },
+                "Paxus": {
+                    "verified": False,
+                    "evidence": ""
+                },
+            },
+        },
         "potential_routes": ["Thorio"],
         "qualification_results": {
             "Thorio": {
                 "qualified": True,
                 "category_score": 1,
                 "matched_category": True,
-                "current_need": {"qualified": True, "observed_at": now},
+                "current_need": {"qualified": True, "observed_at": now, "evidence": "Acme is hiring software engineers"},
                 "recent_inquiry": {"qualified": False, "observed_at": None},
+                "route_research": {"verified": True, "evidence": "Acme has a current software engineering hiring need suitable for Thorio."},
             }
         },
         "qualification_review_stage": "primary",
@@ -53,7 +85,8 @@ def test_qualification_b_rejects_tampered_primary_route_claim():
     result = apply_company_qualification(lead)
     assert result["qualification_review_stage"] == "validated"
     assert result["qualified"] is False
-    assert "Thorio:category_evidence_failed" in result["qualification_b_result"]["disagreements"]
+    assert "Thorio:category_evidence_failed" not in result["qualification_b_result"]["disagreements"]
+    assert "Thorio:primary_claim_not_qualified" in result["qualification_b_result"]["disagreements"]
 
 
 def test_verification_does_not_promote_role_evidence_and_email_to_verified():
