@@ -70,12 +70,13 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
         result["lead"] = stored
         result["research_sync"] = research_sync_result
 
-    verified_research = (ctx.db.get(fingerprint) or lead).get("company_research")
+    verified_lead = ctx.db.get(fingerprint) or lead
+    verified_research = verified_lead.get("company_research")
     company_verified = isinstance(verified_research, Mapping) and verified_research.get("company_verified") is True
     dm_verified = isinstance(verified_research, Mapping) and bool(verified_research.get("decision_maker")) and bool(verified_research.get("decision_maker_evidence")) and str(verified_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"
-    research_complete = str((ctx.db.get(fingerprint) or lead).get("research_status") or "").strip().lower() == "complete"
+    research_complete = str(verified_lead.get("research_status") or "").strip().lower() == "complete"
     if result.get("verified") is True and research_complete and company_verified and dm_verified:
-        enqueue(ctx.db, "routing", {"lead": ctx.db.get(fingerprint) or lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}")
+        enqueue(ctx.db, "routing", {"lead": verified_lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}")
         result["handoff"] = "routing"
     elif result.get("decision_maker_verification") == "verified":
         result["handoff"] = "qualification_a"
@@ -111,7 +112,6 @@ def _has_verified_need(lead: Mapping[str, Any]) -> bool:
 
 
 def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any], integrity_result: Mapping[str, Any], db: Any = None) -> tuple[bool, str]:
-    """Determine whether a verified opportunity may enter autonomous sales execution."""
     destinations = routing_result.get("destinations")
     if not isinstance(destinations, list) or not destinations:
         return False, "no_supported_revenue_route"
@@ -119,6 +119,8 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
         return False, "routing_requires_review"
     if lead.get("qualified") is not True:
         return False, "not_qualified"
+    if not str(lead.get("business_need") or "").strip():
+        return False, "missing_exact_opportunity"
     if not _has_verified_need(lead):
         return False, "missing_verified_researched_need"
     if db is not None:
