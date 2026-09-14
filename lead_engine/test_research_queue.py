@@ -7,7 +7,7 @@ from .research_queue import process_paxus_research_queue, queue_paxus_research
 NOW = datetime.now(timezone.utc).isoformat()
 
 
-def _lead(fingerprint="paxus-1", **extra):
+def _lead(fingerprint="paxus-1", verified_dm=False, **extra):
     lead = {
         "fingerprint": fingerprint,
         "company": "ExampleCo",
@@ -15,7 +15,37 @@ def _lead(fingerprint="paxus-1", **extra):
         "evidence": "The company is seeking technology recruitment support.",
         "need_at": NOW,
         "discovered_at": NOW,
+        "research_status": "complete",
+        "company_research": {
+            "company_verified": True,
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "The company is seeking technology recruitment support.",
+            "observed_at": NOW,
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {
+                "Paxus": {
+                    "verified": True,
+                    "verification_status": "verified",
+                    "evidence": "The company has a current technology recruitment need suitable for Paxus.",
+                },
+                "Thorio": {"verified": False, "evidence": ""},
+                "Shiftr": {"verified": False, "evidence": ""},
+            },
+        },
     }
+    if verified_dm:
+        lead["company_research"].update({
+            "decision_maker": "Jane Doe",
+            "decision_maker_evidence": "https://example.com/jane",
+            "decision_maker_verification_status": "verified",
+            "decision_maker_email": "jane@example.com",
+        })
     lead.update(extra)
     return lead
 
@@ -41,7 +71,7 @@ def test_queue_retains_paxus_qualified_lead_for_missing_research(tmp_path):
 def test_queue_does_not_treat_missing_communication_or_consent_as_research_pass(tmp_path):
     db = LeadDB(data_dir=str(tmp_path))
     try:
-        lead = _lead(contact_name="Jane Doe")
+        lead = _lead(contact_name="Jane Doe", verified_dm=True)
         db.insert_if_new(lead)
 
         result = queue_paxus_research(db, lead)
@@ -58,7 +88,7 @@ def test_queue_does_not_treat_missing_communication_or_consent_as_research_pass(
 def test_research_queue_promotes_when_all_existing_gates_become_present(tmp_path):
     db = LeadDB(data_dir=str(tmp_path))
     try:
-        lead = _lead(fingerprint="paxus-2")
+        lead = _lead(fingerprint="paxus-2", verified_dm=True)
         db.insert_if_new(lead)
         queue_paxus_research(db, lead)
 
@@ -88,6 +118,7 @@ def test_research_retry_preserves_missing_items_and_never_fakes_consent(tmp_path
         lead = _lead(
             fingerprint="paxus-3",
             contact_name="Jane Doe",
+            verified_dm=True,
         )
         db.insert_if_new(lead)
         queue_paxus_research(db, lead)
