@@ -68,13 +68,23 @@ def _section_verified(section: Dict[str, Any]) -> bool:
 
 def _verified_research_text(lead: Dict[str, Any]) -> str:
     sections = _research_sections(lead)
-    verified_parts = []
-    for section in sections.values():
+    verified_parts: list[str] = []
+    for key, section in sections.items():
         if _section_verified(section):
-            for key in ("business_need", "current_need", "recent_inquiry", "need", "service_need", "requirement", "role", "description"):
-                value = section.get(key)
+            for field in ("business_need", "current_need", "recent_inquiry", "need", "service_need", "requirement", "role", "description", "intent"):
+                value = section.get(field)
                 if isinstance(value, str) and value.strip():
                     verified_parts.append(value.strip())
+            if key == "route_research":
+                routes = section.get("routes")
+                if isinstance(routes, dict):
+                    for route_item in routes.values():
+                        if not isinstance(route_item, dict) or not _section_verified(route_item):
+                            continue
+                        for field in ("evidence", "business_need", "current_need", "need", "service_need", "requirement", "description"):
+                            value = route_item.get(field)
+                            if isinstance(value, str) and value.strip():
+                                verified_parts.append(value.strip())
     return " ".join(verified_parts)
 
 
@@ -111,7 +121,8 @@ def _route_research(lead: Dict[str, Any], route: str) -> Dict[str, Any]:
         verified = _section_verified(route_item)
         evidence = str(route_item.get("evidence") or route_item.get("business_need") or route_item.get("need") or "").strip()
         return {"verified": verified and bool(evidence), "evidence": evidence, "reason": f"{route} route research verified." if verified and evidence else f"{route} route research is incomplete."}
-    return {"verified": True, "evidence": str(section.get("evidence") or section.get("business_need") or "").strip(), "reason": "Route research section verified."} if str(section.get("route") or "").strip() == route and _section_verified(section) else {"verified": False, "evidence": "", "reason": f"{route} route research is not explicitly verified."}
+    evidence = str(section.get("evidence") or section.get("business_need") or "").strip()
+    return {"verified": True, "evidence": evidence, "reason": "Route research section verified."} if str(section.get("route") or "").strip() == route and _section_verified(section) and evidence else {"verified": False, "evidence": "", "reason": f"{route} route research is not explicitly verified."}
 
 
 def _paxus_referral_checks(lead: Dict[str, Any], paxus_qualified: bool) -> Dict[str, Any]:
@@ -150,7 +161,7 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
             category_score = max(category_score, 1)
         route_research = _route_research(lead, route)
         qualified = category_score > 0 and intent["qualified"] and route_research["verified"]
-        results[route] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": intent, "recent_inquiry": intent, "route_research": route_research, "reason": "Verified research supports this route and recent intent." if qualified else "Route-specific verified research and recent intent are incomplete." , "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
+        results[route] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": intent, "recent_inquiry": intent, "route_research": route_research, "reason": "Verified research supports this route and recent intent." if qualified else "Route-specific verified research and recent intent are incomplete.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
     paxus = results["Paxus"]
     paxus_referral = _paxus_referral_checks(lead, paxus["qualified"])
     paxus["true_referral"] = paxus_referral["passed"]
@@ -189,6 +200,8 @@ def _independent_review(lead: Dict[str, Any]) -> Dict[str, Any]:
     independent = []
     disagreements = []
     checked = []
+    research_text = _verified_research_text(lead)
+    independent_scores = score_routes(company=str(lead.get("company") or ""), signal=research_text, evidence=research_text) if research_text else {}
     for route in [str(item) for item in lead.get("potential_routes", []) if str(item).strip()]:
         checked.append(route)
         result = prior.get(route)
@@ -202,6 +215,12 @@ def _independent_review(lead: Dict[str, Any]) -> Dict[str, Any]:
         intent = result.get("current_need") if isinstance(result.get("current_need"), dict) else {}
         if not (intent.get("qualified") is True and intent.get("observed_at") and intent.get("evidence")):
             disagreements.append(f"{route}:intent_research_not_verified")
+            continue
+        independent_category_score = int(independent_scores.get(route, 0) or 0)
+        if route == "Shiftr" and SHIFTR_SERVICE_NEED_CONTEXT.search(research_text):
+            independent_category_score = max(independent_category_score, 1)
+        if independent_category_score <= 0:
+            disagreements.append(f"{route}:category_evidence_failed")
             continue
         independent.append(route)
     return {"qualified_companies": independent, "disagreements": disagreements, "checked_routes": checked}
