@@ -50,13 +50,15 @@ def _verified_research_mapping(lead: Mapping[str, Any], key: str) -> Mapping[str
     value = lead.get(key)
     return value if isinstance(value, Mapping) else {}
 
-def _verified_buying_signal(lead: Mapping[str, Any]) -> str:
-    """Return only an explicitly verified researched need or intent.
+def _research_ref(mapping: Mapping[str, Any]) -> str:
+    for key in ("evidence_url", "source_url", "evidence_ref", "source_id"):
+        ref = _text(mapping.get(key))
+        if ref:
+            return ref
+    return ""
 
-    Raw lead signal/evidence is deliberately excluded. A populated research
-    mapping is not sufficient by itself: the lead must explicitly list the
-    corresponding research key as verified.
-    """
+def _verified_buying_signal(lead: Mapping[str, Any]) -> str:
+    """Return only an explicitly verified researched need or intent with provenance."""
     verified = lead.get("research_verified_fields")
     verified_set = {str(item).strip() for item in verified} if isinstance(verified, (list, tuple, set)) else set()
     candidates = (
@@ -70,25 +72,26 @@ def _verified_buying_signal(lead: Mapping[str, Any]) -> str:
             continue
         research = _verified_research_mapping(lead, mapping_key)
         value = _text(research.get(field))
-        if value:
+        if value and _research_ref(research):
             return value
-    raise OutreachContractError("A current need or recent inquiry must be explicitly researched and verified before outreach")
+    raise OutreachContractError("A current need or recent inquiry must be explicitly researched, verified, and backed by provenance before outreach")
 
 def _evidence_refs(lead: Mapping[str, Any]) -> tuple[str, ...]:
     refs: list[str] = []
     research = _research(lead)
     for key in ("decision_maker_evidence", "company_verification_evidence"):
-        ref = _text(research.get(key))
-        if ref:
-            refs.append(ref)
-    for mapping_key in ("current_intent_research", "business_need_research", "route_research"):
-        mapping = _verified_research_mapping(lead, mapping_key)
-        for key in ("evidence_url", "source_url", "evidence_ref", "source_id"):
-            ref = _text(mapping.get(key))
+        value = research.get(key)
+        if isinstance(value, (list, tuple)):
+            refs.extend(_text(item) for item in value if _text(item))
+        else:
+            ref = _text(value)
             if ref:
                 refs.append(ref)
-    # Evidence events are retained as provenance, but only after the research
-    # contract has already been satisfied. They never establish qualification.
+    for mapping_key in ("current_intent_research", "business_need_research", "route_research"):
+        mapping = _verified_research_mapping(lead, mapping_key)
+        ref = _research_ref(mapping)
+        if ref:
+            refs.append(ref)
     for event in lead.get("evidence_events", []) if isinstance(lead.get("evidence_events"), list) else []:
         if isinstance(event, Mapping):
             ref = _text(event.get("source_url") or event.get("url") or event.get("source_id"))
@@ -122,8 +125,7 @@ def _subject(route: str, signal: str) -> str:
     return f"Re: {short}" if short else f"A possible fit for {route}"
 
 def _humanize_signal(signal: str) -> str:
-    text = signal.strip().rstrip(".!?")
-    return text
+    return signal.strip().rstrip(".!?")
 
 def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
     need = _humanize_signal(signal)
