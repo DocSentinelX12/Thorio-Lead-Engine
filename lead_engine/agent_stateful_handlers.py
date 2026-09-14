@@ -77,24 +77,8 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
     decision_maker_role_evidence = ""
     if isinstance(research, Mapping) and research.get("decision_maker"):
         current_status = str(research.get("decision_maker_verification_status") or "").strip().lower()
-        role_evidence = str(
-            research.get("decision_maker_role_evidence")
-            or research.get("decision_maker_title")
-            or research.get("job_title")
-            or lead.get("decision_maker_role_evidence")
-            or lead.get("job_title")
-            or ""
-        ).strip()
-        contact_email = str(
-            research.get("decision_maker_email")
-            or lead.get("contact_email")
-            or ""
-        ).strip()
         if current_status == "verified":
             decision_maker_verification = "verified"
-        elif role_evidence and contact_email:
-            decision_maker_verification = "verified"
-            decision_maker_role_evidence = role_evidence
         else:
             decision_maker_verification = "observed_needs_role_verification"
 
