@@ -99,6 +99,34 @@ class AgentOrchestrator:
             limit=1,
         )
 
+    def _preserve_priority_handoff(self, role_name: str, results: List[Dict[str, Any]]) -> None:
+        """Preserve the production priority -> verification dependency.
+
+        The dedicated priority specialist is intentionally state-only, so the
+        dependency handoff lives at orchestration level rather than allowing a
+        priority result to strand an otherwise verified opportunity. The
+        verification task is deduplicated by LeadDB queue semantics.
+        """
+        if role_name != "priority":
+            return
+        for result in results:
+            if int(result.get("completed_count", 0) or 0) <= 0:
+                continue
+            for payload_result in result.get("results", []):
+                lead = payload_result.get("lead") if isinstance(payload_result, Mapping) else None
+                if not isinstance(lead, Mapping):
+                    continue
+                fingerprint = str(lead.get("fingerprint") or "").strip()
+                if not fingerprint:
+                    continue
+                enqueue(
+                    self.db,
+                    "verification",
+                    {"lead": dict(lead), "evidence_events": payload_result.get("evidence_events", []) if isinstance(payload_result, Mapping) else []},
+                    priority=8,
+                    dedupe_key=f"verification:{fingerprint}",
+                )
+
     def run_all_once(self, *, limit_per_agent: int = 1, max_rounds: int | None = None) -> Dict[str, Any]:
         """Run specialist work in dependency rounds with bounded real concurrency.
 
@@ -145,6 +173,10 @@ class AgentOrchestrator:
                     futures = [executor.submit(self._run_role_slot, role_name, slot) for role_name, slot in jobs]
                     for future in as_completed(futures):
                         results.append(future.result())
+
+            for role_name, _slot in jobs:
+                role_results = [item for item in results if item.get("agent") == role_name]
+                self._preserve_priority_handoff(role_name, role_results)
 
             claimed = sum(int(item.get("claimed_count", 0) or 0) for item in results)
             completed = sum(int(item.get("completed_count", 0) or 0) for item in results)
