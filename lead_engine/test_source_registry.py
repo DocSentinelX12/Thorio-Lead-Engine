@@ -41,7 +41,7 @@ def test_free_source_catalog_preserves_historical_public_sources():
 
 def test_restored_historical_sources_use_explicit_working_collectors():
     definitions = {definition.name: definition for definition in _load_free_source_catalog()}
-    expected_types = {"NoDesk": "html", "Welcome to the Jungle": "html", "Remotive": "json", "Working Nomads": "json", "We Work Remotely": "rss", "Jobspresso": "rss", "Landing Jobs": "json", "EU Remote Jobs": "html", "WorkWave": "json", "AI Jobs": "html", "Total": "html", "FlexJobs": "html", "US Remotely": "html", "Rocketship": "json", "JobFill.AI": "html", "Remote Woman": "html", "Wellfound": "html"}
+    expected_types = {"NoDesk": "html", "Welcome to the Jungle": "html", "Remotive": "json", "Working Nomads": "json", "We Work Remotely": "rss", "Jobspresso": "rss", "Landing Jobs": "atom", "EU Remote Jobs": "html", "WorkWave": "json", "AI Jobs": "html", "Total": "html", "FlexJobs": "html", "US Remotely": "html", "Rocketship": "json", "JobFill.AI": "html", "Remote Woman": "html", "Wellfound": "html"}
     assert {name: definitions[name].collector_type for name in expected_types} == expected_types
 
 
