@@ -44,8 +44,8 @@ def test_configured_sources_includes_web_source():
 def test_free_source_catalog_has_exact_current_universe():
     catalog = _load_free_source_catalog()
 
-    assert len(catalog) == 43
-    assert len(available_free_sources()) == 43
+    assert len(catalog) == 41
+    assert len(available_free_sources()) == 41
     assert all(definition.enabled for definition in catalog)
     assert "EURES" not in available_free_sources()
 
@@ -150,11 +150,9 @@ def test_runtime_sources_use_effective_overridden_endpoints_and_types():
     definitions = {source.name: source for source in sources}
 
     assert definitions["US Remotely"].url == "https://www.usaremotework.com/jobs"
-    assert definitions["US Remotely"].collector_type == "html"
+    assert definitions["US Remotely"].adapter.collector_type == "html"
     assert definitions["Rocketship"].url == "https://remotelanders.com/api/jobs?limit=100&page=1"
-    assert definitions["Rocketship"].collector_type == "json"
-    assert definitions["Remote Landers"].url == "https://remotelanders.com/api/jobs?limit=100&page=1"
-    assert definitions["Remote Landers"].collector_type == "json"
+    assert definitions["Rocketship"].adapter.collector_type == "json"
 
 
 def test_free_source_catalog_supports_all_public_collector_types():
@@ -242,7 +240,7 @@ def test_free_source_catalog_preserves_company_metadata():
 def test_available_free_sources_returns_catalog_names():
     names = available_free_sources()
 
-    assert len(names) == 43
+    assert len(names) == 41
     assert "Himalayas" in names
     assert "Jobicy" in names
     assert "RemoteJobs.org" in names
@@ -264,7 +262,7 @@ def test_configured_sources_loads_all_free_sources():
     ):
         sources = configured_sources()
 
-    assert len(sources) == 43
+    assert len(sources) == 41
 
     names = {
         source.name
