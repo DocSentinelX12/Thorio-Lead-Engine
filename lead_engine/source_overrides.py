@@ -122,7 +122,7 @@ _SOURCE_OVERRIDES = {
     },
     # Landing Jobs' JSON endpoint is currently blocked; use the public Atom feed.
     "Landing Jobs": {
-        "collector_type": "rss",
+        "collector_type": "atom",
         "url": "https://landing.jobs/feed",
         "pagination_type": "none",
         "max_pages": 1,
