@@ -25,6 +25,7 @@ jobs:
       LEAD_ENGINE_FREE_SOURCES_ENABLED: '1'
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: '12'
       THORIO_SOURCE_DIAGNOSTIC_WORKERS: '16'
+      PYTHONPATH: .
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
