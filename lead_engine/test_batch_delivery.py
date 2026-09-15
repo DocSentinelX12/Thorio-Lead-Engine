@@ -102,3 +102,31 @@ def test_batch_delivery_falls_back_to_single_record_sync_on_batch_failure(tmp_pa
     mock_single.assert_called_once_with(lead)
     mock_research.assert_called_once_with(lead)
     assert db.get_sync_state("batch-fallback-001")["synced"] is True
+
+
+def test_batch_delivery_preserves_large_unsynced_backlog_across_runs(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    total = 125
+    for index in range(total):
+        assert db.insert_if_new(_lead(f"durable-backlog-{index:03d}"))
+
+    with patch("lead_engine.batch_delivery._run_batch_high_volume_sync"), \
+         patch("lead_engine.batch_delivery.sync_outreach"), \
+         patch("lead_engine.batch_delivery.sync_followup"), \
+         patch("lead_engine.batch_delivery.sync_paxus_referral_state"), \
+         patch("lead_engine.batch_delivery.sync_commission", return_value=None), \
+         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}):
+        first = sync_pending_batched(db, limit=50)
+        assert first["synced_count"] == 50
+        assert first["failed_count"] == 0
+        assert len(db.pending(limit=1000)) == 75
+
+        second = sync_pending_batched(db, limit=50)
+        assert second["synced_count"] == 50
+        assert second["failed_count"] == 0
+        assert len(db.pending(limit=1000)) == 25
+
+        third = sync_pending_batched(db, limit=50)
+        assert third["synced_count"] == 25
+        assert third["failed_count"] == 0
+        assert db.pending(limit=1000) == []
