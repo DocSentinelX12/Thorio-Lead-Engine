@@ -2,8 +2,8 @@ from lead_engine.source_adapters import RssSourceAdapter, create_adapter
 from lead_engine.source_definition import SourceDefinition
 
 
-def test_landing_jobs_uses_verified_public_atom_feed(monkeypatch):
-    import lead_engine.source_adapters as source_adapters
+def test_landing_jobs_atom_adapter_parses_author_company(monkeypatch):
+    import lead_engine.source_specific_collectors as source_specific_collectors
 
     requests = []
 
@@ -20,7 +20,7 @@ def test_landing_jobs_uses_verified_public_atom_feed(monkeypatch):
           </entry>
         </feed>"""
 
-    monkeypatch.setattr(source_adapters, "fetch_url", fake_fetch)
+    monkeypatch.setattr(source_specific_collectors, "fetch_url", fake_fetch)
     definition = SourceDefinition(
         name="Landing Jobs",
         provider="Landing Jobs",
