@@ -27,6 +27,7 @@ _ACTIVE_SOURCES = {
 _EXPECTED_BROKEN_SOURCE_OVERRIDES = {
     "The Muse",
     "Remotive",
+    "Jobicy",
     "RemoteJobs.org",
     "Remote First Jobs",
     "Arbeitnow",
@@ -105,6 +106,21 @@ def test_historical_source_identities_use_verified_live_replacements():
 
     assert definitions["US Remotely"].url == "https://usremotely.com/"
     assert definitions["Rocketship"].url == "https://rocketship.fm/jobs"
+
+
+def test_jobicy_uses_public_rss_fallback():
+    catalog = _load_free_source_catalog()
+    jobicy = next(
+        definition
+        for definition in _apply_overrides(tuple(catalog))
+        if definition.name == "Jobicy"
+    )
+
+    assert jobicy.collector_type == "rss"
+    assert jobicy.url == "https://jobicy.com/jobs/feed"
+    assert jobicy.pagination_type == "none"
+    assert jobicy.max_pages == 1
+    assert jobicy.max_requests == 1
 
 
 def test_current_api_corrections_remove_stale_explicit_page_parameters():
