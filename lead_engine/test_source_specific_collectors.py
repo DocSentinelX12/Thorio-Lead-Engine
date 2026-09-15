@@ -70,8 +70,8 @@ def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
             "https://remotelanders.com/api/jobs?limit=100&page=1",
             collector_type="json",
         )
-        result = create_adapter(definition=definition, timeout=12).collect()
-        assert result == []
+        result = source_adapters.create_adapter(definition=definition, timeout=12).collect()
+        assert result.records == []
     assert requested == [
         "https://remotelanders.com/api/jobs?limit=100&page=1",
         "https://remotelanders.com/api/jobs?limit=100&page=1",
