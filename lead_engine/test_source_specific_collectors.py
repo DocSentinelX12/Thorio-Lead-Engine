@@ -122,7 +122,7 @@ def test_welcome_to_the_jungle_uses_current_algolia_query_shape(monkeypatch):
         max_records=100,
     )
     result = create_adapter(definition=definition, timeout=12).collect()
-    assert len(result.records) == 1
+    assert len(result) == 1
     algolia_request = requests[1]
     assert "/1/indexes/*/queries" in algolia_request.full_url
     assert algolia_request.headers["Content-type"] == "application/x-www-form-urlencoded"
