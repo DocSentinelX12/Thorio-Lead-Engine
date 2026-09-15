@@ -26,3 +26,14 @@ def test_paxus_true_referral_reaches_human_action():
     assert len(routed["Paxus"]) == 1
     assert routed["Review"] == []
     assert route_state(lead)["destinations"]["Paxus"]["state"] == "ready_for_human_action"
+
+
+def test_verified_qualified_route_reaches_handoff_without_raw_route_hint():
+    lead = {"fingerprint": "verified-route-without-hint", "qualification_results": {"Thorio": _route_result()}}
+    routed = route_leads([lead])
+    assert len(routed["Thorio"]) == 1
+    assert routed["Review"] == []
+    state = route_state(lead)
+    assert state["potential_routes"] == ["Thorio"]
+    assert state["final_routes"] == ["Thorio"]
+    assert state["destinations"]["Thorio"]["state"] == "ready_for_human_action"
