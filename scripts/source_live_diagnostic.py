@@ -40,8 +40,9 @@ def _collect_records(source, definition) -> tuple[list[Dict[str, Any]], int]:
 
 
 def probe(definition) -> Dict[str, Any]:
-    # One real request/page per source. This is intentionally non-destructive:
-    # no LeadDB, Airtable, queue, qualification, or outreach writes occur here.
+    # One real bounded collection request per source. This is intentionally
+    # non-destructive: no LeadDB, Airtable, queue, qualification, or outreach
+    # writes occur here.
     bounded = replace(
         definition,
         max_pages=1,
@@ -94,6 +95,7 @@ def probe(definition) -> Dict[str, Any]:
 
 def main() -> int:
     os.environ.setdefault("LEAD_ENGINE_FREE_SOURCES_ENABLED", "1")
+    os.environ["THORIO_SOURCE_DIAGNOSTIC"] = "1"
     catalog = _load_free_source_catalog()
     # Production does not collect the raw catalog verbatim. It applies the
     # same explicit source corrections used by configured_sources(). Probe the
@@ -137,7 +139,8 @@ def main() -> int:
     # Hard failure is reserved for transport/collector errors or records that
     # cannot be normalized despite the endpoint returning data.
     hard_failures = [
-        item for item in results
+        item
+        for item in results
         if item["status"] in {"ERROR", "LIVE_RAW_BUT_NOT_NORMALIZABLE"}
     ]
     if hard_failures:
