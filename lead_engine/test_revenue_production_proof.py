@@ -27,3 +27,5 @@ def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportu
         record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=stored["conversation_id"], event_id="response-1", text="Yes, let's talk", outcome="interested"); second = _drain(orchestrator); stored = db.get(lead["fingerprint"]); assert second["failed_count"] == 0, second; assert len(transport.calls) == 2; assert "following up" in str(transport.calls[1].get("body", "")).lower(), _proof_debug(db, stored, second, transport); assert stored["revenue_lifecycle_state"] == "conversation_active" and stored["outreach_state"] == "awaiting_response" and stored["follow_up_due"] is True and stored["next_follow_up_at"]
         orphaned = [candidate["fingerprint"] for candidate in db.all_leads() if candidate.get("qualified") is True and candidate.get("sales_eligibility") == "eligible" and not candidate.get("conversation_id")]; assert orphaned == []
     finally: register_revenue_transport(None); db.close()
+
+# CI refresh: execute the current branch head, not the older pull-request merge commit.
