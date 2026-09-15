@@ -7,6 +7,7 @@ from .source_registry import (
     available_free_sources,
     configured_sources,
 )
+from .source_adapters import JsonSourceAdapter
 
 
 def test_configured_sources_empty_when_unconfigured():
@@ -50,9 +51,10 @@ def test_runtime_sources_use_effective_overridden_endpoints_and_types():
         sources = configured_sources()
     definitions = {source.name: source for source in sources}
     assert definitions["US Remotely"].url == "https://www.usaremotework.com/jobs"
-    assert definitions["US Remotely"].collector_type == "html"
+    assert type(definitions["US Remotely"]).__name__ == "_DetailAdapter"
     assert definitions["Rocketship"].url == "https://remotelanders.com/api/jobs?limit=100&page=1"
-    assert definitions["Rocketship"].collector_type == "json"
+    assert isinstance(definitions["Rocketship"], JsonSourceAdapter)
+    assert definitions["Rocketship"].definition.collector_type == "json"
 
 
 def test_free_source_catalog_supports_all_public_collector_types():
