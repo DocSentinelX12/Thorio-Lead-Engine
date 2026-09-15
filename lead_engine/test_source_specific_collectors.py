@@ -4,11 +4,11 @@ from lead_engine.source_adapters import create_adapter
 from lead_engine.source_definition import SourceDefinition
 
 
-def _definition(name: str, url: str) -> SourceDefinition:
+def _definition(name: str, url: str, collector_type: str = "html") -> SourceDefinition:
     return SourceDefinition(
         name=name,
         provider=name,
-        collector_type="html",
+        collector_type=collector_type,
         url=url,
         pagination_type="none",
         max_pages=1,
@@ -68,6 +68,32 @@ def test_renamed_html_detail_sources_keep_their_specialized_adapter(monkeypatch)
     assert requested == [
         "https://www.usaremotework.com/jobs",
         "https://remotelanders.com/jobs",
+    ]
+
+
+def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
+    import lead_engine.source_specific_collectors as collectors
+
+    requested = []
+
+    def fake_fetch(request, timeout):
+        requested.append(request.full_url)
+        return b'{"jobs": []}'
+
+    monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
+
+    for name, url in (
+        ("Rocketship", "https://remotelanders.com/api/jobs?limit=100&page=1"),
+        ("Remote Landers", "https://remotelanders.com/api/jobs?limit=100&page=1"),
+    ):
+        definition = _definition(name, url, collector_type="json")
+        adapter = create_adapter(definition=definition, timeout=12)
+        result = adapter.collect()
+        assert result.records == []
+
+    assert requested == [
+        "https://remotelanders.com/api/jobs?limit=100&page=1",
+        "https://remotelanders.com/api/jobs?limit=100&page=1",
     ]
 
 
