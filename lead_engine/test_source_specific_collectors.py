@@ -1,3 +1,5 @@
+import json
+
 from lead_engine.source_adapters import create_adapter
 from lead_engine.source_definition import SourceDefinition
 
@@ -67,3 +69,60 @@ def test_renamed_html_detail_sources_keep_their_specialized_adapter(monkeypatch)
         "https://www.usaremotework.com/jobs",
         "https://remotelanders.com/jobs",
     ]
+
+
+def test_welcome_to_the_jungle_extracts_credentials_from_javascript_env():
+    from lead_engine.source_specific_collectors import _extract_algolia_credentials
+
+    raw = b'window.__ENV__={"algoliaApplicationId":"CSEKHVMS53","algoliaSearchApiKey":"0123456789abcdef0123456789abcdef"};'
+
+    assert _extract_algolia_credentials(raw) == (
+        "CSEKHVMS53",
+        "0123456789abcdef0123456789abcdef",
+    )
+
+
+def test_welcome_to_the_jungle_uses_current_algolia_query_shape(monkeypatch):
+    import lead_engine.source_specific_collectors as collectors
+
+    requests = []
+
+    def fake_fetch(request, timeout):
+        requests.append(request)
+        if request.full_url.endswith("/api/env"):
+            return b'window.__ENV__={"algoliaApplicationId":"CSEKHVMS53","algoliaSearchApiKey":"0123456789abcdef0123456789abcdef"};'
+        return json.dumps({
+            "results": [{
+                "hits": [{
+                    "objectID": "job-1",
+                    "name": "Senior Software Engineer",
+                    "organization": {"name": "Example Co", "slug": "example-co"},
+                    "slug": "senior-software-engineer",
+                    "descriptions": {"en": "Build software."},
+                    "office": {"city": "Remote"},
+                }]
+            }]
+        }).encode("utf-8")
+
+    monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
+
+    definition = SourceDefinition(
+        name="Welcome to the Jungle",
+        provider="Welcome to the Jungle",
+        collector_type="json",
+        url="https://www.welcometothejungle.com/en/pages/jobs",
+        pagination_type="none",
+        max_pages=1,
+        max_requests=1,
+        max_records=100,
+    )
+    adapter = create_adapter(definition=definition, timeout=12)
+    result = adapter.collect()
+
+    assert len(result.records) == 1
+    algolia_request = requests[1]
+    assert "/1/indexes/*/queries" in algolia_request.full_url
+    assert algolia_request.headers["Content-type"] == "application/x-www-form-urlencoded"
+    body = json.loads(algolia_request.data.decode("utf-8"))
+    assert body["requests"][0]["indexName"] == "wk_cms_jobs_production"
+    assert "hitsPerPage=100" in body["requests"][0]["params"]
