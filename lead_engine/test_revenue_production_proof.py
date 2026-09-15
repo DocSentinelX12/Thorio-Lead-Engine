@@ -28,4 +28,4 @@ def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportu
         orphaned = [candidate["fingerprint"] for candidate in db.all_leads() if candidate.get("qualified") is True and candidate.get("sales_eligibility") == "eligible" and not candidate.get("conversation_id")]; assert orphaned == []
     finally: register_revenue_transport(None); db.close()
 
-# Diagnostic refresh for the reopened verification run.
+# Diagnostic refresh: force CI to evaluate this exact branch head.
