@@ -8,6 +8,7 @@ from dataclasses import replace
 from typing import Any, Dict
 
 from lead_engine.source_adapters import AdapterResult, create_adapter, normalize_job_record
+from lead_engine.source_overrides import _apply_overrides
 from lead_engine.source_registry import _load_free_source_catalog
 
 
@@ -94,7 +95,15 @@ def probe(definition) -> Dict[str, Any]:
 def main() -> int:
     os.environ.setdefault("LEAD_ENGINE_FREE_SOURCES_ENABLED", "1")
     catalog = _load_free_source_catalog()
-    definitions = [item for item in catalog if item.enabled and item.allowed_for_thorio]
+    # Production does not collect the raw catalog verbatim. It applies the
+    # same explicit source corrections used by configured_sources(). Probe the
+    # effective definitions so this diagnostic cannot report stale historical
+    # endpoints as production failures.
+    definitions = [
+        item
+        for item in _apply_overrides(tuple(catalog))
+        if item.enabled and item.allowed_for_thorio
+    ]
 
     results = []
     with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, max(1, len(definitions))), thread_name_prefix="source-probe") as executor:
@@ -113,7 +122,7 @@ def main() -> int:
         "catalog_source_count": len(definitions),
         "probe_workers": MAX_WORKERS,
         "per_source_timeout_seconds": TIMEOUT,
-        "request_scope": "one real bounded collection request per enabled free source; no persistence or downstream writes",
+        "request_scope": "one real bounded collection request per enabled free source using effective production source corrections; no persistence or downstream writes",
         "status_counts": counts,
         "results": results,
     }
