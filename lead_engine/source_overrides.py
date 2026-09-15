@@ -120,7 +120,7 @@ _SOURCE_OVERRIDES = {
         "max_requests": 1,
         "max_records": 500,
     },
-    # Landing Jobs' JSON endpoint is blocked; use the documented public Atom feed.
+    # Landing Jobs is preserved as a historical source identity. Its public Atom feed currently returns HTTP 403 from CI, so it is not allowed for Thorio until a live endpoint is verified.
     "Landing Jobs": {
         "collector_type": "atom",
         "url": "https://landing.jobs/feed?remote=true",
@@ -128,6 +128,7 @@ _SOURCE_OVERRIDES = {
         "max_pages": 1,
         "max_requests": 1,
         "max_records": 55,
+        "allowed_for_thorio": False,
     },
     "WorkWave": {
         "collector_type": "json",
@@ -218,39 +219,12 @@ def _apply_overrides(
             continue
 
         values = dict(override)
-        metadata = values.get("metadata")
-        if metadata is not None:
-            values["metadata"] = {
-                **definition.metadata,
-                **metadata,
-            }
-
-        # Historical source names remain stable for existing records, but
-        # their runtime collection endpoint is corrected to the verified live
-        # replacement. The current replacement source remains independently
-        # present in the catalog when it has its own public identity.
+        if "metadata" in values:
+            values["metadata"] = {**definition.metadata, **values["metadata"]}
         updated.append(replace(definition, **values))
 
     return tuple(updated)
 
 
-def install() -> None:
-    """Apply only explicit, source-specific configuration corrections."""
-    from . import source_registry
-
-    original: Callable[[], Tuple[SourceDefinition, ...]] = (
-        source_registry._load_free_source_catalog
-    )
-
-    if getattr(original, "_thorio_source_overrides", False):
-        return
-
-    def patched() -> Tuple[SourceDefinition, ...]:
-        return tuple(
-            definition
-            for definition in _apply_overrides(original())
-            if definition.enabled and definition.allowed_for_thorio
-        )
-
-    patched._thorio_source_overrides = True
-    source_registry._load_free_source_catalog = patched
+def apply_source_overrides(definitions: Tuple[SourceDefinition, ...]) -> Tuple[SourceDefinition, ...]:
+    return _apply_overrides(definitions)
