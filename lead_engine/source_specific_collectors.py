@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from html import unescape
 from html.parser import HTMLParser
@@ -84,7 +85,7 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
             continue
         if any(hint in link.lower() for hint in source_hints):
             candidates.append(link)
-        if len(candidates) >= 40:
+        if len(candidates) >= (1 if os.environ.get("THORIO_SOURCE_DIAGNOSTIC") == "1" else 40):
             break
     records: Dict[str, Dict[str, Any]] = {}
     for link in candidates:
