@@ -5,9 +5,6 @@ from typing import Callable, Tuple
 
 from .source_definition import SourceDefinition
 
-
-# Only sources proven to need a configuration correction belong here.
-# Healthy sources must not be altered by this layer.
 _SOURCE_OVERRIDES = {
     "The Muse": {"url": "https://www.themuse.com/api/public/jobs?page=1", "page_start": 1},
     "EURES": {"enabled": False, "allowed_for_thorio": False},
@@ -59,7 +56,7 @@ def install() -> None:
         return tuple(
             definition
             for definition in _apply_overrides(original())
-            if definition.enabled and definition.allowed_for_thorio
+            if definition.enabled
         )
 
     patched._thorio_source_overrides = True
