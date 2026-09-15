@@ -50,6 +50,25 @@ def _validate_task_authorization(agent: str, payload: Mapping[str, Any]) -> None
         raise ValueError("follow_up tasks require authorization by high_ticket_sales_closer")
 
 
+def _verification_stage(payload: Mapping[str, Any]) -> str:
+    """Return the qualification state that a verification task is evaluating.
+
+    Verification is stage-sensitive. A verification task created before final
+    qualification must not suppress a later verification task created after an
+    independent qualification result becomes available.
+    """
+    lead = payload.get("lead", payload)
+    if not isinstance(lead, Mapping):
+        return ""
+    return str(lead.get("qualification_review_stage") or "").strip().lower()
+
+
+def _same_verification_stage(existing: Mapping[str, Any], incoming: Mapping[str, Any]) -> bool:
+    if existing.get("agent") != "verification":
+        return True
+    return _verification_stage(existing.get("payload") or {}) == _verification_stage(incoming)
+
+
 def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     """Enqueue specialist tasks with durable per-row persistence."""
     if not isinstance(tasks, list):
@@ -69,7 +88,9 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
             agent = specification.get("agent"); payload = specification.get("payload"); priority = specification.get("priority", 0); dedupe_key = specification.get("dedupe_key")
             duplicate_row = db.queue_find_duplicate(agent, dedupe_key) if dedupe_key else None
             if duplicate_row is not None:
-                created.append(_row_to_task(duplicate_row)); continue
+                duplicate_task = _row_to_task(duplicate_row)
+                if not (agent == "verification" and not _same_verification_stage(duplicate_task, {"agent": agent, "payload": payload})):
+                    created.append(duplicate_task); continue
             task = {"task_id": uuid4().hex, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
             rows.append((task["task_id"], task["agent"], task["queue"], task["status"], task["priority"], json.dumps(task["payload"], ensure_ascii=False), task["dedupe_key"], task["created_at"], task["updated_at"], task["attempts"], task["lease_until"], task["worker_id"], task["last_error"], None))
             created.append(task)
@@ -81,7 +102,9 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
         agent = specification.get("agent"); payload = specification.get("payload"); priority = specification.get("priority", 0); dedupe_key = specification.get("dedupe_key")
         if dedupe_key:
             duplicate = next((existing for existing in existing_items.values() if existing.get("agent") == agent and existing.get("dedupe_key") == dedupe_key and existing.get("status") in {QUEUED, RUNNING}), None)
-            if duplicate is not None: created.append(dict(duplicate)); continue
+            if duplicate is not None:
+                if not (agent == "verification" and not _same_verification_stage(duplicate, {"agent": agent, "payload": payload})):
+                    created.append(dict(duplicate)); continue
         task_id = uuid4().hex
         task = {"task_id": task_id, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
         existing_items[task_id] = task; created.append(dict(task))
@@ -109,7 +132,7 @@ def claim_task(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) ->
     if not worker_id: raise ValueError("worker_id is required")
     if lease_seconds <= 0: raise ValueError("lease_seconds must be positive")
     if _queue_db(db):
-        row = db.queue_get(task_id); task = _row_to_task(row)
+        task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
         if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
         _validate_task_authorization(task["agent"], task.get("payload") or {})
