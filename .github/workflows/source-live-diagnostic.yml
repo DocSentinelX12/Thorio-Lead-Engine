@@ -9,6 +9,7 @@ on:
       - 'lead_engine/source_definition.py'
       - 'lead_engine/source_registry.py'
       - 'lead_engine/source_specific_collectors.py'
+      - 'lead_engine/source_overrides.py'
       - 'scripts/source_live_diagnostic.py'
       - '.github/workflows/source-live-diagnostic.yml'
   workflow_dispatch:
