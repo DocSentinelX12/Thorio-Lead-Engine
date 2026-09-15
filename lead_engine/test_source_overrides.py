@@ -84,6 +84,29 @@ def test_live_replacements_use_verified_current_endpoints():
     assert usa_remote_work.collector_type == "html"
 
 
+def test_historical_source_identities_use_verified_live_replacements():
+    catalog = _load_free_source_catalog()
+    definitions = {definition.name: definition for definition in catalog}
+    overridden = {definition.name: definition for definition in _apply_overrides(tuple(catalog))}
+
+    us_remotely = overridden["US Remotely"]
+    assert us_remotely.name == "US Remotely"
+    assert us_remotely.provider == "USA Remote Work"
+    assert us_remotely.url == "https://www.usaremotework.com/jobs"
+    assert us_remotely.collector_type == "html"
+
+    rocketship = overridden["Rocketship"]
+    assert rocketship.name == "Rocketship"
+    assert rocketship.provider == "Remote Landers"
+    assert rocketship.url == "https://remotelanders.com/api/jobs?limit=100&page=1"
+    assert rocketship.collector_type == "json"
+    assert rocketship.record_path == "jobs"
+    assert rocketship.url_field == "applyUrl"
+
+    assert definitions["US Remotely"].url == "https://usremotely.com/"
+    assert definitions["Rocketship"].url == "https://rocketship.fm/jobs"
+
+
 def test_current_api_corrections_remove_stale_explicit_page_parameters():
     catalog = _load_free_source_catalog()
     definitions = {definition.name: definition for definition in catalog}
@@ -105,7 +128,7 @@ def test_current_api_corrections_remove_stale_explicit_page_parameters():
     assert nomado24.url == "https://api.nomado24.de/api/public/v1/jobs?per_page=100&language=en"
 
     landing_jobs = definitions["Landing Jobs"]
-    assert landing_jobs.url == "https://landing.jobs/api/v1/jobs.json"
+    assert landing_jobs.url == "https://landing.jobs/api/v1/jobs"
 
 
 def test_remotive_uses_current_jobs_api():
