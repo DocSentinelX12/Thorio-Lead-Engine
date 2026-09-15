@@ -10,8 +10,8 @@ from .source_definition import SourceDefinition
 # Healthy sources must not be altered by this layer.
 _SOURCE_OVERRIDES = {
     "The Muse": {
-        "url": "https://www.themuse.com/api/public/jobs?page=1",
-        "page_start": 1,
+        "url": "https://www.themuse.com/api/public/jobs?page=0",
+        "page_start": 0,
     },
     "EURES": {
         "enabled": False,
