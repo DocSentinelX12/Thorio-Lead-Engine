@@ -125,7 +125,7 @@ def test_restored_historical_sources_use_explicit_working_collectors():
         "Total": "html",
         "FlexJobs": "html",
         "US Remotely": "html",
-        "Rocketship": "html",
+        "Rocketship": "json",
         "JobFill.AI": "html",
         "Remote Woman": "html",
         "Wellfound": "html",
@@ -135,6 +135,26 @@ def test_restored_historical_sources_use_explicit_working_collectors():
         name: definitions[name].collector_type
         for name in expected_types
     } == expected_types
+
+
+def test_runtime_sources_use_effective_overridden_endpoints_and_types():
+    with patch.dict(
+        "os.environ",
+        {
+            "LEAD_ENGINE_FREE_SOURCES_ENABLED": "true",
+        },
+        clear=True,
+    ):
+        sources = configured_sources()
+
+    definitions = {source.name: source for source in sources}
+
+    assert definitions["US Remotely"].url == "https://www.usaremotework.com/jobs"
+    assert definitions["US Remotely"].collector_type == "html"
+    assert definitions["Rocketship"].url == "https://remotelanders.com/api/jobs?limit=100&page=1"
+    assert definitions["Rocketship"].collector_type == "json"
+    assert definitions["Remote Landers"].url == "https://remotelanders.com/api/jobs?limit=100&page=1"
+    assert definitions["Remote Landers"].collector_type == "json"
 
 
 def test_free_source_catalog_supports_all_public_collector_types():
