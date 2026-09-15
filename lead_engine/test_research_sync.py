@@ -1,6 +1,6 @@
 import json
 
-from .research_sync import _research_payload, sync_research
+from .research_sync import _research_payload, _research_table_url, sync_research
 
 
 def test_research_payload_preserves_research_and_raw_lead():
@@ -30,6 +30,12 @@ def test_research_payload_preserves_research_and_raw_lead():
     assert json.loads(fields["Evidence and Provenance"])[0]["source"] == "https://example.com"
     raw = json.loads(fields["Raw Research Package"])
     assert raw["unknown_field"] == "must survive in raw package"
+
+
+def test_research_table_url_uses_dedicated_research_configuration(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+    monkeypatch.setenv("AIRTABLE_RESEARCH_TABLE", "Research")
+    assert _research_table_url() == "https://api.airtable.com/v0/app12345678901234/Research"
 
 
 def test_sync_research_updates_existing_record_without_dropping_fields(monkeypatch):
