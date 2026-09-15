@@ -201,6 +201,14 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
     for root in raw_roots:
+        if root == source_url and not root.endswith("/"):
+            candidate = root
+            if candidate not in seen:
+                seen.add(candidate)
+                ordered.append(candidate)
+            if len(ordered) >= MAX_PAGES:
+                return ordered
+            continue
         base = root.rstrip("/") + "/"
         paths = ["", "about", "company", "team", "product", "careers", "jobs"] if root.endswith("/") else [""]
         for path in paths:
