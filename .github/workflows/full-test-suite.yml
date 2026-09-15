@@ -21,6 +21,7 @@ concurrency:
 jobs:
   test:
     name: Full pytest suite
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -49,6 +50,7 @@ jobs:
           echo "PYTEST COLLECTION AUDIT"
           echo "=============================================="
           echo "Selector: ${TEST_PATH}"
+          echo "Branch: ${GITHUB_REF}"
           echo ""
           python -m pytest "${TEST_PATH}" --collect-only -q
 
