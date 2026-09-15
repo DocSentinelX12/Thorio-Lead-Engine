@@ -297,7 +297,7 @@ def install() -> None:
         if name == "Welcome to the Jungle":
             return _WelcomeToTheJungleAdapter(effective_url, timeout)
         if name in _HTML_DETAIL_SOURCES and effective_type.lower() == "html":
-            return _DetailAdapter(name, effective_url, timeout)
+            return _DetailAdapter(name, effective_url, timeout, definition)
         return original(
             collector_type=collector_type,
             url=url,
@@ -307,12 +307,13 @@ def install() -> None:
         )
 
     class _DetailAdapter:
-        def __init__(self, name: str, url: str, timeout: int):
+        def __init__(self, name: str, url: str, timeout: int, definition):
             self.name = name
             self.source = name
             self.url = url
             self.collector_type = "html"
             self.timeout = timeout
+            self.definition = definition
 
         def collect(self, checkpoint=None):
             return _detail_collect(self.name, self.url, self.timeout)
