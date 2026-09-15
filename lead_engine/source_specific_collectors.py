@@ -19,7 +19,9 @@ _HTML_DETAIL_SOURCES = frozenset({
     "Total",
     "FlexJobs",
     "US Remotely",
+    "USA Remote Work",
     "Rocketship",
+    "Remote Landers",
     "JobFill.AI",
     "Remote Woman",
     "Wellfound",
@@ -112,7 +114,9 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
         "Total": ("/jobs/", "/job/"),
         "FlexJobs": ("/remote-jobs/",),
         "US Remotely": ("/job/", "/jobs/"),
+        "USA Remote Work": ("/job/", "/jobs/"),
         "Rocketship": ("/jobs/", "/job/"),
+        "Remote Landers": ("/jobs/", "/job/"),
         "JobFill.AI": ("/job/", "/jobs/"),
         "Remote Woman": ("/job/", "/jobs/"),
         "Wellfound": ("/jobs/",),
@@ -232,10 +236,11 @@ def install() -> None:
 
     def patched(*, collector_type=None, url=None, source=None, timeout=20, definition=None):
         name = getattr(definition, "name", None) or source or ""
+        effective_url = getattr(definition, "url", None) or url or ""
         if name == "Welcome to the Jungle":
-            return _WelcomeToTheJungleAdapter(url or "", timeout)
+            return _WelcomeToTheJungleAdapter(effective_url, timeout)
         if name in _HTML_DETAIL_SOURCES:
-            return _DetailAdapter(name, url or "", timeout)
+            return _DetailAdapter(name, effective_url, timeout)
         return original(
             collector_type=collector_type,
             url=url,
