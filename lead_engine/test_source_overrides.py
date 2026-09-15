@@ -4,7 +4,6 @@ from .source_overrides import _SOURCE_OVERRIDES, _apply_overrides
 
 _ACTIVE_SOURCES = {
     "Himalayas",
-    "Jobicy",
     "Remote OK",
     "Airbnb",
     "Anthropic",
@@ -144,7 +143,7 @@ def test_current_api_corrections_remove_stale_explicit_page_parameters():
     assert nomado24.url == "https://api.nomado24.de/api/public/v1/jobs?per_page=100&language=en"
 
     landing_jobs = definitions["Landing Jobs"]
-    assert landing_jobs.url == "https://landing.jobs/api/v1/jobs"
+    assert landing_jobs.url == "https://landing.jobs/api/v1/jobs.json"
 
 
 def test_remotive_uses_current_jobs_api():
