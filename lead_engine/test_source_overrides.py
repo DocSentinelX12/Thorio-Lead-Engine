@@ -66,7 +66,7 @@ def test_the_muse_uses_current_api_page_one():
     assert muse.url_field == "refs.landing_page"
 
 
-def test_landing_jobs_uses_verified_public_atom_feed():
+def test_landing_jobs_preserves_historical_atom_configuration_but_is_not_allowed_for_thorio():
     catalog = _load_free_source_catalog()
     landing_jobs = next(
         definition
@@ -80,6 +80,7 @@ def test_landing_jobs_uses_verified_public_atom_feed():
     assert landing_jobs.max_pages == 1
     assert landing_jobs.max_requests == 1
     assert landing_jobs.max_records == 55
+    assert landing_jobs.allowed_for_thorio is False
 
 
 def test_historical_source_identities_use_verified_live_replacements():
