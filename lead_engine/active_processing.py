@@ -24,29 +24,41 @@ def priority(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]
 
 
 def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
-    lead = _lead(payload); fingerprint = lead["fingerprint"]; validation_lead = dict(lead)
-    potential_routes = validation_lead.get("potential_routes")
-    if not isinstance(potential_routes, list) or not potential_routes:
-        qualification = validation_lead.get("qualification_results")
-        if isinstance(qualification, Mapping):
-            verified_routes = []
-            for route_name in ("Shiftr", "Paxus", "Thorio"):
-                result = qualification.get(route_name)
-                if not isinstance(result, Mapping) or result.get("qualified") is not True:
-                    continue
-                route_research = result.get("route_research")
-                if not isinstance(route_research, Mapping) or route_research.get("verified") is not True:
-                    continue
-                if route_name == "Paxus" and result.get("true_referral") is not True:
-                    continue
-                verified_routes.append(route_name)
-            if verified_routes:
-                validation_lead["potential_routes"] = verified_routes
-                if not str(validation_lead.get("route") or "").strip(): validation_lead["route"] = verified_routes[0]
-    if not str(validation_lead.get("route") or "").strip() and isinstance(validation_lead.get("potential_routes"), list) and validation_lead["potential_routes"]: validation_lead["route"] = str(validation_lead["potential_routes"][0])
-    verification_payload = dict(payload); verification_payload["lead"] = validation_lead; result = _verification(agent, verification_payload, ctx)
+    lead = _lead(payload); fingerprint = lead["fingerprint"]
+
+    def _verification_input(candidate: Mapping[str, Any]) -> Dict[str, Any]:
+        value = dict(candidate)
+        if not str(value.get("route") or "").strip():
+            potential_routes = value.get("potential_routes")
+            if isinstance(potential_routes, list) and potential_routes:
+                value["route"] = str(potential_routes[0])
+        return value
+
+    validation_lead = _verification_input(lead)
+    verification_payload = dict(payload); verification_payload["lead"] = validation_lead
+    result = _verification(agent, verification_payload, ctx)
+
+    # Verification is a durable state boundary. A queued verification task may
+    # contain an older lead snapshot than the LeadDB record after qualification
+    # or research completed. If the first evaluation is blocked by missing
+    # qualification state, re-read the authoritative LeadDB record and evaluate
+    # that state once before declaring the opportunity review-required. This
+    # preserves every verification gate and only prevents stale payloads from
+    # stranding a fully qualified opportunity.
+    if result.get("verified") is not True:
+        current = ctx.db.get(fingerprint)
+        if isinstance(current, Mapping):
+            current_lead = dict(current)
+            current_validation = _verification_input(current_lead)
+            current_payload = dict(payload); current_payload["lead"] = current_validation
+            current_result = _verification(agent, current_payload, ctx)
+            if current_result.get("verified") is True or current_result.get("decision_maker_verification") == "verified":
+                result = current_result
+                validation_lead = current_validation
+
     if result.get("decision_maker_verification") == "verified":
-        current_lead = ctx.db.get(fingerprint) or lead; research = dict(current_lead.get("company_research") or {}) if isinstance(current_lead.get("company_research"), Mapping) else {}
+        current_lead = ctx.db.get(fingerprint) or validation_lead
+        research = dict(current_lead.get("company_research") or {}) if isinstance(current_lead.get("company_research"), Mapping) else {}
         if not research.get("company_verified"):
             result.update({"decision_maker_handoff": "research_required", "research_verification_blocked": "company_not_verified", "handoff": "review_required"}); return result
         research["decision_maker_verification_status"] = "verified"
@@ -56,7 +68,9 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
         except Exception as exc: research_sync_result = {"status": "failed", "error": str(exc)}
         enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a_verified:{fingerprint}")
         result.update({"decision_maker_handoff": "qualification_a", "lead": stored, "research_sync": research_sync_result})
-    verified_lead = ctx.db.get(fingerprint) or lead; verified_research = verified_lead.get("company_research"); company_verified = isinstance(verified_research, Mapping) and verified_research.get("company_verified") is True; dm_verified = isinstance(verified_research, Mapping) and bool(verified_research.get("decision_maker")) and bool(verified_research.get("decision_maker_evidence")) and str(verified_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"; research_status = str(verified_lead.get("research_status") or "").strip().lower(); research_complete = research_status in {"complete", "research_complete"}
+
+    verified_lead = ctx.db.get(fingerprint) or validation_lead
+    verified_research = verified_lead.get("company_research"); company_verified = isinstance(verified_research, Mapping) and verified_research.get("company_verified") is True; dm_verified = isinstance(verified_research, Mapping) and bool(verified_research.get("decision_maker")) and bool(verified_research.get("decision_maker_evidence")) and str(verified_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"; research_status = str(verified_lead.get("research_status") or "").strip().lower(); research_complete = research_status in {"complete", "research_complete"}
     if result.get("verified") is True and research_complete and company_verified and dm_verified:
         if research_status == "research_complete":
             normalized = dict(verified_lead); normalized["research_status"] = "complete"; verified_lead = ctx.db.update_payload(fingerprint, normalized) or normalized
