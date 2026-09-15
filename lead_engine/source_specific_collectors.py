@@ -293,9 +293,10 @@ def install() -> None:
     def patched(*, collector_type=None, url=None, source=None, timeout=20, definition=None):
         name = getattr(definition, "name", None) or source or ""
         effective_url = getattr(definition, "url", None) or url or ""
+        effective_type = getattr(definition, "collector_type", None) or collector_type or ""
         if name == "Welcome to the Jungle":
             return _WelcomeToTheJungleAdapter(effective_url, timeout)
-        if name in _HTML_DETAIL_SOURCES:
+        if name in _HTML_DETAIL_SOURCES and effective_type.lower() == "html":
             return _DetailAdapter(name, effective_url, timeout)
         return original(
             collector_type=collector_type,
