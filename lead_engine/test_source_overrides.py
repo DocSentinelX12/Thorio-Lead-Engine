@@ -32,6 +32,7 @@ _EXPECTED_BROKEN_SOURCE_OVERRIDES = {
     "Arbeitnow",
     "Nomado24",
     "Working Nomads",
+    "Landing Jobs",
     "WorkWave",
     "NoDesk",
     "We Work Remotely",
@@ -63,6 +64,22 @@ def test_the_muse_uses_current_api_page_one():
     assert muse.title_field == "name"
     assert muse.company_field == "company.name"
     assert muse.url_field == "refs.landing_page"
+
+
+def test_landing_jobs_uses_verified_public_atom_feed():
+    catalog = _load_free_source_catalog()
+    landing_jobs = next(
+        definition
+        for definition in _apply_overrides(tuple(catalog))
+        if definition.name == "Landing Jobs"
+    )
+
+    assert landing_jobs.collector_type == "atom"
+    assert landing_jobs.url == "https://landing.jobs/feed"
+    assert landing_jobs.pagination_type == "none"
+    assert landing_jobs.max_pages == 1
+    assert landing_jobs.max_requests == 1
+    assert landing_jobs.max_records == 55
 
 
 def test_historical_source_identities_use_verified_live_replacements():
