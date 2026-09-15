@@ -101,11 +101,17 @@ def main() -> int:
     # same explicit source corrections used by configured_sources(). Probe the
     # effective definitions so this diagnostic cannot report stale historical
     # endpoints as production failures.
+    effective_definitions = _apply_overrides(tuple(catalog))
     definitions = [
         item
-        for item in _apply_overrides(tuple(catalog))
+        for item in effective_definitions
         if item.enabled and item.allowed_for_thorio
     ]
+    excluded_sources = sorted(
+        item.name
+        for item in effective_definitions
+        if not (item.enabled and item.allowed_for_thorio)
+    )
 
     results = []
     with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, max(1, len(definitions))), thread_name_prefix="source-probe") as executor:
@@ -122,6 +128,7 @@ def main() -> int:
 
     report = {
         "catalog_source_count": len(definitions),
+        "excluded_sources": excluded_sources,
         "probe_workers": MAX_WORKERS,
         "per_source_timeout_seconds": TIMEOUT,
         "request_scope": "one real bounded collection request per enabled free source using effective production source corrections; no persistence or downstream writes",
@@ -132,7 +139,7 @@ def main() -> int:
         json.dump(report, handle, ensure_ascii=False, indent=2)
 
     print("SOURCE LIVE DIAGNOSTIC SUMMARY", flush=True)
-    print(json.dumps({"catalog_source_count": len(definitions), "status_counts": counts}, sort_keys=True), flush=True)
+    print(json.dumps({"catalog_source_count": len(definitions), "excluded_sources": excluded_sources, "status_counts": counts}, sort_keys=True), flush=True)
 
     # A live empty source is not automatically a failure. It is evidence that
     # the endpoint responded successfully but yielded no current records.
