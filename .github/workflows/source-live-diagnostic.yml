@@ -1,0 +1,52 @@
+name: Source Live Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lead_engine/free_sources.json'
+      - 'lead_engine/source_adapters.py'
+      - 'lead_engine/source_definition.py'
+      - 'lead_engine/source_registry.py'
+      - 'scripts/source_live_diagnostic.py'
+      - '.github/workflows/source-live-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-live-diagnostic:
+    name: Probe every enabled free source
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      THORIO_FREE_ONLY: '1'
+      LEAD_ENGINE_FREE_SOURCES_ENABLED: '1'
+      LEAD_ENGINE_FREE_SOURCE_TIMEOUT: '12'
+      THORIO_SOURCE_DIAGNOSTIC_WORKERS: '16'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Probe live sources
+        run: python scripts/source_live_diagnostic.py
+
+      - name: Upload source diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-live-diagnostic-${{ github.run_id }}
+          path: source-live-diagnostic.json
+          if-no-files-found: error
+          retention-days: 14
