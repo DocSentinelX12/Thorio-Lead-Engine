@@ -22,3 +22,11 @@ from .source_specific_collectors import install as _install_source_specific
 
 _install_source_specific()
 del _install_source_specific
+
+# Install the research identity gate before research workers import the
+# public research function. Discovery URLs remain provenance; only evidence
+# tied to the target lead's company may be promoted into research facts.
+from .research_integrity import install as _install_research_integrity
+
+_install_research_integrity()
+del _install_research_integrity
