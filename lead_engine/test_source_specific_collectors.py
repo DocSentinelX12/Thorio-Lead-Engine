@@ -1,6 +1,6 @@
 import json
 
-from lead_engine.source_adapters import create_adapter
+from lead_engine.source_adapters import RssSourceAdapter, create_adapter
 from lead_engine.source_definition import SourceDefinition
 
 
@@ -76,6 +76,32 @@ def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
         "https://remotelanders.com/api/jobs?limit=100&page=1",
         "https://remotelanders.com/api/jobs?limit=100&page=1",
     ]
+
+
+def test_landing_jobs_uses_native_xml_adapter(monkeypatch):
+    import lead_engine.source_adapters as source_adapters
+
+    requested = []
+
+    def fake_fetch(request, timeout):
+        requested.append(request)
+        return b"<feed xmlns='http://www.w3.org/2005/Atom'></feed>"
+
+    monkeypatch.setattr(source_adapters, "fetch_url", fake_fetch)
+    definition = _definition(
+        "Landing Jobs",
+        "https://landing.jobs/feed",
+        collector_type="atom",
+    )
+    adapter = create_adapter(definition=definition, timeout=12)
+
+    assert isinstance(adapter.adapter, RssSourceAdapter)
+    assert adapter.adapter.url == "https://landing.jobs/feed"
+    assert adapter.adapter.source == "Landing Jobs"
+    assert adapter.collect() == []
+    assert len(requested) == 1
+    assert requested[0].full_url == "https://landing.jobs/feed"
+    assert requested[0].headers["Accept"] == "application/rss+xml, application/atom+xml, application/xml, text/xml"
 
 
 def test_welcome_to_the_jungle_extracts_credentials_from_javascript_env():
