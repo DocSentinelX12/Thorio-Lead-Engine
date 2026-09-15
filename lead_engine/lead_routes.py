@@ -12,7 +12,12 @@ def _get_routes(lead: Dict[str, Any]) -> List[str]:
         if routes:
             return list(dict.fromkeys(routes))
     route = str(lead.get("route", "") or "").strip()
-    return [route] if route in SUPPORTED_ROUTES else []
+    if route in SUPPORTED_ROUTES:
+        return [route]
+    qualification = lead.get("qualification_results")
+    if isinstance(qualification, dict):
+        return [route_name for route_name in SUPPORTED_ROUTES if isinstance(qualification.get(route_name), dict) and qualification[route_name].get("qualified") is True]
+    return []
 
 
 def _route_independently_verified(lead: Dict[str, Any], route: str) -> bool:
@@ -33,6 +38,8 @@ def _route_independently_verified(lead: Dict[str, Any], route: str) -> bool:
 def _final_routes(lead: Dict[str, Any]) -> List[str]:
     routes = _get_routes(lead)
     if isinstance(lead.get("potential_routes"), list):
+        routes = [route for route in routes if _route_independently_verified(lead, route)]
+    elif not str(lead.get("route", "") or "").strip():
         routes = [route for route in routes if _route_independently_verified(lead, route)]
     return routes
 
