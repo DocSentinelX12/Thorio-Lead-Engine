@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any, Dict, List
 
+from .agent_queue import enqueue_many
 from .enrichment import enrich_lead
 from .qualification import evaluate_company_qualification
 
@@ -11,6 +13,7 @@ STATE_KEY = "paxus_research_queue"
 RESEARCH_REQUIRED = "research_required"
 COMPLETE = "complete"
 NOT_QUALIFIED = "not_qualified"
+LEGACY_RESEARCH_LIMIT = 50
 
 
 def _now() -> str:
@@ -35,6 +38,65 @@ def _missing_items(
 ) -> List[str]:
     """Return the legacy combined view while retaining separated categories."""
     return list(dict.fromkeys([*research_items, *verification_items]))
+
+
+def enqueue_legacy_company_research(db, limit: int = LEGACY_RESEARCH_LIMIT) -> Dict[str, Any]:
+    """Queue previously synchronized leads that predate the company-research handoff.
+
+    Only leads with no research status are selected. Once company research runs,
+    its payload update makes the lead ineligible for this backfill again.
+    """
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        raise ValueError("limit must be a positive integer")
+
+    rows = db.conn.execute(
+        """
+        SELECT fingerprint, payload
+        FROM leads
+        WHERE synced = 1
+          AND (
+              json_extract(payload, '$.research_status') IS NULL
+              OR trim(CAST(json_extract(payload, '$.research_status') AS TEXT)) = ''
+          )
+        ORDER BY rowid
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    tasks = []
+    skipped = []
+    for fingerprint, payload_json in rows:
+        try:
+            lead = json.loads(payload_json)
+        except (TypeError, ValueError):
+            skipped.append(str(fingerprint))
+            continue
+        if not isinstance(lead, dict):
+            skipped.append(str(fingerprint))
+            continue
+        tasks.append(
+            {
+                "agent": "company_research",
+                "payload": {
+                    "lead": dict(lead),
+                    "evidence_events": lead.get("evidence_events", []) if isinstance(lead.get("evidence_events"), list) else [],
+                    "legacy_backfill": True,
+                },
+                "priority": 6,
+                "dedupe_key": f"company_research:{fingerprint}",
+            }
+        )
+
+    if tasks:
+        enqueue_many(db, tasks)
+
+    return {
+        "queued_count": len(tasks),
+        "skipped_count": len(skipped),
+        "skipped_fingerprints": skipped,
+        "limit": limit,
+    }
 
 
 def queue_paxus_research(db, lead: Dict[str, Any]) -> Dict[str, Any]:
@@ -112,12 +174,9 @@ def queue_paxus_research(db, lead: Dict[str, Any]) -> Dict[str, Any]:
 
 def process_paxus_research_queue(db, limit: int = 50) -> Dict[str, Any]:
     """
-    Re-run conservative enrichment and qualification for queued Paxus leads.
-
-    The existing enrichment layer only normalizes information already present,
-    so this function does not pretend that external research occurred. It
-    creates a durable retry boundary for a future research provider and
-    immediately promotes a lead when all existing gates become verifiable.
+    Re-run conservative enrichment and qualification for queued Paxus leads,
+    and maintain a bounded backfill for legacy leads that never reached the
+    company-research handoff.
     """
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         raise ValueError("limit must be a positive integer")
@@ -195,6 +254,7 @@ def process_paxus_research_queue(db, limit: int = 50) -> Dict[str, Any]:
             errors.append({"fingerprint": fingerprint, "error": str(exc)})
 
     _save_queue(db, queue)
+    legacy_backfill = enqueue_legacy_company_research(db, limit=limit)
 
     return {
         "status": "completed" if not errors else "completed_with_errors",
@@ -203,6 +263,7 @@ def process_paxus_research_queue(db, limit: int = 50) -> Dict[str, Any]:
         "still_required": still_required,
         "errors": errors,
         "queued_count": len(queue),
+        "legacy_backfill": legacy_backfill,
     }
 
 
