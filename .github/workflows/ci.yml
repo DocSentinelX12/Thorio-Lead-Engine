@@ -9,7 +9,7 @@ on:
       - main
   workflow_dispatch:
 
-# Preserve every queued test run and execute test workflows one at a time.
+# Main is the canonical production verification branch. Preserve every queued test run.
 # A newer commit or manual full-suite run must never cancel an older test run.
 concurrency:
   group: thorio-test-queue
