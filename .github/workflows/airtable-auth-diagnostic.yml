@@ -9,6 +9,7 @@ permissions:
 jobs:
   diagnose:
     name: Diagnose Airtable PAT
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       AIRTABLE_PAT: ${{ secrets.AIRTABLE_PAT }}
