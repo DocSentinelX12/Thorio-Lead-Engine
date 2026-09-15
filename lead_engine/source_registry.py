@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from .airtable_sync import AirtableSyncError, _master_table_url, _request
 from .free_sources import FreeJobSource
 from .sources import LeadSource
-from .source_adapters import create_adapter
+from . import source_adapters
 from .source_definition import SourceDefinition
 from .web_source_config import create_web_source_from_env
 
@@ -124,7 +124,7 @@ def _free_source_timeout() -> int:
 
 
 def _free_source_instance(definition: SourceDefinition) -> LeadSource:
-    return create_adapter(definition=definition, timeout=_free_source_timeout())
+    return source_adapters.create_adapter(definition=definition, timeout=_free_source_timeout())
 
 
 def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str, Tuple[str, ...]], ...]:
