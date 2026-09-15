@@ -183,9 +183,6 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
             continue
         parsed = urlparse(value)
         if parsed.netloc:
-            public, _ = _public_host(value)
-            if not public:
-                continue
             company_domains.add(_domain(value))
             raw_roots.append(f"{parsed.scheme}://{parsed.netloc}/")
             raw_roots.append(value)
@@ -198,10 +195,9 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
             # Research the exact public source already observed for the lead.
             # This does not invent a company domain or treat the source as a
             # verified company website. It simply preserves and analyzes the
-            # public evidence that produced the lead.
-            public, _ = _public_host(source_url)
-            if public:
-                raw_roots.append(source_url)
+            # public evidence that produced the lead. Public-host and robots
+            # validation remains enforced by _allowed() immediately before fetch.
+            raw_roots.append(source_url)
     ordered: list[str] = []
     seen: set[str] = set()
     for root in raw_roots:
