@@ -25,7 +25,7 @@ def test_landing_jobs_uses_verified_public_atom_feed(monkeypatch):
         name="Landing Jobs",
         provider="Landing Jobs",
         collector_type="atom",
-        url="https://landing.jobs/feed",
+        url="https://landing.jobs/feed?remote=true",
         pagination_type="none",
         max_pages=1,
         max_requests=1,
@@ -40,5 +40,5 @@ def test_landing_jobs_uses_verified_public_atom_feed(monkeypatch):
     assert result[0]["source"] == "Landing Jobs"
     assert result[0]["job_title"] == "Senior Software Engineer"
     assert result[0]["company"] == "Example Co"
-    assert requests[0].full_url == "https://landing.jobs/feed"
-    assert requests[0].headers["Accept"] == "application/rss+xml, application/atom+xml, application/xml, text/xml"
+    assert requests[0].full_url == "https://landing.jobs/feed?remote=true"
+    assert requests[0].headers["Accept"] == "application/atom+xml, application/xml, text/xml"
