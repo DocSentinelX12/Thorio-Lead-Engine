@@ -32,7 +32,6 @@ _EXPECTED_BROKEN_SOURCE_OVERRIDES = {
     "Arbeitnow",
     "Nomado24",
     "Working Nomads",
-    "Landing Jobs",
     "WorkWave",
     "NoDesk",
     "We Work Remotely",
@@ -106,22 +105,6 @@ def test_jobicy_uses_public_rss_fallback():
     assert jobicy.max_requests == 1
 
 
-def test_landing_jobs_uses_public_atom_feed():
-    catalog = _load_free_source_catalog()
-    landing_jobs = next(
-        definition
-        for definition in _apply_overrides(tuple(catalog))
-        if definition.name == "Landing Jobs"
-    )
-
-    assert landing_jobs.collector_type == "atom"
-    assert landing_jobs.url == "https://landing.jobs/feed"
-    assert landing_jobs.pagination_type == "none"
-    assert landing_jobs.max_pages == 1
-    assert landing_jobs.max_requests == 1
-    assert landing_jobs.max_records == 55
-
-
 def test_current_api_corrections_remove_stale_explicit_page_parameters():
     catalog = _load_free_source_catalog()
     definitions = {definition.name: definition for definition in catalog}
@@ -141,11 +124,6 @@ def test_current_api_corrections_remove_stale_explicit_page_parameters():
 
     nomado24 = definitions["Nomado24"]
     assert nomado24.url == "https://api.nomado24.de/api/public/v1/jobs?per_page=100&language=en"
-
-    landing_jobs = definitions["Landing Jobs"]
-    assert landing_jobs.url == "https://landing.jobs/feed"
-    assert landing_jobs.collector_type == "atom"
-    assert landing_jobs.pagination_type == "none"
 
 
 def test_remotive_uses_current_jobs_api():
