@@ -236,10 +236,21 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     status = "research_complete" if company_verified and decision_maker_verified else "research_required"
     verification_exclusions = {"observed_input", "researched_at", "public_web_research", "public_web_sources", "public_company_facts", "public_product_facts", "public_hiring_facts", "public_decision_maker_facts", "public_business_need_facts", "public_commercial_facts", "fabricated_fields", "social_findings", "social_evidence_sources", "social_evidence_count", "observed_decision_maker", "observed_decision_maker_evidence", "decision_maker_verification_status"}
     verified_fields = []
+    existing_verified = lead.get("research_verified_fields")
+    if isinstance(existing_verified, (list, tuple, set)):
+        for field in existing_verified:
+            field_name = str(field).strip()
+            if field_name in {"current_intent_research", "business_need_research", "technical_product_hiring_research", "commercial_research", "route_research", "closer_package"}:
+                section = lead.get(field_name)
+                if isinstance(section, Mapping):
+                    section_status = str(section.get("verification_status") or section.get("status") or "").strip().lower()
+                    if section.get("verified") is True or section_status in {"verified", "research_verified", "complete"}:
+                        verified_fields.append(field_name)
     if company_verified:
         verified_fields.append("company_verified")
     if decision_maker_verified:
         verified_fields.append("decision_maker")
+    verified_fields = list(dict.fromkeys(verified_fields))
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": verified_fields})
     if stored is None:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
