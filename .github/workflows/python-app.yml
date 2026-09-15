@@ -24,7 +24,7 @@ permissions:
 jobs:
   test:
     name: Production Preflight Tests
-    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -45,7 +45,7 @@ jobs:
 
   engine:
     name: Run Lead Engine
-    if: github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN')
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'issue_comment' && github.event_name != 'issues' || (github.event_name == 'issue_comment' && github.event.issue.pull_request == null && github.event.issue.title == 'THORIO_PRODUCTION_RUN' && startsWith(github.event.comment.body, 'THORIO_PRODUCTION_RUN')) || (github.event_name == 'issues' && github.event.issue.title == 'THORIO_PRODUCTION_RUN'))
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 75
@@ -268,12 +268,24 @@ jobs:
               sys.exit(1)
           discovered_total = sum(int(result.get("discovered_count", 0) or 0) for result in results)
           accepted_total = sum(int(result.get("accepted_count", 0) or 0) for result in results)
+          source_counts = [int(result.get("source_count", 0) or 0) for result in results]
           successful_source_counts = [int(result.get("successful_source_count", 0) or 0) for result in results]
+          source_failure_counts = [int(result.get("failed_count", 0) or 0) for result in results]
+          source_skip_counts = [int(result.get("skipped_count", 0) or 0) for result in results]
           if discovered_total <= 0:
               print("PRODUCTION COLLECTION FAILURE: no leads were discovered during the production cycle.")
               sys.exit(1)
-          if not successful_source_counts or max(successful_source_counts) <= 0:
-              print("PRODUCTION COLLECTION FAILURE: no configured source reported successful collection.")
+          if not source_counts or not successful_source_counts:
+              print("PRODUCTION COLLECTION FAILURE: source collection metadata was missing from the production result.")
+              sys.exit(1)
+          if any(successful < source_count for successful, source_count in zip(successful_source_counts, source_counts)):
+              print(f"PRODUCTION COLLECTION FAILURE: not every configured source completed successfully. source_counts={source_counts}, successful_source_counts={successful_source_counts}")
+              sys.exit(1)
+          if any(count > 0 for count in source_failure_counts):
+              print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources failed. failed_source_counts={source_failure_counts}")
+              sys.exit(1)
+          if any(count > 0 for count in source_skip_counts):
+              print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources were skipped. skipped_source_counts={source_skip_counts}")
               sys.exit(1)
           sync_failed = 0
           sync_completed = 0
