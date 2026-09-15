@@ -153,6 +153,59 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
     return AdapterResult(records=list(records.values()), checkpoint=None)
 
 
+def _extract_algolia_credentials(raw: bytes) -> tuple[str, str]:
+    """Extract the public Algolia app id and search key from WTTJ's JS env response."""
+    text = raw.decode("utf-8", errors="replace")
+    values: Dict[str, str] = {}
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+
+    if payload is not None:
+        for item in _walk(payload):
+            for key, value in item.items():
+                if isinstance(value, str) and value:
+                    values[str(key).lower()] = value
+    else:
+        assignment_pattern = re.compile(
+            r"[\"']?([A-Za-z0-9_$.-]+)[\"']?\s*[:=]\s*[\"']([^\"']+)[\"']"
+        )
+        for match in assignment_pattern.finditer(text):
+            key = match.group(1).lower()
+            value = match.group(2).strip()
+            if value:
+                values[key] = value
+
+    app_id = ""
+    api_key = ""
+    for key, value in values.items():
+        compact = re.sub(r"[^a-z0-9]", "", key)
+        if not app_id and "algolia" in compact and "app" in compact and "id" in compact:
+            app_id = value
+        if not api_key and "algolia" in compact and "key" in compact:
+            api_key = value
+
+    # Some deployments expose the same public values as generic applicationId
+    # and apiKey fields inside an Algolia configuration object. Only accept
+    # those generic names when the response itself contains an Algolia marker.
+    if not app_id or not api_key:
+        has_algolia_marker = "algolia" in text.lower()
+        if has_algolia_marker:
+            for key, value in values.items():
+                compact = re.sub(r"[^a-z0-9]", "", key)
+                if not app_id and compact in {"applicationid", "appid"}:
+                    app_id = value
+                if not api_key and compact in {"apikey", "searchonlyapikey"}:
+                    api_key = value
+
+    if not app_id or not api_key:
+        raise ValueError("Welcome to the Jungle public Algolia credentials were not found in /api/env")
+
+    return app_id, api_key
+
+
 class _WelcomeToTheJungleAdapter:
     name = "Welcome to the Jungle"
     source = name
@@ -167,40 +220,39 @@ class _WelcomeToTheJungleAdapter:
             "https://www.welcometothejungle.com/api/env",
             headers={
                 "User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0",
-                "Accept": "application/json",
+                "Accept": "application/json,application/javascript,text/javascript,*/*;q=0.1",
                 "Referer": "https://www.welcometothejungle.com/",
             },
         )
         env_raw = fetch_url(env_request, timeout=self.timeout)
-        env = json.loads(env_raw.decode("utf-8", errors="replace"))
-        values = {}
-        for item in _walk(env):
-            for key, value in item.items():
-                if isinstance(value, str) and value:
-                    values[str(key).lower()] = value
-        app_id = next((v for k, v in values.items() if "algolia" in k and "app" in k and "id" in k), "")
-        api_key = next((v for k, v in values.items() if "algolia" in k and "key" in k), "")
-        if not app_id or not api_key:
-            raise ValueError("Welcome to the Jungle public Algolia credentials were not found")
+        app_id, api_key = _extract_algolia_credentials(env_raw)
 
-        endpoint = "https://%s-dsn.algolia.net/1/indexes/wk_cms_jobs_production/query" % app_id
+        endpoint = "https://%s-dsn.algolia.net/1/indexes/*/queries" % app_id
         params = urlencode({"hitsPerPage": 100, "page": 0, "query": ""})
-        payload = json.dumps({"query": "", "hitsPerPage": 100, "page": 0}).encode()
+        payload = json.dumps({
+            "requests": [{
+                "indexName": "wk_cms_jobs_production",
+                "params": params,
+            }]
+        }).encode("utf-8")
         request = Request(
             endpoint,
             data=payload,
             headers={
                 "User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
+                "Accept": "*/*",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://www.welcometothejungle.com",
+                "Referer": "https://www.welcometothejungle.com/",
                 "X-Algolia-Application-Id": app_id,
                 "X-Algolia-API-Key": api_key,
-                "Referer": "https://www.welcometothejungle.com/",
             },
         )
         raw = fetch_url(request, timeout=self.timeout)
         data = json.loads(raw.decode("utf-8", errors="replace"))
-        hits = data.get("hits", []) if isinstance(data, dict) else []
+        results = data.get("results", []) if isinstance(data, dict) else []
+        first_result = results[0] if results and isinstance(results[0], dict) else {}
+        hits = first_result.get("hits", []) if isinstance(first_result, dict) else []
         records = []
         for hit in hits:
             organization = hit.get("organization") or {}
@@ -211,14 +263,18 @@ class _WelcomeToTheJungleAdapter:
                 "https://www.welcometothejungle.com/en/companies/%s/jobs/%s" % (slug, job_slug)
                 if slug and job_slug else ""
             )
+            descriptions = hit.get("descriptions")
+            description = descriptions.get("en", "") if isinstance(descriptions, dict) else hit.get("description")
+            office = hit.get("office") or {}
+            location = office.get("city", "") if isinstance(office, dict) else ""
             record = normalize_job_record(
                 {
                     "title": hit.get("name") or hit.get("title"),
                     "company": company,
                     "url": url,
-                    "description": (hit.get("descriptions") or {}).get("en", "") if isinstance(hit.get("descriptions"), dict) else hit.get("description"),
+                    "description": description,
                     "id": hit.get("objectID") or hit.get("reference"),
-                    "location": (hit.get("office") or {}).get("city", "") if isinstance(hit.get("office"), dict) else "",
+                    "location": location,
                 },
                 source=self.name,
                 source_url=self.url,
