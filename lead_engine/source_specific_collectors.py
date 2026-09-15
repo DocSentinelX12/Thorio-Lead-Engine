@@ -99,6 +99,53 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
     return AdapterResult(records=list(records.values()), checkpoint=None)
 
 
+def _landing_jobs_collect(url: str, timeout: int, definition) -> AdapterResult:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://landing.jobs/",
+            "Origin": "https://landing.jobs",
+        },
+    )
+    try:
+        raw = fetch_url(request, timeout=timeout)
+    except HTTPRetryError as exc:
+        raise ValueError(f"Landing Jobs request failed: {exc}") from exc
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Landing Jobs returned invalid JSON.") from exc
+
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        records = payload.get("jobs") or payload.get("results") or payload.get("items") or payload.get("data") or []
+        if isinstance(records, dict):
+            records = records.get("jobs") or records.get("results") or records.get("items") or []
+    else:
+        records = []
+
+    normalized = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        record = normalize_job_record(
+            item,
+            source="Landing Jobs",
+            source_url=url,
+            definition=definition,
+        )
+        if record:
+            normalized.append(record)
+        if len(normalized) >= definition.max_records:
+            break
+    return AdapterResult(records=normalized, checkpoint=None)
+
+
+
 def _extract_algolia_credentials(raw: bytes) -> tuple[str, str]:
     text = raw.decode("utf-8", errors="replace")
     values: Dict[str, str] = {}
@@ -187,9 +234,23 @@ def install() -> None:
         effective_type = getattr(definition, "collector_type", None) or collector_type or ""
         if name == "Welcome to the Jungle":
             return AdapterLeadSource(_WelcomeToTheJungleAdapter(effective_url, timeout), definition)
+        if name == "Landing Jobs":
+            return AdapterLeadSource(_LandingJobsAdapter(effective_url, timeout, definition), definition)
         if name in _HTML_DETAIL_SOURCES and effective_type.lower() == "html":
             return AdapterLeadSource(_DetailAdapter(name, effective_url, timeout, definition), definition)
         return original(collector_type=collector_type, url=url, source=source, timeout=timeout, definition=definition)
+
+    class _LandingJobsAdapter:
+        def __init__(self, url: str, timeout: int, definition):
+            self.name = "Landing Jobs"
+            self.source = self.name
+            self.url = url
+            self.collector_type = "json"
+            self.timeout = timeout
+            self.definition = definition
+
+        def collect(self, checkpoint=None):
+            return _landing_jobs_collect(self.url, self.timeout, self.definition)
 
     class _DetailAdapter:
         def __init__(self, name: str, url: str, timeout: int, definition):
