@@ -15,6 +15,7 @@ concurrency:
 jobs:
   coordinator_gate:
     name: Verify remote coordinator availability
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       enabled: ${{ steps.check.outputs.enabled }}
@@ -64,7 +65,7 @@ jobs:
   worker:
     name: Free Worker ${{ matrix.worker }}
     needs: coordinator_gate
-    if: needs.coordinator_gate.outputs.enabled == 'true'
+    if: github.ref == 'refs/heads/main' && needs.coordinator_gate.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 9
     strategy:
