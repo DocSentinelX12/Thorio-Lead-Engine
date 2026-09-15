@@ -263,7 +263,7 @@ def install() -> None:
         if name == "Welcome to the Jungle":
             return AdapterLeadSource(_WelcomeToTheJungleAdapter(effective_url, timeout), definition)
         if name == "Landing Jobs" and effective_type.lower() == "atom":
-            return AdapterLeadSource(_LandingJobsAtomAdapter(effective_url, "Landing Jobs", timeout, definition), definition)
+            return AdapterLeadSource(_LandingJobsAtomAdapter(effective_url, "Landing Jobs", timeout), definition)
         if name in _HTML_DETAIL_SOURCES and effective_type.lower() == "html":
             return AdapterLeadSource(_DetailAdapter(name, effective_url, timeout, definition), definition)
         return original(collector_type=collector_type, url=url, source=source, timeout=timeout, definition=definition)
