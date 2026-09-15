@@ -7,13 +7,35 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from typing import Any, Dict
 
-from lead_engine.source_adapters import create_adapter, normalize_job_record
+from lead_engine.source_adapters import AdapterResult, create_adapter, normalize_job_record
 from lead_engine.source_registry import _load_free_source_catalog
 
 
 MAX_WORKERS = max(1, min(int(os.environ.get("THORIO_SOURCE_DIAGNOSTIC_WORKERS", "16")), 32))
 TIMEOUT = max(1, int(os.environ.get("THORIO_FREE_SOURCE_TIMEOUT", "12")))
 MAX_SAMPLES = 3
+
+
+def _collect_records(source, definition) -> tuple[list[Dict[str, Any]], int]:
+    """Collect one bounded page and return production-normalized records."""
+    collected = source.collect()
+    if isinstance(collected, AdapterResult):
+        return list(collected.records), len(collected.records)
+
+    raw = list(collected)
+    normalized = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        lead = normalize_job_record(
+            item,
+            source=definition.name,
+            source_url=definition.url,
+            definition=definition,
+        )
+        if lead is not None:
+            normalized.append(lead)
+    return normalized, len(raw)
 
 
 def probe(definition) -> Dict[str, Any]:
@@ -27,30 +49,18 @@ def probe(definition) -> Dict[str, Any]:
     )
     source = create_adapter(definition=bounded, timeout=TIMEOUT)
     try:
-        raw = list(source.collect())
-        normalized = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            lead = normalize_job_record(
-                item,
-                source=definition.name,
-                source_url=definition.url,
-                definition=bounded,
-            )
-            if lead is not None:
-                normalized.append(lead)
+        normalized, raw_count = _collect_records(source, bounded)
 
         if normalized:
             status = "LIVE_NONZERO"
-        elif raw:
+        elif raw_count:
             status = "LIVE_RAW_BUT_NOT_NORMALIZABLE"
         else:
             status = "LIVE_EMPTY"
 
         samples = [
             {
-                "title": str(item.get("title", ""))[:200],
+                "title": str(item.get("job_title") or item.get("title") or "")[:200],
                 "company": str(item.get("company", ""))[:200],
                 "url": str(item.get("url", ""))[:500],
             }
@@ -62,7 +72,7 @@ def probe(definition) -> Dict[str, Any]:
             "endpoint": definition.url,
             "collector_type": definition.collector_type,
             "status": status,
-            "raw_records": len(raw),
+            "raw_records": raw_count,
             "normalized_records": len(normalized),
             "samples": samples,
         }
