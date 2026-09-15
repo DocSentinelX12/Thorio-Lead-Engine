@@ -21,6 +21,40 @@ def test_collector_normalizes_lead():
     assert result["signal"] == "remote software engineer"
 
 
+def test_collector_preserves_company_website_for_public_research():
+    lead = {
+        "source": "company-site",
+        "source_id": "lead-website-001",
+        "url": "https://jobs.example.com/roles/001",
+        "company": "Acme",
+        "signal": "engineering expansion",
+        "evidence": "Hiring announcement",
+        "company_website": "https://acme.example.com",
+    }
+
+    result = normalize_lead_input(lead)
+
+    assert result["company_website"] == "https://acme.example.com"
+    assert result["website"] == "https://acme.example.com"
+
+
+def test_collector_does_not_overwrite_explicit_website():
+    lead = {
+        "source": "company-site",
+        "source_id": "lead-website-002",
+        "url": "https://jobs.example.com/roles/002",
+        "company": "Acme",
+        "signal": "engineering expansion",
+        "evidence": "Hiring announcement",
+        "company_website": "https://acme.example.com",
+        "website": "https://www.acme.example.com",
+    }
+
+    result = normalize_lead_input(lead)
+
+    assert result["website"] == "https://www.acme.example.com"
+
+
 def test_collector_rejects_incomplete_lead():
     lead = {
         "source": "linkedin",
