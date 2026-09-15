@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from .database import LeadDB
@@ -5,6 +6,19 @@ from .sync_worker import (
     sync_one,
     sync_pending,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_research_sync(monkeypatch):
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_research",
+        lambda lead: {
+            "status": "created",
+            "record": {
+                "id": "rec_research_test",
+            },
+        },
+    )
 
 
 def test_sync_worker_retries_failed_lead(tmp_path):
@@ -125,6 +139,98 @@ def test_sync_one_requires_successful_lead_radar_record(
             "returning an Airtable record."
         )
     )
+
+
+def test_sync_one_requires_research_record_after_lead_radar(
+    monkeypatch,
+):
+    lead = {
+        "fingerprint": "lead-research-required",
+        "company": "Example Corp",
+        "route": "Thorio",
+    }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_lead_if_missing",
+        lambda lead: {
+            "status": "created",
+            "record": {
+                "id": "rec_lead_research",
+            },
+        },
+    )
+
+    research_calls = []
+
+    def research_sync(lead_payload):
+        research_calls.append(lead_payload)
+        return {
+            "status": "created",
+            "record": {
+                "id": "rec_research_required",
+                "fields": {
+                    "Research Status": "research_required",
+                    "Lead Fingerprint": "lead-research-required",
+                },
+            },
+        }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_research",
+        research_sync,
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_master_tracker",
+        lambda lead: {
+            "status": "synced",
+        },
+    )
+
+    result = sync_one(
+        lead
+    )
+
+    assert result["status"] == "synced"
+    assert result["research_record"]["id"] == "rec_research_required"
+    assert len(research_calls) == 1
+    assert research_calls[0]["fingerprint"] == "lead-research-required"
+
+
+def test_sync_one_fails_and_remains_retryable_when_research_sync_fails(
+    monkeypatch,
+):
+    lead = {
+        "fingerprint": "lead-research-failure",
+        "company": "Example Corp",
+        "route": "Thorio",
+    }
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_lead_if_missing",
+        lambda lead: {
+            "status": "created",
+            "record": {
+                "id": "rec_lead_research_failure",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.sync_research",
+        lambda lead: {
+            "status": "failed",
+            "error": "research Airtable failure",
+        },
+    )
+
+    result = sync_one(
+        lead
+    )
+
+    assert result["status"] == "failed"
+    assert result["research_record"] is None
+    assert result["error"] == "research Airtable failure"
 
 
 def test_sync_one_requires_valid_master_tracker_result(
