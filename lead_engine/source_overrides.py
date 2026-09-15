@@ -114,7 +114,7 @@ _SOURCE_OVERRIDES = {
     },
     "Landing Jobs": {
         "collector_type": "json",
-        "url": "https://landing.jobs/api/v1/jobs.json",
+        "url": "https://landing.jobs/api/v1/jobs",
         "pagination_type": "none",
         "max_pages": 1,
         "max_requests": 1,
@@ -161,7 +161,6 @@ _SOURCE_OVERRIDES = {
         "max_records": 500,
     },
     "US Remotely": {
-        "name": "USA Remote Work",
         "provider": "USA Remote Work",
         "collector_type": "html",
         "url": "https://www.usaremotework.com/jobs",
@@ -174,7 +173,6 @@ _SOURCE_OVERRIDES = {
         "allowed_for_thorio": True,
     },
     "Rocketship": {
-        "name": "Remote Landers",
         "provider": "Remote Landers",
         "collector_type": "json",
         "url": "https://remotelanders.com/api/jobs?limit=100&page=1",
@@ -218,14 +216,11 @@ def _apply_overrides(
                 **metadata,
             }
 
-        replacement_name = values.get("name")
-        if isinstance(replacement_name, str) and replacement_name.strip() and replacement_name != definition.name:
-            # Preserve the historical public source while also retaining the
-            # verified live replacement under its current public name.
-            updated.append(definition)
-            updated.append(replace(definition, **values))
-        else:
-            updated.append(replace(definition, **values))
+        # Historical source names remain stable for existing records, but
+        # their runtime collection endpoint is corrected to the verified live
+        # replacement. The current replacement source remains independently
+        # present in the catalog when it has its own public identity.
+        updated.append(replace(definition, **values))
 
     return tuple(updated)
 
