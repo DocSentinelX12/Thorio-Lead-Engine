@@ -190,8 +190,18 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
             raw_roots.append(f"{parsed.scheme}://{parsed.netloc}/")
             raw_roots.append(value)
     source_url = str(lead.get("source_url") or lead.get("url") or "").strip()
-    if source_url.startswith(("http://", "https://")) and _domain(source_url) in company_domains:
-        raw_roots.append(source_url)
+    if source_url.startswith(("http://", "https://")):
+        source_parsed = urlparse(source_url)
+        if source_parsed.netloc and _domain(source_url) in company_domains:
+            raw_roots.append(source_url)
+        elif source_parsed.netloc and not company_domains:
+            # Research the exact public source already observed for the lead.
+            # This does not invent a company domain or treat the source as a
+            # verified company website. It simply preserves and analyzes the
+            # public evidence that produced the lead.
+            public, _ = _public_host(source_url)
+            if public:
+                raw_roots.append(source_url)
     ordered: list[str] = []
     seen: set[str] = set()
     for root in raw_roots:
@@ -227,7 +237,7 @@ def _classify(pages: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
 
 
 def research_public_web(lead: Mapping[str, Any]) -> Dict[str, Any]:
-    """Collect bounded public evidence only from the company's public, globally routable domain inputs."""
+    """Collect bounded public evidence from verified company URLs or the exact observed public source URL."""
     urls = _candidate_urls(lead)
     pages = []
     for url in urls:
