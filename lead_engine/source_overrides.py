@@ -218,7 +218,14 @@ def _apply_overrides(
                 **metadata,
             }
 
-        updated.append(replace(definition, **values))
+        replacement_name = values.get("name")
+        if isinstance(replacement_name, str) and replacement_name.strip() and replacement_name != definition.name:
+            # Preserve the historical public source while also retaining the
+            # verified live replacement under its current public name.
+            updated.append(definition)
+            updated.append(replace(definition, **values))
+        else:
+            updated.append(replace(definition, **values))
 
     return tuple(updated)
 
