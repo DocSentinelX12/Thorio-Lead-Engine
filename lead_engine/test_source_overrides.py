@@ -66,24 +66,6 @@ def test_the_muse_uses_current_api_page_one():
     assert muse.url_field == "refs.landing_page"
 
 
-def test_live_replacements_use_verified_current_endpoints():
-    catalog = _load_free_source_catalog()
-    definitions = {definition.name: definition for definition in catalog}
-
-    remote_landers = definitions["Remote Landers"]
-    assert remote_landers.url == "https://remotelanders.com/api/jobs?limit=100&page=1"
-    assert remote_landers.collector_type == "json"
-    assert remote_landers.record_path == "jobs"
-    assert remote_landers.title_field == "title"
-    assert remote_landers.company_field == "company"
-    assert remote_landers.url_field == "applyUrl"
-    assert remote_landers.source_id_field == "slug"
-
-    usa_remote_work = definitions["USA Remote Work"]
-    assert usa_remote_work.url == "https://www.usaremotework.com/jobs"
-    assert usa_remote_work.collector_type == "html"
-
-
 def test_historical_source_identities_use_verified_live_replacements():
     catalog = _load_free_source_catalog()
     definitions = {definition.name: definition for definition in catalog}
@@ -103,8 +85,10 @@ def test_historical_source_identities_use_verified_live_replacements():
     assert rocketship.record_path == "jobs"
     assert rocketship.url_field == "applyUrl"
 
-    assert definitions["US Remotely"].url == "https://usremotely.com/"
-    assert definitions["Rocketship"].url == "https://rocketship.fm/jobs"
+    assert definitions["US Remotely"].url == "https://www.usaremotework.com/jobs"
+    assert definitions["Rocketship"].url == "https://remotelanders.com/api/jobs?limit=100&page=1"
+    assert "Remote Landers" not in definitions
+    assert "USA Remote Work" not in definitions
 
 
 def test_jobicy_uses_public_rss_fallback():
