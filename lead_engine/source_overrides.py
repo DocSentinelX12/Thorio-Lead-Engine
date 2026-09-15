@@ -169,9 +169,9 @@ _SOURCE_OVERRIDES = {
         "max_pages": 1,
         "max_requests": 1,
         "max_records": 500,
-        "attribution_required": false,
+        "attribution_required": False,
         "attribution_url": "https://www.usaremotework.com/",
-        "allowed_for_thorio": true,
+        "allowed_for_thorio": True,
     },
     "Rocketship": {
         "name": "Remote Landers",
@@ -192,9 +192,9 @@ _SOURCE_OVERRIDES = {
         "max_pages": 5,
         "max_requests": 5,
         "max_records": 500,
-        "attribution_required": true,
+        "attribution_required": True,
         "attribution_url": "https://remotelanders.com/",
-        "allowed_for_thorio": true,
+        "allowed_for_thorio": True,
     },
 }
 
