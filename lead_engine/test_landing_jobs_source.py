@@ -1,48 +1,44 @@
-import json
-
-from lead_engine.source_adapters import create_adapter
+from lead_engine.source_adapters import RssSourceAdapter, create_adapter
 from lead_engine.source_definition import SourceDefinition
 
 
-def test_landing_jobs_uses_public_json_endpoint_with_browser_compatible_request(monkeypatch):
-    import lead_engine.source_specific_collectors as collectors
+def test_landing_jobs_uses_verified_public_atom_feed(monkeypatch):
+    import lead_engine.source_adapters as source_adapters
 
     requests = []
 
     def fake_fetch(request, timeout):
         requests.append(request)
-        return json.dumps([
-            {
-                "id": 123,
-                "title": "Senior Software Engineer",
-                "company": "Example Co",
-                "url": "https://landing.jobs/jobs/senior-software-engineer-123",
-                "role_description": "Build software.",
-                "city": "Remote",
-            }
-        ]).encode("utf-8")
+        return b"""<?xml version='1.0' encoding='utf-8'?>
+        <feed xmlns='http://www.w3.org/2005/Atom'>
+          <entry>
+            <id>landing-123</id>
+            <title>Senior Software Engineer</title>
+            <link href='https://landing.jobs/jobs/senior-software-engineer-123'/>
+            <summary>Build software.</summary>
+            <author><name>Example Co</name></author>
+          </entry>
+        </feed>"""
 
-    monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
+    monkeypatch.setattr(source_adapters, "fetch_url", fake_fetch)
     definition = SourceDefinition(
         name="Landing Jobs",
         provider="Landing Jobs",
-        collector_type="json",
-        url="https://landing.jobs/api/v1/jobs",
+        collector_type="atom",
+        url="https://landing.jobs/feed",
         pagination_type="none",
         max_pages=1,
         max_requests=1,
-        max_records=50,
+        max_records=55,
     )
 
-    result = create_adapter(definition=definition, timeout=12).collect()
+    adapter = create_adapter(definition=definition, timeout=12)
 
-    assert len(result.records) == 1
-    assert result.records[0]["source"] == "Landing Jobs"
-    assert result.records[0]["job_title"] == "Senior Software Engineer"
-    assert result.records[0]["company"] == "Example Co"
-    assert requests[0].full_url == "https://landing.jobs/api/v1/jobs"
-    assert requests[0].headers["User-agent"] == "Mozilla/5.0 Thorio-Lead-Engine/1.0"
-    assert requests[0].headers["Accept"] == "application/json,text/plain,*/*"
-    assert requests[0].headers["Accept-language"] == "en-US,en;q=0.9"
-    assert requests[0].headers["Referer"] == "https://landing.jobs/"
-    assert requests[0].headers["Origin"] == "https://landing.jobs"
+    assert isinstance(adapter.adapter, RssSourceAdapter)
+    result = adapter.collect()
+    assert len(result) == 1
+    assert result[0]["source"] == "Landing Jobs"
+    assert result[0]["job_title"] == "Senior Software Engineer"
+    assert result[0]["company"] == "Example Co"
+    assert requests[0].full_url == "https://landing.jobs/feed"
+    assert requests[0].headers["Accept"] == "application/rss+xml, application/atom+xml, application/xml, text/xml"
