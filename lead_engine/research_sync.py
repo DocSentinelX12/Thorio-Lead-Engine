@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+import urllib.parse
+from typing import Any, Dict, List, Optional
 
-from .airtable_sync import AirtableSyncError, _text, create_master_record, find_master_records, update_master_record
+from .airtable_sync import AirtableSyncError, AIRTABLE_API_URL, _request, _text
+from .config import LeadEngineConfig
 
 _RESEARCH_FIELD_MAP = {
     "Company Research": "company_research",
@@ -88,6 +90,66 @@ def _research_payload(lead: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Research synchronization requires a serializable lead payload.")
     fields["Raw Research Package"] = raw_package
     return fields
+
+
+def _research_table_url() -> str:
+    config = LeadEngineConfig.from_environment()
+    table_name = _text(config.airtable_research_table)
+    if not table_name:
+        raise AirtableSyncError("No Airtable Research table configured.")
+    base_id = _text(config.airtable_base_id)
+    if not base_id:
+        raise AirtableSyncError("AIRTABLE_BASE_ID must be configured.")
+    return f"{AIRTABLE_API_URL}/{base_id}/{urllib.parse.quote(table_name, safe='')}"
+
+
+def find_master_records(table_key: str, field_name: str, value: Any) -> List[Dict[str, Any]]:
+    """Research-table lookup uses the dedicated Research table configuration."""
+    if table_key != "research":
+        raise AirtableSyncError(f"Research synchronization does not support table: {table_key}")
+    if not _text(value):
+        return []
+    escaped = _text(value).replace("\\", "\\\\").replace('"', '\\"')
+    field = _text(field_name)
+    if not field:
+        raise ValueError("Airtable lookup requires a field name.")
+    formula = f'{{{field}}}="{escaped}"'
+    records: List[Dict[str, Any]] = []
+    offset: Optional[str] = None
+    while True:
+        params = {"filterByFormula": formula, "pageSize": "100"}
+        if offset:
+            params["offset"] = offset
+        result = _request("GET", f"{_research_table_url()}?{urllib.parse.urlencode(params)}")
+        page = result.get("records", [])
+        if isinstance(page, list):
+            records.extend(record for record in page if isinstance(record, dict))
+        offset = result.get("offset")
+        if not offset:
+            return records
+
+
+def create_master_record(table_key: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    if table_key != "research":
+        raise AirtableSyncError(f"Research synchronization does not support table: {table_key}")
+    if not isinstance(fields, dict):
+        raise ValueError("Airtable record fields must be a dictionary.")
+    return _request("POST", _research_table_url(), {"records": [{"fields": fields}]})
+
+
+def update_master_record(table_key: str, record_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    if table_key != "research":
+        raise AirtableSyncError(f"Research synchronization does not support table: {table_key}")
+    record_id = _text(record_id)
+    if not record_id:
+        raise ValueError("Airtable update requires a record ID.")
+    if not isinstance(fields, dict):
+        raise ValueError("Airtable record fields must be a dictionary.")
+    encoded_record_id = urllib.parse.quote(record_id, safe="")
+    result = _request("PATCH", f"{_research_table_url()}/{encoded_record_id}", {"fields": fields})
+    if "records" in result:
+        return result
+    return {"records": [result]}
 
 
 def sync_research(lead: Dict[str, Any]) -> Dict[str, Any]:
