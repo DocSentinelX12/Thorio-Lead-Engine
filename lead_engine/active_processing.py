@@ -8,6 +8,7 @@ from .agent_stateful_handlers import verification as _verification
 from .dedupe import Dedupe
 from .research_sync import sync_research
 
+
 def _lead(payload: Mapping[str, Any]) -> Dict[str, Any]:
     lead = payload.get("lead", payload)
     if not isinstance(lead, Mapping): raise ValueError("lead must be a mapping")
@@ -15,13 +16,33 @@ def _lead(payload: Mapping[str, Any]) -> Dict[str, Any]:
     if not str(value.get("fingerprint") or "").strip(): raise ValueError("lead requires fingerprint")
     return value
 
+
 def priority(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     lead = _lead(payload); evidence = sum(1 for key in ("signal", "evidence", "job_title", "person", "company") if str(lead.get(key) or "").strip()); qualified = bool(lead.get("qualified") or lead.get("potential_routes")); freshness = bool(lead.get("need_at") or lead.get("current_need_at") or lead.get("inquiry_at") or lead.get("last_inquiry_at") or lead.get("intent_at") or lead.get("discovery_timestamp")); research_ready = str(lead.get("research_status") or "").strip().lower() in {"complete", "research_complete"}; decision_maker_ready = bool(lead.get("company_research", {}).get("decision_maker")) if isinstance(lead.get("company_research"), Mapping) else False; score = evidence + (5 if qualified else 0) + (3 if freshness else 0) + (2 if research_ready else 0) + (1 if decision_maker_ready else 0); fingerprint = lead["fingerprint"]
     enqueue(ctx.db, "verification", {"lead": lead, "evidence_events": payload.get("evidence_events", [])}, priority=8, dedupe_key=f"verification:{fingerprint}")
     return {"role": agent, "priority_score": score, "lead": lead, "research_ready": research_ready, "decision_maker_ready": decision_maker_ready, "actionability": "ready" if research_ready and decision_maker_ready else "research_required", "handoff": "verification"}
 
+
 def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     lead = _lead(payload); fingerprint = lead["fingerprint"]; validation_lead = dict(lead)
+    potential_routes = validation_lead.get("potential_routes")
+    if not isinstance(potential_routes, list) or not potential_routes:
+        qualification = validation_lead.get("qualification_results")
+        if isinstance(qualification, Mapping):
+            verified_routes = []
+            for route_name in ("Shiftr", "Paxus", "Thorio"):
+                result = qualification.get(route_name)
+                if not isinstance(result, Mapping) or result.get("qualified") is not True:
+                    continue
+                route_research = result.get("route_research")
+                if not isinstance(route_research, Mapping) or route_research.get("verified") is not True:
+                    continue
+                if route_name == "Paxus" and result.get("true_referral") is not True:
+                    continue
+                verified_routes.append(route_name)
+            if verified_routes:
+                validation_lead["potential_routes"] = verified_routes
+                if not str(validation_lead.get("route") or "").strip(): validation_lead["route"] = verified_routes[0]
     if not str(validation_lead.get("route") or "").strip() and isinstance(validation_lead.get("potential_routes"), list) and validation_lead["potential_routes"]: validation_lead["route"] = str(validation_lead["potential_routes"][0])
     verification_payload = dict(payload); verification_payload["lead"] = validation_lead; result = _verification(agent, verification_payload, ctx)
     if result.get("decision_maker_verification") == "verified":
@@ -44,10 +65,12 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
     else: result["handoff"] = "review_required"
     return result
 
+
 def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     result = _routing(agent, payload, ctx); lead = _lead(payload)
     if result.get("destinations"): enqueue(ctx.db, "airtable_integrity", {"lead": lead, "routing_result": result}, priority=6, dedupe_key=f"airtable_integrity:{lead['fingerprint']}")
     result["handoff"] = "airtable_integrity" if result.get("destinations") else "review_required"; return result
+
 
 def _has_verified_need(lead: Mapping[str, Any]) -> bool:
     for key in ("business_need_research", "current_intent_research", "route_research"):
@@ -60,6 +83,7 @@ def _has_verified_need(lead: Mapping[str, Any]) -> bool:
             for route_item in value["routes"].values():
                 if isinstance(route_item, Mapping) and (route_item.get("verified") is True or str(route_item.get("verification_status") or "").lower() == "verified") and any(str(route_item.get(field) or "").strip() for field in ("business_need", "current_need", "need", "service_need", "requirement", "evidence")): return True
     return False
+
 
 def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any], integrity_result: Mapping[str, Any], db: Any = None) -> tuple[bool, str]:
     destinations = routing_result.get("destinations")
@@ -77,6 +101,7 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
     if not str(lead.get("contact_email") or research.get("decision_maker_email") or "").strip(): return False, "missing_contact_email"
     if integrity_result.get("sync_error_present"): return True, "airtable_sync_retryable"
     return True, "eligible"
+
 
 def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     result = _airtable_integrity(agent, payload, ctx); lead = _lead(payload); fingerprint = lead["fingerprint"]; current_lead = ctx.db.get(fingerprint) or lead; routing_result = payload.get("routing_result", {}); routing_result = routing_result if isinstance(routing_result, Mapping) else {}
