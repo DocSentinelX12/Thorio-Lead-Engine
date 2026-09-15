@@ -120,6 +120,7 @@ _SOURCE_OVERRIDES = {
         "max_requests": 1,
         "max_records": 500,
     },
+    # Landing Jobs' JSON endpoint is currently blocked; use the public Atom feed.
     "Landing Jobs": {
         "collector_type": "rss",
         "url": "https://landing.jobs/feed",
