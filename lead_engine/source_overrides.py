@@ -17,6 +17,14 @@ _SOURCE_OVERRIDES = {
         "enabled": False,
         "allowed_for_thorio": False,
     },
+    "Jobicy": {
+        "collector_type": "rss",
+        "url": "https://jobicy.com/jobs/feed",
+        "pagination_type": "none",
+        "max_pages": 1,
+        "max_requests": 1,
+        "max_records": 200,
+    },
     "RemoteJobs.org": {
         "collector_type": "json",
         "url": "https://remotejobs.org/api/v1/jobs?limit=50",
