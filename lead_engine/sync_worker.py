@@ -10,6 +10,7 @@ from .airtable_sync import (
 from .database import LeadDB
 from .master_tracker_sync import sync_master_tracker
 from .paxus_referral_adapter import lead_to_paxus_referral
+from .research_sync import sync_research
 
 
 def _text(value: Any) -> str:
@@ -171,15 +172,17 @@ def _build_followup_payload(
         ),
     }
 
-                    
+
 def sync_one(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
     Synchronize one complete Master Tracker state.
 
-    Lead Radar must succeed first. Every downstream synchronization
-    that is actually attempted must also explicitly confirm success.
+    Lead Radar must succeed first. The durable Research handoff is
+    mandatory immediately after Lead Radar succeeds. Every downstream
+    synchronization that is actually attempted must also explicitly
+    confirm success.
     """
 
     if not isinstance(lead, dict):
@@ -187,6 +190,7 @@ def sync_one(
             "status": "failed",
             "lead": {},
             "airtable_record": None,
+            "research_record": None,
             "outreach_record": None,
             "followup_record": None,
             "referral_record": None,
@@ -232,6 +236,44 @@ def sync_one(
         if airtable_record is None:
             raise ValueError(
                 "Lead Radar synchronization succeeded without "
+                "returning an Airtable record."
+            )
+
+        research_result = sync_research(
+            lead
+        )
+
+        if not isinstance(
+            research_result,
+            dict,
+        ):
+            raise ValueError(
+                "Research synchronization returned an invalid result."
+            )
+
+        if research_result.get(
+            "status"
+        ) not in {
+            "created",
+            "updated",
+            "synced",
+            "already_exists",
+        }:
+            raise ValueError(
+                research_result.get("error")
+                or (
+                    "Research synchronization did not "
+                    "confirm a successful result."
+                )
+            )
+
+        research_record = research_result.get(
+            "record"
+        )
+
+        if research_record is None:
+            raise ValueError(
+                "Research synchronization succeeded without "
                 "returning an Airtable record."
             )
 
@@ -394,7 +436,6 @@ def sync_one(
             )
 
         return {
-
             "status": (
                 "synced"
                 if lead_status != "already_exists"
@@ -402,6 +443,7 @@ def sync_one(
             ),
             "lead": lead,
             "airtable_record": airtable_record,
+            "research_record": research_record,
             "outreach_record": (
                 outreach_result.get("record")
                 if outreach_result
@@ -426,6 +468,7 @@ def sync_one(
             "status": "failed",
             "lead": lead,
             "airtable_record": None,
+            "research_record": None,
             "outreach_record": None,
             "followup_record": None,
             "referral_record": None,
@@ -467,6 +510,7 @@ def sync_pending(
                 "status": "failed",
                 "lead": {},
                 "airtable_record": None,
+                "research_record": None,
                 "outreach_record": None,
                 "followup_record": None,
                 "referral_record": None,
@@ -494,6 +538,7 @@ def sync_pending(
                 "status": "failed",
                 "lead": {},
                 "airtable_record": None,
+                "research_record": None,
                 "outreach_record": None,
                 "followup_record": None,
                 "referral_record": None,
