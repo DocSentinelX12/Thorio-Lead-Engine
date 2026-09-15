@@ -10,40 +10,21 @@ from .source_registry import (
 
 
 def test_configured_sources_empty_when_unconfigured():
-    with patch.dict(
-        "os.environ",
-        {},
-        clear=True,
-    ):
+    with patch.dict("os.environ", {}, clear=True):
         sources = configured_sources()
-
     assert sources == []
 
 
 def test_configured_sources_includes_web_source():
-    with patch.dict(
-        "os.environ",
-        {
-            "THORIO_LEAD_SOURCE_URL":
-                "https://example.com/leads.json",
-            "THORIO_LEAD_SOURCE_TIMEOUT":
-                "20",
-        },
-        clear=True,
-    ):
+    with patch.dict("os.environ", {"THORIO_LEAD_SOURCE_URL": "https://example.com/leads.json", "THORIO_LEAD_SOURCE_TIMEOUT": "20"}, clear=True):
         sources = configured_sources()
-
     assert len(sources) == 1
     assert sources[0].name == "web"
-    assert (
-        sources[0].url
-        == "https://example.com/leads.json"
-    )
+    assert sources[0].url == "https://example.com/leads.json"
 
 
 def test_free_source_catalog_has_exact_current_universe():
     catalog = _load_free_source_catalog()
-
     assert len(catalog) == 41
     assert len(available_free_sources()) == 41
     assert all(definition.enabled for definition in catalog)
@@ -52,194 +33,52 @@ def test_free_source_catalog_has_exact_current_universe():
 
 def test_free_source_catalog_preserves_historical_public_sources():
     names = set(available_free_sources())
-
-    historical_sources = {
-        "NoDesk",
-        "Welcome to the Jungle",
-        "Remotive",
-        "Working Nomads",
-        "We Work Remotely",
-        "Remote OK",
-        "Jobspresso",
-        "Landing Jobs",
-        "EU Remote Jobs",
-        "WorkWave",
-        "AI Jobs",
-        "Total",
-        "FlexJobs",
-        "US Remotely",
-        "Rocketship",
-        "JobFill.AI",
-        "Remote Woman",
-        "Wellfound",
-    }
-
-    current_sources = {
-        "Himalayas",
-        "Jobicy",
-        "RemoteJobs.org",
-        "Remote First Jobs",
-        "Arbeitnow",
-        "Nomado24",
-        "The Muse",
-        "Airbnb",
-        "Anthropic",
-        "Airtable",
-        "Asana",
-        "Brex",
-        "Cloudflare",
-        "Coinbase",
-        "Datadog",
-        "Discord",
-        "Dropbox",
-        "Figma",
-        "GitLab",
-        "Instacart",
-        "Lyft",
-        "Netlify",
-        "Stripe",
-    }
-
+    historical_sources = {"NoDesk", "Welcome to the Jungle", "Remotive", "Working Nomads", "We Work Remotely", "Remote OK", "Jobspresso", "Landing Jobs", "EU Remote Jobs", "WorkWave", "AI Jobs", "Total", "FlexJobs", "US Remotely", "Rocketship", "JobFill.AI", "Remote Woman", "Wellfound"}
+    current_sources = {"Himalayas", "Jobicy", "RemoteJobs.org", "Remote First Jobs", "Arbeitnow", "Nomado24", "The Muse", "Airbnb", "Anthropic", "Airtable", "Asana", "Brex", "Cloudflare", "Coinbase", "Datadog", "Discord", "Dropbox", "Figma", "GitLab", "Instacart", "Lyft", "Netlify", "Stripe"}
     assert historical_sources <= names
     assert current_sources <= names
 
 
 def test_restored_historical_sources_use_explicit_working_collectors():
-    catalog = _load_free_source_catalog()
-    definitions = {
-        definition.name: definition
-        for definition in catalog
-    }
-
-    expected_types = {
-        "NoDesk": "html",
-        "Welcome to the Jungle": "html",
-        "Remotive": "json",
-        "Working Nomads": "json",
-        "We Work Remotely": "rss",
-        "Jobspresso": "rss",
-        "Landing Jobs": "json",
-        "EU Remote Jobs": "html",
-        "WorkWave": "json",
-        "AI Jobs": "html",
-        "Total": "html",
-        "FlexJobs": "html",
-        "US Remotely": "html",
-        "Rocketship": "json",
-        "JobFill.AI": "html",
-        "Remote Woman": "html",
-        "Wellfound": "html",
-    }
-
-    assert {
-        name: definitions[name].collector_type
-        for name in expected_types
-    } == expected_types
+    definitions = {definition.name: definition for definition in _load_free_source_catalog()}
+    expected_types = {"NoDesk": "html", "Welcome to the Jungle": "html", "Remotive": "json", "Working Nomads": "json", "We Work Remotely": "rss", "Jobspresso": "rss", "Landing Jobs": "json", "EU Remote Jobs": "html", "WorkWave": "json", "AI Jobs": "html", "Total": "html", "FlexJobs": "html", "US Remotely": "html", "Rocketship": "json", "JobFill.AI": "html", "Remote Woman": "html", "Wellfound": "html"}
+    assert {name: definitions[name].collector_type for name in expected_types} == expected_types
 
 
 def test_runtime_sources_use_effective_overridden_endpoints_and_types():
-    with patch.dict(
-        "os.environ",
-        {
-            "LEAD_ENGINE_FREE_SOURCES_ENABLED": "true",
-        },
-        clear=True,
-    ):
+    with patch.dict("os.environ", {"LEAD_ENGINE_FREE_SOURCES_ENABLED": "true"}, clear=True):
         sources = configured_sources()
-
     definitions = {source.name: source for source in sources}
-
     assert definitions["US Remotely"].url == "https://www.usaremotework.com/jobs"
-    assert definitions["US Remotely"].adapter.collector_type == "html"
+    assert definitions["US Remotely"].collector_type == "html"
     assert definitions["Rocketship"].url == "https://remotelanders.com/api/jobs?limit=100&page=1"
-    assert definitions["Rocketship"].adapter.collector_type == "json"
+    assert definitions["Rocketship"].collector_type == "json"
 
 
 def test_free_source_catalog_supports_all_public_collector_types():
-    assert SUPPORTED_FREE_SOURCE_TYPES == {
-        "html",
-        "json",
-        "rss",
-        "atom",
-        "xml",
-    }
+    assert SUPPORTED_FREE_SOURCE_TYPES == {"html", "json", "rss", "atom", "xml"}
 
 
 def test_free_source_catalog_preserves_rich_definition():
-    catalog = _load_free_source_catalog()
-
-    himalayas = next(
-        definition
-        for definition in catalog
-        if definition.name == "Himalayas"
-    )
-
-    assert (
-        himalayas.collector_type
-        == "json"
-    )
-
-    assert (
-        himalayas.record_path
-        == "jobs"
-    )
-
-    assert (
-        himalayas.pagination_type
-        == "cursor"
-    )
-
-    assert (
-        himalayas.cursor_parameter
-        == "cursor"
-    )
-
-    assert (
-        himalayas.cursor_response_field
-        == "nextCursor"
-    )
-
-    assert (
-        himalayas.company_field
-        == "companyName"
-    )
+    himalayas = next(definition for definition in _load_free_source_catalog() if definition.name == "Himalayas")
+    assert himalayas.collector_type == "json"
+    assert himalayas.record_path == "jobs"
+    assert himalayas.pagination_type == "cursor"
+    assert himalayas.cursor_parameter == "cursor"
+    assert himalayas.cursor_response_field == "nextCursor"
+    assert himalayas.company_field == "companyName"
 
 
 def test_free_source_catalog_preserves_company_metadata():
-    catalog = _load_free_source_catalog()
-
-    stripe = next(
-        definition
-        for definition in catalog
-        if definition.name == "Stripe"
-    )
-
-    assert (
-        stripe.provider
-        == "Greenhouse"
-    )
-
-    assert (
-        stripe.metadata[
-            "default_company"
-        ]
-        == "Stripe"
-    )
-
-    assert (
-        stripe.record_path
-        == "jobs"
-    )
-
-    assert (
-        stripe.url_field
-        == "absolute_url"
-    )
+    stripe = next(definition for definition in _load_free_source_catalog() if definition.name == "Stripe")
+    assert stripe.provider == "Greenhouse"
+    assert stripe.metadata["default_company"] == "Stripe"
+    assert stripe.record_path == "jobs"
+    assert stripe.url_field == "absolute_url"
 
 
 def test_available_free_sources_returns_catalog_names():
     names = available_free_sources()
-
     assert len(names) == 41
     assert "Himalayas" in names
     assert "Jobicy" in names
@@ -252,61 +91,18 @@ def test_available_free_sources_returns_catalog_names():
 
 
 def test_configured_sources_loads_all_free_sources():
-    with patch.dict(
-        "os.environ",
-        {
-            "LEAD_ENGINE_FREE_SOURCES_ENABLED":
-                "true",
-        },
-        clear=True,
-    ):
+    with patch.dict("os.environ", {"LEAD_ENGINE_FREE_SOURCES_ENABLED": "true"}, clear=True):
         sources = configured_sources()
-
     assert len(sources) == 41
-
-    names = {
-        source.name
-        for source in sources
-    }
-
-    assert names == set(available_free_sources())
+    assert {source.name for source in sources} == set(available_free_sources())
 
 
 def test_free_source_catalog_nomado24_uses_description_field():
-    catalog = _load_free_source_catalog()
-
-    nomado24 = next(
-        definition
-        for definition in catalog
-        if definition.name == "Nomado24"
-    )
-
-    assert (
-        nomado24.description_field
-        == "description"
-    )
+    nomado24 = next(definition for definition in _load_free_source_catalog() if definition.name == "Nomado24")
+    assert nomado24.description_field == "description"
 
 
 def test_active_airtable_search_theme_without_url_is_skipped_from_direct_catalog():
-    records = {
-        "records": [
-            {
-                "id": "rec-search-theme",
-                "fields": {
-                    "Active": True,
-                    "Source / Search": "LinkedIn hiring",
-                    "Source URL": "",
-                    "Collector Type": "",
-                },
-            }
-        ]
-    }
-    with patch.dict(
-        "os.environ",
-        {
-            "AIRTABLE_BASE_ID": "app-test",
-            "AIRTABLE_API_KEY": "pat-test",
-        },
-        clear=True,
-    ), patch("lead_engine.source_registry._request", return_value=records):
+    records = {"records": [{"id": "rec-search-theme", "fields": {"Active": True, "Source / Search": "LinkedIn hiring", "Source URL": "", "Collector Type": ""}}]}
+    with patch.dict("os.environ", {"AIRTABLE_BASE_ID": "app-test", "AIRTABLE_API_KEY": "pat-test"}, clear=True), patch("lead_engine.source_registry._request", return_value=records):
         assert _load_airtable_source_catalog() == ()
