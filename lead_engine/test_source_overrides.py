@@ -37,6 +37,8 @@ _EXPECTED_BROKEN_SOURCE_OVERRIDES = {
     "NoDesk",
     "We Work Remotely",
     "Jobspresso",
+    "US Remotely",
+    "Rocketship",
     "EURES",
 }
 
@@ -62,6 +64,48 @@ def test_the_muse_uses_current_api_page_one():
     assert muse.title_field == "name"
     assert muse.company_field == "company.name"
     assert muse.url_field == "refs.landing_page"
+
+
+def test_live_replacements_use_verified_current_endpoints():
+    catalog = _load_free_source_catalog()
+    definitions = {definition.name: definition for definition in catalog}
+
+    remote_landers = definitions["Remote Landers"]
+    assert remote_landers.url == "https://remotelanders.com/api/jobs?limit=100&page=1"
+    assert remote_landers.collector_type == "json"
+    assert remote_landers.record_path == "jobs"
+    assert remote_landers.title_field == "title"
+    assert remote_landers.company_field == "company"
+    assert remote_landers.url_field == "applyUrl"
+    assert remote_landers.source_id_field == "slug"
+
+    usa_remote_work = definitions["USA Remote Work"]
+    assert usa_remote_work.url == "https://www.usaremotework.com/jobs"
+    assert usa_remote_work.collector_type == "html"
+
+
+def test_current_api_corrections_remove_stale_explicit_page_parameters():
+    catalog = _load_free_source_catalog()
+    definitions = {definition.name: definition for definition in catalog}
+
+    remote_jobs = definitions["RemoteJobs.org"]
+    assert remote_jobs.url == "https://remotejobs.org/api/v1/jobs?limit=50"
+    assert remote_jobs.offset_start == 0
+    assert remote_jobs.offset_parameter == "offset"
+
+    remote_first = definitions["Remote First Jobs"]
+    assert remote_first.url == "https://remotefirstjobs.com/api/search-jobs"
+    assert remote_first.page_start == 0
+
+    arbeitnow = definitions["Arbeitnow"]
+    assert arbeitnow.url == "https://www.arbeitnow.com/api/job-board-api"
+    assert arbeitnow.page_start == 1
+
+    nomado24 = definitions["Nomado24"]
+    assert nomado24.url == "https://api.nomado24.de/api/public/v1/jobs?per_page=100&language=en"
+
+    landing_jobs = definitions["Landing Jobs"]
+    assert landing_jobs.url == "https://landing.jobs/api/v1/jobs.json"
 
 
 def test_remotive_uses_current_jobs_api():
