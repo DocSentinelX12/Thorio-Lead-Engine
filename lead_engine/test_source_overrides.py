@@ -75,7 +75,7 @@ def test_landing_jobs_uses_verified_public_atom_feed():
     )
 
     assert landing_jobs.collector_type == "atom"
-    assert landing_jobs.url == "https://landing.jobs/feed"
+    assert landing_jobs.url == "https://landing.jobs/feed?remote=true"
     assert landing_jobs.pagination_type == "none"
     assert landing_jobs.max_pages == 1
     assert landing_jobs.max_requests == 1
