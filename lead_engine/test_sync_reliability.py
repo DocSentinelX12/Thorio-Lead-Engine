@@ -20,6 +20,11 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
             "status": "failed",
             "lead": {},
             "airtable_record": None,
+            "research_record": None,
+            "outreach_record": None,
+            "followup_record": None,
+            "referral_record": None,
+            "master_tracker": None,
             "error": "Airtable unavailable",
         }
 
@@ -44,6 +49,8 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
     with patch(
         "lead_engine.sync_worker.sync_lead_if_missing"
     ) as mock_sync, patch(
+        "lead_engine.sync_worker.sync_research"
+    ) as mock_research, patch(
         "lead_engine.sync_worker.sync_outreach"
     ) as mock_outreach, patch(
         "lead_engine.sync_worker.sync_followup"
@@ -55,6 +62,13 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
             "status": "created",
             "record": {
                 "id": "rec_retry_001"
+            },
+        }
+
+        mock_research.return_value = {
+            "status": "created",
+            "record": {
+                "id": "research_retry_001"
             },
         }
 
