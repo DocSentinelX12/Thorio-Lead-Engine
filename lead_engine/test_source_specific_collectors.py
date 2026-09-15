@@ -79,29 +79,40 @@ def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
 
 
 def test_landing_jobs_uses_native_xml_adapter(monkeypatch):
-    import lead_engine.source_adapters as source_adapters
+    import lead_engine.source_specific_collectors as collectors
 
     requested = []
 
     def fake_fetch(request, timeout):
         requested.append(request)
-        return b"<feed xmlns='http://www.w3.org/2005/Atom'></feed>"
+        return b"""<feed xmlns='http://www.w3.org/2005/Atom'>
+          <entry>
+            <id>landing-123</id>
+            <title>Senior Software Engineer</title>
+            <link href='https://landing.jobs/jobs/senior-software-engineer-123'/>
+            <summary>Build software.</summary>
+            <author><name>Example Co</name></author>
+          </entry>
+        </feed>"""
 
-    monkeypatch.setattr(source_adapters, "fetch_url", fake_fetch)
+    monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
     definition = _definition(
         "Landing Jobs",
-        "https://landing.jobs/feed",
+        "https://landing.jobs/feed?remote=true",
         collector_type="atom",
     )
     adapter = create_adapter(definition=definition, timeout=12)
 
     assert isinstance(adapter.adapter, RssSourceAdapter)
-    assert adapter.adapter.url == "https://landing.jobs/feed"
+    assert adapter.adapter.url == "https://landing.jobs/feed?remote=true"
     assert adapter.adapter.source == "Landing Jobs"
-    assert adapter.collect() == []
+    result = adapter.collect()
+    assert len(result) == 1
+    assert result[0]["company"] == "Example Co"
+    assert result[0]["job_title"] == "Senior Software Engineer"
     assert len(requested) == 1
-    assert requested[0].full_url == "https://landing.jobs/feed"
-    assert requested[0].headers["Accept"] == "application/rss+xml, application/atom+xml, application/xml, text/xml"
+    assert requested[0].full_url == "https://landing.jobs/feed?remote=true"
+    assert requested[0].headers["Accept"] == "application/atom+xml, application/xml, text/xml"
 
 
 def test_welcome_to_the_jungle_extracts_credentials_from_javascript_env():
