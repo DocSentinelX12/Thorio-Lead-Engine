@@ -57,9 +57,6 @@ def install() -> None:
         ).strip()
         source_url = str(candidate.get("source_url") or "").strip()
 
-        # Job research must use the exact opportunity URL produced by the
-        # collector. A source listing/API endpoint is discovery provenance,
-        # never company-specific evidence.
         signal_type = str(candidate.get("signal_type") or "").strip().lower()
         if signal_type == "hiring" and not exact_url:
             return {
@@ -81,9 +78,19 @@ def install() -> None:
 
         result = original(candidate)
         pages = result.get("raw_pages", []) if isinstance(result, Mapping) else []
-        safe_pages = [
+
+        # A blocked, failed, or otherwise uncollected page is a collection
+        # outcome, not an identity mismatch. Preserve that original outcome.
+        collected_pages = [
             page for page in pages
-            if isinstance(page, Mapping) and _page_identity_matches(page, company)
+            if isinstance(page, Mapping) and page.get("status") == "collected"
+        ]
+        if not collected_pages:
+            return dict(result)
+
+        safe_pages = [
+            page for page in collected_pages
+            if _page_identity_matches(page, company)
         ]
 
         # Never promote facts from a page that does not identify the target
@@ -95,7 +102,9 @@ def install() -> None:
         for page in pages:
             audited = dict(page) if isinstance(page, Mapping) else {"value": page}
             url = str(audited.get("url") or "")
-            if url in safe_ids:
+            if audited.get("status") != "collected":
+                audited["evidence_admission_status"] = "not_collected"
+            elif url in safe_ids:
                 audited["evidence_admission_status"] = "admitted_company_identity_match"
             else:
                 audited["evidence_admission_status"] = "rejected_company_identity_mismatch"
@@ -108,7 +117,7 @@ def install() -> None:
         updated["status"] = "evidence_found" if safe_pages else "no_company_matched_evidence"
         updated["identity_gate"] = "company_identity_required"
         updated["company_identity_match_count"] = len(safe_pages)
-        updated["rejected_page_count"] = len(pages) - len(safe_pages)
+        updated["rejected_page_count"] = len(collected_pages) - len(safe_pages)
         return updated
 
     public_research.research_public_web = guarded_research
