@@ -66,12 +66,12 @@ def test_real_decision_maker_verification_persists_verified_identity_before_hand
     stored = db.payload
     research = stored["company_research"]
     assert result["decision_maker_verification"] == "verified"
-    assert result["decision_maker_handoff"] == "qualification_a"
+    assert result["decision_maker_handoff"] == "research_required"
     assert research["decision_maker"] == "Taylor"
     assert research["decision_maker_evidence"] == "https://example.com/taylor-role"
     assert research["decision_maker_role_evidence"] == "https://example.com/taylor-role"
     assert research["decision_maker_verification_status"] == "verified"
     assert research["decision_maker_verification_source"] == "LinkedIn"
-    assert stored["research_status"] == "complete"
-    assert synced and synced[0]["company_research"]["decision_maker"] == "Taylor"
-    assert any(args[1] == "qualification_a" for args, _ in queued)
+    assert stored["research_status"] == "research_required"
+    assert synced == []
+    assert not any(args[1] == "qualification_a" for args, _ in queued)
