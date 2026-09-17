@@ -6,6 +6,7 @@ from .agent_stateful_handlers import airtable_integrity as _airtable_integrity
 from .agent_stateful_handlers import routing as _routing
 from .agent_stateful_handlers import verification as _verification
 from .dedupe import Dedupe
+from .research_package import finalize_closer_package, research_readiness
 from .research_sync import sync_research
 
 
@@ -69,15 +70,22 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
             if str(record.get("verified_at") or "").strip(): research["decision_maker_verified_at"] = str(record["verified_at"]).strip()
         research["decision_maker_verification_status"] = "verified"
         if result.get("decision_maker_role_evidence"): research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
-        updated = dict(current_lead); updated["company_research"] = research; updated["research_status"] = "complete"; stored = ctx.db.update_payload(fingerprint, updated) or updated
-        try: research_sync_result = sync_research(stored)
-        except Exception as exc: research_sync_result = {"status": "failed", "error": str(exc)}
-        enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a_verified:{fingerprint}")
-        result.update({"decision_maker_handoff": "qualification_a", "lead": stored, "research_sync": research_sync_result})
+        updated = dict(current_lead); updated["company_research"] = research; updated["closer_package"] = finalize_closer_package(updated, updated.get("closer_package"))
+        readiness = research_readiness(updated)
+        updated["research_status"] = "complete" if readiness["ready"] else "research_required"
+        stored = ctx.db.update_payload(fingerprint, updated) or updated
+        research_sync_result = None
+        if readiness["ready"]:
+            try: research_sync_result = sync_research(stored)
+            except Exception as exc: research_sync_result = {"status": "failed", "error": str(exc)}
+            enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a_verified:{fingerprint}")
+            result.update({"decision_maker_handoff": "qualification_a", "lead": stored, "research_sync": research_sync_result})
+        else:
+            result.update({"decision_maker_handoff": "research_required", "lead": stored, "research_readiness": readiness, "research_sync": {"status": "not_ready"}})
 
     verified_lead = ctx.db.get(fingerprint) or validation_lead
-    verified_research = verified_lead.get("company_research"); company_verified = isinstance(verified_research, Mapping) and verified_research.get("company_verified") is True; dm_verified = isinstance(verified_research, Mapping) and bool(verified_research.get("decision_maker")) and bool(verified_research.get("decision_maker_evidence")) and str(verified_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"; research_status = str(verified_lead.get("research_status") or "").strip().lower(); research_complete = research_status in {"complete", "research_complete"}
-    if result.get("verified") is True and research_complete and company_verified and dm_verified:
+    verified_research = verified_lead.get("company_research"); company_verified = isinstance(verified_research, Mapping) and verified_research.get("company_verified") is True; dm_verified = isinstance(verified_research, Mapping) and bool(verified_research.get("decision_maker")) and bool(verified_research.get("decision_maker_evidence")) and str(verified_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"; research_status = str(verified_lead.get("research_status") or "").strip().lower(); research_complete = research_status in {"complete", "research_complete"}; research_readiness_result = research_readiness(verified_lead)
+    if result.get("verified") is True and research_complete and research_readiness_result["ready"] and company_verified and dm_verified:
         if research_status == "research_complete":
             normalized = dict(verified_lead); normalized["research_status"] = "complete"; verified_lead = ctx.db.update_payload(fingerprint, normalized) or normalized
         enqueue(ctx.db, "routing", {"lead": verified_lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}"); result["handoff"] = "routing"
