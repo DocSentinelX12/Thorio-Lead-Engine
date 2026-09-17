@@ -9,7 +9,7 @@ from .agent_specializations import AgentSpecialization, get_specialization
 from .agent_stateful_handlers import identity_resolution
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
-from .research_package import RESEARCH_SECTIONS, build_canonical_research_package
+from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, build_canonical_research_package, merge_canonical_section
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .revenue_conversation import objection_reply
 from .revenue_execution import PRIVILEGED_CAPABILITY, RevenueTransportUnavailable, configured_revenue_transport, execute_outbound
@@ -88,14 +88,10 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     for section_name in RESEARCH_SECTIONS:
         current_section = lead.get(section_name)
         if isinstance(current_section, Mapping):
-            section_status = str(current_section.get("verification_status") or current_section.get("status") or "").strip().lower()
-            if current_section.get("verified") is True or section_status in {"verified", "research_verified", "complete"}:
-                canonical[section_name] = dict(current_section)
-            else:
-                merged_section = dict(canonical[section_name]); merged_section.update(dict(current_section)); canonical[section_name] = merged_section
+            canonical[section_name] = merge_canonical_section(canonical[section_name], current_section)
     merged = dict(lead); merged["company_research"] = merged_research; merged.update(canonical)
     verified_fields = []
-    for field in RESEARCH_SECTIONS[:-1]:
+    for field in VERIFIABLE_RESEARCH_SECTIONS:
         section = merged.get(field)
         if isinstance(section, Mapping):
             section_status = str(section.get("verification_status") or section.get("status") or "").strip().lower()
