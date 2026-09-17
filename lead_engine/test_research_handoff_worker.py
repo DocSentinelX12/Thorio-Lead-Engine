@@ -107,6 +107,10 @@ def test_company_research_worker_requires_all_verified_sections_before_complete_
     assert stored["research_status"] == "complete"
     assert stored["closer_package"]["ready"] is True
     assert stored["closer_package"]["verification_status"] == "verified"
+    assert stored["research_gaps"]["verified"] is True
+    assert stored["research_gaps"]["verification_status"] == "verified"
+    assert stored["research_gaps"]["missing_sections"] == []
+    assert stored["research_gaps"]["unknowns"] == []
     assert set(stored["research_verified_fields"]) == {
         "business_need_research",
         "current_intent_research",
