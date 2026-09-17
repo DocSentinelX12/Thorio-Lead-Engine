@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# Every revenue proof must execute. queue: max prevents a burst of main commits
+# from replacing older pending proof runs.
+concurrency:
+  group: thorio-revenue-proof
+  queue: max
+  cancel-in-progress: false
+
 jobs:
   revenue-proof:
     if: github.ref == 'refs/heads/main'
