@@ -111,6 +111,17 @@ def _load_free_source_catalog() -> Tuple[SourceDefinition, ...]:
     return tuple(catalog)
 
 
+def _effective_free_source_definitions() -> Tuple[SourceDefinition, ...]:
+    """Return enabled free sources that are explicitly eligible for Thorio."""
+    from .source_overrides import _apply_overrides
+
+    return tuple(
+        definition
+        for definition in _apply_overrides(_load_free_source_catalog())
+        if definition.enabled and definition.allowed_for_thorio
+    )
+
+
 def _free_sources_enabled() -> bool:
     return os.getenv("LEAD_ENGINE_FREE_SOURCES_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -192,7 +203,7 @@ def configured_sources() -> List[LeadSource]:
         )
         sources.append(_free_source_instance(definition))
     if _free_sources_enabled():
-        for definition in _load_free_source_catalog():
+        for definition in _effective_free_source_definitions():
             sources.append(_free_source_instance(definition))
     return sources
 
