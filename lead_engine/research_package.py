@@ -120,6 +120,7 @@ def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
     )
     closer = lead.get("closer_package")
     closer_evidence = isinstance(closer, Mapping) and bool(closer.get("evidence"))
+    closer_package_ready = isinstance(closer, Mapping) and closer.get("ready") is True
     ready = not missing_sections and company_verified and decision_maker_verified and closer_evidence
     blockers = list(missing_sections)
     if not company_verified:
@@ -134,6 +135,7 @@ def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
         "company_verified": company_verified,
         "decision_maker_verified": decision_maker_verified,
         "closer_evidence_present": closer_evidence,
+        "closer_package_ready": closer_package_ready,
         "blockers": list(dict.fromkeys(blockers)),
     }
 
