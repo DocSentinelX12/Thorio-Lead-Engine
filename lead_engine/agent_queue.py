@@ -106,7 +106,7 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
                 if not (agent == "verification" and not _same_verification_stage(duplicate, {"agent": agent, "payload": payload})):
                     created.append(dict(duplicate)); continue
         task_id = uuid4().hex
-        task = {"task_id": task_id, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
+        task = {"task_id": task_id, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
         existing_items[task_id] = task; created.append(dict(task))
     _save(db, state); return created
 
@@ -151,7 +151,18 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
     if limit <= 0 or lease_seconds <= 0: raise ValueError("limit and lease_seconds must be positive")
     capacity = min(int(limit), registry[agent].max_concurrency)
     if _queue_db(db):
-        db.queue_recover_stale(_iso(_now())); now = _now(); rows = db.queue_claim(agent, worker_id, capacity, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now)); tasks = [_row_to_task(row) for row in rows if row is not None]
+        # Claim first. Queue claiming already uses one IMMEDIATE transaction,
+        # so concurrent workers serialize safely instead of all performing a
+        # separate stale-lease UPDATE before they contend for the writer lock.
+        now = _now()
+        tasks = [_row_to_task(row) for row in db.queue_claim(agent, worker_id, capacity, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now)) if row is not None]
+        if not tasks:
+            # Only touch stale leases when the normal claim found no work.
+            # This keeps the hot backlog path read/claim focused while still
+            # recovering abandoned work when a queue would otherwise appear empty.
+            if db.queue_recover_stale(_iso(_now())):
+                now = _now()
+                tasks = [_row_to_task(row) for row in db.queue_claim(agent, worker_id, capacity, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now)) if row is not None]
         for task in tasks: _validate_task_authorization(task["agent"], task.get("payload") or {})
         return tasks
     state = _load(db); changed = _recover_stale(state); active = sum(1 for task in state["items"].values() if task.get("agent") == agent and task.get("status") == RUNNING); available = max(0, capacity - active); candidates = [task for task in state["items"].values() if task.get("agent") == agent and task.get("status") == QUEUED]; candidates.sort(key=lambda item: (-int(item.get("priority", 0)), item.get("created_at", ""))); claimed = []; now = _now(); lease_until = _iso(now + timedelta(seconds=lease_seconds))
