@@ -67,3 +67,26 @@ def test_production_gate_rejects_sales_eligible_without_closer_task(tmp_path):
     with pytest.raises(ProductionResearchGateError, match="sales_eligible_missing_closer_task"):
         validate_production_research_gate(db)
     db.close()
+
+
+def test_scheduled_cli_fails_closed_when_research_gate_fails(monkeypatch):
+    from lead_engine import cli
+
+    class _Config:
+        database_dir = "data"
+
+    class _Application:
+        config = _Config()
+        db = object()
+
+    monkeypatch.setattr(cli, "create_application", lambda: _Application())
+    monkeypatch.setattr(cli, "_configured_runtime_sources", lambda: [])
+    monkeypatch.setattr(cli, "_run_scheduled_with_lock", lambda *args, **kwargs: {"status": "completed"})
+    monkeypatch.setattr(
+        cli,
+        "validate_production_research_gate",
+        lambda db: (_ for _ in ()).throw(ProductionResearchGateError("RESEARCH/CLOSER GATE FAILURE: test")),
+    )
+    monkeypatch.setattr(cli, "_install_production_diagnostics", lambda: None)
+
+    assert cli.main(["run-scheduled", "--cycles", "1"]) == 1
