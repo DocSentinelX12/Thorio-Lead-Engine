@@ -11,8 +11,14 @@ class _DB:
                 "decision_maker": "Taylor",
                 "decision_maker_evidence": "https://example.com/taylor",
             },
-            "research_verified_fields": ["company_verified", "decision_maker"],
-            "research_status": "in_progress",
+            "research_verified_fields": ["business_need_research", "current_intent_research", "technical_product_hiring_research", "commercial_research", "route_research"],
+            "business_need_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Verified need"}]},
+            "current_intent_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/intent", "evidence": "Verified intent"}]},
+            "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/technical", "evidence": "Verified technical need"}]},
+            "commercial_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/commercial", "evidence": "Verified commercial context"}]},
+            "route_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/route", "evidence": "Verified route"}]},
+            "closer_package": {"ready": False, "verification_status": "research_required", "evidence": [{"url": "https://example.com/need", "evidence": "Verified need"}]},
+            "research_status": "research_required",
         }
 
     def get(self, _fingerprint):
