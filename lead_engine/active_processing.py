@@ -61,6 +61,12 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
         research = dict(current_lead.get("company_research") or {}) if isinstance(current_lead.get("company_research"), Mapping) else {}
         if not research.get("company_verified"):
             result.update({"decision_maker_handoff": "research_required", "research_verification_blocked": "company_not_verified", "handoff": "review_required"}); return result
+        record = result.get("decision_maker_verification_record")
+        if isinstance(record, Mapping):
+            if str(record.get("person") or "").strip(): research["decision_maker"] = str(record["person"]).strip()
+            if str(record.get("role_evidence") or "").strip(): research["decision_maker_evidence"] = str(record["role_evidence"]).strip()
+            if str(record.get("source") or "").strip(): research["decision_maker_verification_source"] = str(record["source"]).strip()
+            if str(record.get("verified_at") or "").strip(): research["decision_maker_verified_at"] = str(record["verified_at"]).strip()
         research["decision_maker_verification_status"] = "verified"
         if result.get("decision_maker_role_evidence"): research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
         updated = dict(current_lead); updated["company_research"] = research; updated["research_status"] = "complete"; stored = ctx.db.update_payload(fingerprint, updated) or updated
