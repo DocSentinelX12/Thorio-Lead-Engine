@@ -39,16 +39,19 @@ def validate_production_research_gate(db: Any) -> Dict[str, Any]:
         readiness = research_readiness(lead)
         if research_status in {"complete", "research_complete"}:
             complete_checked += 1
-            if not readiness["ready"]:
+            if not readiness["ready"] or not readiness["closer_package_ready"]:
+                blockers = list(readiness["blockers"])
+                if not readiness["closer_package_ready"] and "closer_package_not_ready" not in blockers:
+                    blockers.append("closer_package_not_ready")
                 violations.append({
                     "fingerprint": fingerprint,
                     "reason": "research_marked_complete_but_closer_not_ready",
-                    "blockers": list(readiness["blockers"]),
+                    "blockers": blockers,
                 })
 
         if sales_eligible:
             sales_checked += 1
-            if not readiness["ready"]:
+            if not readiness["ready"] or not readiness["closer_package_ready"]:
                 violations.append({
                     "fingerprint": fingerprint,
                     "reason": "sales_eligible_but_research_or_closer_not_ready",
