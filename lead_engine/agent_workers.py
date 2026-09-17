@@ -9,7 +9,7 @@ from .agent_specializations import AgentSpecialization, get_specialization
 from .agent_stateful_handlers import identity_resolution
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
-from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, build_canonical_research_package, finalize_closer_package, merge_canonical_section, research_readiness
+from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, build_canonical_research_package, finalize_research_readiness, merge_canonical_section
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .revenue_conversation import objection_reply
 from .revenue_execution import PRIVILEGED_CAPABILITY, RevenueTransportUnavailable, configured_revenue_transport, execute_outbound
@@ -90,16 +90,7 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
         if isinstance(current_section, Mapping):
             canonical[section_name] = merge_canonical_section(canonical[section_name], current_section)
     merged = dict(lead); merged["company_research"] = merged_research; merged.update(canonical)
-    merged["closer_package"] = finalize_closer_package(merged, merged.get("closer_package"))
-    verified_fields = []
-    for field in VERIFIABLE_RESEARCH_SECTIONS:
-        section = merged.get(field)
-        if isinstance(section, Mapping):
-            section_status = str(section.get("verification_status") or section.get("status") or "").strip().lower()
-            if section.get("verified") is True or section_status in {"verified", "research_verified", "complete"}: verified_fields.append(field)
-    readiness = research_readiness(merged)
-    status = "complete" if readiness["ready"] else "research_required"
-    merged["research_status"] = status; merged["research_verified_fields"] = list(dict.fromkeys(verified_fields))
+    merged, readiness = finalize_research_readiness(merged)
     stored = _persist_lead(ctx.db, merged)
     if status == "complete": enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": status, "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
     return {"role": "company_research", "lead": stored, "research": merged_research, "research_status": status, "verified_fields": stored.get("research_verified_fields", []), "canonical_sections": list(RESEARCH_SECTIONS), "decision_maker_verified": str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified", "fabricated_fields": list(merged_research.get("fabricated_fields") or []), "handoff": "qualification_a" if status == "complete" else "research_required"}
