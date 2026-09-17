@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lead_engine.agent_queue import enqueue
+from lead_engine.agent_queue import enqueue, pending
 from lead_engine.agent_workers import run_worker_once
 from lead_engine.database import LeadDB
 
@@ -114,5 +114,5 @@ def test_company_research_worker_requires_all_verified_sections_before_complete_
         "commercial_research",
         "route_research",
     }
-    assert any(task["agent"] == "qualification_a" for task in __import__("lead_engine.agent_queue", fromlist=["pending"]).pending(db))
+    assert any(task["agent"] == "qualification_a" for task in pending(db))
     db.close()
