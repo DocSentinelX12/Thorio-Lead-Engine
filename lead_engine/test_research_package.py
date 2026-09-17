@@ -26,12 +26,23 @@ def test_build_canonical_research_package_materializes_all_sections_without_veri
     package = build_canonical_research_package(lead, company_research, findings)
 
     assert tuple(package) == RESEARCH_SECTIONS
-    for section_name in RESEARCH_SECTIONS[:-1]:
+    for section_name in ("business_need_research", "current_intent_research", "technical_product_hiring_research", "commercial_research"):
         section = package[section_name]
         assert section["verification_status"] == "observed_evidence"
         assert section["verified"] is False
         assert section["evidence"]
         assert section["provenance"]["evidence_count"] == len(section["evidence"])
+
+    route = package["route_research"]
+    assert route["verification_status"] == "observed_evidence"
+    assert route["verified"] is False
+    assert set(route["routes"]) == {"Shiftr", "Paxus", "Thorio"}
+    assert all(item["verified"] is False for item in route["routes"].values())
+
+    gaps = package["research_gaps"]
+    assert gaps["verification_status"] == "observed_evidence"
+    assert gaps["missing_sections"] == []
+    assert "company_verification" in gaps["unknowns"]
 
     closer = package["closer_package"]
     assert closer["ready"] is False
@@ -48,10 +59,19 @@ def test_build_canonical_research_package_never_creates_evidence_from_missing_se
         {},
     )
 
-    for section_name in RESEARCH_SECTIONS[:-1]:
+    for section_name in ("business_need_research", "current_intent_research", "technical_product_hiring_research", "commercial_research"):
         section = package[section_name]
         assert section["verified"] is False
         assert section["verification_status"] == "observed_evidence"
         assert section["evidence"] == []
         assert section["provenance"]["evidence_count"] == 0
+    route = package["route_research"]
+    assert route["routes"]["Shiftr"]["evidence"] == []
+    assert package["research_gaps"]["missing_sections"] == [
+        "business_need_research",
+        "current_intent_research",
+        "technical_product_hiring_research",
+        "commercial_research",
+        "route_research",
+    ]
     assert package["closer_package"]["evidence"] == []
