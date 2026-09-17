@@ -106,7 +106,7 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
                 if not (agent == "verification" and not _same_verification_stage(duplicate, {"agent": agent, "payload": payload})):
                     created.append(dict(duplicate)); continue
         task_id = uuid4().hex
-        task = {"task_id": task_id, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
+        task = {"task_id": task_id, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
         existing_items[task_id] = task; created.append(dict(task))
     _save(db, state); return created
 
