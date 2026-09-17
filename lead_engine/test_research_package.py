@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lead_engine.research_package import RESEARCH_SECTIONS, build_canonical_research_package
+from lead_engine.research_package import RESEARCH_SECTIONS, build_canonical_research_package, merge_canonical_section
 
 
 def test_build_canonical_research_package_materializes_all_sections_without_verifying_observed_evidence():
@@ -75,3 +75,23 @@ def test_build_canonical_research_package_never_creates_evidence_from_missing_se
         "route_research",
     ]
     assert package["closer_package"]["evidence"] == []
+
+
+def test_merge_canonical_section_preserves_verified_existing_section():
+    generated = {"verified": False, "verification_status": "observed_evidence", "evidence": [{"url": "https://new.example", "evidence": "new"}]}
+    existing = {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://verified.example", "evidence": "verified"}], "custom": "preserve"}
+
+    merged = merge_canonical_section(generated, existing)
+
+    assert merged == existing
+
+
+def test_merge_canonical_section_keeps_existing_and_new_observed_evidence():
+    generated = {"verified": False, "verification_status": "observed_evidence", "evidence": [{"url": "https://new.example", "evidence": "new", "observed_at": "2026-09-17T00:00:00+00:00"}], "provenance": {"source_sections": ["new"]}}
+    existing = {"verified": False, "verification_status": "observed_evidence", "evidence": [{"url": "https://old.example", "evidence": "old", "observed_at": "2026-09-16T00:00:00+00:00"}], "provenance": {"source_sections": ["old"]}}
+
+    merged = merge_canonical_section(generated, existing)
+
+    assert {item["evidence"] for item in merged["evidence"]} == {"new", "old"}
+    assert set(merged["provenance"]["source_sections"]) == {"new", "old"}
+    assert merged["provenance"]["evidence_count"] == 2
