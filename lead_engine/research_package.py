@@ -129,6 +129,8 @@ def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
         blockers.append("decision_maker_verification")
     if not closer_evidence:
         blockers.append("closer_package_evidence")
+    if not closer_package_ready:
+        blockers.append("closer_package_not_ready")
     return {
         "ready": ready,
         "missing_sections": missing_sections,
