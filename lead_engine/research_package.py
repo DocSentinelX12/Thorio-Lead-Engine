@@ -3,15 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
+from .router import ROUTES
 
-RESEARCH_SECTIONS = (
+VERIFIABLE_RESEARCH_SECTIONS = (
     "business_need_research",
     "current_intent_research",
     "technical_product_hiring_research",
     "commercial_research",
     "route_research",
-    "closer_package",
 )
+RESEARCH_SECTIONS = VERIFIABLE_RESEARCH_SECTIONS + ("research_gaps", "closer_package")
 
 
 def _now() -> str:
@@ -72,6 +73,21 @@ def _specialist_items(findings: Mapping[str, Any], agents: Iterable[str]) -> lis
     return items
 
 
+def _route_section(evidence: list[Dict[str, Any]]) -> Dict[str, Any]:
+    section = _section(evidence, "Evidence relevant to matching the opportunity to supported revenue routes.", ["specialist_findings", "business_need_research", "technical_product_hiring_research"])
+    refs = section["evidence"]
+    section["routes"] = {
+        route: {
+            "verified": False,
+            "verification_status": "observed_evidence" if refs else "research_required",
+            "evidence": list(refs),
+            "provenance": {"source": "canonical_route_evidence", "evidence_count": len(refs)},
+        }
+        for route in ROUTES
+    }
+    return section
+
+
 def build_canonical_research_package(
     lead: Mapping[str, Any],
     company_research: Mapping[str, Any],
@@ -86,7 +102,7 @@ def build_canonical_research_package(
     business = (
         _items(company_research.get("public_business_need_facts"))
         + _items(public_facts.get("business_need"))
-        + _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "contract_team_demand_discovery", "social_inquiry_research"))
+        + _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "social_inquiry_research"))
     )
     intent = (
         _items(company_research.get("public_hiring_facts"))
@@ -113,7 +129,26 @@ def build_canonical_research_package(
         "current_intent_research": _section(intent, "Public and specialist evidence relevant to current or recent intent.", ["public_hiring_facts", "social_findings", "specialist_findings"]),
         "technical_product_hiring_research": _section(technical, "Public and specialist evidence relevant to technical, product, or hiring needs.", ["public_product_facts", "public_hiring_facts", "specialist_findings"]),
         "commercial_research": _section(commercial, "Public and specialist evidence relevant to commercial context.", ["public_commercial_facts", "specialist_findings"]),
-        "route_research": _section(route, "Evidence relevant to matching the opportunity to supported revenue routes.", ["specialist_findings", "business_need_research", "technical_product_hiring_research"]),
+        "route_research": _route_section(route),
+    }
+
+    missing = [name for name in VERIFIABLE_RESEARCH_SECTIONS if not package[name]["evidence"]]
+    package["research_gaps"] = {
+        "verified": False,
+        "verification_status": "research_required" if missing else "observed_evidence",
+        "researched_at": _now(),
+        "missing_sections": missing,
+        "unknowns": [
+            "company_verification",
+            "decision_maker_verification",
+            "current_need_verification",
+            "route_verification",
+        ],
+        "provenance": {
+            "source": "canonical_research_sections",
+            "checked_sections": list(VERIFIABLE_RESEARCH_SECTIONS),
+            "missing_count": len(missing),
+        },
     }
     all_refs = _refs(business + intent + technical + commercial + route + _items(company_research.get("public_company_facts")) + _items(company_research.get("public_decision_maker_facts")))
     package["closer_package"] = {
@@ -123,8 +158,8 @@ def build_canonical_research_package(
         "company": str(lead.get("company") or "").strip(),
         "contact": str(lead.get("contact_name") or lead.get("person") or "").strip(),
         "evidence": all_refs,
-        "required_verification": list(RESEARCH_SECTIONS[:-1]),
+        "required_verification": list(VERIFIABLE_RESEARCH_SECTIONS),
         "provenance": {"source": "canonical_research_sections", "evidence_count": len(all_refs)},
-        "unknowns": ["company_verification", "decision_maker_verification", "current_need_verification", "route_verification"],
+        "unknowns": list(package["research_gaps"]["unknowns"]),
     }
     return package
