@@ -65,3 +65,54 @@ def test_company_research_worker_refreshes_stale_queue_payload_before_handoff(tm
     assert stored["current_intent_research"]["evidence"]
     assert any("actively hiring backend engineers" in item["evidence"] for item in stored["current_intent_research"]["evidence"])
     db.close()
+
+
+def test_company_research_worker_requires_all_verified_sections_before_complete_handoff(tmp_path):
+    db = LeadDB(str(tmp_path))
+    fingerprint = "worker-canonical-complete"
+    now = "2026-09-17T00:00:00+00:00"
+    verified = {
+        "verified": True,
+        "verification_status": "verified",
+        "evidence": [{"url": "https://example.com/evidence", "evidence": "Verified research", "observed_at": now}],
+    }
+    lead = {
+        "fingerprint": fingerprint,
+        "company": "Acme",
+        "person": "Taylor",
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_verification_status": "verified",
+        },
+        "business_need_research": dict(verified),
+        "current_intent_research": dict(verified),
+        "technical_product_hiring_research": dict(verified),
+        "commercial_research": dict(verified),
+        "route_research": dict(verified),
+        "closer_package": {
+            "ready": False,
+            "verification_status": "research_required",
+            "evidence": [{"url": "https://example.com/evidence", "evidence": "Verified research", "observed_at": now}],
+        },
+    }
+    assert db.insert_if_new(lead) is True
+    enqueue(db, "company_research", {"lead": lead}, dedupe_key=f"company_research:{fingerprint}")
+
+    result = run_worker_once(db, "company_research", worker_id="test-company-research-complete")
+    stored = db.get(fingerprint)
+
+    assert result["completed_count"] == 1
+    assert stored["research_status"] == "complete"
+    assert stored["closer_package"]["ready"] is True
+    assert stored["closer_package"]["verification_status"] == "verified"
+    assert set(stored["research_verified_fields"]) == {
+        "business_need_research",
+        "current_intent_research",
+        "technical_product_hiring_research",
+        "commercial_research",
+        "route_research",
+    }
+    assert any(task["agent"] == "qualification_a" for task in __import__("lead_engine.agent_queue", fromlist=["pending"]).pending(db))
+    db.close()
