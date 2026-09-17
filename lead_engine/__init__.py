@@ -30,3 +30,11 @@ from .research_integrity import install as _install_research_integrity
 
 _install_research_integrity()
 del _install_research_integrity
+
+# The company-research queue is stateful and must use the durable canonical
+# handoff handler. The advanced registry also exposes a stateless research
+# handler, so install the explicit precedence rule after agent_workers loads.
+from .company_research_handler_override import install as _install_company_research_override
+
+_install_company_research_override()
+del _install_company_research_override
