@@ -151,6 +151,24 @@ def finalize_closer_package(lead: Mapping[str, Any], package: Mapping[str, Any] 
     return result
 
 
+def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Apply canonical closer, research-gap, and status state from one readiness decision."""
+    updated = dict(lead)
+    updated["closer_package"] = finalize_closer_package(updated, updated.get("closer_package"))
+    readiness = research_readiness(updated)
+    gaps = dict(updated.get("research_gaps") or {}) if isinstance(updated.get("research_gaps"), Mapping) else {}
+    gaps["verified"] = bool(readiness["ready"])
+    gaps["verification_status"] = "verified" if readiness["ready"] else "research_required"
+    gaps["missing_sections"] = list(readiness["missing_sections"])
+    gaps["unknowns"] = list(readiness["blockers"])
+    updated["research_gaps"] = gaps
+    updated["research_status"] = "complete" if readiness["ready"] else "research_required"
+    updated["research_verified_fields"] = [
+        section for section in VERIFIABLE_RESEARCH_SECTIONS if _explicitly_verified(updated.get(section))
+    ]
+    return updated, readiness
+
+
 def build_canonical_research_package(lead: Mapping[str, Any], company_research: Mapping[str, Any], specialist_findings: Mapping[str, Any] | None = None) -> Dict[str, Dict[str, Any]]:
     """Materialize canonical research sections without promoting observation to verification."""
     findings = specialist_findings if isinstance(specialist_findings, Mapping) else {}
