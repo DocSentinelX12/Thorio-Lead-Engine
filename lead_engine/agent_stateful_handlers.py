@@ -53,26 +53,10 @@ def identity_resolution(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str
 
 
 _DECISION_MAKER_ROLE_TERMS = (
-    "founder",
-    "co founder",
-    "co-founder",
-    "chief executive officer",
-    "chief technology officer",
-    "chief information officer",
-    "chief product officer",
-    "ceo",
-    "cto",
-    "cio",
-    "cpo",
-    "vp engineering",
-    "vice president of engineering",
-    "head of engineering",
-    "engineering manager",
-    "head of technology",
-    "recruiter",
-    "head of talent",
-    "talent acquisition",
-    "chief people officer",
+    "founder", "co founder", "co-founder", "chief executive officer", "chief technology officer",
+    "chief information officer", "chief product officer", "ceo", "cto", "cio", "cpo",
+    "vp engineering", "vice president of engineering", "head of engineering", "engineering manager",
+    "head of technology", "recruiter", "head of talent", "talent acquisition", "chief people officer",
 )
 
 
@@ -210,7 +194,7 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
     decision_maker_verification = "not_required"
     decision_maker_role_evidence = ""
     decision_maker_verification_record: Dict[str, Any] | None = None
-    if isinstance(research, Mapping) and research.get("decision_maker"):
+    if isinstance(research, Mapping) and (research.get("decision_maker") or research.get("observed_decision_maker") or research.get("decision_maker_verification_status")):
         if str(research.get("decision_maker_verification_status") or "").strip().lower() == "verified":
             decision_maker_verification = "verified"
             decision_maker_role_evidence = str(research.get("decision_maker_role_evidence") or research.get("decision_maker_evidence") or "").strip()
