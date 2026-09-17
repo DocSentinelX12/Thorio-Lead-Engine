@@ -84,7 +84,6 @@ class AgentOrchestrator:
         memory operation and can starve the actual worker drain.
         """
         if isinstance(self.db, LeadDB):
-            self.db.queue_recover_stale(self.db._iso_now())
             rows = self.db.conn.execute(
                 "SELECT DISTINCT agent FROM agent_queue "
                 "WHERE status IN ('queued', 'running')"
