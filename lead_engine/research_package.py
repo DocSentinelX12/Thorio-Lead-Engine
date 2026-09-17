@@ -95,6 +95,62 @@ def merge_canonical_section(generated: Mapping[str, Any], existing: Mapping[str,
     return result
 
 
+def _explicitly_verified(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if value.get("verified") is True:
+        return True
+    return str(value.get("verification_status") or value.get("status") or "").strip().lower() in {"verified", "research_verified", "complete"}
+
+
+def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the single canonical readiness decision for completed research and closer handoff."""
+    missing_sections = [
+        section
+        for section in VERIFIABLE_RESEARCH_SECTIONS
+        if not _explicitly_verified(lead.get(section))
+    ]
+    company_research = lead.get("company_research")
+    company_verified = isinstance(company_research, Mapping) and company_research.get("company_verified") is True
+    decision_maker_verified = (
+        isinstance(company_research, Mapping)
+        and bool(str(company_research.get("decision_maker") or "").strip())
+        and bool(str(company_research.get("decision_maker_evidence") or "").strip())
+        and str(company_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"
+    )
+    closer = lead.get("closer_package")
+    closer_evidence = isinstance(closer, Mapping) and bool(closer.get("evidence"))
+    ready = not missing_sections and company_verified and decision_maker_verified and closer_evidence
+    blockers = list(missing_sections)
+    if not company_verified:
+        blockers.append("company_verification")
+    if not decision_maker_verified:
+        blockers.append("decision_maker_verification")
+    if not closer_evidence:
+        blockers.append("closer_package_evidence")
+    return {
+        "ready": ready,
+        "missing_sections": missing_sections,
+        "company_verified": company_verified,
+        "decision_maker_verified": decision_maker_verified,
+        "closer_evidence_present": closer_evidence,
+        "blockers": list(dict.fromkeys(blockers)),
+    }
+
+
+def finalize_closer_package(lead: Mapping[str, Any], package: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+    """Materialize closer readiness without promoting observed evidence to verification."""
+    result = dict(package or (lead.get("closer_package") if isinstance(lead.get("closer_package"), Mapping) else {}))
+    readiness_input = dict(lead)
+    readiness_input["closer_package"] = result
+    readiness = research_readiness(readiness_input)
+    result["ready"] = bool(readiness["ready"])
+    result["verification_status"] = "verified" if readiness["ready"] else "research_required"
+    result["required_verification"] = list(VERIFIABLE_RESEARCH_SECTIONS)
+    result["unknowns"] = list(readiness["blockers"])
+    return result
+
+
 def build_canonical_research_package(lead: Mapping[str, Any], company_research: Mapping[str, Any], specialist_findings: Mapping[str, Any] | None = None) -> Dict[str, Dict[str, Any]]:
     """Materialize canonical research sections without promoting observation to verification."""
     findings = specialist_findings if isinstance(specialist_findings, Mapping) else {}
