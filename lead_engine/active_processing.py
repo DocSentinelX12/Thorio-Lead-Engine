@@ -6,7 +6,7 @@ from .agent_stateful_handlers import airtable_integrity as _airtable_integrity
 from .agent_stateful_handlers import routing as _routing
 from .agent_stateful_handlers import verification as _verification
 from .dedupe import Dedupe
-from .research_package import finalize_closer_package, research_readiness
+from .research_package import finalize_research_readiness, research_readiness
 from .research_sync import sync_research
 
 
@@ -70,9 +70,8 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
             if str(record.get("verified_at") or "").strip(): research["decision_maker_verified_at"] = str(record["verified_at"]).strip()
         research["decision_maker_verification_status"] = "verified"
         if result.get("decision_maker_role_evidence"): research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
-        updated = dict(current_lead); updated["company_research"] = research; updated["closer_package"] = finalize_closer_package(updated, updated.get("closer_package"))
-        readiness = research_readiness(updated)
-        updated["research_status"] = "complete" if readiness["ready"] else "research_required"
+        updated = dict(current_lead); updated["company_research"] = research
+        updated, readiness = finalize_research_readiness(updated)
         stored = ctx.db.update_payload(fingerprint, updated) or updated
         research_sync_result = None
         if readiness["ready"]:
