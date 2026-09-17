@@ -92,7 +92,7 @@ def test_verified_decision_maker_cannot_complete_research_without_verified_compa
     assert result["decision_maker_handoff"] == "research_required"
     assert result["research_verification_blocked"] == "company_not_verified"
     assert result["handoff"] == "review_required"
-    assert db.payload["research_status"] == "in_progress"
+    assert db.payload["research_status"] == "research_required"
     assert "decision_maker_verification_status" not in db.payload["company_research"]
 
 
