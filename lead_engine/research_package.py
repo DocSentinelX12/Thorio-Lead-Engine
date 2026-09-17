@@ -162,7 +162,19 @@ def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any]
     readiness = research_readiness(updated)
     gaps = dict(updated.get("research_gaps") or {}) if isinstance(updated.get("research_gaps"), Mapping) else {}
     gaps["verified"] = bool(readiness["ready"])
-    gaps["verification_status"] = "verified" if readiness["ready"] else "research_required"
+    if readiness["ready"]:
+        gaps["verification_status"] = "verified"
+    else:
+        has_observed_evidence = any(
+            isinstance(updated.get(section), Mapping) and bool(updated.get(section, {}).get("evidence"))
+            for section in VERIFIABLE_RESEARCH_SECTIONS
+        )
+        existing_status = str(gaps.get("verification_status") or "").strip().lower()
+        gaps["verification_status"] = (
+            "observed_evidence"
+            if has_observed_evidence or existing_status == "observed_evidence"
+            else "research_required"
+        )
     gaps["missing_sections"] = list(readiness["missing_sections"])
     gaps["unknowns"] = list(readiness["blockers"])
     updated["research_gaps"] = gaps
