@@ -13,8 +13,11 @@ on:
   issues:
     types: [opened]
 
+# Production cycles are serialized, but every scheduled/manual cycle is retained.
+# GitHub otherwise keeps only one pending run and cancels older pending runs.
 concurrency:
   group: thorio-production
+  queue: max
   cancel-in-progress: false
 
 permissions:
