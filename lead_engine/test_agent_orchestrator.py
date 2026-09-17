@@ -81,3 +81,32 @@ def test_orchestrator_rejects_non_positive_agent_limit(tmp_path):
     orchestrator = AgentOrchestrator(db)
     with pytest.raises(ValueError, match="limit_per_agent"):
         orchestrator.run_all_once(limit_per_agent=0)
+
+
+def test_orchestrator_queue_inspection_does_not_decode_backlog_payloads(tmp_path, monkeypatch):
+    db = LeadDB(data_dir=tmp_path)
+    db.conn.execute(
+        "INSERT INTO agent_queue "
+        "(task_id, agent, queue, status, priority, payload, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "large-backlog-task",
+            "web_job_signal",
+            "discovery",
+            "queued",
+            1,
+            "this-is-intentionally-not-json",
+            "2026-09-16T00:00:00+00:00",
+            "2026-09-16T00:00:00+00:00",
+        ),
+    )
+    db.conn.commit()
+
+    def fail_if_materialized(_db):
+        raise AssertionError("full pending payload materialization was used")
+
+    monkeypatch.setattr("lead_engine.agent_orchestrator.pending", fail_if_materialized)
+    orchestrator = AgentOrchestrator(db)
+
+    assert orchestrator._pending_agent_names() == {"web_job_signal"}
+    assert orchestrator._pending_count() == 1
