@@ -74,6 +74,37 @@ class AgentOrchestrator:
             value = 128
         return max(1, min(value, 128))
 
+    def _pending_agent_names(self) -> set[str]:
+        """Inspect pending queue membership without decoding every task payload.
+
+        Production queues can contain a very large durable backlog. The drain
+        scheduler only needs to know which specialist roles have work before it
+        claims one bounded slot per role. Materializing every queued JSON payload
+        here turns a lightweight scheduler decision into an O(backlog) CPU and
+        memory operation and can starve the actual worker drain.
+        """
+        if isinstance(self.db, LeadDB):
+            self.db.queue_recover_stale(self.db._iso_now())
+            rows = self.db.conn.execute(
+                "SELECT DISTINCT agent FROM agent_queue "
+                "WHERE status IN ('queued', 'running')"
+            ).fetchall()
+            return {str(row[0]) for row in rows if row and row[0]}
+        return {
+            str(task.get("agent"))
+            for task in pending(self.db)
+            if task.get("status") in {None, "queued"} and task.get("agent")
+        }
+
+    def _pending_count(self) -> int:
+        """Count pending queue rows without materializing their JSON payloads."""
+        if isinstance(self.db, LeadDB):
+            row = self.db.conn.execute(
+                "SELECT COUNT(*) FROM agent_queue WHERE status IN ('queued', 'running')"
+            ).fetchone()
+            return int(row[0]) if row else 0
+        return len(pending(self.db))
+
     def _run_role_slot(self, role_name: str, slot: int) -> Dict[str, Any]:
         """Run one claimed specialist slot with an isolated SQLite connection.
 
@@ -147,11 +178,7 @@ class AgentOrchestrator:
         effective_max_rounds = self._max_drain_rounds() if max_rounds is None else max_rounds
 
         for round_number in range(1, effective_max_rounds + 1):
-            queued_agents = {
-                str(task.get("agent"))
-                for task in pending(self.db)
-                if task.get("status") in {None, "queued"} and task.get("agent")
-            }
+            queued_agents = self._pending_agent_names()
             if not queued_agents:
                 break
 
@@ -189,15 +216,15 @@ class AgentOrchestrator:
             if claimed == 0:
                 break
 
-        remaining = pending(self.db)
+        remaining_count = self._pending_count()
         return {
             "agent_count": len(ALL_AGENT_ROLES),
             "claimed_count": total_claimed,
             "completed_count": total_completed,
             "failed_count": total_failed,
             "round_count": len(rounds),
-            "drain_complete": not remaining,
-            "remaining_queue_count": len(remaining),
+            "drain_complete": remaining_count == 0,
+            "remaining_queue_count": remaining_count,
             "rounds": rounds,
             "agents": rounds[-1]["agents"] if rounds else [],
             "execution_workers": self._execution_workers(),
