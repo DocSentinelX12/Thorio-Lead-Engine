@@ -13,6 +13,7 @@ from .export import export_pending_leads
 from .json_source import JsonLeadSource
 from .runtime_lock import RuntimeLock
 from .scheduler import LeadScheduler
+from .production_research_gate import ProductionResearchGateError, validate_production_research_gate
 from .source_registry import configured_sources
 from .sync_worker import sync_pending
 
@@ -210,6 +211,18 @@ def main(argv=None):
         result = export_pending_leads(application.db, args.path)
     else:
         parser.error(f"Unknown command: {args.command}")
+
+    if args.command == "run-scheduled" and not args.forever:
+        try:
+            research_gate = validate_production_research_gate(application.db)
+            result["research_closer_gate"] = research_gate
+            print(
+                f"PRODUCTION RESEARCH/CLOSER GATE VERIFIED: complete_research={research_gate['research_complete_checked']}, sales_eligible={research_gate['sales_eligible_checked']}, pending_closer_tasks={research_gate['closer_tasks_pending']}.",
+                flush=True,
+            )
+        except ProductionResearchGateError as exc:
+            print(str(exc), flush=True)
+            return 1
 
     print(json.dumps(result, indent=2, ensure_ascii=False, default=str), flush=True)
     return 0
