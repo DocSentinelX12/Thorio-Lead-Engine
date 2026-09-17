@@ -287,6 +287,24 @@ jobs:
           if any(count > 0 for count in source_skip_counts):
               print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources were skipped. skipped_source_counts={source_skip_counts}")
               sys.exit(1)
+          agents_evidence_found = False
+          agent_drain_complete = []
+          agent_remaining_queue = []
+          for result in results:
+              agents = result.get("agents")
+              if not isinstance(agents, dict):
+                  continue
+              agents_evidence_found = True
+              agent_drain_complete.append(bool(agents.get("drain_complete") is True))
+              agent_remaining_queue.append(int(agents.get("remaining_queue_count", 0) or 0))
+          if not agents_evidence_found:
+              print("SPECIALIST DRAIN FAILURE: Lead Engine result did not contain specialist orchestration evidence.")
+              sys.exit(1)
+          if any(not complete for complete in agent_drain_complete) or any(count > 0 for count in agent_remaining_queue):
+              print(f"SPECIALIST DRAIN FAILURE: specialist backlog remained after the bounded production cycle. drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}")
+              sys.exit(1)
+          print(f"SPECIALIST DRAIN VERIFIED: drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}")
+
           sync_failed = 0
           sync_completed = 0
           sync_already_exists = 0
