@@ -7,9 +7,11 @@ on:
   workflow_dispatch:
 
 # Main is the canonical production verification branch. Preserve every queued test run.
-# A newer commit or manual full-suite run must never cancel an older test run.
+# GitHub's default concurrency queue keeps only one pending run. queue: max retains
+# up to 100 pending runs instead of canceling older verification runs.
 concurrency:
   group: thorio-test-queue
+  queue: max
   cancel-in-progress: false
 
 permissions:
