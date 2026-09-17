@@ -1,4 +1,4 @@
-from .source_registry import _load_free_source_catalog
+from .source_registry import _effective_free_source_definitions, _load_free_source_catalog
 from .source_overrides import _SOURCE_OVERRIDES, _apply_overrides
 
 
@@ -81,6 +81,16 @@ def test_landing_jobs_preserves_historical_atom_configuration_but_is_not_allowed
     assert landing_jobs.max_requests == 1
     assert landing_jobs.max_records == 55
     assert landing_jobs.allowed_for_thorio is False
+
+
+def test_effective_thorio_sources_exclude_ineligible_historical_sources():
+    effective = _effective_free_source_definitions()
+    names = {definition.name for definition in effective}
+
+    assert "Landing Jobs" not in names
+    assert "EURES" not in names
+    assert all(definition.enabled for definition in effective)
+    assert all(definition.allowed_for_thorio for definition in effective)
 
 
 def test_historical_source_identities_use_verified_live_replacements():
