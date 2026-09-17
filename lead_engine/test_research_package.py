@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+from lead_engine.research_package import RESEARCH_SECTIONS, build_canonical_research_package
+
+
+def test_build_canonical_research_package_materializes_all_sections_without_verifying_observed_evidence():
+    lead = {"fingerprint": "canonical-1", "company": "Acme", "person": "Jane Doe"}
+    company_research = {
+        "public_company_facts": [{"url": "https://acme.example/", "evidence": "Acme company facts", "observed_at": "2026-09-17T00:00:00+00:00"}],
+        "public_product_facts": [{"url": "https://acme.example/product", "evidence": "Acme product facts", "observed_at": "2026-09-17T00:00:00+00:00"}],
+        "public_hiring_facts": [{"url": "https://acme.example/careers", "evidence": "Acme is hiring software engineers", "observed_at": "2026-09-17T00:00:00+00:00"}],
+        "public_business_need_facts": [{"url": "https://acme.example/about", "evidence": "Acme needs to scale engineering", "observed_at": "2026-09-17T00:00:00+00:00"}],
+        "public_commercial_facts": [{"url": "https://acme.example/pricing", "evidence": "Acme has an enterprise plan", "observed_at": "2026-09-17T00:00:00+00:00"}],
+        "social_findings": [{"url": "https://social.example/post", "evidence": "Jane posted that Acme is hiring now", "observed_at": "2026-09-16T00:00:00+00:00", "source": "LinkedIn"}],
+        "fabricated_fields": [],
+    }
+    findings = {
+        "business_need": [{"url": "https://social.example/need", "evidence": "Acme needs a development team", "observed_at": "2026-09-16T00:00:00+00:00"}],
+        "current_intent": [{"url": "https://social.example/intent", "evidence": "Acme is actively looking for engineers", "observed_at": "2026-09-16T00:00:00+00:00"}],
+        "recent_inquiry": [{"url": "https://social.example/inquiry", "evidence": "Acme asked for recommendations", "observed_at": "2026-09-15T00:00:00+00:00"}],
+        "technical_product_hiring": [{"url": "https://acme.example/jobs", "evidence": "Acme needs backend engineering", "observed_at": "2026-09-16T00:00:00+00:00"}],
+        "commercial": [{"url": "https://acme.example/enterprise", "evidence": "Acme offers enterprise services", "observed_at": "2026-09-16T00:00:00+00:00"}],
+        "route": [{"url": "https://social.example/route", "evidence": "Acme is seeking an engineering team", "observed_at": "2026-09-16T00:00:00+00:00"}],
+    }
+
+    package = build_canonical_research_package(lead, company_research, findings)
+
+    assert tuple(package) == RESEARCH_SECTIONS
+    for section_name in RESEARCH_SECTIONS[:-1]:
+        section = package[section_name]
+        assert section["verification_status"] == "observed_evidence"
+        assert section["verified"] is False
+        assert section["evidence"]
+        assert section["provenance"]["evidence_count"] == len(section["evidence"])
+
+    closer = package["closer_package"]
+    assert closer["ready"] is False
+    assert closer["verification_status"] == "research_required"
+    assert closer["evidence"]
+    assert closer["provenance"]["source"] == "canonical_research_sections"
+    assert "company_verification" in closer["unknowns"]
+
+
+def test_build_canonical_research_package_never_creates_evidence_from_missing_sections():
+    package = build_canonical_research_package(
+        {"fingerprint": "canonical-empty", "company": "Acme"},
+        {"fabricated_fields": []},
+        {},
+    )
+
+    for section_name in RESEARCH_SECTIONS[:-1]:
+        section = package[section_name]
+        assert section["verified"] is False
+        assert section["verification_status"] == "observed_evidence"
+        assert section["evidence"] == []
+        assert section["provenance"]["evidence_count"] == 0
+    assert package["closer_package"]["evidence"] == []
