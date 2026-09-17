@@ -8,9 +8,12 @@ on:
 permissions:
   contents: read
 
+# Worker cycles must never be killed solely because a newer scheduled cycle arrived.
+# Serialize cycles and retain pending work instead.
 concurrency:
   group: thorio-free-compute-workers
-  cancel-in-progress: true
+  queue: max
+  cancel-in-progress: false
 
 jobs:
   coordinator_gate:
