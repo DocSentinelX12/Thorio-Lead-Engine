@@ -260,46 +260,6 @@ class ComputeInventory:
             )
             connection.commit()
 
-    def record_allocation(
-        self,
-        allocation_id: str,
-        provider_id: str,
-        domain_id: str,
-        resource_keys: list[str] | tuple[str, ...],
-    ) -> None:
-        """Persist ownership of already-reserved physical resources."""
-        keys = tuple(dict.fromkeys(str(key) for key in resource_keys))
-        if not allocation_id.strip() or not provider_id.strip() or not domain_id.strip() or not keys:
-            raise ValueError("allocation identity and resources are required")
-        now = time.time()
-        serialized = json.dumps(keys, ensure_ascii=False)
-        with self._connect() as connection:
-            existing = connection.execute(
-                "SELECT provider_id,domain_id,resource_keys_json,state FROM compute_allocations WHERE allocation_id=?",
-                (allocation_id,),
-            ).fetchone()
-            if existing:
-                if (existing["provider_id"] != provider_id or existing["domain_id"] != domain_id
-                        or tuple(json.loads(existing["resource_keys_json"])) != keys):
-                    raise ValueError("allocation_id already exists with different resources")
-                return
-            rows = connection.execute(
-                f"SELECT resource_key,state,provider_id,domain_id FROM compute_resource_inventory "
-                f"WHERE resource_key IN ({','.join('?' for _ in keys)})", keys).fetchall()
-            by_key = {row["resource_key"]: row for row in rows}
-            if len(by_key) != len(keys) or any(
-                row["state"] != ResourceState.RESERVED.value
-                or row["provider_id"] != provider_id or row["domain_id"] != domain_id
-                for row in by_key.values()):
-                raise ValueError("allocation resources are not reserved")
-            connection.execute(
-                """INSERT INTO compute_allocations
-                   (allocation_id,state,provider_id,domain_id,resource_keys_json,created_at,updated_at)
-                   VALUES (?, 'reserved', ?, ?, ?, ?, ?)""",
-                (allocation_id, provider_id, domain_id, serialized, now, now),
-            )
-            connection.commit()
-
     def bind_allocation(
         self,
         allocation_id: str,
