@@ -141,10 +141,40 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
     if str(company_fields.get("Company") or "").strip() != str(lead.get("company") or "").strip():
         return False
     routes = lead.get("potential_routes") or []
-    opportunities = result.get("opportunities") or []
-    opportunity_count = len(opportunities) if isinstance(opportunities, list) else 0
-    expected_opportunities = len([route for route in routes if str(route).strip() in {"Paxus", "Shiftr"}])
-    return opportunity_count >= expected_opportunities
+    expected_routes = {
+        str(route).strip()
+        for route in routes
+        if str(route).strip() in {"Paxus", "Shiftr"}
+    }
+    opportunities = result.get("opportunities")
+    if not isinstance(opportunities, list):
+        return not expected_routes
+
+    observed_routes: dict[str, dict[str, Any]] = {}
+    for item in opportunities:
+        if not isinstance(item, Mapping):
+            return False
+        record = item.get("record")
+        if not isinstance(record, Mapping) or not str(record.get("id") or "").strip():
+            return False
+        fields = _record_fields(record)
+        partner = str(fields.get("Partner") or "").strip()
+        opportunity = str(fields.get("Opportunity") or "").strip()
+        company = str(fields.get("Company") or "").strip()
+        expected_key = f"{lead.get('fingerprint', '').strip()}:{partner}" if partner else ""
+        if partner not in {"Paxus", "Shiftr"}:
+            return False
+        if partner in observed_routes:
+            return False
+        if partner not in expected_routes:
+            return False
+        if opportunity != expected_key:
+            return False
+        if company != str(lead.get("company") or "").strip():
+            return False
+        observed_routes[partner] = dict(record)
+
+    return set(observed_routes) == expected_routes
 
 def verify_airtable_handoff(result: Mapping[str, Any], lead: Mapping[str, Any], expected_digest: str | None = None) -> tuple[bool, str]:
     if not package_is_ready(lead):
