@@ -72,6 +72,15 @@ jobs:
             echo "DISPATCH REQUEST FAILURE: ref cannot be empty."
             exit 1
           fi
+          case "$TARGET_WORKFLOW" in
+            revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml)
+              if [ "$TARGET_REF" != "main" ]; then
+                echo "DISPATCH REQUEST FAILURE: $TARGET_WORKFLOW is production/main-only and cannot be dispatched against $TARGET_REF."
+                echo "Use ci.yml, full-test-suite.yml, or source-live-diagnostic.yml for branch verification."
+                exit 1
+              fi
+              ;;
+          esac
           echo "Approved workflow: $TARGET_WORKFLOW"
           echo "Target ref: $TARGET_REF"
           echo "Test selector: $TEST_PATH"
