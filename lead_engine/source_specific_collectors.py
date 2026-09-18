@@ -177,3 +177,50 @@ class _WelcomeToTheJungleAdapter:
         return AdapterResult(records=records, checkpoint=None)
 
 
+
+def install() -> None:
+    from . import source_adapters
+
+    original = source_adapters.create_adapter
+    if getattr(original, "_thorio_source_specific", False):
+        return
+
+    def patched(*, collector_type=None, url=None, source=None, timeout=20, definition=None):
+        name = getattr(definition, "name", None) or source or ""
+        effective_url = getattr(definition, "url", None) or url or ""
+        effective_type = getattr(definition, "collector_type", None) or collector_type or ""
+
+        if name == "Welcome to the Jungle":
+            return AdapterLeadSource(
+                _WelcomeToTheJungleAdapter(effective_url, timeout),
+                definition,
+            )
+
+        if name in _HTML_DETAIL_SOURCES and effective_type.lower() == "html":
+            return AdapterLeadSource(
+                _DetailAdapter(name, effective_url, timeout, definition),
+                definition,
+            )
+
+        return original(
+            collector_type=collector_type,
+            url=url,
+            source=source,
+            timeout=timeout,
+            definition=definition,
+        )
+
+    class _DetailAdapter:
+        def __init__(self, name: str, url: str, timeout: int, definition):
+            self.name = name
+            self.source = name
+            self.url = url
+            self.collector_type = "html"
+            self.timeout = timeout
+            self.definition = definition
+
+        def collect(self, checkpoint=None):
+            return _detail_collect(self.name, self.url, self.timeout)
+
+    patched._thorio_source_specific = True
+    source_adapters.create_adapter = patched
