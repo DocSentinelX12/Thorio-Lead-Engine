@@ -15,7 +15,7 @@ def _worker():
         "x86_64",
         4,
         8192,
-        ("lead-processing",),
+        ("lead-processing", "engineering_demand_discovery"),
     )
 
 
