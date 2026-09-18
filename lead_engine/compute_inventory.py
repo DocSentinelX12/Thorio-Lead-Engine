@@ -144,7 +144,8 @@ class ComputeInventory:
                     ON CONFLICT(resource_key) DO UPDATE SET
                     provider_id=excluded.provider_id,domain_id=excluded.domain_id,
                     node_id=excluded.node_id,gpu_id=excluded.gpu_id,
-                    identity_key=excluded.identity_key,state=excluded.state,
+                    identity_key=excluded.identity_key,
+                    state=CASE WHEN compute_resource_inventory.state = 'reserved' THEN compute_resource_inventory.state ELSE excluded.state END,
                     observed_at=excluded.observed_at,expires_at=excluded.expires_at,
                     ephemeral=excluded.ephemeral,authentication_state=excluded.authentication_state,
                     payload_json=excluded.payload_json,
