@@ -25,8 +25,8 @@ def test_configured_sources_includes_web_source():
 
 def test_free_source_catalog_has_exact_current_universe():
     catalog = _load_free_source_catalog()
-    assert len(catalog) == 41
-    assert len(available_free_sources()) == 41
+    assert len(catalog) == 40
+    assert len(available_free_sources()) == 40
     assert all(definition.enabled for definition in catalog)
     assert "EURES" not in available_free_sources()
 
@@ -81,7 +81,7 @@ def test_free_source_catalog_preserves_company_metadata():
 
 def test_available_free_sources_returns_catalog_names():
     names = available_free_sources()
-    assert len(names) == 41
+    assert len(names) == 40
     assert "Himalayas" in names
     assert "Jobicy" in names
     assert "RemoteJobs.org" in names
@@ -95,7 +95,7 @@ def test_available_free_sources_returns_catalog_names():
 def test_configured_sources_loads_all_free_sources():
     with patch.dict("os.environ", {"LEAD_ENGINE_FREE_SOURCES_ENABLED": "true"}, clear=True):
         sources = configured_sources()
-    assert len(sources) == 41
+    assert len(sources) == 40
     assert {source.name for source in sources} == set(available_free_sources())
 
 
