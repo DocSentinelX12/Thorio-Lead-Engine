@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from .airtable_sync import AirtableSyncError, AIRTABLE_API_URL, _request, _text
 from .config import LeadEngineConfig
+from .sales_handoff import package_digest
 
 _RESEARCH_FIELD_MAP = {
     "Company Research": "company_research",
@@ -85,7 +86,9 @@ def _research_payload(lead: Dict[str, Any]) -> Dict[str, Any]:
         if value is not None:
             fields[airtable_field] = value
 
-    raw_package = _json_text(lead)
+    raw_payload = dict(lead)
+    raw_payload["__thorio_package_digest"] = package_digest(lead)
+    raw_package = _json_text(raw_payload)
     if raw_package is None:
         raise ValueError("Research synchronization requires a serializable lead payload.")
     fields["Raw Research Package"] = raw_package
