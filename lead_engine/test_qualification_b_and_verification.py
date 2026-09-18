@@ -62,3 +62,55 @@ def test_verification_does_not_promote_observed_person_without_role_and_contact_
     lead.pop("contact_email", None)
     result = verification("verification", {"lead": lead, "evidence_events": []}, None)
     assert result["decision_maker_verification"] == "observed_needs_role_verification"
+
+
+def test_verification_can_complete_research_boundary_before_route_qualification():
+    now = _timestamp()
+    verified_ref = lambda text: {"url": "https://example.com/evidence", "evidence": text, "observed_at": now}
+    lead = _primary_lead()
+    lead["research_status"] = "research_required"
+    lead["potential_routes"] = []
+    lead["company_research"].update({
+        "decision_maker": None,
+        "decision_maker_evidence": None,
+        "decision_maker_verification_status": "observed_needs_role_verification",
+        "observed_decision_maker": "Alex CTO",
+        "public_web_research": {"pages_attempted": 3},
+    })
+    lead["business_need_research"] = {"verified": False, "verification_status": "observed_evidence", "evidence": [verified_ref("Acme needs engineering support.")]}
+    lead["current_intent_research"] = {"verified": False, "verification_status": "observed_evidence", "evidence": [verified_ref("Acme is hiring a remote software engineer now.")]}
+    lead["technical_product_hiring_research"] = {"verified": False, "verification_status": "observed_evidence", "evidence": [verified_ref("Acme is hiring software engineers.")]}
+    lead["commercial_research"] = {"verified": False, "verification_status": "observed_evidence", "evidence": [verified_ref("Acme offers enterprise software.")]}
+    lead["route_research"] = {
+        "verified": False,
+        "verification_status": "observed_evidence",
+        "routes": {
+            "Thorio": {"verified": False, "verification_status": "observed_evidence", "evidence": [verified_ref("Acme is hiring a remote software engineer now.")]},
+            "Shiftr": {"verified": False, "verification_status": "observed_evidence", "evidence": [verified_ref("Acme is hiring a remote software engineer now.")]},
+            "Paxus": {"verified": False, "verification_status": "research_required", "evidence": []},
+        },
+    }
+    lead["specialist_findings"] = {
+        "social_decision_maker_research": {
+            "findings": [{
+                "url": "https://example.com/alex",
+                "evidence": "Alex CTO is a technology leader at Acme.",
+                "matches": ["CTO"],
+                "source": "LinkedIn",
+            }]
+        }
+    }
+    result = verification("verification", {"lead": lead, "evidence_events": []}, None)
+    assert result["decision_maker_verification"] == "verified"
+    assert result["verified"] is True
+    updates = result["research_section_updates"]
+    assert all(updates[name]["verified"] is True for name in (
+        "business_need_research",
+        "current_intent_research",
+        "technical_product_hiring_research",
+        "commercial_research",
+        "route_research",
+    ))
+    assert updates["route_research"]["routes"]["Thorio"]["verified"] is True
+    assert updates["route_research"]["routes"]["Shiftr"]["verified"] is True
+    assert updates["route_research"]["routes"]["Paxus"]["verified"] is False
