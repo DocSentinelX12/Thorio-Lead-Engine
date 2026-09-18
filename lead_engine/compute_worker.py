@@ -151,9 +151,10 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
             continue
         client._active_task = task["task_id"]
         try:
-            if not isinstance(task.get("physical_allocation"), Mapping):
+            payload = task["payload"]
+            if "compute_requirements" in payload and not isinstance(task.get("physical_allocation"), Mapping):
                 raise ComputeWorkerError("coordinator did not assign a physical execution allocation")
-            result = execute_compute_task(task["payload"])
+            result = execute_compute_task(payload)
             client.complete(task["task_id"], task["lease_token"], result)
         except Exception as error:
             try:
