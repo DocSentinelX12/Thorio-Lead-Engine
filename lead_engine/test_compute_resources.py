@@ -5,7 +5,6 @@ from lead_engine.compute_resources import (
     GpuResource,
     NodeResource,
     ResourceLease,
-    ResourceState,
     WorkloadClass,
 )
 
@@ -44,19 +43,19 @@ def test_multi_gpu_requirement_is_concrete_gpu_count():
     assert requirements.gpu.gpu_count == 8
 
 
-def test_nccL_is_not_required_for_single_gpu():
+def test_nccl_is_not_required_for_single_gpu():
     requirements = ComputeRequirements(
         workload_class=WorkloadClass.GPU_REQUIRED,
         gpu=GpuRequirements(gpu_count=1),
     )
-    assert requirements.gpu.require_nccL is False
+    assert requirements.gpu.require_nccl is False
 
 
 def test_multi_node_gpu_cannot_claim_same_node():
     try:
         ComputeRequirements(
             workload_class=WorkloadClass.MULTI_NODE_GPU,
-            gpu=GpuRequirements(gpu_count=8, require_nccL=True),
+            gpu=GpuRequirements(gpu_count=8, require_nccl=True),
             same_node=True,
         )
     except ValueError:
