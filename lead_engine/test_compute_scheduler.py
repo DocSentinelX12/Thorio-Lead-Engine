@@ -182,3 +182,84 @@ def test_second_allocation_cannot_double_book_reserved_gpu(tmp_path):
     scheduler.allocate(ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)), "allocation-1")
     with pytest.raises(ComputeSchedulingError):
         scheduler.allocate(ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)), "allocation-2")
+
+
+def test_allocation_has_durable_owner_record(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+    ])]))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+        "allocation-1",
+    )
+    stored = inventory.allocation("allocation-1")
+    assert stored["state"] == "reserved"
+    assert stored["task_id"] is None
+    assert set(stored["resource_keys"]) == set(allocation.resource_keys)
+
+
+def test_allocation_binding_is_idempotent_and_generation_specific(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+    ])]))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+        "allocation-1",
+    )
+    assert inventory.bind_allocation(
+        "allocation-1", task_id="task-1", attempt_id="attempt-1",
+        generation=1, lease_token_digest="digest-1",
+    )
+    assert inventory.bind_allocation(
+        "allocation-1", task_id="task-1", attempt_id="attempt-1",
+        generation=1, lease_token_digest="digest-1",
+    )
+    assert not inventory.bind_allocation(
+        "allocation-1", task_id="task-1", attempt_id="attempt-2",
+        generation=2, lease_token_digest="digest-2",
+    )
+    stored = inventory.allocation("allocation-1")
+    assert stored["state"] == "bound"
+    assert stored["attempt_id"] == "attempt-1"
+    assert stored["generation"] == 1
+
+
+def test_stale_generation_cannot_release_newer_binding(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+    ])]))
+    scheduler = ComputeScheduler(inventory)
+    allocation = scheduler.allocate(
+        ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+        "allocation-1",
+    )
+    assert inventory.bind_allocation(
+        allocation.allocation_id, task_id="task-1", attempt_id="attempt-1",
+        generation=2, lease_token_digest="digest-2",
+    )
+    assert inventory.release_allocation(
+        allocation.allocation_id, task_id="task-1", attempt_id="attempt-1",
+        generation=1, reason="stale recovery",
+    ) == 0
+    assert inventory.get(allocation.resource_keys[-1])["state"] == ResourceState.RESERVED.value
+    assert inventory.release_allocation(
+        allocation.allocation_id, task_id="task-1", attempt_id="attempt-1",
+        generation=2, reason="completed",
+    ) == 2
+    assert inventory.get(allocation.resource_keys[-1])["state"] == ResourceState.AVAILABLE.value
+
+
+def test_provider_missing_does_not_erase_reserved_allocation(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+    ])]))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+        "allocation-1",
+    )
+    assert inventory.mark_provider_missing("provider-a", "domain-a") == 0
+    assert inventory.get(allocation.resource_keys[-1])["state"] == ResourceState.RESERVED.value
