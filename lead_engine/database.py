@@ -165,6 +165,43 @@ class LeadDB:
                     current[field] = before[field]
                 else:
                     current.pop(field, None)
+        elif current_rank == incoming_rank and current_state:
+            for field in protected_revenue_fields:
+                if field not in before or field not in updates:
+                    continue
+                existing = before.get(field)
+                incoming = updates.get(field)
+                if existing not in (None, "", []) and incoming in (None, "", []):
+                    current[field] = existing
+            for field in ("outreach_history", "conversation_events"):
+                existing = before.get(field)
+                incoming = updates.get(field)
+                if isinstance(existing, list) and isinstance(incoming, list) and len(existing) > len(incoming):
+                    current[field] = existing
+            for field in ("outreach_attempt", "response_count"):
+                existing = before.get(field)
+                incoming = updates.get(field)
+                if isinstance(existing, int) and isinstance(incoming, int) and incoming < existing:
+                    current[field] = existing
+            for field in ("last_response_at", "next_follow_up_at"):
+                existing = str(before.get(field) or "").strip()
+                incoming = str(updates.get(field) or "").strip()
+                if existing and incoming and incoming < existing:
+                    current[field] = before[field]
+            if before.get("conversation_id") and updates.get("conversation_id") and updates.get("conversation_id") != before.get("conversation_id"):
+                current["conversation_id"] = before["conversation_id"]
+            if before.get("last_outreach_action_id") and updates.get("last_outreach_action_id") and updates.get("last_outreach_action_id") != before.get("last_outreach_action_id"):
+                current["last_outreach_action_id"] = before["last_outreach_action_id"]
+            existing_eligibility = str(before.get("sales_eligibility") or "").strip().lower()
+            incoming_eligibility = str(updates.get("sales_eligibility") or "").strip().lower()
+            if existing_eligibility == "eligible" and incoming_eligibility != "eligible":
+                current["sales_eligibility"] = before["sales_eligibility"]
+                if before.get("sales_eligibility_reason") is not None:
+                    current["sales_eligibility_reason"] = before["sales_eligibility_reason"]
+            elif existing_eligibility == "blocked" and not incoming_eligibility:
+                current["sales_eligibility"] = before["sales_eligibility"]
+                if before.get("sales_eligibility_reason") is not None and not str(updates.get("sales_eligibility_reason") or "").strip():
+                    current["sales_eligibility_reason"] = before["sales_eligibility_reason"]
         prior_action = str(before.get("last_outreach_action_id") or "").strip()
         incoming_action = str(updates.get("last_outreach_action_id") or "").strip()
         if prior_action and not incoming_action and "outreach_state" in updates:
