@@ -214,7 +214,7 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
         except Exception as batch_exc:
             from .sync_worker import sync_one
             for fingerprint, lead in chunk:
-                result = sync_one(lead)
+                result = sync_one(lead, db=db)
                 if result.get("status") in {"synced", "already_exists"}:
                     try:
                         sync_research(lead)
