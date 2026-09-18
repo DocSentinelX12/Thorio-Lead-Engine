@@ -1,6 +1,7 @@
 """Bridge durable local specialist work into the authenticated free coordinator."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
 
 from .advanced_agent_logic import advanced_handler_registry
@@ -56,24 +57,50 @@ def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> No
         enqueue(db, "company_research", {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent}, priority=7, dedupe_key=f"company_research:{fingerprint}")
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20) -> Dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
+    worker_id = f"{REMOTE_WORKER_PREFIX}{client.worker_id}"
     candidates = [task for task in pending(db) if task.get("status") == QUEUED and task.get("agent") in REMOTE_SAFE_AGENTS]
     candidates.sort(key=lambda item: (-int(item.get("priority", 0)), item.get("created_at", "")))
-    published = []
+    prepared = 0
     for task in candidates[:limit]:
         payload = {"kind": "agent_task", "agent": task["agent"], "payload": task["payload"]}
-        client.enqueue(payload, task_id=task["task_id"])
-        claimed = claim_task(db, task["task_id"], worker_id=f"{REMOTE_WORKER_PREFIX}{client.worker_id}", lease_seconds=900)
-        published.append({"task_id": claimed["task_id"], "agent": claimed["agent"]})
-    return {"published_count": len(published), "published": published}
+        db.compute_bridge_prepare(task["task_id"], worker_id, payload, _now_iso())
+        try:
+            claim_task(db, task["task_id"], worker_id=worker_id, lease_seconds=900)
+            prepared += 1
+        except ValueError:
+            continue
+
+    published = []
+    for publication in db.compute_bridge_publications():
+        if len(published) >= limit:
+            break
+        task = next((item for item in pending(db) if item.get("task_id") == publication["task_id"]), None)
+        if task is None or task.get("status") != RUNNING or task.get("worker_id") != publication["worker_id"]:
+            continue
+        try:
+            client.enqueue(publication["payload"], task_id=publication["task_id"])
+            db.compute_bridge_mark_published(publication["task_id"], _now_iso())
+            published.append({"task_id": task["task_id"], "agent": task["agent"]})
+        except Exception as error:
+            db.compute_bridge_mark_retry(publication["task_id"], str(error), _now_iso())
+    return {"published_count": len(published), "prepared_count": prepared, "published": published}
 
 
 def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 50) -> Dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
-    local_tasks = [task for task in pending(db) if task.get("status") == RUNNING and str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)]
+    local_tasks = [
+        task for task in pending(db)
+        if task.get("status") == RUNNING
+        and str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)
+        and (db.compute_bridge_get(task["task_id"]) or {}).get("status") == "published"
+    ]
     completed = []
     retried = []
     for task in local_tasks[:limit]:
