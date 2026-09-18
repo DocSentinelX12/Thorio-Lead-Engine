@@ -140,7 +140,7 @@ class ComputeInventory:
                     (resource_key,provider_id,domain_id,node_id,gpu_id,identity_key,
                      resource_type,state,observed_at,expires_at,ephemeral,authentication_state,payload_json,
                      evidence_json,first_seen_at,last_seen_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(resource_key) DO UPDATE SET
                     provider_id=excluded.provider_id,domain_id=excluded.domain_id,
                     node_id=excluded.node_id,gpu_id=excluded.gpu_id,
@@ -371,4 +371,3 @@ class ComputeInventory:
             item["resource_keys"] = json.loads(item.pop("resource_keys_json"))
             result.append(item)
         return result
-
