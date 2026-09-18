@@ -6,7 +6,6 @@ qualification, outreach, revenue, or Partnership state.
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -163,25 +162,11 @@ class ComputeScheduler:
         resources.extend(gpu_rows)
 
         keys = [row["resource_key"] for row in resources]
-        placeholders = ",".join("?" for _ in keys)
-        with self.inventory._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            current = connection.execute(
-                f"SELECT resource_key,state FROM compute_resource_inventory WHERE resource_key IN ({placeholders})",
-                keys,
-            ).fetchall()
-            current_by_key = {row["resource_key"]: row["state"] for row in current}
-            if len(current_by_key) != len(keys) or any(
-                current_by_key[key] not in {ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value}
-                for key in keys
-            ):
-                connection.rollback()
-                raise ComputeSchedulingError("resource changed before allocation")
-            connection.executemany(
-                "UPDATE compute_resource_inventory SET state=?,last_seen_at=? WHERE resource_key=?",
-                [(ResourceState.RESERVED.value, __import__("time").time(), key) for key in keys],
-            )
-            connection.commit()
+        try:
+            self.inventory.reserve_allocation(allocation_id, next(iter({row["provider_id"] for row in resources})),
+                                             next(iter({row["domain_id"] for row in resources})), keys)
+        except ValueError as error:
+            raise ComputeSchedulingError(str(error)) from error
 
         provider_ids = {row["provider_id"] for row in resources}
         domain_ids = {row["domain_id"] for row in resources}
