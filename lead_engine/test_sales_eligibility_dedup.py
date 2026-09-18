@@ -74,6 +74,7 @@ def test_different_business_need_remains_eligible(tmp_path):
     current = _lead("current-opportunity", business_need="AI agent development")
     db.insert_if_new(existing)
     db.insert_if_new(current)
+    db.record_airtable_handoff(current["fingerprint"], package_digest(current), "recLead", "recResearch", ["recCompany"], "2026-09-18T00:00:00+00:00")
 
     eligible, reason = _sales_eligibility(current, _routing(), {}, db)
     assert eligible is True
