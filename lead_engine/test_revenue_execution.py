@@ -78,31 +78,28 @@ def test_stale_queued_closer_cannot_bypass_airtable_handoff(tmp_path):
 
 def test_concurrent_same_idempotency_key_has_one_external_send(tmp_path):
     key = "outreach:concurrent:conversation-1:1"
-    barrier = threading.Barrier(2)
+    start_barrier = threading.Barrier(2)
     calls = []
     calls_lock = threading.Lock()
-
-    class RaceDB(LeadDB):
-        def get_state(self, state_key):
-            if state_key == "revenue_execution":
-                barrier.wait(timeout=5)
-            return super().get_state(state_key)
 
     class ConcurrentTransport:
         def send(self, **kwargs):
             with calls_lock:
                 calls.append(dict(kwargs))
+            threading.Event().wait(0.2)
             return {"provider": "fake", "delivery_id": "delivery-1", "status": "accepted"}
 
         def reconcile(self, *, idempotency_key):
             return None
 
+    transport = ConcurrentTransport()
     errors = []
     results = []
 
     def worker():
-        db = RaceDB(data_dir=tmp_path)
+        db = LeadDB(data_dir=tmp_path)
         try:
+            start_barrier.wait(timeout=5)
             results.append(
                 execute_outbound(
                     db,
@@ -113,7 +110,7 @@ def test_concurrent_same_idempotency_key_has_one_external_send(tmp_path):
                     recipient={"email": "taylor@example.com"},
                     subject="Hello",
                     body="Hello Taylor",
-                    transport=ConcurrentTransport(),
+                    transport=transport,
                     idempotency_key=key,
                 )
             )
@@ -133,7 +130,6 @@ def test_concurrent_same_idempotency_key_has_one_external_send(tmp_path):
     assert len(results) == 1
     assert len(errors) == 1
     assert isinstance(errors[0], RevenueActionInProgress)
-
 
 def test_uncertain_send_without_provider_reconciliation_never_resends(tmp_path):
     db = LeadDB(data_dir=tmp_path)
