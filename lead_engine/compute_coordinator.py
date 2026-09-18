@@ -6,6 +6,7 @@ only the Python standard library and an operator-provided bearer token.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -50,11 +51,43 @@ class ComputeCoordinator:
                 result TEXT,
                 error TEXT NOT NULL DEFAULT '',
                 attempts INTEGER NOT NULL DEFAULT 0,
+                attempt_id TEXT,
+                generation INTEGER NOT NULL DEFAULT 0,
+                completed_worker_id TEXT,
+                completed_lease_digest TEXT,
+                completed_result_digest TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL)""")
             columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_tasks)")}
-            if "attempts" not in columns:
-                connection.execute("ALTER TABLE compute_tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
+            migrations = {
+                "attempts": "ALTER TABLE compute_tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+                "attempt_id": "ALTER TABLE compute_tasks ADD COLUMN attempt_id TEXT",
+                "generation": "ALTER TABLE compute_tasks ADD COLUMN generation INTEGER NOT NULL DEFAULT 0",
+                "completed_worker_id": "ALTER TABLE compute_tasks ADD COLUMN completed_worker_id TEXT",
+                "completed_lease_digest": "ALTER TABLE compute_tasks ADD COLUMN completed_lease_digest TEXT",
+                "completed_result_digest": "ALTER TABLE compute_tasks ADD COLUMN completed_result_digest TEXT",
+            }
+            for column, statement in migrations.items():
+                if column not in columns:
+                    connection.execute(statement)
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_execution_attempts (
+                attempt_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                worker_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                lease_token_digest TEXT NOT NULL,
+                started_at REAL NOT NULL,
+                finished_at REAL,
+                error TEXT NOT NULL DEFAULT '',
+                provider_id TEXT,
+                domain_id TEXT,
+                resource_ids TEXT NOT NULL DEFAULT '[]',
+                checkpoint_ref TEXT,
+                artifact_refs TEXT NOT NULL DEFAULT '[]',
+                verification TEXT,
+                authoritative_acceptance TEXT NOT NULL DEFAULT 'pending'
+            )""")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
             connection.commit()
 
@@ -154,16 +187,23 @@ class ComputeCoordinator:
                 task_id = selected["task_id"]
                 lease_token = str(uuid.uuid4())
                 now = time.time()
+                generation = int(connection.execute("SELECT generation FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()["generation"]) + 1
+                attempt_id = str(uuid.uuid4())
                 updated = connection.execute(
-                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE task_id=? AND status='queued'",
-                    (worker_id, lease_token, now + self.lease_seconds, now, task_id),
+                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,lease_until=?,attempts=attempts+1,attempt_id=?,generation=?,updated_at=? WHERE task_id=? AND status='queued'",
+                    (worker_id, lease_token, now + self.lease_seconds, attempt_id, generation, now, task_id),
                 )
                 if updated.rowcount != 1:
                     connection.rollback()
                     self.pool.release_task_slot(worker_id)
                     return None
+                lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+                connection.execute(
+                    "INSERT INTO compute_execution_attempts(attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at) VALUES(?,?,?,?,?,?,?)",
+                    (attempt_id, task_id, generation, worker_id, "leased", lease_digest, now),
+                )
                 connection.commit()
-            return {"task_id": task_id, "payload": json.loads(selected["payload"]), "lease_token": lease_token}
+            return {"task_id": task_id, "attempt_id": attempt_id, "generation": generation, "payload": json.loads(selected["payload"]), "lease_token": lease_token}
 
     def _valid_lease(self, connection: sqlite3.Connection, worker_id: str, task_id: str, lease_token: str) -> bool:
         row = connection.execute("SELECT status,worker_id,lease_token,lease_until FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()
@@ -172,14 +212,33 @@ class ComputeCoordinator:
     def complete(self, worker_id: str, task_id: str, lease_token: str, result: Dict[str, Any]) -> bool:
         if not isinstance(result, dict):
             raise ValueError("result must be an object")
+        result_digest = hashlib.sha256(json.dumps(result, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
         with self._lock:
             with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT status,completed_worker_id,completed_lease_digest,completed_result_digest,attempt_id FROM compute_tasks WHERE task_id=?",
+                    (task_id,),
+                ).fetchone()
+                if row and row["status"] == "completed":
+                    return bool(
+                        row["completed_worker_id"] == worker_id
+                        and row["completed_lease_digest"] == lease_digest
+                        and row["completed_result_digest"] == result_digest
+                    )
                 if not self._valid_lease(connection, worker_id, task_id, lease_token):
                     return False
+                now = time.time()
                 connection.execute(
-                    "UPDATE compute_tasks SET status='completed',result=?,error='',lease_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=?",
-                    (json.dumps(result, ensure_ascii=False), time.time(), task_id),
+                    "UPDATE compute_tasks SET status='completed',result=?,error='',lease_token=NULL,lease_until=NULL,completed_worker_id=?,completed_lease_digest=?,completed_result_digest=?,updated_at=? WHERE task_id=?",
+                    (json.dumps(result, ensure_ascii=False), worker_id, lease_digest, result_digest, now, task_id),
                 )
+                attempt_id = row["attempt_id"] if row else None
+                if attempt_id:
+                    connection.execute(
+                        "UPDATE compute_execution_attempts SET status='completed',finished_at=?,authoritative_acceptance='pending' WHERE attempt_id=?",
+                        (now, attempt_id),
+                    )
                 connection.commit()
             self.pool.release_task_slot(worker_id)
         return True
@@ -189,10 +248,17 @@ class ComputeCoordinator:
             with self._connect() as connection:
                 if not self._valid_lease(connection, worker_id, task_id, lease_token):
                     return False
+                now = time.time()
+                row = connection.execute("SELECT attempt_id FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()
                 connection.execute(
                     "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error=?,updated_at=? WHERE task_id=?",
-                    (str(error)[:4000], time.time(), task_id),
+                    (str(error)[:4000], now, task_id),
                 )
+                if row and row["attempt_id"]:
+                    connection.execute(
+                        "UPDATE compute_execution_attempts SET status='released',finished_at=?,error=? WHERE attempt_id=?",
+                        (now, str(error)[:4000], row["attempt_id"]),
+                    )
                 connection.commit()
             self.pool.release_task_slot(worker_id)
         return True
@@ -202,7 +268,7 @@ class ComputeCoordinator:
         with self._lock:
             with self._connect() as connection:
                 rows = connection.execute(
-                    "SELECT task_id,worker_id FROM compute_tasks WHERE status='leased' AND lease_until <= ?",
+                    "SELECT task_id,worker_id,attempt_id FROM compute_tasks WHERE status='leased' AND lease_until <= ?",
                     (now,),
                 ).fetchall()
                 if not rows:
@@ -211,6 +277,12 @@ class ComputeCoordinator:
                     "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error='lease expired',updated_at=? WHERE status='leased' AND lease_until <= ?",
                     (now, now),
                 )
+                for row in rows:
+                    if row["attempt_id"]:
+                        connection.execute(
+                            "UPDATE compute_execution_attempts SET status='expired',finished_at=?,error='lease expired' WHERE attempt_id=?",
+                            (now, row["attempt_id"]),
+                        )
                 connection.commit()
             for row in rows:
                 if row["worker_id"]:
