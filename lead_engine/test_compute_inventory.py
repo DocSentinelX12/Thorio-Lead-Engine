@@ -5,7 +5,7 @@ from lead_engine.compute_provider import ProviderResourceSnapshot
 from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
 
 
-def _snapshot(*, gpus=(), ephemeral=False, expires_at=None):
+def _snapshot(*, gpus=(), ephemeral=False, expires_at=None, authentication_state="authenticated"):
     return ProviderResourceSnapshot(
         provider_id="provider-a",
         domain_id="domain-a",
@@ -18,6 +18,7 @@ def _snapshot(*, gpus=(), ephemeral=False, expires_at=None):
         ),),
         ephemeral=ephemeral,
         expires_at=expires_at,
+        authentication_state=authentication_state,
         evidence={"probe": "test"},
     )
 
@@ -81,3 +82,49 @@ def test_resource_state_evidence_is_retained(tmp_path):
     gpu = inventory.get("provider-a/domain-a/node-1/gpu/uuid-0")
     assert gpu is not None
     assert '"probe": "test"' in gpu["evidence_json"]
+
+
+def test_one_gpu_failure_does_not_quarantine_unrelated_gpu(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot(gpus=(_gpu("0", "uuid-0"), _gpu("1", "uuid-1"))))
+    failed_key = "provider-a/domain-a/node-1/gpu/uuid-0"
+    healthy_key = "provider-a/domain-a/node-1/gpu/uuid-1"
+    assert inventory.mark_state(failed_key, ResourceState.QUARANTINED)
+    assert inventory.get(failed_key)["state"] == ResourceState.QUARANTINED.value
+    assert inventory.get(healthy_key)["state"] != ResourceState.QUARANTINED.value
+
+
+def test_provider_authentication_state_is_retained(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot(authentication_state="reauth_required"))
+    resource = inventory.get("provider-a/domain-a/node-1/cpu")
+    assert resource is not None
+    assert resource["authentication_state"] == "reauth_required"
+
+
+def test_existing_inventory_schema_is_migrated(tmp_path):
+    db_path = tmp_path / "inventory.sqlite3"
+    import sqlite3
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("""CREATE TABLE compute_resource_inventory (
+            resource_key TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            domain_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            gpu_id TEXT,
+            identity_key TEXT,
+            resource_type TEXT NOT NULL,
+            state TEXT NOT NULL,
+            observed_at REAL NOT NULL,
+            expires_at REAL,
+            ephemeral INTEGER NOT NULL DEFAULT 0,
+            payload_json TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            first_seen_at REAL NOT NULL,
+            last_seen_at REAL NOT NULL)""")
+        connection.commit()
+
+    inventory = ComputeInventory(str(db_path))
+    columns = {row[1] for row in sqlite3.connect(db_path).execute("PRAGMA table_info(compute_resource_inventory)")}
+    assert "authentication_state" in columns
