@@ -611,7 +611,8 @@ def sync_pending(
             continue
 
         result = sync_one(
-            lead
+            lead,
+            db=db,
         )
 
         if result["status"] in {
