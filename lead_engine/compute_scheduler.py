@@ -140,7 +140,8 @@ class ComputeScheduler:
             for candidate in candidates:
                 if candidate["gpus"]:
                     selected.append(candidate)
-                    if sum(len(c["gpus"]) for c in selected) >= needed:
+                    total = sum(len(c["gpus"]) for c in selected)
+                    if len(selected) >= 2 and total >= needed:
                         break
             if len(selected) < 2 or sum(len(c["gpus"]) for c in selected) < needed:
                 raise ComputeSchedulingError("no compatible multi-node allocation")
