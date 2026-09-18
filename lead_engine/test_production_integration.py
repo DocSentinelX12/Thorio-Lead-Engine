@@ -106,7 +106,7 @@ def test_production_path_continues_after_a_failed_record(tmp_path):
 
 def test_production_path_marks_successful_sync_as_synced(tmp_path, monkeypatch):
     config = LeadEngineConfig(database_dir=str(tmp_path / "database"), sync_enabled=True, batch_size=50)
-    monkeypatch.setattr("lead_engine.pipeline.sync_one", lambda payload: {"status": "synced", "error": None})
+    monkeypatch.setattr("lead_engine.pipeline.sync_one", lambda payload, db=None: {"status": "synced", "error": None})
     application = LeadEngineApplication(config=config)
     result = application.run_sources([StaticLeadSource([_lead("integration-sync-success")])])
     assert result["results"][0]["result"]["accepted_count"] == 1
