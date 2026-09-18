@@ -208,6 +208,13 @@ def _verify_research_sections(lead: Mapping[str, Any]) -> tuple[Dict[str, Dict[s
                 "verified_at": datetime.now(timezone.utc).isoformat(),
                 "finding_status": finding_status,
             })
+        else:
+            update.update({
+                "verified": False,
+                "verification_status": "research_required",
+                "verification_basis": "canonical_evidence_contract_recheck",
+                "finding_status": finding_status,
+            })
         updates[name] = update
 
     route = lead.get("route_research")
@@ -244,6 +251,12 @@ def _verify_research_sections(lead: Mapping[str, Any]) -> tuple[Dict[str, Dict[s
                         "provenance": {**(dict(item.get("provenance") or {}) if isinstance(item.get("provenance"), Mapping) else {}), "evidence_count": len(verified_refs)},
                     })
                     verified_route_count += 1
+                else:
+                    item.update({
+                        "verified": False,
+                        "verification_status": "research_required",
+                        "verification_basis": "route_rule_recheck",
+                    })
                 new_routes[str(route_name)] = item
             route_updates["routes"] = new_routes
             route_updates["verified"] = verified_route_count > 0
