@@ -43,7 +43,38 @@ def reconcile_allocations(
 
         allocation_id = allocation["allocation_id"]
         if allocation["state"] == "reserved" and not allocation.get("attempt_id"):
-            age = max(0.0, current - float(allocation["updated_at"]))
+            # The coordinator records the execution-side binding separately from
+            # the physical inventory. Repair that split here before deciding that
+            # a reservation is truly unbound. This keeps physical ownership in
+            # inventory while making the cross-store boundary self-healing.
+            attempt = coordinator.execution_attempt_for_allocation(allocation_id)
+            if attempt is not None:
+                if attempt["status"] not in TERMINAL_ATTEMPT_STATES and attempt["status"] != "leased":
+                    anomalies.append({
+                        "allocation_id": allocation_id,
+                        "reason": f"unexpected execution attempt state {attempt['status']!r}",
+                    })
+                    continue
+                bound = inventory.bind_allocation(
+                    allocation_id,
+                    task_id=attempt["task_id"],
+                    attempt_id=attempt["attempt_id"],
+                    generation=int(attempt["generation"]),
+                    lease_token_digest=str(attempt["lease_token_digest"]),
+                )
+                if bound:
+                    allocation = inventory.allocation(allocation_id) or allocation
+                elif allocation.get("state") == "reserved":
+                    anomalies.append({
+                        "allocation_id": allocation_id,
+                        "reason": "execution attempt exists but physical allocation binding was rejected",
+                    })
+                    continue
+                else:
+                    allocation = inventory.allocation(allocation_id) or allocation
+
+            if allocation.get("state") == "reserved" and not allocation.get("attempt_id"):
+                age = max(0.0, current - float(allocation["updated_at"]))
             if reservation_ttl_seconds is not None and age >= reservation_ttl_seconds:
                 count = inventory.release_allocation(
                     allocation_id,
