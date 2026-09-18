@@ -167,3 +167,51 @@ def test_claim_finds_compatible_work_beyond_oldest_scan_window(tmp_path):
     claimed = coordinator.claim("specialist-worker")
     assert claimed is not None
     assert claimed["task_id"] == target_id
+
+
+def test_completion_is_idempotent_and_attempt_is_durable(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
+        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
+    ))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("worker-1")
+    assert claimed["task_id"] == task_id
+    assert claimed["attempt_id"]
+    assert claimed["generation"] == 1
+
+    result = {"status": "processed"}
+    assert coordinator.complete("worker-1", task_id, claimed["lease_token"], result) is True
+    assert coordinator.complete("worker-1", task_id, claimed["lease_token"], result) is True
+
+    with coordinator._connect() as connection:
+        attempt = connection.execute(
+            "SELECT status,generation,worker_id,authoritative_acceptance FROM compute_execution_attempts WHERE attempt_id=?",
+            (claimed["attempt_id"],),
+        ).fetchone()
+    assert attempt["status"] == "completed"
+    assert attempt["generation"] == 1
+    assert attempt["worker_id"] == "worker-1"
+    assert attempt["authoritative_acceptance"] == "pending"
+
+
+def test_expired_attempt_is_recoverable_without_completion(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
+        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
+    ))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("worker-1")
+    with coordinator._connect() as connection:
+        connection.execute("UPDATE compute_tasks SET lease_until=? WHERE task_id=?", (0, task_id))
+        connection.commit()
+    assert coordinator.recover_expired_tasks() == 1
+    with coordinator._connect() as connection:
+        attempt = connection.execute(
+            "SELECT status,finished_at,error FROM compute_execution_attempts WHERE attempt_id=?",
+            (claimed["attempt_id"],),
+        ).fetchone()
+    assert attempt["status"] == "expired"
+    assert attempt["finished_at"] is not None
+    assert "lease expired" in attempt["error"]
+    assert coordinator.task(task_id)["status"] == "queued"
