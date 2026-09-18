@@ -24,7 +24,7 @@ def _ready_lead():
         "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
         "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "engineering expansion"}}},
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
-        "potential_routes": ["Thorio"],
+        "potential_routes": ["Thorio"], "eligible_routes": ["Thorio"], "preserved_routes": ["Thorio"], "routing_result": {"destinations": ["Thorio"], "review_required": False},
     }
 
 
