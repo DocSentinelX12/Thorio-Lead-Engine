@@ -42,6 +42,44 @@ def test_social_research_handoffs_to_company_research(tmp_path):
 def test_qualification_worker_requires_completed_company_research(tmp_path):
     db = _db(tmp_path); lead = {"fingerprint": "qualification-research-gate", "company": "Acme", "signal": "Acme is hiring a remote software engineer"}; db.insert_if_new(lead); enqueue(db, "qualification_a", {"lead": lead}); result = run_worker_once(db, "qualification_a", worker_id="qualification-a"); assert result["completed_count"] == 0 and result["failed_count"] == 1; assert db.get(lead["fingerprint"]).get("qualification_results") is None
 
+
+
+def test_qualification_b_materializes_blocked_sales_state_before_airtable_handoff(tmp_path):
+    db = _db(tmp_path)
+    now = _recent()
+    lead = {
+        "fingerprint": "qualification-sales-boundary",
+        "company": "Acme",
+        "qualified": False,
+        "research_status": "complete",
+        "business_need": "remote software engineer hiring",
+        "need_at": now,
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_verification_status": "verified",
+        },
+        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": "remote software engineer hiring", "evidence": ["https://example.com/need"]},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote software engineer hiring", "observed_at": now, "evidence_url": "https://example.com/need"},
+        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/hiring"]},
+        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current remote software engineering hiring need."}}},
+        "research_verified_fields": ["business_need_research", "current_intent_research", "technical_product_hiring_research", "commercial_research", "route_research"],
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "qualification_b", {"lead": lead, "prior_result": {"agent": "qualification_a"}}, priority=9)
+    try:
+        result = run_worker_once(db, "qualification_b", worker_id="qualification-sales-boundary-worker")
+        stored = db.get(lead["fingerprint"])
+        assert result["failed_count"] == 0, result
+        assert stored["qualified"] is True
+        assert stored["sales_eligibility"] == "blocked"
+        assert stored["sales_eligibility_reason"] == "airtable_handoff_required"
+        assert stored["revenue_lifecycle_state"] == "qualified"
+    finally:
+        db.close()
+
 def test_qualification_worker_applies_independent_company_routes_after_research(tmp_path):
     db = _db(tmp_path); now = _recent(); lead = {"fingerprint": "qualification-worker-test", "company": "Acme", "signal": "Acme is hiring a remote software engineer", "job_title": "Software Engineer", "need_at": now, "research_status": "complete", "research_verified_fields": ["current_intent_research", "route_research"], "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified", "decision_maker_email": "taylor@example.com"}, "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "Acme is hiring a remote software engineer and is looking for an engineering team to develop software.", "observed_at": now, "evidence_url": "https://example.com/need"}, "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current engineering hiring need."}, "Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Current need for an engineering team to develop software."}, "Paxus": {"verified": False, "evidence": ""}}}}
     db.insert_if_new(lead); task = enqueue(db, "qualification_a", {"lead": lead}); result = run_worker_once(db, "qualification_a", worker_id="qualification-a"); stored = db.get(lead["fingerprint"]); assert result["completed_count"] == 1; assert "Thorio" in stored["potential_routes"] and "Shiftr" in stored["potential_routes"]; assert task["agent"] == "qualification_a"
