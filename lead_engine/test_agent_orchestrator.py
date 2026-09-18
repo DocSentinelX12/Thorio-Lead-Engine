@@ -113,7 +113,8 @@ def test_orchestrator_queue_inspection_does_not_decode_backlog_payloads(tmp_path
 
 def test_orchestrator_reports_durable_backlog_separately_from_terminal_failures(tmp_path):
     db = LeadDB(data_dir=tmp_path)
-    queued = enqueue(db, "monitoring", {"lead": {"fingerprint": "queued-backlog"}}, priority=1)
+    enqueue(db, "monitoring", {"lead": {"fingerprint": "queued-backlog-1"}}, priority=1)
+    enqueue(db, "monitoring", {"lead": {"fingerprint": "queued-backlog-2"}}, priority=1)
     running = enqueue(db, "audit", {"lead": {"fingerprint": "running-backlog"}}, priority=1)
     failed = enqueue(db, "identity_resolution", {"lead": {"fingerprint": "failed-task"}}, priority=1)
 
