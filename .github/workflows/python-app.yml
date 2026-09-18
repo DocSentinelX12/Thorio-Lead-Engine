@@ -222,7 +222,7 @@ jobs:
             [ -z "$run_id" ] && continue
             artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
             if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
-          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
+          done < <(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
       - name: Download previous Lead Engine state
         if: steps.previous_state.outputs.run_id != ''
