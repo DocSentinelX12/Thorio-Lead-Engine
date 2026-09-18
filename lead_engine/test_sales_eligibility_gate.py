@@ -14,7 +14,7 @@ def _lead(qualified=True):
         "eligible_routes": ["thorio"],
         "preserved_routes": ["thorio"],
         "routing_result": {"destinations": ["thorio"], "review_required": False},
-        "research_status: "complete",
+        "research_status": "complete",
         "current_intent_research": {
             "verified": True,
             "verification_status": "verified",
@@ -39,7 +39,7 @@ def _lead(qualified=True):
 
 
 def _routing():
-    return {"destinations": ["thorio"]}
+    return {"destinations": ["thorio"], "review_required": False}
 
 
 def test_potential_routes_alone_cannot_enter_sales_execution():
@@ -67,7 +67,7 @@ def test_exact_airtable_handoff_allows_sales_eligibility(tmp_path):
     assert reason == "eligible"
 
 
-def test_qualified_opportunity_survives_airtable_sync_failure():
+def test_qualified_opportunity_survives_airtable_sync_failure(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead(qualified=True)
     db.insert_if_new(lead)
