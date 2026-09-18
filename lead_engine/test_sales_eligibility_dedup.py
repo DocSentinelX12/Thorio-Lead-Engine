@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from .active_processing import _sales_eligibility
 from .database import LeadDB
+from .sales_handoff import package_digest
 
 
 def _lead(fingerprint, business_need="remote software engineer hiring"):
@@ -14,6 +15,9 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
         "contact_email": "taylor@example.com",
         "qualified": True,
         "potential_routes": ["Thorio"],
+        "eligible_routes": ["Thorio"],
+        "preserved_routes": ["Thorio"],
+        "routing_result": {"destinations": ["Thorio"], "review_required": False},
         "need_at": now,
         "company_research": {
             "company_verified": True,
@@ -29,6 +33,11 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
             "observed_at": now,
             "evidence_url": "https://example.com/need",
         },
+        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": business_need, "evidence": ["https://example.com/need"]},
+        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/hiring"]},
+        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "current need"}}},
+        "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
         "research_status": "complete",
     }
 
@@ -52,6 +61,7 @@ def test_exact_same_company_person_and_need_is_blocked_as_duplicate(tmp_path):
     current = _lead("current-opportunity")
     db.insert_if_new(existing)
     db.insert_if_new(current)
+    db.record_airtable_handoff(current["fingerprint"], package_digest(current), "recLead", "recResearch", ["recCompany"], "2026-09-18T00:00:00+00:00")
 
     eligible, reason = _sales_eligibility(current, _routing(), {}, db)
     assert eligible is False
