@@ -112,7 +112,7 @@ class GpuRequirements:
     required_cuda_version: Optional[str] = None
     required_driver_version: Optional[str] = None
     required_nvlink_domain: Optional[str] = None
-    require_nccL: bool = False
+    require_nccl: bool = False
 
     def __post_init__(self) -> None:
         if self.gpu_count < 0:
@@ -121,7 +121,7 @@ class GpuRequirements:
             value = getattr(self, name)
             if value is not None and value < 0:
                 raise ValueError(f"{name} must not be negative")
-        if self.require_nccL and self.gpu_count < 2:
+        if self.require_nccl and self.gpu_count < 2:
             raise ValueError("NCCL requirement is meaningful only for multi-GPU work")
 
 
