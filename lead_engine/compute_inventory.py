@@ -90,7 +90,7 @@ class ComputeInventory:
     def observe(self, snapshot: ProviderResourceSnapshot) -> dict[str, Any]:
         """Persist one provider observation without deleting historical resources."""
         now = time.time()
-        rows: list[tuple[str, str, str, str, str | None, str | None, str, str, float, float | None, int, str, str, float, float]] = []
+        rows: list[tuple[str, str, str, str, str | None, str | None, str, str, float, float | None, int, str, str, str, float, float]] = []
         for node in snapshot.nodes:
             node_payload = self._node_payload(node)
             rows.append((
@@ -105,7 +105,7 @@ class ComputeInventory:
                     self._resource_key(snapshot.provider_id, snapshot.domain_id, node.node_id, gpu),
                     snapshot.provider_id, snapshot.domain_id, node.node_id, gpu.gpu_id, gpu.identity_key,
                     "gpu", gpu.availability_state.value, snapshot.observed_at, snapshot.expires_at,
-                    int(snapshot.ephemeral, snapshot.authentication_state, json.dumps(asdict(gpu) | {
+                    int(snapshot.ephemeral), snapshot.authentication_state, json.dumps(asdict(gpu) | {
                         "health_state": gpu.health_state.value,
                         "availability_state": gpu.availability_state.value,
                     }, ensure_ascii=False, sort_keys=True),
