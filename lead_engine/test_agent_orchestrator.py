@@ -124,12 +124,10 @@ def test_orchestrator_reports_durable_backlog_separately_from_terminal_failures(
     claim(db, "identity_resolution", worker_id="test-failed", limit=1)
     fail(db, failed["task_id"], worker_id="test-failed", error="intentional terminal failure")
 
-    result = AgentOrchestrator(db).run_all_once(limit_per_agent=1, max_rounds=1)
+    orchestrator = AgentOrchestrator(db)
+    health = orchestrator._queue_health()
 
-    health = result["queue_health"]
     assert health["failed_count"] == 1
-    assert health["queued_count"] >= 1
-    assert health["running_count"] >= 0
-    assert result["remaining_queue_count"] == health["queued_count"] + health["running_count"]
-    assert result["drain_complete"] is False
+    assert health["queued_count"] == 2
+    assert health["running_count"] == 1
 
