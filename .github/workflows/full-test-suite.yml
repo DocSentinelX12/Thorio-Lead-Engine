@@ -2,12 +2,6 @@ name: Full Test Suite (Manual)
 
 on:
   workflow_dispatch:
-    inputs:
-      test_path:
-        description: "Test path or pytest selector. Leave as . to run the entire discovered suite."
-        required: false
-        default: "."
-        type: string
 
 permissions:
   contents: read
@@ -43,19 +37,15 @@ jobs:
           python -m pip install pytest pytest-timeout
 
       - name: Show complete pytest collection
-        env:
-          TEST_PATH: ${{ inputs.test_path }}
         run: |
           echo "=============================================="
           echo "PYTEST COLLECTION AUDIT"
           echo "=============================================="
-          echo "Selector: $TEST_PATH"
+          echo "Selector: ."
           echo "Branch: $GITHUB_REF"
           echo ""
-          python -m pytest "$TEST_PATH" --collect-only -q
+          python -m pytest . --collect-only -q
 
       - name: Run every collected test
-        env:
-          TEST_PATH: ${{ inputs.test_path }}
         run: |
-          python -m pytest "$TEST_PATH" -vv -ra --tb=short --timeout=900 --durations=25
+          python -m pytest . -vv -ra --tb=short --timeout=900 --durations=25
