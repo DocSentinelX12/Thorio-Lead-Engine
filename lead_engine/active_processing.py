@@ -126,6 +126,15 @@ def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     if result.get("destinations"):
         stored = dict(lead)
         stored["routing_result"] = dict(result)
+        # A qualified opportunity must have an explicit sales-eligibility state
+        # before the Airtable integrity boundary runs. This is a conservative
+        # state materialization only: it does not authorize outreach and the
+        # existing Airtable handoff gate remains responsible for upgrading the
+        # opportunity to sales-eligible.
+        if stored.get("qualified") is True and not str(stored.get("sales_eligibility") or "").strip():
+            stored["sales_eligibility"] = "blocked"
+            stored["sales_eligibility_reason"] = "airtable_handoff_required"
+            stored["revenue_lifecycle_state"] = "qualified"
         stored = ctx.db.update_payload(lead["fingerprint"], stored) or stored
         enqueue(ctx.db, "airtable_integrity", {"lead": stored, "routing_result": dict(result)}, priority=6, dedupe_key=f"airtable_integrity:{lead['fingerprint']}")
     result["handoff"] = "airtable_integrity" if result.get("destinations") else "review_required"
