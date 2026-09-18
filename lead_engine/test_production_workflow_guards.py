@@ -8,6 +8,7 @@ def test_state_recovery_uses_only_successful_completed_production_runs():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert '--json databaseId,event,status,conclusion' in text
     assert '.status == "completed" and .conclusion == "success"' in text
+    assert '--limit 1000 --json databaseId,event,status,conclusion' in text
     assert 'thorio-lead-engine-state' in text
 
 
