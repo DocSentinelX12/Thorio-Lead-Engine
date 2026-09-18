@@ -312,6 +312,48 @@ class LeadDB:
         self.conn.execute("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", (key, json.dumps(value, ensure_ascii=False)))
         self.conn.commit()
 
+    def claim_revenue_action(self, idempotency_key: str, action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Atomically claim one outbound revenue action identity.
+
+        Returns the already-persisted action when another worker owns the identity.
+        Returns None only when this connection durably creates the new action.
+        """
+        key = str(idempotency_key or "").strip()
+        if not key:
+            raise ValueError("Revenue action idempotency key is required.")
+        if not isinstance(action, dict):
+            raise ValueError("Revenue action must be an object.")
+
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute("SELECT value FROM state WHERE key = ?", ("revenue_execution",)).fetchone()
+            state: Dict[str, Any] = {}
+            if row:
+                value = json.loads(row[0])
+                if isinstance(value, dict):
+                    state = value
+            actions = state.get("actions")
+            if not isinstance(actions, dict):
+                actions = {}
+                state["actions"] = actions
+
+            existing = actions.get(key)
+            if existing is not None:
+                self.conn.rollback()
+                return dict(existing) if isinstance(existing, dict) else {"status": "unknown"}
+
+            actions[key] = dict(action)
+            payload = json.dumps(state, ensure_ascii=False)
+            self.conn.execute(
+                "INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+                ("revenue_execution", payload),
+            )
+            self.conn.commit()
+            return None
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def _migrate_agent_queue_state(self):
         row = self.conn.execute("SELECT COUNT(*) FROM agent_queue").fetchone()
         if row and int(row[0]) > 0:
