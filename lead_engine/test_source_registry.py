@@ -41,7 +41,7 @@ def test_free_source_catalog_preserves_historical_public_sources():
 
 def test_restored_historical_sources_use_explicit_working_collectors():
     definitions = {definition.name: definition for definition in _load_free_source_catalog()}
-    expected_types = {"NoDesk": "html", "Welcome to the Jungle": "html", "Remotive": "json", "Working Nomads": "json", "We Work Remotely": "rss", "Jobspresso": "rss": "atom", "EU Remote Jobs": "html", "WorkWave": "json", "AI Jobs": "html", "Total": "html", "FlexJobs": "html", "US Remotely": "html", "Rocketship": "json", "JobFill.AI": "html", "Remote Woman": "html", "Wellfound": "html"}
+    expected_types = {"NoDesk": "html", "Welcome to the Jungle": "html", "Remotive": "json", "Working Nomads": "json", "We Work Remotely": "rss", "Jobspresso": "rss", "EU Remote Jobs": "html", "WorkWave": "json", "AI Jobs": "html", "Total": "html", "FlexJobs": "html", "US Remotely": "html", "Rocketship": "json", "JobFill.AI": "html", "Remote Woman": "html", "Wellfound": "html"}
     assert {name: definitions[name].collector_type for name in expected_types} == expected_types
 
 
@@ -108,3 +108,4 @@ def test_active_airtable_search_theme_without_url_is_skipped_from_direct_catalog
     records = {"records": [{"id": "rec-search-theme", "fields": {"Active": True, "Source / Search": "LinkedIn hiring", "Source URL": "", "Collector Type": ""}}]}
     with patch.dict("os.environ", {"AIRTABLE_BASE_ID": "app-test", "AIRTABLE_API_KEY": "pat-test"}, clear=True), patch("lead_engine.source_registry._request", return_value=records):
         assert _load_airtable_source_catalog() == ()
+}
