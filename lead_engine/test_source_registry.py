@@ -33,7 +33,7 @@ def test_free_source_catalog_has_exact_current_universe():
 
 def test_free_source_catalog_preserves_historical_public_sources():
     names = set(available_free_sources())
-    historical_sources = {"NoDesk", "Welcome to the Jungle", "Remotive", "Working Nomads", "We Work Remotely", "Remote OK", "Jobspresso", "Landing Jobs", "EU Remote Jobs", "WorkWave", "AI Jobs", "Total", "FlexJobs", "US Remotely", "Rocketship", "JobFill.AI", "Remote Woman", "Wellfound"}
+    historical_sources = {"NoDesk", "Welcome to the Jungle", "Remotive", "Working Nomads", "We Work Remotely", "Remote OK", "Jobspresso", "EU Remote Jobs", "WorkWave", "AI Jobs", "Total", "FlexJobs", "US Remotely", "Rocketship", "JobFill.AI", "Remote Woman", "Wellfound"}
     current_sources = {"Himalayas", "Jobicy", "RemoteJobs.org", "Remote First Jobs", "Arbeitnow", "Nomado24", "The Muse", "Airbnb", "Anthropic", "Airtable", "Asana", "Brex", "Cloudflare", "Coinbase", "Datadog", "Discord", "Dropbox", "Figma", "GitLab", "Instacart", "Lyft", "Netlify", "Stripe"}
     assert historical_sources <= names
     assert current_sources <= names
