@@ -206,6 +206,59 @@ class ComputeInventory:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def reserve_allocation(
+        self,
+        allocation_id: str,
+        provider_id: str,
+        domain_id: str,
+        resource_keys: list[str] | tuple[str, ...],
+    ) -> None:
+        """Atomically reserve resources and create their durable ownership record."""
+        keys = tuple(dict.fromkeys(str(key) for key in resource_keys))
+        if not allocation_id.strip() or not provider_id.strip() or not domain_id.strip() or not keys:
+            raise ValueError("allocation identity and resources are required")
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT provider_id,domain_id,resource_keys_json,state FROM compute_allocations WHERE allocation_id=?",
+                (allocation_id,),
+            ).fetchone()
+            if existing:
+                same = (
+                    existing["provider_id"] == provider_id
+                    and existing["domain_id"] == domain_id
+                    and tuple(json.loads(existing["resource_keys_json"])) == keys
+                )
+                connection.rollback()
+                if not same:
+                    raise ValueError("allocation_id already exists with different resources")
+                return
+            rows = connection.execute(
+                f"SELECT resource_key,state,provider_id,domain_id FROM compute_resource_inventory "
+                f"WHERE resource_key IN ({','.join('?' for _ in keys)})", keys
+            ).fetchall()
+            by_key = {row["resource_key"]: row for row in rows}
+            if len(by_key) != len(keys) or any(
+                row["state"] not in {ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value}
+                or row["provider_id"] != provider_id
+                or row["domain_id"] != domain_id
+                for row in by_key.values()
+            ):
+                connection.rollback()
+                raise ValueError("allocation resources are no longer available")
+            connection.executemany(
+                "UPDATE compute_resource_inventory SET state=?,last_seen_at=? WHERE resource_key=?",
+                [(ResourceState.RESERVED.value, now, key) for key in keys],
+            )
+            connection.execute(
+                """INSERT INTO compute_allocations
+                   (allocation_id,state,provider_id,domain_id,resource_keys_json,created_at,updated_at)
+                   VALUES (?, 'reserved', ?, ?, ?, ?, ?)""",
+                (allocation_id, provider_id, domain_id, json.dumps(keys, ensure_ascii=False), now, now),
+            )
+            connection.commit()
+
     def record_allocation(
         self,
         allocation_id: str,
