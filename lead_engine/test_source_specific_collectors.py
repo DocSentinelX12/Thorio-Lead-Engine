@@ -1,6 +1,6 @@
 import json
 
-from lead_engine.source_adapters import RssSourceAdapter, create_adapter
+from lead_engine.source_adapters import create_adapter
 from lead_engine.source_definition import SourceDefinition
 
 
