@@ -36,6 +36,11 @@ def test_claim_creates_and_binds_physical_allocation_to_worker_node():
             "payload": {
                 "lead": {"fingerprint": "lead-1"},
                 "evidence_events": [{"signal": "Hiring a backend engineer"}],
+                "compute_requirements": {
+                    "workload_class": "cpu_bound",
+                    "min_cpu_count": 1,
+                    "min_memory_bytes": 1,
+                },
             },
         })
 
@@ -67,7 +72,17 @@ def test_completion_releases_physical_allocation():
             inventory=inventory,
         )
         coordinator.register_worker(_worker())
-        task_id = coordinator.enqueue({"kind": "agent_task", "agent": "engineering_demand_discovery", "payload": {}})
+        task_id = coordinator.enqueue({
+            "kind": "agent_task",
+            "agent": "engineering_demand_discovery",
+            "payload": {
+                "compute_requirements": {
+                    "workload_class": "cpu_bound",
+                    "min_cpu_count": 1,
+                    "min_memory_bytes": 1,
+                }
+            },
+        })
         claimed = coordinator.claim("worker-1")
         allocation_id = claimed["physical_allocation"]["allocation_id"]
         resource_key = claimed["physical_allocation"]["resource_keys"][0]
