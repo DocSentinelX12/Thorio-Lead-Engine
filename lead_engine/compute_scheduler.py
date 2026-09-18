@@ -96,6 +96,8 @@ class ComputeScheduler:
         grouped = self._node_from_rows(rows)
         candidates = []
         for node_id, node_rows in grouped.items():
+            if requirements.allowed_node_ids and node_id not in set(requirements.allowed_node_ids):
+                continue
             cpu = next((r for r in node_rows if r["resource_type"] == "cpu"), None)
             gpus = [r for r in node_rows if r["resource_type"] == "gpu"]
             if cpu is None:
