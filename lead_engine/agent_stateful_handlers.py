@@ -161,9 +161,32 @@ def _verify_research_sections(lead: Mapping[str, Any]) -> tuple[Dict[str, Dict[s
             errors.append(f"missing_{name}")
             continue
         refs = section.get("evidence")
-        refs = refs if isinstance(refs, list) else []
+        if isinstance(refs, list):
+            normalized_refs = refs
+        else:
+            normalized_refs = []
+            scalar_evidence = str(
+                section.get("current_need")
+                or section.get("business_need")
+                or section.get("need")
+                or section.get("service_need")
+                or section.get("requirement")
+                or section.get("intent")
+                or section.get("evidence")
+                or ""
+            ).strip()
+            scalar_url = str(
+                section.get("evidence_url")
+                or section.get("source_url")
+                or section.get("url")
+                or lead.get("source_url")
+                or lead.get("url")
+                or ""
+            ).strip()
+            if scalar_evidence and scalar_url:
+                normalized_refs = [{"url": scalar_url, "evidence": scalar_evidence}]
         valid_refs: list[Dict[str, Any]] = []
-        for index, ref in enumerate(refs):
+        for index, ref in enumerate(normalized_refs):
             if not isinstance(ref, Mapping):
                 errors.append(f"{name}_evidence_{index}_not_object")
                 continue
@@ -230,9 +253,23 @@ def _verify_research_sections(lead: Mapping[str, Any]) -> tuple[Dict[str, Dict[s
                     continue
                 item = dict(route_item)
                 route_evidence = item.get("evidence")
-                route_evidence = route_evidence if isinstance(route_evidence, list) else []
+                if isinstance(route_evidence, list):
+                    normalized_route_evidence = route_evidence
+                else:
+                    normalized_route_evidence = []
+                    scalar_evidence = str(route_evidence or "").strip()
+                    scalar_url = str(
+                        item.get("url")
+                        or item.get("source_url")
+                        or item.get("evidence_url")
+                        or lead.get("source_url")
+                        or lead.get("url")
+                        or ""
+                    ).strip()
+                    if scalar_evidence and scalar_url:
+                        normalized_route_evidence = [{"url": scalar_url, "evidence": scalar_evidence}]
                 verified_refs: list[Dict[str, Any]] = []
-                for ref in route_evidence:
+                for ref in normalized_route_evidence:
                     if not isinstance(ref, Mapping):
                         continue
                     evidence = str(ref.get("evidence") or ref.get("signal") or "").strip()
