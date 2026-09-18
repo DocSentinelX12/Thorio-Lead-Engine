@@ -293,6 +293,7 @@ class ComputeCoordinator:
                 connection.commit()
             payload = json.loads(selected["payload"])
             allocation_id = f"{task_id}:{attempt_id}"
+            allocation = None
             try:
                 requirements = self._requirements_from_payload(payload, worker_id)
                 allocation = self.compute_scheduler.allocate(requirements, allocation_id)
@@ -304,6 +305,11 @@ class ComputeCoordinator:
                     self.release(worker_id, task_id, lease_token, "physical binding rejected")
                     return None
             except Exception as error:
+                if allocation is not None:
+                    self._release_physical_allocation(
+                        {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
+                        f"physical allocation failed: {error}",
+                    )
                 self.release(worker_id, task_id, lease_token, f"physical allocation unavailable: {error}")
                 return None
             return {
