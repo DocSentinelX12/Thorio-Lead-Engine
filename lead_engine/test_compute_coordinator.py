@@ -215,3 +215,54 @@ def test_expired_attempt_is_recoverable_without_completion(tmp_path):
     assert attempt["finished_at"] is not None
     assert "lease expired" in attempt["error"]
     assert coordinator.task(task_id)["status"] == "queued"
+
+
+def test_physical_allocation_binding_is_idempotent_and_generation_specific(tmp_path):
+    from lead_engine.compute_pool import WorkerIdentity
+
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(WorkerIdentity(
+        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
+    ))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("worker-1")
+    assert claimed["task_id"] == task_id
+    assert coordinator.bind_physical_allocation(
+        task_id=task_id,
+        attempt_id=claimed["attempt_id"],
+        generation=claimed["generation"],
+        allocation_id="allocation-1",
+        provider_id="provider-a",
+        domain_id="domain-a",
+        resource_ids=("node-a/cpu", "node-a/gpu-0"),
+        lease_token=claimed["lease_token"],
+    )
+    assert coordinator.bind_physical_allocation(
+        task_id=task_id,
+        attempt_id=claimed["attempt_id"],
+        generation=claimed["generation"],
+        allocation_id="allocation-1",
+        provider_id="provider-a",
+        domain_id="domain-a",
+        resource_ids=("node-a/cpu", "node-a/gpu-0"),
+        lease_token=claimed["lease_token"],
+    )
+    assert not coordinator.bind_physical_allocation(
+        task_id=task_id,
+        attempt_id=claimed["attempt_id"],
+        generation=claimed["generation"] + 1,
+        allocation_id="allocation-2",
+        provider_id="provider-a",
+        domain_id="domain-a",
+        resource_ids=("node-a/cpu", "node-a/gpu-1"),
+        lease_token=claimed["lease_token"],
+    )
+    with coordinator._connect() as connection:
+        row = connection.execute(
+            "SELECT allocation_id,provider_id,domain_id,resource_ids FROM compute_execution_attempts WHERE attempt_id=?",
+            (claimed["attempt_id"],),
+        ).fetchone()
+    assert row["allocation_id"] == "allocation-1"
+    assert row["provider_id"] == "provider-a"
+    assert row["domain_id"] == "domain-a"
+    assert row["resource_ids"] == '["node-a/cpu", "node-a/gpu-0"]'
