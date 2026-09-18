@@ -70,6 +70,9 @@ class ComputeCoordinator:
             for column, statement in migrations.items():
                 if column not in columns:
                     connection.execute(statement)
+            attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
+            if "allocation_id" not in attempt_columns:
+                connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_execution_attempts (
                 attempt_id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -86,7 +89,8 @@ class ComputeCoordinator:
                 checkpoint_ref TEXT,
                 artifact_refs TEXT NOT NULL DEFAULT '[]',
                 verification TEXT,
-                authoritative_acceptance TEXT NOT NULL DEFAULT 'pending'
+                authoritative_acceptance TEXT NOT NULL DEFAULT 'pending',
+                allocation_id TEXT
             )""")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
             connection.commit()
@@ -204,6 +208,64 @@ class ComputeCoordinator:
                 )
                 connection.commit()
             return {"task_id": task_id, "attempt_id": attempt_id, "generation": generation, "payload": json.loads(selected["payload"]), "lease_token": lease_token}
+
+
+    def bind_physical_allocation(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        generation: int,
+        allocation_id: str,
+        provider_id: str,
+        domain_id: str,
+        resource_ids: list[str] | tuple[str, ...],
+        lease_token: str,
+    ) -> bool:
+        """Durably attach one physical allocation to one exact leased attempt.
+
+        The coordinator records the binding but does not own physical resources.
+        The resource inventory remains authoritative for physical allocation.
+        """
+        if not task_id.strip() or not attempt_id.strip() or not allocation_id.strip():
+            raise ValueError("task, attempt, and allocation identities are required")
+        if generation < 1 or not provider_id.strip() or not domain_id.strip() or not resource_ids:
+            raise ValueError("complete physical allocation metadata is required")
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        serialized_ids = json.dumps(tuple(dict.fromkeys(str(item) for item in resource_ids)), ensure_ascii=False)
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """SELECT a.status,a.task_id,a.generation,a.worker_id,a.lease_token_digest,
+                              a.allocation_id,a.provider_id,a.domain_id,a.resource_ids
+                       FROM compute_execution_attempts a
+                       JOIN compute_tasks t ON t.attempt_id=a.attempt_id
+                       WHERE a.attempt_id=? AND a.task_id=?""",
+                    (attempt_id, task_id),
+                ).fetchone()
+                if not row or row["generation"] != generation or row["status"] != "leased":
+                    return False
+                if row["lease_token_digest"] != lease_digest:
+                    return False
+                if row["allocation_id"]:
+                    return bool(
+                        row["allocation_id"] == allocation_id
+                        and row["provider_id"] == provider_id
+                        and row["domain_id"] == domain_id
+                        and row["resource_ids"] == serialized_ids
+                    )
+                cursor = connection.execute(
+                    """UPDATE compute_execution_attempts
+                       SET allocation_id=?,provider_id=?,domain_id=?,resource_ids=?
+                       WHERE attempt_id=? AND task_id=? AND generation=?
+                         AND status='leased' AND allocation_id IS NULL""",
+                    (allocation_id, provider_id, domain_id, serialized_ids, attempt_id, task_id, generation),
+                )
+                if cursor.rowcount != 1:
+                    connection.rollback()
+                    return False
+                connection.commit()
+                return True
 
     def _valid_lease(self, connection: sqlite3.Connection, worker_id: str, task_id: str, lease_token: str) -> bool:
         row = connection.execute("SELECT status,worker_id,lease_token,lease_until FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()
