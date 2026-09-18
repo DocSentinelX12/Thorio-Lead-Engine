@@ -241,11 +241,20 @@ class LeadScheduler:
         remote_after = self._bridge_remote()
         paxus_research = process_paxus_research_queue(db)
         sync_result = sync_pending(db)
+        # A successful Airtable handoff may occur after the main agent drain.
+        # Re-run the authoritative queue once so the newly confirmed handoff
+        # can advance to the closer without waiting for another scheduler cycle.
+        post_sync_agents = None
+        if int(sync_result.get("synced_count", 0) or 0) or int(sync_result.get("already_exists_count", 0) or 0):
+            if agent_max_rounds is None:
+                post_sync_agents = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
+            else:
+                post_sync_agents = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=self._agent_drain_rounds())
         discovered_total = sum(int(item["result"].get("discovered_count", item["result"].get("total", 0)) or 0) for item in results)
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
-        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "due_followups_enqueued": due_followups, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
+        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "post_sync_agents": post_sync_agents, "due_followups_enqueued": due_followups, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 1) -> Dict[str, Any]:
         """Run a finite production window and force each supplied source through its bounded cycles."""
