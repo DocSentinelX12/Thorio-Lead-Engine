@@ -40,6 +40,29 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
     verification_payload = dict(payload); verification_payload["lead"] = validation_lead
     result = _verification(agent, verification_payload, ctx)
 
+    # Persist independently verified canonical research sections before the
+    # decision-maker handoff. This is a verification transition, not a source
+    # or qualification shortcut, and it never creates evidence.
+    section_updates = result.get("research_section_updates")
+    if isinstance(section_updates, Mapping):
+        current = ctx.db.get(fingerprint) or validation_lead
+        updated = dict(current)
+        changed = False
+        for name, section in section_updates.items():
+            if not isinstance(section, Mapping):
+                continue
+            existing = updated.get(name)
+            if isinstance(existing, Mapping) and (
+                existing.get("verified") is True
+                or str(existing.get("verification_status") or existing.get("status") or "").strip().lower() in {"verified", "research_verified", "complete"}
+            ):
+                continue
+            updated[name] = dict(section)
+            changed = True
+        if changed:
+            updated, _ = finalize_research_readiness(updated)
+            ctx.db.update_payload(fingerprint, updated)
+
     # Verification is a durable state boundary. A queued verification task may
     # contain an older lead snapshot than the LeadDB record after qualification
     # or research completed. If the first evaluation is blocked by missing
