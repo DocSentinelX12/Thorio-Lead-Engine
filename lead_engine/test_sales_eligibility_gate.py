@@ -11,7 +11,10 @@ def _lead(qualified=True):
         "business_need": "remote software engineer hiring",
         "qualified": qualified,
         "potential_routes": ["thorio"],
-        "research_status": "complete",
+        "eligible_routes": ["thorio"],
+        "preserved_routes": ["thorio"],
+        "routing_result": {"destinations": ["thorio"], "review_required": False},
+        "research_status: "complete",
         "current_intent_research": {
             "verified": True,
             "verification_status": "verified",
