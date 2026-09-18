@@ -6,6 +6,8 @@ from .sync_worker import (
     sync_one,
     sync_pending,
 )
+from .sales_handoff import package_digest
+import json
 
 
 @pytest.fixture(autouse=True)
@@ -391,3 +393,43 @@ def test_sync_one_fails_when_referral_sync_fails(
 
     assert result["status"] == "failed"
     assert result["error"] == "referral failure"
+
+
+def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkeypatch):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {
+        "fingerprint": "worker-handoff-ready",
+        "company": "Acme",
+        "contact_email": "taylor@example.com",
+        "qualified": True,
+        "research_status": "complete",
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_verification_status": "verified",
+            "decision_maker_email": "taylor@example.com",
+        },
+        "decision_maker_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/taylor"]},
+        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": "engineering expansion", "evidence": ["https://example.com/need"]},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering expansion", "evidence": ["https://example.com/intent"]},
+        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/hiring"]},
+        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "engineering expansion"}}},
+        "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
+        "potential_routes": ["Thorio"],
+    }
+    db.insert_if_new(lead)
+    digest = package_digest(lead)
+    raw = dict(lead)
+    raw["__thorio_package_digest"] = digest
+
+    monkeypatch.setattr("lead_engine.sync_worker.sync_lead_if_missing", lambda payload: {"status": "created", "record": {"id": "recLead", "fields": {"Duplicate Key": payload["fingerprint"], "Company": payload["company"]}}})
+    monkeypatch.setattr("lead_engine.sync_worker.sync_research", lambda payload: {"status": "created", "record": {"id": "recResearch", "fields": {"Research Key": payload["fingerprint"], "Lead Fingerprint": payload["fingerprint"], "Raw Research Package": json.dumps(raw, sort_keys=True)}}})
+    monkeypatch.setattr("lead_engine.sync_worker.sync_master_tracker", lambda payload: {"status": "synced", "company": {"status": "created", "record": {"id": "recCompany", "fields": {"Company": payload["company"]}}}, "opportunities": []})
+
+    result = sync_one(lead, db=db)
+
+    assert result["status"] == "synced"
+    assert result["package_digest"] == digest
+    assert db.get_airtable_handoff(lead["fingerprint"])["package_digest"] == digest
