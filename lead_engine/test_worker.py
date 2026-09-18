@@ -417,7 +417,7 @@ def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkey
         "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
         "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "engineering expansion"}}},
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
-        "potential_routes": ["Thorio"],
+        "potential_routes": ["Thorio"], "eligible_routes": ["Thorio"], "preserved_routes": ["Thorio"], "routing_result": {"destinations": ["Thorio"], "review_required": False},
     }
     db.insert_if_new(lead)
     digest = package_digest(lead)
