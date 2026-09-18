@@ -18,21 +18,15 @@ def _lead():
 
 def _drain(orchestrator, rounds=30): return orchestrator.run_all_once(limit_per_agent=1, max_rounds=rounds)
 def _proof_debug(db, stored, drain, transport):
-    fingerprint = str(stored.get("fingerprint") or "")
-    handoff = db.get_airtable_handoff(fingerprint)
-    sync_state = db.get_sync_state(fingerprint)
-    from .sales_handoff import package_is_ready
-    return (
-        f"reason={stored.get('sales_eligibility_reason')!r}; "
-        f"routing={stored.get('routing_result')!r}; "
-        f"eligible_routes={stored.get('eligible_routes')!r}; "
-        f"preserved_routes={stored.get('preserved_routes')!r}; "
-        f"package_ready={package_is_ready(stored)!r}; "
-        f"digest={package_digest(stored)!r}; "
-        f"handoff={handoff!r}; sync={sync_state!r}; "
-        f"pending_agents={sorted({task.get('agent') for task in pending(db) if task.get('status') in {'queued', 'running'}})!r}; "
-        f"drain={drain!r}; calls={transport.calls!r}"
-    )
+    return {
+        "pending_agents": sorted({task.get("agent") for task in pending(db) if task.get("status") in {"queued", "running"}}),
+        "pending_tasks": [task for task in pending(db) if task.get("status") in {"queued", "running"}],
+        "drain": drain,
+        "sales_eligibility": stored.get("sales_eligibility"),
+        "qualification_review_stage": stored.get("qualification_review_stage"),
+        "verification_state": stored.get("verification_state"),
+        "handoff": stored.get("handoff"),
+    }
 
 def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportunity(tmp_path, monkeypatch):
     monkeypatch.setenv("THORIO_AGENT_EXECUTION_WORKERS", "1")
