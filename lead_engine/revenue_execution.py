@@ -32,6 +32,10 @@ class RevenueTransportUnavailable(RevenueExecutionError):
     """Raised when no authorized outbound transport is configured."""
 
 
+class RevenueActionInProgress(RevenueExecutionError):
+    """Raised when an outbound idempotency identity is already owned or uncertain."""
+
+
 class RevenueTransport(Protocol):
     def send(self, *, channel: str, recipient: Mapping[str, Any], subject: str, body: str, idempotency_key: str) -> Mapping[str, Any]:
         """Send one authorized message and return a provider result."""
@@ -161,7 +165,7 @@ def execute_outbound(
     transport: RevenueTransport | None,
     idempotency_key: str | None = None,
 ) -> RevenueAction:
-    """Execute one outbound action with durable idempotency and reconciliation."""
+    """Execute one outbound action with atomic idempotency and fail-closed recovery."""
     _authorized(worker_capability)
     opportunity_id = str(opportunity_id or "").strip()
     conversation_id = str(conversation_id or "").strip()
@@ -176,35 +180,110 @@ def execute_outbound(
         raise RevenueTransportUnavailable("no authorized revenue transport is configured")
 
     idem = str(idempotency_key or "").strip() or f"revenue:{opportunity_id}:{conversation_id}:{channel}"
-    state = _load(db)
-    actions = state["actions"]
-    existing = actions.get(idem)
-    if isinstance(existing, Mapping) and str(existing.get("status") or "") == "sent":
-        return RevenueAction(action_id=str(existing["action_id"]), opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=existing.get("provider_result"), error=None)
+    action_id = uuid4().hex
+    initial_action = {
+        "action_id": action_id,
+        "opportunity_id": opportunity_id,
+        "conversation_id": conversation_id,
+        "idempotency_key": idem,
+        "channel": channel,
+        "status": "sending",
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
 
-    if isinstance(existing, Mapping) and str(existing.get("status") or "") in {"sending", "retryable"}:
-        reconcile = getattr(transport, "reconcile", None)
-        if callable(reconcile):
-            provider_result = reconcile(idempotency_key=idem)
-            if provider_result is not None:
-                action_id = str(existing.get("action_id") or uuid4().hex)
-                state["actions"][idem] = {**dict(existing), "action_id": action_id, "status": "sent", "provider_result": dict(provider_result), "updated_at": _now()}
-                _save(db, state)
-                return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=dict(provider_result), error=None)
+    claim = getattr(db, "claim_revenue_action", None)
+    if not callable(claim):
+        raise RevenueExecutionError("database does not provide atomic revenue action claiming")
 
-    action_id = str(existing.get("action_id")) if isinstance(existing, Mapping) and existing.get("action_id") else uuid4().hex
-    actions[idem] = {"action_id": action_id, "opportunity_id": opportunity_id, "conversation_id": conversation_id, "idempotency_key": idem, "channel": channel, "status": "sending", "created_at": str(existing.get("created_at")) if isinstance(existing, Mapping) else _now(), "updated_at": _now()}
-    _save(db, state)
+    existing = claim(idem, initial_action)
+    if isinstance(existing, Mapping):
+        existing_status = str(existing.get("status") or "").strip().lower()
+        existing_action_id = str(existing.get("action_id") or action_id)
+        if existing_status == "sent":
+            return RevenueAction(
+                action_id=existing_action_id,
+                opportunity_id=opportunity_id,
+                conversation_id=conversation_id,
+                idempotency_key=idem,
+                channel=channel,
+                status="sent",
+                provider_result=existing.get("provider_result"),
+                error=None,
+            )
+
+        if existing_status in {"sending", "unknown"}:
+            reconcile = getattr(transport, "reconcile", None)
+            if callable(reconcile):
+                provider_result = reconcile(idempotency_key=idem)
+                if provider_result is not None:
+                    state = _load(db)
+                    state["actions"][idem] = {
+                        **dict(existing),
+                        "action_id": existing_action_id,
+                        "status": "sent",
+                        "provider_result": dict(provider_result),
+                        "updated_at": _now(),
+                    }
+                    _save(db, state)
+                    return RevenueAction(
+                        action_id=existing_action_id,
+                        opportunity_id=opportunity_id,
+                        conversation_id=conversation_id,
+                        idempotency_key=idem,
+                        channel=channel,
+                        status="sent",
+                        provider_result=dict(provider_result),
+                        error=None,
+                    )
+            raise RevenueActionInProgress(
+                f"revenue action {idem!r} is already in progress or has an uncertain provider outcome"
+            )
+
+        if existing_status == "retryable":
+            raise RevenueActionInProgress(
+                f"revenue action {idem!r} requires reconciliation before retry"
+            )
+
+        raise RevenueActionInProgress(
+            f"revenue action {idem!r} is already claimed with status {existing_status or 'unknown'}"
+        )
 
     try:
-        provider_result = dict(transport.send(channel=channel, recipient=dict(recipient), subject=str(subject or ""), body=str(body), idempotency_key=idem))
+        provider_result = dict(
+            transport.send(
+                channel=channel,
+                recipient=dict(recipient),
+                subject=str(subject or ""),
+                body=str(body),
+                idempotency_key=idem,
+            )
+        )
     except Exception as exc:
         state = _load(db)
-        state["actions"][idem] = {**state["actions"].get(idem, {}), "status": "retryable", "error": str(exc)[:4000], "updated_at": _now()}
+        state["actions"][idem] = {
+            **state["actions"].get(idem, initial_action),
+            "status": "unknown",
+            "error": str(exc)[:4000],
+            "updated_at": _now(),
+        }
         _save(db, state)
         raise
 
     state = _load(db)
-    state["actions"][idem] = {**state["actions"].get(idem, {}), "status": "sent", "provider_result": provider_result, "updated_at": _now()}
+    state["actions"][idem] = {
+        **state["actions"].get(idem, initial_action),
+        "status": "sent",
+        "provider_result": provider_result,
+        "updated_at": _now(),
+    }
     _save(db, state)
-    return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=provider_result)
+    return RevenueAction(
+        action_id=action_id,
+        opportunity_id=opportunity_id,
+        conversation_id=conversation_id,
+        idempotency_key=idem,
+        channel=channel,
+        status="sent",
+        provider_result=provider_result,
+    )
