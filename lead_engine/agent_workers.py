@@ -118,6 +118,9 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
         if current.get("last_outreach_action_id") or str(current.get("outreach_state") or "").lower() == "awaiting_response": return {"role": "outreach_closer", "lead": current, "autonomous": True, "approval_required": False, "action": "already_active", "delivery": dict(current.get("last_outreach_delivery") or {}), "action_id": current.get("last_outreach_action_id"), "conversation_id": current.get("conversation_id"), "next_state": current.get("outreach_state")}
         lead = current
     if str(lead.get("sales_eligibility") or "").strip().lower() != "eligible": raise AgentContractError("outreach_closer requires a sales-eligible opportunity")
+    if not package_is_ready(lead): raise AgentContractError("outreach_closer requires a complete verified research package")
+    handoff = ctx.db.get_airtable_handoff(fingerprint)
+    if not isinstance(handoff, Mapping) or str(handoff.get("package_digest") or "").strip() != package_digest(lead): raise AgentContractError("outreach_closer requires a current confirmed Airtable handoff")
     if str(lead.get("research_status") or "").strip().lower() not in {"complete", "research_complete"}: raise AgentContractError("outreach_closer requires completed company research")
     research = lead.get("company_research")
     if not isinstance(research, Mapping) or not research.get("company_verified"): raise AgentContractError("outreach_closer requires verified company research")
