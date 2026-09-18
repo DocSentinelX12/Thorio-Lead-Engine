@@ -37,3 +37,20 @@ def test_probe_includes_enabled_sources_even_when_thorio_route_flag_is_false():
         "Research Source",
     }
     assert excluded == ["Disabled Source"]
+
+
+def test_jobicy_probe_uses_current_json_api_definition():
+    from lead_engine.source_registry import _load_free_source_catalog
+
+    definitions, _ = _probe_definitions(_load_free_source_catalog())
+    jobicy = next(item for item in definitions if item.name == "Jobicy")
+
+    assert jobicy.collector_type == "json"
+    assert jobicy.url == "https://jobicy.com/api/v2/remote-jobs?count=200"
+    assert jobicy.record_path == "jobs"
+    assert jobicy.title_field == "jobTitle"
+    assert jobicy.company_field == "companyName"
+    assert jobicy.description_field == "jobDescription"
+    assert jobicy.url_field == "url"
+    assert jobicy.source_id_field == "id"
+    assert jobicy.location_field == "jobGeo"
