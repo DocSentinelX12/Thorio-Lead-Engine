@@ -11,6 +11,7 @@ from .database import LeadDB
 from .master_tracker_sync import sync_master_tracker
 from .paxus_referral_adapter import lead_to_paxus_referral
 from .research_sync import sync_research
+from .sales_handoff import package_digest, package_is_ready, verify_airtable_handoff
 
 
 def _text(value: Any) -> str:
@@ -175,6 +176,7 @@ def _build_followup_payload(
 
 def sync_one(
     lead: Dict[str, Any],
+    db: LeadDB | None = None,
 ) -> Dict[str, Any]:
     """
     Synchronize one complete Master Tracker state.
@@ -435,6 +437,54 @@ def sync_one(
                 )
             )
 
+        handoff = None
+        if package_is_ready(lead):
+            digest = package_digest(lead)
+            confirmed, handoff_result = verify_airtable_handoff(
+                {
+                    "airtable_record": airtable_record,
+                    "research_record": research_record,
+                    "master_tracker": master_tracker_result,
+                },
+                lead,
+                expected_digest=digest,
+            )
+            if not confirmed:
+                raise ValueError(
+                    f"Airtable sales handoff was not durably confirmed: {handoff_result}"
+                )
+            master_record_ids = []
+            company_result = master_tracker_result.get("company")
+            if isinstance(company_result, dict) and isinstance(company_result.get("record"), dict):
+                company_id = str(company_result["record"].get("id") or "").strip()
+                if company_id:
+                    master_record_ids.append(company_id)
+            for opportunity in master_tracker_result.get("opportunities") or []:
+                if isinstance(opportunity, dict) and isinstance(opportunity.get("record"), dict):
+                    opportunity_id = str(opportunity["record"].get("id") or "").strip()
+                    if opportunity_id:
+                        master_record_ids.append(opportunity_id)
+            if db is not None:
+                from datetime import datetime, timezone
+                handoff = db.record_airtable_handoff(
+                    lead["fingerprint"],
+                    digest,
+                    str(airtable_record["id"]),
+                    str(research_record["id"]),
+                    master_record_ids,
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                routing_result = lead.get("routing_result")
+                if isinstance(routing_result, dict) and routing_result.get("destinations"):
+                    from .agent_queue import enqueue
+                    enqueue(
+                        db,
+                        "airtable_integrity",
+                        {"lead": db.get(lead["fingerprint"]) or lead, "routing_result": dict(routing_result)},
+                        priority=6,
+                        dedupe_key=f"airtable_integrity:{lead['fingerprint']}",
+                    )
+
         return {
             "status": (
                 "synced"
@@ -460,6 +510,8 @@ def sync_one(
                 else None
             ),
             "master_tracker": master_tracker_result,
+            "airtable_handoff": handoff,
+            "package_digest": package_digest(lead) if package_is_ready(lead) else None,
             "error": None,
         }
 
