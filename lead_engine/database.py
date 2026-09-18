@@ -53,6 +53,8 @@ class LeadDB:
         )""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS airtable_handoffs (\n            fingerprint TEXT PRIMARY KEY,\n            package_digest TEXT NOT NULL,\n            lead_radar_record_id TEXT NOT NULL,\n            research_record_id TEXT NOT NULL,\n            master_tracker_record_ids TEXT NOT NULL,\n            confirmed_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_airtable_handoffs_digest ON airtable_handoffs(package_digest)")
         self.conn.commit()
         self._migrate_agent_queue_state()
 
@@ -204,6 +206,26 @@ class LeadDB:
             if len(result) >= limit:
                 break
         return result
+
+    def record_airtable_handoff(self, fingerprint: str, package_digest: str, lead_radar_record_id: str, research_record_id: str, master_tracker_record_ids: list[str], confirmed_at: str) -> Dict[str, Any]:
+        values = (str(fingerprint).strip(), str(package_digest).strip(), str(lead_radar_record_id).strip(), str(research_record_id).strip(), json.dumps([str(value) for value in master_tracker_record_ids], ensure_ascii=False), str(confirmed_at).strip())
+        if not all(values[:4]) or not values[5]:
+            raise ValueError("Airtable handoff confirmation requires fingerprint, package digest, record IDs, and confirmation time.")
+        self.conn.execute("INSERT INTO airtable_handoffs (fingerprint, package_digest, lead_radar_record_id, research_record_id, master_tracker_record_ids, confirmed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(fingerprint) DO UPDATE SET package_digest = excluded.package_digest, lead_radar_record_id = excluded.lead_radar_record_id, research_record_id = excluded.research_record_id, master_tracker_record_ids = excluded.master_tracker_record_ids, confirmed_at = excluded.confirmed_at, updated_at = CURRENT_TIMESTAMP", values)
+        self.conn.commit()
+        return self.get_airtable_handoff(fingerprint) or {}
+
+    def get_airtable_handoff(self, fingerprint: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute("SELECT fingerprint, package_digest, lead_radar_record_id, research_record_id, master_tracker_record_ids, confirmed_at, updated_at FROM airtable_handoffs WHERE fingerprint = ?", (str(fingerprint).strip(),)).fetchone()
+        if row is None:
+            return None
+        try:
+            record_ids = json.loads(row[4])
+        except (TypeError, ValueError):
+            record_ids = []
+        if not isinstance(record_ids, list):
+            record_ids = []
+        return {"fingerprint": row[0], "package_digest": row[1], "lead_radar_record_id": row[2], "research_record_id": row[3], "master_tracker_record_ids": [str(value) for value in record_ids], "confirmed_at": row[5], "updated_at": row[6]}
 
     def get_sync_state(self, fingerprint: str) -> Dict[str, Any]:
         row = self.conn.execute("SELECT synced, attempts, last_error, updated_at FROM leads WHERE fingerprint = ?", (fingerprint,)).fetchone()
