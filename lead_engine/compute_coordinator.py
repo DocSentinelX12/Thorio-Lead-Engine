@@ -88,7 +88,7 @@ class ComputeCoordinator:
                 verification TEXT,
                 authoritative_acceptance TEXT NOT NULL DEFAULT 'pending',
                 allocation_id TEXT
-            )
+            )""")
             attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
             if "allocation_id" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
