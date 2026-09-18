@@ -32,7 +32,6 @@ _EXPECTED_BROKEN_SOURCE_OVERRIDES = {
     "Arbeitnow",
     "Nomado24",
     "Working Nomads",
-    "Landing Jobs",
     "WorkWave",
     "NoDesk",
     "We Work Remotely",
