@@ -66,3 +66,47 @@ def test_handoff_confirmation_is_durable_and_digest_bound(tmp_path):
     assert stored["package_digest"] == digest
     assert stored["lead_radar_record_id"] == "recLead"
     assert stored["research_record_id"] == "recResearch"
+
+
+def _multi_route_master_tracker(lead):
+    return {
+        "status": "synced",
+        "company": {"status": "created", "record": {"id": "recCompany", "fields": {"Company": lead["company"]}}},
+        "opportunities": [
+            {"status": "created", "record": {"id": "recPaxus", "fields": {"Opportunity": f'{lead["fingerprint"]}:Paxus', "Company": lead["company"], "Partner": "Paxus", "Notes": f'Lead fingerprint: {lead["fingerprint"]}'}}},
+            {"status": "created", "record": {"id": "recShiftr", "fields": {"Opportunity": f'{lead["fingerprint"]}:Shiftr', "Company": lead["company"], "Partner": "Shiftr", "Notes": f'Lead fingerprint: {lead["fingerprint"]}'}}},
+        ],
+    }
+
+
+def test_master_tracker_verification_requires_exact_route_bound_opportunities():
+    lead = _ready_lead()
+    lead["potential_routes"] = ["Paxus", "Shiftr", "Thorio"]
+    result = _multi_route_master_tracker(lead)
+    assert verify_airtable_handoff(
+        {"airtable_record": _records(lead)[0], "research_record": _records(lead)[1], "master_tracker": result},
+        lead,
+    )[0] is True
+
+
+def test_master_tracker_verification_rejects_wrong_route_opportunity():
+    lead = _ready_lead()
+    lead["potential_routes"] = ["Paxus", "Shiftr"]
+    result = _multi_route_master_tracker(lead)
+    result["opportunities"][1]["record"]["fields"]["Opportunity"] = f'{lead["fingerprint"]}:Thorio'
+    result["opportunities"][1]["record"]["fields"]["Partner"] = "Thorio"
+    assert verify_airtable_handoff(
+        {"airtable_record": _records(lead)[0], "research_record": _records(lead)[1], "master_tracker": result},
+        lead,
+    )[0] is False
+
+
+def test_master_tracker_verification_rejects_missing_route_opportunity():
+    lead = _ready_lead()
+    lead["potential_routes"] = ["Paxus", "Shiftr"]
+    result = _multi_route_master_tracker(lead)
+    result["opportunities"] = result["opportunities"][:1]
+    assert verify_airtable_handoff(
+        {"airtable_record": _records(lead)[0], "research_record": _records(lead)[1], "master_tracker": result},
+        lead,
+    )[0] is False
