@@ -53,6 +53,16 @@ class LeadDB:
         )""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_bridge_publications (
+            task_id TEXT PRIMARY KEY,
+            worker_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'prepared',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_compute_bridge_publications_status ON compute_bridge_publications(status, updated_at)")
         self.conn.commit()
         self._migrate_agent_queue_state()
 
@@ -333,6 +343,56 @@ class LeadDB:
         values = list(updates.values()) + [task_id]
         self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
         self.conn.commit()
+
+    def compute_bridge_prepare(self, task_id, worker_id, payload, now_iso):
+        self.conn.execute(
+            """INSERT INTO compute_bridge_publications
+               (task_id, worker_id, payload, status, last_error, created_at, updated_at)
+               VALUES (?, ?, ?, 'prepared', '', ?, ?)
+               ON CONFLICT(task_id) DO UPDATE SET
+               worker_id=excluded.worker_id, payload=excluded.payload,
+               updated_at=excluded.updated_at""",
+            (str(task_id), str(worker_id), json.dumps(payload, ensure_ascii=False), now_iso, now_iso),
+        )
+        self.conn.commit()
+
+    def compute_bridge_publications(self):
+        rows = self.conn.execute(
+            "SELECT task_id,worker_id,payload,status,last_error,created_at,updated_at "
+            "FROM compute_bridge_publications WHERE status IN ('prepared','publish_retry') "
+            "ORDER BY created_at,task_id"
+        ).fetchall()
+        return [{
+            "task_id": row[0], "worker_id": row[1], "payload": json.loads(row[2]),
+            "status": row[3], "last_error": row[4], "created_at": row[5], "updated_at": row[6]
+        } for row in rows]
+
+    def compute_bridge_mark_published(self, task_id, now_iso):
+        self.conn.execute(
+            "UPDATE compute_bridge_publications SET status='published',last_error='',updated_at=? WHERE task_id=?",
+            (now_iso, str(task_id)),
+        )
+        self.conn.commit()
+
+    def compute_bridge_mark_retry(self, task_id, error, now_iso):
+        self.conn.execute(
+            "UPDATE compute_bridge_publications SET status='publish_retry',last_error=?,updated_at=? WHERE task_id=?",
+            (str(error)[:4000], now_iso, str(task_id)),
+        )
+        self.conn.commit()
+
+    def compute_bridge_get(self, task_id):
+        row = self.conn.execute(
+            "SELECT task_id,worker_id,payload,status,last_error,created_at,updated_at "
+            "FROM compute_bridge_publications WHERE task_id=?",
+            (str(task_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "task_id": row[0], "worker_id": row[1], "payload": json.loads(row[2]),
+            "status": row[3], "last_error": row[4], "created_at": row[5], "updated_at": row[6]
+        }
 
     def queue_all_rows(self):
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
