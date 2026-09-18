@@ -55,3 +55,36 @@ def test_remote_bridge_persists_completed_specialist_evidence_before_local_compl
         assert stored["specialist_findings"]["ai_demand_discovery"]["matched_event_count"] == 1
         assert any(item["agent"] == "ai_demand_discovery" for item in stored["specialist_evidence_events"])
         assert any(item["agent"] == "company_research" for item in pending(db))
+
+
+class FailingOnceRemoteClient(FakeRemoteClient):
+    def __init__(self):
+        super().__init__()
+        self.fail_once = True
+
+    def enqueue(self, payload, task_id=None):
+        if self.fail_once:
+            self.fail_once = False
+            raise RuntimeError("simulated remote publish failure")
+        return super().enqueue(payload, task_id=task_id)
+
+
+def test_remote_publication_failure_is_durable_and_retried():
+    with tempfile.TemporaryDirectory() as directory:
+        db = LeadDB(data_dir=Path(directory))
+        lead = {"fingerprint": "lead-2", "company": "Example", "signal": "Hiring an AI team"}
+        assert db.insert_if_new(lead)
+        task = enqueue(db, "ai_demand_discovery", {"lead": lead, "evidence_events": []})
+        remote = FailingOnceRemoteClient()
+
+        first = bridge_once(db, remote, publish_limit=10, reconcile_limit=10)
+        assert first["published_count"] == 0
+        publication = db.compute_bridge_get(task["task_id"])
+        assert publication["status"] == "publish_retry"
+        local = pending(db, "ai_demand_discovery")
+        assert local[0]["status"] == "running"
+
+        second = bridge_once(db, remote, publish_limit=10, reconcile_limit=10)
+        assert second["published_count"] == 1
+        assert db.compute_bridge_get(task["task_id"])["status"] == "published"
+        assert remote.tasks[task["task_id"]]["status"] == "queued"
