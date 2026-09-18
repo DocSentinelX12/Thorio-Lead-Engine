@@ -6,10 +6,11 @@ deliberately separate from the authoritative Thorio work queue.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from dataclasses import asdict
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .compute_provider import ProviderResourceSnapshot
 from .compute_resources import GpuResource, NodeResource, ResourceState
@@ -18,7 +19,13 @@ from .compute_resources import GpuResource, NodeResource, ResourceState
 class ComputeInventory:
     """SQLite-backed resource inventory with stable physical identities."""
 
-    def __init__(self, db_path: str = "data/lead_engine.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            data_dir = os.environ.get("LEAD_ENGINE_DATA_DIR", "data")
+            db_path = os.environ.get(
+                "THORIO_COMPUTE_INVENTORY_DB",
+                os.path.join(data_dir, "leads.sqlite3"),
+            )
         self.db_path = db_path
         self._initialize()
 
@@ -41,10 +48,17 @@ class ComputeInventory:
                 observed_at REAL NOT NULL,
                 expires_at REAL,
                 ephemeral INTEGER NOT NULL DEFAULT 0,
+                authentication_state TEXT NOT NULL DEFAULT 'unknown',
                 payload_json TEXT NOT NULL,
                 evidence_json TEXT NOT NULL,
                 first_seen_at REAL NOT NULL,
                 last_seen_at REAL NOT NULL)""")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(compute_resource_inventory)").fetchall()}
+            if "authentication_state" not in columns:
+                connection.execute(
+                    "ALTER TABLE compute_resource_inventory "
+                    "ADD COLUMN authentication_state TEXT NOT NULL DEFAULT 'unknown'"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_inventory_provider "
                 "ON compute_resource_inventory(provider_id,domain_id,node_id)"
@@ -82,7 +96,7 @@ class ComputeInventory:
             rows.append((
                 self._resource_key(snapshot.provider_id, snapshot.domain_id, node.node_id, None),
                 snapshot.provider_id, snapshot.domain_id, node.node_id, None, None, "cpu",
-                node.state.value, snapshot.observed_at, snapshot.expires_at, int(snapshot.ephemeral),
+                node.state.value, snapshot.observed_at, snapshot.expires_at, int(snapshot.ephemeral), snapshot.authentication_state,
                 json.dumps(node_payload, ensure_ascii=False, sort_keys=True),
                 json.dumps(dict(snapshot.evidence or {}), ensure_ascii=False, sort_keys=True), now, now,
             ))
@@ -91,7 +105,7 @@ class ComputeInventory:
                     self._resource_key(snapshot.provider_id, snapshot.domain_id, node.node_id, gpu),
                     snapshot.provider_id, snapshot.domain_id, node.node_id, gpu.gpu_id, gpu.identity_key,
                     "gpu", gpu.availability_state.value, snapshot.observed_at, snapshot.expires_at,
-                    int(snapshot.ephemeral), json.dumps(asdict(gpu) | {
+                    int(snapshot.ephemeral, snapshot.authentication_state, json.dumps(asdict(gpu) | {
                         "health_state": gpu.health_state.value,
                         "availability_state": gpu.availability_state.value,
                     }, ensure_ascii=False, sort_keys=True),
@@ -101,7 +115,7 @@ class ComputeInventory:
             for row in rows:
                 connection.execute("""INSERT INTO compute_resource_inventory
                     (resource_key,provider_id,domain_id,node_id,gpu_id,identity_key,
-                     resource_type,state,observed_at,expires_at,ephemeral,payload_json,
+                     resource_type,state,observed_at,expires_at,ephemeral,authentication_state,payload_json,
                      evidence_json,first_seen_at,last_seen_at)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(resource_key) DO UPDATE SET
@@ -109,7 +123,8 @@ class ComputeInventory:
                     node_id=excluded.node_id,gpu_id=excluded.gpu_id,
                     identity_key=excluded.identity_key,state=excluded.state,
                     observed_at=excluded.observed_at,expires_at=excluded.expires_at,
-                    ephemeral=excluded.ephemeral,payload_json=excluded.payload_json,
+                    ephemeral=excluded.ephemeral,authentication_state=excluded.authentication_state,
+                    payload_json=excluded.payload_json,
                     evidence_json=excluded.evidence_json,last_seen_at=excluded.last_seen_at""", row)
             connection.commit()
         return {"provider_id": snapshot.provider_id, "domain_id": snapshot.domain_id,
