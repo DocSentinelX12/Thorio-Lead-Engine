@@ -295,7 +295,8 @@ class LeadPipeline:
 
         if self.sync_enabled:
             sync_result = sync_one(
-                payload
+                payload,
+                db=self.db,
             )
 
             sync_status = sync_result.get(
