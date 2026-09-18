@@ -36,6 +36,7 @@ from .airtable_sync import (
 from .master_tracker_sync import sync_commission
 from .paxus_referral_adapter import lead_to_paxus_referral
 from .research_sync import sync_research
+from .sales_handoff import package_is_ready
 
 BATCH_SIZE = 10
 
@@ -236,6 +237,16 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
         from .sync_worker import sync_one
         for fingerprint, lead in chunk:
             try:
+                if package_is_ready(lead):
+                    result = sync_one(lead, db=db)
+                    if result.get("status") not in {"synced", "already_exists"}:
+                        raise AirtableSyncError(result.get("error") or "complete sales handoff confirmation failed")
+                    db.mark_synced(fingerprint)
+                    if result.get("status") == "already_exists":
+                        already_exists.append(result)
+                    else:
+                        synced.append(result)
+                    continue
                 if _outreach_ready(lead):
                     outreach_result = sync_outreach(_build_outreach_payload(lead))
                     if outreach_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
