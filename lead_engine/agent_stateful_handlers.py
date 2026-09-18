@@ -333,6 +333,12 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
             else:
                 decision_maker_verification = "observed_needs_role_verification"
 
+    if decision_maker_verification == "verified":
+        errors = [
+            error for error in errors
+            if error not in {"missing_verified_decision_maker", "missing_decision_maker_evidence", "decision_maker_not_verified"}
+        ]
+
     all_errors = errors + evidence_errors + research_errors
     return {
         "role": "verification",
