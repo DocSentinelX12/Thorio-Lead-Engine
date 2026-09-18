@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .lead_routes import SUPPORTED_ROUTES, route_leads
+from .router import score_routes
 from .lead_validation import validate_lead
 
 
