@@ -116,7 +116,13 @@ class ComputeScheduler:
                 nccl = node_payload.get("nccl_version")
                 if not nccl:
                     continue
-            if requirements.gpu.gpu_count > len(compatible):
+            # A multi-node request can combine GPUs from multiple nodes, so
+            # each candidate only needs to contribute at least one compatible GPU.
+            # Single-node workloads still require the full GPU count on one node.
+            if requirements.workload_class == WorkloadClass.MULTI_NODE_GPU:
+                if not compatible:
+                    continue
+            elif requirements.gpu.gpu_count > len(compatible):
                 continue
             candidates.append({
                 "node_id": node_id,
