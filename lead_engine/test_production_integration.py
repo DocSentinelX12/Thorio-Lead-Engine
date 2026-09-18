@@ -118,7 +118,7 @@ def test_production_path_marks_successful_sync_as_synced(tmp_path, monkeypatch):
 
 def test_production_path_keeps_lead_pending_after_sync_failure(tmp_path, monkeypatch):
     config = LeadEngineConfig(database_dir=str(tmp_path / "database"), sync_enabled=True, batch_size=50)
-    monkeypatch.setattr("lead_engine.pipeline.sync_one", lambda payload: {"status": "failed", "error": "temporary Airtable failure"})
+    monkeypatch.setattr("lead_engine.pipeline.sync_one", lambda payload, db=None: {"status": "failed", "error": "temporary Airtable failure"})
     application = LeadEngineApplication(config=config)
     result = application.run_sources([StaticLeadSource([_lead("integration-sync-failure")])])
     assert result["results"][0]["result"]["accepted_count"] == 1
