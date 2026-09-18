@@ -7,7 +7,7 @@ verification, or route qualification state is missing.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .lead_routes import SUPPORTED_ROUTES, route_leads
@@ -137,9 +137,136 @@ def _verified_decision_maker_evidence(lead: Mapping[str, Any]) -> Dict[str, Any]
     return None
 
 
+def _verify_research_sections(lead: Mapping[str, Any]) -> tuple[Dict[str, Dict[str, Any]], list[str]]:
+    """Independently validate canonical research evidence before final qualification.
+
+    This verifies the evidence contract and re-applies the existing route rules.
+    It never creates evidence, facts, contacts, or route matches that are not
+    already present in the canonical package.
+    """
+    updates: Dict[str, Dict[str, Any]] = {}
+    errors: list[str] = []
+    sections = (
+        "business_need_research",
+        "current_intent_research",
+        "technical_product_hiring_research",
+        "commercial_research",
+        "route_research",
+    )
+    company = str(lead.get("company") or "").strip()
+    for name in sections:
+        section = lead.get(name)
+        if not isinstance(section, Mapping):
+            errors.append(f"missing_{name}")
+            continue
+        refs = section.get("evidence")
+        refs = refs if isinstance(refs, list) else []
+        valid_refs: list[Dict[str, Any]] = []
+        for index, ref in enumerate(refs):
+            if not isinstance(ref, Mapping):
+                errors.append(f"{name}_evidence_{index}_not_object")
+                continue
+            url = str(ref.get("url") or ref.get("source_url") or ref.get("evidence_url") or "").strip()
+            evidence = str(ref.get("evidence") or ref.get("signal") or "").strip()
+            if not url or not evidence:
+                errors.append(f"{name}_evidence_{index}_incomplete")
+                continue
+            valid_refs.append(dict(ref))
+        verified = bool(valid_refs)
+        finding_status = "evidence_verified" if verified else "no_verified_evidence"
+        if name == "current_intent_research":
+            now = datetime.now(timezone.utc)
+            recent = False
+            for ref in valid_refs:
+                value = ref.get("observed_at") or ref.get("collected_at")
+                if not value:
+                    continue
+                try:
+                    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                except (TypeError, ValueError):
+                    continue
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                parsed = parsed.astimezone(timezone.utc)
+                if now - timedelta(days=30) <= parsed <= now:
+                    recent = True
+                    break
+            verified = recent
+            finding_status = "recent_evidence_verified" if recent else "no_recent_verified_evidence"
+        elif name in {"technical_product_hiring_research", "commercial_research"} and not valid_refs:
+            public = lead.get("company_research")
+            public_web = public.get("public_web_research") if isinstance(public, Mapping) else None
+            attempted = isinstance(public_web, Mapping) and int(public_web.get("pages_attempted", 0) or 0) > 0
+            verified = attempted
+            finding_status = "researched_no_public_evidence" if attempted else "research_not_performed"
+        update = dict(section)
+        if verified:
+            update.update({
+                "verified": True,
+                "verification_status": "verified",
+                "verification_basis": "canonical_evidence_contract_recheck",
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+                "finding_status": finding_status,
+            })
+        updates[name] = update
+
+    route = lead.get("route_research")
+    if isinstance(route, Mapping):
+        route_updates = dict(route)
+        route_items = route.get("routes")
+        if isinstance(route_items, Mapping):
+            verified_route_count = 0
+            new_routes: Dict[str, Dict[str, Any]] = {}
+            for route_name, route_item in route_items.items():
+                if not isinstance(route_item, Mapping):
+                    continue
+                item = dict(route_item)
+                route_evidence = item.get("evidence")
+                route_evidence = route_evidence if isinstance(route_evidence, list) else []
+                verified_refs: list[Dict[str, Any]] = []
+                for ref in route_evidence:
+                    if not isinstance(ref, Mapping):
+                        continue
+                    evidence = str(ref.get("evidence") or ref.get("signal") or "").strip()
+                    url = str(ref.get("url") or ref.get("source_url") or ref.get("evidence_url") or "").strip()
+                    if not evidence or not url:
+                        continue
+                    scores = score_routes(company=company, signal=evidence, evidence=evidence)
+                    if int(scores.get(str(route_name), 0) or 0) > 0:
+                        verified_refs.append(dict(ref))
+                if verified_refs:
+                    item.update({
+                        "verified": True,
+                        "verification_status": "verified",
+                        "verification_basis": "route_rule_recheck",
+                        "verified_at": datetime.now(timezone.utc).isoformat(),
+                        "evidence": verified_refs,
+                        "provenance": {**dict(item.get("provenance") or {}) if isinstance(item.get("provenance"), Mapping) else {}, "evidence_count": len(verified_refs)},
+                    })
+                    verified_route_count += 1
+                new_routes[str(route_name)] = item
+            route_updates["routes"] = new_routes
+            route_updates["verified"] = verified_route_count > 0
+            route_updates["verification_status"] = "verified" if verified_route_count > 0 else "research_required"
+            route_updates["verification_basis"] = "route_rule_recheck"
+            route_updates["verified_at"] = datetime.now(timezone.utc).isoformat()
+            updates["route_research"] = route_updates
+            if verified_route_count == 0:
+                errors.append("route_research_has_no_verified_route_evidence")
+        else:
+            errors.append("route_research_missing_routes")
+    return updates, errors
+
+
 def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
     lead = _lead(payload)
-    errors = validate_lead(lead)
+    research_updates, research_errors = _verify_research_sections(lead)
+    validation_lead = dict(lead)
+    for name, section in research_updates.items():
+        validation_lead[name] = section
+    errors = validate_lead(validation_lead)
+    if not validation_lead.get("potential_routes"):
+        errors = [error for error in errors if error != "missing_route"]
     evidence = payload.get("evidence_events", [])
     if not isinstance(evidence, list):
         raise StatefulAgentError("evidence_events must be a list")
@@ -166,7 +293,7 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
         if str(research.get("decision_maker_verification_status") or "").strip().lower() != "verified":
             errors.append("decision_maker_not_verified")
 
-    if str(lead.get("research_status") or "").strip().lower() not in {"complete", "research_complete"}:
+    if lead.get("potential_routes") and str(validation_lead.get("research_status") or "").strip().lower() not in {"complete", "research_complete"}:
         errors.append("research_not_complete")
 
     qualification = lead.get("qualification_results")
@@ -206,7 +333,7 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
             else:
                 decision_maker_verification = "observed_needs_role_verification"
 
-    all_errors = errors + evidence_errors
+    all_errors = errors + evidence_errors + research_errors
     return {
         "role": "verification",
         "fingerprint": lead["fingerprint"],
@@ -217,6 +344,8 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
         "decision_maker_verification": decision_maker_verification,
         "decision_maker_role_evidence": decision_maker_role_evidence,
         "decision_maker_verification_record": decision_maker_verification_record,
+        "research_section_updates": research_updates,
+        "research_section_errors": research_errors,
     }
 
 
