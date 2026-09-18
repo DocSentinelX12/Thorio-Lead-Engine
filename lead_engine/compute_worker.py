@@ -139,7 +139,7 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                 client.register()
             now = time.monotonic()
             if now - last_heartbeat >= heartbeat_seconds:
-                client.heartbeat(0)
+                client.heartbeat(1 if getattr(client, "_active_task", None) else 0)
                 last_heartbeat = now
             task = client.claim()
             backoff = 1.0
@@ -152,6 +152,7 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
         if task is None:
             stop_event.wait(idle_seconds)
             continue
+        client._active_task = task["task_id"]
         try:
             result = execute_compute_task(task["payload"])
             client.complete(task["task_id"], task["lease_token"], result)
@@ -160,6 +161,8 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                 client.release(task["task_id"], task["lease_token"], str(error))
             except ComputeWorkerError:
                 client._registered = False
+        finally:
+            client._active_task = None
 
 
 class _NeverStop:
