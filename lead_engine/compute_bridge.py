@@ -4,14 +4,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
 
-from .advanced_agent_logic import advanced_handler_registry
+from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim_task, complete, enqueue, pending, retry
 from .compute_worker import ComputeWorkerClient, ComputeWorkerError
 
-REMOTE_SAFE_AGENTS = frozenset(
-    agent for agent in advanced_handler_registry()
-    if agent not in {"outreach_closer", "follow_up"}
-)
+# Only stateless agents whose worker implementation actually executes them may
+# cross the remote boundary. Stateful specialists stay on the authoritative
+# Thorio execution path until a durable stateful adapter exists.
+REMOTE_SAFE_AGENTS = frozenset(set(DISCOVERY_TARGETS) | set(SOCIAL_TARGETS))
 REMOTE_WORKER_PREFIX = "remote-compute:"
 
 
@@ -68,7 +68,12 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
     candidates.sort(key=lambda item: (-int(item.get("priority", 0)), item.get("created_at", "")))
     prepared = 0
     for task in candidates[:limit]:
-        payload = {"kind": "agent_task", "agent": task["agent"], "payload": task["payload"]}
+        payload = {
+            "kind": "agent_task",
+            "agent": task["agent"],
+            "payload": task["payload"],
+            "compute_requirements": {"workload_class": "cpu_bound", "min_cpu_count": 1, "min_memory_bytes": 1},
+        }
         db.compute_bridge_prepare(task["task_id"], worker_id, payload, _now_iso())
         try:
             claim_task(db, task["task_id"], worker_id=worker_id, lease_seconds=900)
