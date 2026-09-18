@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
-from .router import ROUTES
+from .router import ROUTES, score_routes
 
 VERIFIABLE_RESEARCH_SECTIONS = (
     "business_need_research",
@@ -58,10 +58,28 @@ def _specialist_items(findings: Mapping[str, Any], agents: Iterable[str]) -> lis
     return items
 
 
-def _route_section(evidence: list[Dict[str, Any]]) -> Dict[str, Any]:
+def _route_section(evidence: list[Dict[str, Any]], company: str) -> Dict[str, Any]:
+    """Keep route evidence independently scoped to the route it actually supports."""
     section = _section(evidence, "Evidence relevant to matching the opportunity to supported revenue routes.", ["specialist_findings", "business_need_research", "technical_product_hiring_research"])
     refs = section["evidence"]
-    section["routes"] = {route: {"verified": False, "verification_status": "observed_evidence" if refs else "research_required", "evidence": list(refs), "provenance": {"source": "canonical_route_evidence", "evidence_count": len(refs)}} for route in ROUTES}
+    route_refs: Dict[str, list[Dict[str, Any]]] = {route: [] for route in ROUTES}
+    for ref in refs:
+        text = str(ref.get("evidence") or ref.get("signal") or "").strip()
+        if not text:
+            continue
+        scores = score_routes(company=company, signal=text, evidence=text)
+        for route in ROUTES:
+            if int(scores.get(route, 0) or 0) > 0:
+                route_refs[route].append(dict(ref))
+    section["routes"] = {
+        route: {
+            "verified": False,
+            "verification_status": "observed_evidence" if route_refs[route] else "research_required",
+            "evidence": route_refs[route],
+            "provenance": {"source": "route_specific_canonical_evidence", "evidence_count": len(route_refs[route])},
+        }
+        for route in ROUTES
+    }
     return section
 
 
@@ -206,7 +224,7 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
         "current_intent_research": _section(intent, "Public and specialist evidence relevant to current or recent intent.", ["public_hiring_facts", "social_findings", "specialist_findings"]),
         "technical_product_hiring_research": _section(technical, "Public and specialist evidence relevant to technical, product, or hiring needs.", ["public_product_facts", "public_hiring_facts", "specialist_findings"]),
         "commercial_research": _section(commercial, "Public and specialist evidence relevant to commercial context.", ["public_commercial_facts", "specialist_findings"]),
-        "route_research": _route_section(route),
+        "route_research": _route_section(route, str(lead.get("company") or "").strip()),
     }
     missing_evidence = [name for name in VERIFIABLE_RESEARCH_SECTIONS if not package[name]["evidence"]]
     has_any_evidence = any(package[name]["evidence"] for name in VERIFIABLE_RESEARCH_SECTIONS)
