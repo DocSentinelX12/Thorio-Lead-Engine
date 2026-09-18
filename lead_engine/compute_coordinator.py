@@ -210,6 +210,20 @@ class ComputeCoordinator:
             return {"task_id": task_id, "attempt_id": attempt_id, "generation": generation, "payload": json.loads(selected["payload"]), "lease_token": lease_token}
 
 
+    def execution_attempt(self, attempt_id: str) -> Optional[Dict[str, Any]]:
+        """Return one durable execution attempt for resource reconciliation."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM compute_execution_attempts WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
+        item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]")
+        return item
+
     def bind_physical_allocation(
         self,
         *,
