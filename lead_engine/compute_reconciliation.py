@@ -75,16 +75,16 @@ def reconcile_allocations(
 
             if allocation.get("state") == "reserved" and not allocation.get("attempt_id"):
                 age = max(0.0, current - float(allocation["updated_at"]))
-            if reservation_ttl_seconds is not None and age >= reservation_ttl_seconds:
-                count = inventory.release_allocation(
-                    allocation_id,
-                    reason="unbound allocation reservation expired",
-                )
-                if count:
-                    released.append(allocation_id)
-                    continue
-            unbound.append(allocation_id)
-            continue
+                if reservation_ttl_seconds is not None and age >= reservation_ttl_seconds:
+                    count = inventory.release_allocation(
+                        allocation_id,
+                        reason="unbound allocation reservation expired",
+                    )
+                    if count:
+                        released.append(allocation_id)
+                        continue
+                unbound.append(allocation_id)
+                continue
 
         task_id = allocation.get("task_id")
         attempt_id = allocation.get("attempt_id")
