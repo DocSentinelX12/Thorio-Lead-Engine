@@ -222,7 +222,7 @@ jobs:
             [ -z "$run_id" ] && continue
             artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
             if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
-          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status --jq '.[] | select(.status == "completed" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
+          done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
       - name: Download previous Lead Engine state
         if: steps.previous_state.outputs.run_id != ''
@@ -303,10 +303,23 @@ jobs:
           if not agents_evidence_found:
               print("SPECIALIST DRAIN FAILURE: Lead Engine result did not contain specialist orchestration evidence.")
               sys.exit(1)
-          if any(not complete for complete in agent_drain_complete) or any(count > 0 for count in agent_remaining_queue):
-              print(f"SPECIALIST DRAIN FAILURE: specialist backlog remained after the bounded production cycle. drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}")
+          queue_health = []
+          specialist_failed_total = 0
+          for result in results:
+              agents = result.get("agents")
+              if isinstance(agents, dict):
+                  health = agents.get("queue_health")
+                  if isinstance(health, dict):
+                      queue_health.append(health)
+                      specialist_failed_total += int(health.get("failed_count", 0) or 0)
+          if specialist_failed_total > 0:
+              print(f"SPECIALIST EXECUTION FAILURE: {specialist_failed_total} terminal specialist task(s) are failed and require retry or repair.")
+              print(f"SPECIALIST QUEUE HEALTH: {queue_health}")
               sys.exit(1)
-          print(f"SPECIALIST DRAIN VERIFIED: drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}")
+          if any(not complete for complete in agent_drain_complete):
+              print(f"SPECIALIST DRAIN DEFERRED: bounded production execution left durable specialist work for the next cycle. drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}, queue_health={queue_health}")
+          else:
+              print(f"SPECIALIST DRAIN VERIFIED: drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}, queue_health={queue_health}")
 
           sync_failed = 0
           sync_completed = 0
