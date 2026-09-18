@@ -669,7 +669,7 @@
   {
     "name": "Landing Jobs",
     "url": "https://landing.jobs/",
-    "enabled": true,
+    "enabled": false,
     "type": "html"
   },
   {
