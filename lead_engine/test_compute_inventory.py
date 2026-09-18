@@ -128,3 +128,13 @@ def test_existing_inventory_schema_is_migrated(tmp_path):
     inventory = ComputeInventory(str(db_path))
     columns = {row[1] for row in sqlite3.connect(db_path).execute("PRAGMA table_info(compute_resource_inventory)")}
     assert "authentication_state" in columns
+
+
+def test_provider_observation_preserves_reserved_resource_state(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    snapshot = _snapshot(gpus=(_gpu("0", "uuid-0"),))
+    inventory.observe(snapshot)
+    key = "provider-a/domain-a/node-1/gpu/uuid-0"
+    inventory.mark_state(key, ResourceState.RESERVED)
+    inventory.observe(snapshot)
+    assert inventory.get(key)["state"] == ResourceState.RESERVED.value
