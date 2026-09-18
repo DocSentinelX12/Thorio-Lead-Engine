@@ -194,6 +194,16 @@ class ComputeScheduler:
         keys = tuple(dict.fromkeys(resource_keys))
         if not keys:
             return 0
+        target = set(keys)
+        for allocation in self.inventory.allocations():
+            if allocation["state"] in {"reserved", "bound"} and set(allocation["resource_keys"]) == target:
+                return self.inventory.release_allocation(
+                    allocation["allocation_id"],
+                    task_id=allocation["task_id"],
+                    attempt_id=allocation["attempt_id"],
+                    generation=allocation["generation"],
+                    reason="scheduler release",
+                )
         placeholders = ",".join("?" for _ in keys)
         with self.inventory._connect() as connection:
             cursor = connection.execute(
