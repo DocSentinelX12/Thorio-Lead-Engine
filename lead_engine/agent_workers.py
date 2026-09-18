@@ -93,6 +93,14 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     merged = dict(lead); merged["company_research"] = merged_research; merged.update(canonical)
     merged, readiness = finalize_research_readiness(merged)
     stored = _persist_lead(ctx.db, merged)
+    research = stored.get("company_research") if isinstance(stored.get("company_research"), Mapping) else {}
+    specialist = stored.get("specialist_findings") if isinstance(stored.get("specialist_findings"), Mapping) else {}
+    dm_findings = specialist.get("social_decision_maker_research")
+    has_dm_candidate = bool(str(research.get("decision_maker") or research.get("observed_decision_maker") or "").strip())
+    if isinstance(dm_findings, Mapping) and isinstance(dm_findings.get("findings"), list) and dm_findings.get("findings"):
+        has_dm_candidate = True
+    if research.get("company_verified") is True and has_dm_candidate:
+        enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
     if readiness["ready"]: enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
     return {"role": "company_research", "lead": stored, "research": merged_research, "research_status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", []), "canonical_sections": list(RESEARCH_SECTIONS), "decision_maker_verified": str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified", "fabricated_fields": list(merged_research.get("fabricated_fields") or []), "handoff": "qualification_a" if readiness["ready"] else "research_required"}
 
