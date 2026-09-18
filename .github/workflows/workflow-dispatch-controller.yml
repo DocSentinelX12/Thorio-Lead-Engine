@@ -28,7 +28,7 @@ on:
       wait_minutes:
         description: "Maximum minutes to wait for the dispatched workflow"
         required: true
-        default: "60"
+        default: "75"
         type: string
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
   dispatch-and-capture:
     name: Dispatch and capture workflow evidence
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 85
     env:
       TARGET_WORKFLOW: ${{ inputs.workflow_file }}
       TARGET_REF: ${{ inputs.ref }}
@@ -64,8 +64,8 @@ jobs:
             echo "DISPATCH REQUEST FAILURE: wait_minutes must be a positive integer."
             exit 1
           fi
-          if [ "$WAIT_MINUTES" -gt 60 ]; then
-            echo "DISPATCH REQUEST FAILURE: wait_minutes cannot exceed 60."
+          if [ "$WAIT_MINUTES" -gt 75 ]; then
+            echo "DISPATCH REQUEST FAILURE: wait_minutes cannot exceed 75."
             exit 1
           fi
           if [ -z "$TARGET_REF" ]; then
