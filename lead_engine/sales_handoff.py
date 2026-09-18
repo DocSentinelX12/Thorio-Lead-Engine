@@ -79,7 +79,19 @@ def package_digest(lead: Mapping[str, Any]) -> str:
 
 def package_is_ready(lead: Mapping[str, Any]) -> bool:
     readiness = research_readiness(lead)
-    return bool(readiness.get("ready"))
+    routing_result = lead.get("routing_result")
+    destinations = routing_result.get("destinations") if isinstance(routing_result, Mapping) else None
+    eligible_routes = lead.get("eligible_routes")
+    preserved_routes = lead.get("preserved_routes")
+    return bool(
+        readiness.get("ready")
+        and isinstance(destinations, list)
+        and bool(destinations)
+        and isinstance(eligible_routes, list)
+        and bool(eligible_routes)
+        and isinstance(preserved_routes, list)
+        and bool(preserved_routes)
+    )
 
 def _record_fields(record: Mapping[str, Any]) -> Mapping[str, Any]:
     fields = record.get("fields", {})
