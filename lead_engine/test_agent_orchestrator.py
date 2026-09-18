@@ -110,3 +110,25 @@ def test_orchestrator_queue_inspection_does_not_decode_backlog_payloads(tmp_path
 
     assert orchestrator._pending_agent_names() == {"web_job_signal"}
     assert orchestrator._pending_count() == 1
+
+def test_orchestrator_reports_durable_backlog_separately_from_terminal_failures(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    queued = enqueue(db, "monitoring", {"lead": {"fingerprint": "queued-backlog"}}, priority=1)
+    running = enqueue(db, "audit", {"lead": {"fingerprint": "running-backlog"}}, priority=1)
+    failed = enqueue(db, "identity_resolution", {"lead": {"fingerprint": "failed-task"}}, priority=1)
+
+    from .agent_queue import claim, fail
+
+    claim(db, "audit", worker_id="test-running", limit=1)
+    claim(db, "identity_resolution", worker_id="test-failed", limit=1)
+    fail(db, failed["task_id"], worker_id="test-failed", error="intentional terminal failure")
+
+    result = AgentOrchestrator(db).run_all_once(limit_per_agent=1, max_rounds=1)
+
+    health = result["queue_health"]
+    assert health["failed_count"] == 1
+    assert health["queued_count"] >= 1
+    assert health["running_count"] >= 0
+    assert result["remaining_queue_count"] == health["queued_count"] + health["running_count"]
+    assert result["drain_complete"] is False
+
