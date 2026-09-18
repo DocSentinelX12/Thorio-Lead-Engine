@@ -224,7 +224,7 @@ class ComputeCoordinator:
         item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]")
         return item
 
-    def execution_attempt(self, attempt_id: str, ) -> Optional[Dict[str, Any]]:
+    def execution_attempt(self, attempt_id: str) -> Optional[Dict[str, Any]]:
         """Return one durable execution attempt for resource reconciliation."""
         with self._connect() as connection:
             row = connection.execute(
