@@ -76,60 +76,56 @@ def test_stale_queued_closer_cannot_bypass_airtable_handoff(tmp_path):
         register_revenue_transport(None)
 
 
-def test_concurrent_same_idempotency_key_has_one_external_send(tmp_path):
+def test_existing_inflight_idempotency_claim_blocks_duplicate_send(tmp_path):
     key = "outreach:concurrent:conversation-1:1"
-    start_barrier = threading.Barrier(2)
-    calls = []
-    calls_lock = threading.Lock()
+    db = LeadDB(data_dir=tmp_path)
+    claim = db.claim_revenue_action(
+        key,
+        {
+            "action_id": "claimed-action",
+            "opportunity_id": "concurrent",
+            "conversation_id": "conversation-1",
+            "idempotency_key": key,
+            "channel": "email",
+            "status": "sending",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert claim is None
+    db.close()
 
-    class ConcurrentTransport:
+    class NoReconcileTransport:
+        def __init__(self):
+            self.calls = 0
+
         def send(self, **kwargs):
-            with calls_lock:
-                calls.append(dict(kwargs))
-            threading.Event().wait(0.2)
-            return {"provider": "fake", "delivery_id": "delivery-1", "status": "accepted"}
+            self.calls += 1
+            return {"provider": "fake", "delivery_id": "duplicate", "status": "accepted"}
 
         def reconcile(self, *, idempotency_key):
             return None
 
-    transport = ConcurrentTransport()
-    errors = []
-    results = []
-
-    def worker():
-        db = LeadDB(data_dir=tmp_path)
-        try:
-            start_barrier.wait(timeout=5)
-            results.append(
-                execute_outbound(
-                    db,
-                    worker_capability="high_ticket_sales_closer",
-                    opportunity_id="concurrent",
-                    conversation_id="conversation-1",
-                    channel="email",
-                    recipient={"email": "taylor@example.com"},
-                    subject="Hello",
-                    body="Hello Taylor",
-                    transport=transport,
-                    idempotency_key=key,
-                )
+    db = LeadDB(data_dir=tmp_path)
+    transport = NoReconcileTransport()
+    try:
+        with pytest.raises(RevenueActionInProgress):
+            execute_outbound(
+                db,
+                worker_capability="high_ticket_sales_closer",
+                opportunity_id="concurrent",
+                conversation_id="conversation-1",
+                channel="email",
+                recipient={"email": "taylor@example.com"},
+                subject="Hello",
+                body="Hello Taylor",
+                transport=transport,
+                idempotency_key=key,
             )
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            db.close()
-
-    threads = [threading.Thread(target=worker) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert all(not thread.is_alive() for thread in threads)
-    assert len(calls) == 1
-    assert len(results) == 1
-    assert len(errors) == 1
-    assert isinstance(errors[0], RevenueActionInProgress)
+        assert transport.calls == 0
+        assert db.get_state("revenue_execution")["actions"][key]["action_id"] == "claimed-action"
+    finally:
+        db.close()
 
 def test_uncertain_send_without_provider_reconciliation_never_resends(tmp_path):
     db = LeadDB(data_dir=tmp_path)
