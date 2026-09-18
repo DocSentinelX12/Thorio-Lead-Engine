@@ -3,6 +3,7 @@ import pytest
 from .active_processing import airtable_integrity
 from .agent_queue import pending
 from .agent_workers import run_worker_once
+from .agent_queue import enqueue
 from .database import LeadDB
 from .revenue_execution import RevenueAuthorizationError, execute_outbound, register_revenue_transport
 from .sales_handoff import package_digest
@@ -55,3 +56,20 @@ def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
         airtable_integrity("airtable_integrity", {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}}, type("Ctx", (), {"db": db})()); result = run_worker_once(db, "outreach_closer", worker_id="closer-worker"); assert result["completed_count"] == 1 and result["failed_count"] == 0 and len(transport.calls) == 1
         stored = db.get(lead["fingerprint"]); assert stored["revenue_lifecycle_state"] == "outreach_sent" and stored["outreach_state"] == "awaiting_response" and stored["outreach_history"] and stored["last_outreach_action_id"]
     finally: register_revenue_transport(None)
+
+
+def test_stale_queued_closer_cannot_bypass_airtable_handoff(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("stale-handoff-test")
+    db.insert_if_new(lead)
+    enqueue(db, "outreach_closer", {"lead": lead, "routing_result": {"destinations": ["Thorio"], "review_required": False}}, priority=10, dedupe_key="sales:stale-handoff-test")
+    transport = FakeTransport()
+    register_revenue_transport(transport)
+    try:
+        result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
+        assert result["completed_count"] == 0
+        assert result["failed_count"] == 1
+        assert transport.calls == []
+        assert "Airtable handoff" in result["results"][0]["error"]
+    finally:
+        register_revenue_transport(None)
