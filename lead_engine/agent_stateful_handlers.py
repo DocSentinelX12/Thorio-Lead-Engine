@@ -241,7 +241,7 @@ def _verify_research_sections(lead: Mapping[str, Any]) -> tuple[Dict[str, Dict[s
                         "verification_basis": "route_rule_recheck",
                         "verified_at": datetime.now(timezone.utc).isoformat(),
                         "evidence": verified_refs,
-                        "provenance": {**dict(item.get("provenance") or {}) if isinstance(item.get("provenance"), Mapping) else {}, "evidence_count": len(verified_refs)},
+                        "provenance": {**(dict(item.get("provenance") or {}) if isinstance(item.get("provenance"), Mapping) else {}), "evidence_count": len(verified_refs)},
                     })
                     verified_route_count += 1
                 new_routes[str(route_name)] = item
