@@ -68,7 +68,13 @@ def _qualification_a(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
 def _qualification_b(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
     if str(lead.get("research_status") or "").strip().lower() != "complete": raise AgentContractError("qualification_b requires completed company research")
-    evaluated = _persist_lead(ctx.db, apply_company_qualification(lead)); fingerprint = str(evaluated.get("fingerprint")); enqueue(ctx.db, "priority", {"lead": evaluated, "evidence_events": payload.get("evidence_events", [])}, priority=5, dedupe_key=f"priority:{fingerprint}")
+    evaluated = _persist_lead(ctx.db, apply_company_qualification(lead)); fingerprint = str(evaluated.get("fingerprint"))
+    if evaluated.get("qualified") is True and not str(evaluated.get("sales_eligibility") or "").strip():
+        evaluated["sales_eligibility"] = "blocked"
+        evaluated["sales_eligibility_reason"] = "airtable_handoff_required"
+        evaluated["revenue_lifecycle_state"] = "qualified"
+        evaluated = _persist_lead(ctx.db, evaluated)
+    enqueue(ctx.db, "priority", {"lead": evaluated, "evidence_events": payload.get("evidence_events", [])}, priority=5, dedupe_key=f"priority:{fingerprint}")
     return {"role": "qualification_b", "lead": evaluated, "qualification_results": evaluated.get("qualification_results", {}), "qualified_companies": evaluated.get("potential_routes", []), "independent_review": "validation", "challenged_prior_result": payload.get("prior_result") is not None}
 
 def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
