@@ -1,0 +1,251 @@
+name: Workflow Dispatch Controller
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_file:
+        description: "Approved workflow to dispatch"
+        required: true
+        type: choice
+        options:
+          - ci.yml
+          - full-test-suite.yml
+          - source-live-diagnostic.yml
+          - revenue-production-proof.yml
+          - airtable-auth-diagnostic.yml
+          - free-compute-workers.yml
+          - python-app.yml
+      ref:
+        description: "Branch or tag to run the selected workflow against"
+        required: true
+        default: "feature/gpu-fabric-foundation"
+        type: string
+      test_path:
+        description: "Only used by full-test-suite.yml. Use . for the entire suite."
+        required: false
+        default: "."
+        type: string
+      wait_minutes:
+        description: "Maximum minutes to wait for the dispatched workflow"
+        required: true
+        default: "60"
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch-and-capture:
+    name: Dispatch and capture workflow evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      TARGET_WORKFLOW: ${{ inputs.workflow_file }}
+      TARGET_REF: ${{ inputs.ref }}
+      TEST_PATH: ${{ inputs.test_path }}
+      WAIT_MINUTES: ${{ inputs.wait_minutes }}
+    steps:
+      - name: Check out controller revision
+        uses: actions/checkout@v5
+
+      - name: Validate dispatch request
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$TARGET_WORKFLOW" in
+            ci.yml|full-test-suite.yml|source-live-diagnostic.yml|revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml) ;;
+            *)
+              echo "DISPATCH REQUEST FAILURE: workflow is not on the approved allowlist: $TARGET_WORKFLOW"
+              exit 1
+              ;;
+          esac
+          if [[ ! "$WAIT_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+            echo "DISPATCH REQUEST FAILURE: wait_minutes must be a positive integer."
+            exit 1
+          fi
+          if [ "$WAIT_MINUTES" -gt 60 ]; then
+            echo "DISPATCH REQUEST FAILURE: wait_minutes cannot exceed 60."
+            exit 1
+          fi
+          if [ -z "$TARGET_REF" ]; then
+            echo "DISPATCH REQUEST FAILURE: ref cannot be empty."
+            exit 1
+          fi
+          echo "Approved workflow: $TARGET_WORKFLOW"
+          echo "Target ref: $TARGET_REF"
+          echo "Test selector: $TEST_PATH"
+          echo "Maximum wait: $WAIT_MINUTES minute(s)"
+
+      - name: Dispatch selected workflow
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dispatch_epoch="$(date +%s)"
+          dispatch_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "dispatch_epoch=$dispatch_epoch" >> "$GITHUB_OUTPUT"
+          echo "dispatch_iso=$dispatch_iso"
+
+          if [ "$TARGET_WORKFLOW" = "full-test-suite.yml" ]; then
+            gh workflow run "$TARGET_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$TARGET_REF" --field "test_path=$TEST_PATH"
+          else
+            gh workflow run "$TARGET_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$TARGET_REF"
+          fi
+
+          echo "DISPATCH ACCEPTED: $TARGET_WORKFLOW on $TARGET_REF"
+
+      - name: Locate dispatched workflow run
+        id: locate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_EPOCH: ${{ steps.dispatch.outputs.dispatch_epoch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + 300 ))
+          run_id=""
+          run_sha=""
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            while IFS=$'\t' read -r candidate_id candidate_created candidate_event candidate_sha; do
+              [ -z "$candidate_id" ] && continue
+              created_epoch="$(date -d "$candidate_created" +%s)"
+              if [ "$candidate_event" = "workflow_dispatch" ] && [ "$created_epoch" -ge "$DISPATCH_EPOCH" ]; then
+                run_id="$candidate_id"
+                run_sha="$candidate_sha"
+                break
+              fi
+            done < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$TARGET_WORKFLOW" --branch "$TARGET_REF" --limit 20 --json databaseId,createdAt,event,headSha --jq '.[] | [.databaseId,.createdAt,.event,.headSha] | @tsv')
+            if [ -n "$run_id" ]; then
+              echo "run_sha=$run_sha" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "$run_id" ]; then
+            echo "DISPATCH LOCATE FAILURE: workflow was dispatched but its run ID could not be located within 5 minutes."
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "DISPATCH RUN LOCATED: $run_id"
+
+      - name: Wait for dispatched workflow to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.locate.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout_seconds=$((WAIT_MINUTES * 60))
+          if ! timeout --signal=TERM --kill-after=20s "$timeout_seconds"s gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --interval 10 --exit-status=false; then
+            echo "WORKFLOW WAIT FAILURE: the dispatched workflow did not finish within $WAIT_MINUTES minute(s). Evidence capture will still run."
+            exit 1
+          fi
+
+      - name: Capture complete workflow metadata
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.locate.outputs.run_id }}
+        shell: bash
+        run: |
+          set +e
+          mkdir -p workflow-evidence
+          if [ -n "$RUN_ID" ]; then
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,name,displayTitle,event,status,conclusion,workflowName,headBranch,headSha,createdAt,startedAt,updatedAt,url,attempt > workflow-evidence/run.json
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log > workflow-evidence/all-job-logs.txt
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs > workflow-evidence/jobs.json
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs[] | [.databaseId,.name,.status,.conclusion] | @tsv' > workflow-evidence/jobs.tsv
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" > workflow-evidence/jobs-raw.json
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" > workflow-evidence/artifacts.json
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/timing" > workflow-evidence/timing.json
+          else
+            echo '{"error":"run_id was not located"}' > workflow-evidence/run.json
+          fi
+
+      - name: Download every available workflow artifact
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.locate.outputs.run_id }}
+        shell: bash
+        run: |
+          set +e
+          mkdir -p workflow-evidence/artifacts
+          if [ -n "$RUN_ID" ]; then
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir workflow-evidence/artifacts
+            download_status=$?
+            echo "Artifact download exit status: $download_status" > workflow-evidence/artifact-download-status.txt
+          fi
+
+      - name: Capture controller and target context
+        if: always()
+        env:
+          RUN_ID: ${{ steps.locate.outputs.run_id }}
+        shell: bash
+        run: |
+          set +e
+          {
+            echo "CONTROLLER_REPOSITORY=$GITHUB_REPOSITORY"
+            echo "CONTROLLER_RUN_ID=$GITHUB_RUN_ID"
+            echo "CONTROLLER_SHA=$GITHUB_SHA"
+            echo "TARGET_WORKFLOW=$TARGET_WORKFLOW"
+            echo "TARGET_REF=$TARGET_REF"
+            echo "TARGET_RUN_ID=$RUN_ID"
+            echo "TARGET_RUN_SHA=${{ steps.locate.outputs.run_sha }}"
+            echo "DISPATCH_TIME=${{ steps.dispatch.outputs.dispatch_iso }}"
+            echo "TEST_PATH=$TEST_PATH"
+            echo "WAIT_MINUTES=$WAIT_MINUTES"
+          } > workflow-evidence/context.txt
+
+      - name: Evaluate target conclusion
+        if: always()
+        env:
+          RUN_ID: ${{ steps.locate.outputs.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$RUN_ID" ]; then
+            echo "WORKFLOW RESULT FAILURE: target run was not located."
+            exit 1
+          fi
+          conclusion="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion --jq '.conclusion')"
+          status="$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')"
+          echo "Target status: $status"
+          echo "Target conclusion: $conclusion"
+          case "$conclusion" in
+            success)
+              echo "WORKFLOW RESULT: target workflow completed successfully."
+              ;;
+            *)
+              echo "WORKFLOW RESULT FAILURE: target workflow completed with conclusion=$conclusion."
+              exit 1
+              ;;
+          esac
+
+      - name: Publish evidence summary
+        if: always()
+        env:
+          RUN_ID: ${{ steps.locate.outputs.run_id }}
+        shell: bash
+        run: |
+          {
+            echo "Workflow Dispatch Evidence"
+            echo "Target workflow: $TARGET_WORKFLOW"
+            echo "Target ref: $TARGET_REF"
+            echo "Target run ID: $RUN_ID"
+            echo "The evidence bundle contains run metadata, job metadata and steps, complete available job logs, artifact inventory, downloaded artifacts, timing data, and controller context."
+            echo "Secret values are not intentionally printed. GitHub's normal secret redaction rules remain in effect."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload complete workflow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflow-evidence-${{ github.run_id }}
+          path: workflow-evidence
+          if-no-files-found: error
+          retention-days: 14
