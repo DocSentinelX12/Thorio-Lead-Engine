@@ -292,30 +292,31 @@ class ComputeCoordinator:
                 )
                 connection.commit()
             payload = json.loads(selected["payload"])
-            allocation_id = f"{task_id}:{attempt_id}"
             allocation = None
-            try:
-                requirements = self._requirements_from_payload(payload, worker_id)
-                allocation = self.compute_scheduler.allocate(requirements, allocation_id)
-                lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
-                if not self.inventory.bind_allocation(allocation.allocation_id, task_id=task_id, attempt_id=attempt_id, generation=generation, lease_token_digest=lease_digest):
-                    raise ComputeSchedulingError("physical allocation could not be bound to execution attempt")
-                if not self.bind_physical_allocation(task_id=task_id, attempt_id=attempt_id, generation=generation, allocation_id=allocation.allocation_id, provider_id=allocation.provider_id, domain_id=allocation.domain_id, resource_ids=allocation.resource_ids, lease_token=lease_token):
-                    self._release_physical_allocation({"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation}, "coordinator binding rejected")
-                    self.release(worker_id, task_id, lease_token, "physical binding rejected")
+            if "compute_requirements" in payload:
+                allocation_id = f"{task_id}:{attempt_id}"
+                try:
+                    requirements = self._requirements_from_payload(payload, worker_id)
+                    allocation = self.compute_scheduler.allocate(requirements, allocation_id)
+                    lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+                    if not self.inventory.bind_allocation(allocation.allocation_id, task_id=task_id, attempt_id=attempt_id, generation=generation, lease_token_digest=lease_digest):
+                        raise ComputeSchedulingError("physical allocation could not be bound to execution attempt")
+                    if not self.bind_physical_allocation(task_id=task_id, attempt_id=attempt_id, generation=generation, allocation_id=allocation.allocation_id, provider_id=allocation.provider_id, domain_id=allocation.domain_id, resource_ids=allocation.resource_ids, lease_token=lease_token):
+                        self._release_physical_allocation({"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation}, "coordinator binding rejected")
+                        self.release(worker_id, task_id, lease_token, "physical binding rejected")
+                        return None
+                except Exception as error:
+                    if allocation is not None:
+                        self._release_physical_allocation(
+                            {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
+                            f"physical allocation failed: {error}",
+                        )
+                    self.release(worker_id, task_id, lease_token, f"physical allocation unavailable: {error}")
                     return None
-            except Exception as error:
-                if allocation is not None:
-                    self._release_physical_allocation(
-                        {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
-                        f"physical allocation failed: {error}",
-                    )
-                self.release(worker_id, task_id, lease_token, f"physical allocation unavailable: {error}")
-                return None
             return {
                 "task_id": task_id, "attempt_id": attempt_id, "generation": generation,
                 "payload": payload, "lease_token": lease_token,
-                "physical_allocation": {
+                "physical_allocation": None if allocation is None else {
                     "allocation_id": allocation.allocation_id, "provider_id": allocation.provider_id,
                     "domain_id": allocation.domain_id, "node_ids": list(allocation.node_ids),
                     "resource_ids": list(allocation.resource_ids), "resource_keys": list(allocation.resource_keys),
