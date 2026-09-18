@@ -133,12 +133,17 @@ class ComputeRequirements:
     min_memory_bytes: int = 1
     same_node: bool = True
     topology_domain: Optional[str] = None
+    allowed_node_ids: Tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.min_cpu_count < 1 or self.min_memory_bytes < 1:
             raise ValueError("minimum CPU and memory requirements must be positive")
         if self.workload_class == WorkloadClass.MULTI_NODE_GPU and self.same_node:
             raise ValueError("multi-node GPU work cannot require same_node")
+        if any(not str(node_id).strip() for node_id in self.allowed_node_ids):
+            raise ValueError("allowed_node_ids must contain non-empty node IDs")
+        if len(set(self.allowed_node_ids)) != len(self.allowed_node_ids):
+            raise ValueError("allowed_node_ids must be unique")
 
 
 @dataclass(frozen=True)
