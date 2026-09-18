@@ -13,6 +13,7 @@ from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, b
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .revenue_conversation import objection_reply
 from .revenue_execution import PRIVILEGED_CAPABILITY, RevenueTransportUnavailable, configured_revenue_transport, execute_outbound
+from .sales_handoff import package_digest, package_is_ready
 
 class AgentContractError(ValueError): pass
 @dataclass(frozen=True)
