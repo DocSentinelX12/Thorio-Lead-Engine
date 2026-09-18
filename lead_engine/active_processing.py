@@ -70,7 +70,7 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
             if str(record.get("source") or "").strip(): research["decision_maker_verification_source"] = str(record["source"]).strip()
             if str(record.get("verified_at") or "").strip(): research["decision_maker_verified_at"] = str(record["verified_at"]).strip()
         research["decision_maker_verification_status"] = "verified"
-        if result.get("decision_maker_role_evidence") and isinstance(record, Mapping): research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
+        if result.get("decision_maker_role_evidence"): research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
         updated = dict(current_lead); updated["company_research"] = research
         updated, readiness = finalize_research_readiness(updated)
         stored = ctx.db.update_payload(fingerprint, updated) or updated
