@@ -99,7 +99,7 @@ def test_batch_delivery_falls_back_to_single_record_sync_on_batch_failure(tmp_pa
 
     assert result["synced_count"] == 1
     assert result["failed_count"] == 0
-    mock_single.assert_called_once_with(lead)
+    mock_single.assert_called_once_with(lead, db=db)
     mock_research.assert_called_once_with(lead)
     assert db.get_sync_state("batch-fallback-001")["synced"] is True
 
