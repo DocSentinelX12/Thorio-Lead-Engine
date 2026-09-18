@@ -70,9 +70,6 @@ class ComputeCoordinator:
             for column, statement in migrations.items():
                 if column not in columns:
                     connection.execute(statement)
-            attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
-            if "allocation_id" not in attempt_columns:
-                connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_execution_attempts (
                 attempt_id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -91,7 +88,10 @@ class ComputeCoordinator:
                 verification TEXT,
                 authoritative_acceptance TEXT NOT NULL DEFAULT 'pending',
                 allocation_id TEXT
-            )""")
+            )
+            attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
+            if "allocation_id" not in attempt_columns:
+                connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
             connection.commit()
 
