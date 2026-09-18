@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_finding, social_research
-from .advanced_agent_logic import advanced_handler_registry
 from .compute_pool import local_worker_identity
 from .lead_pipeline import process_leads
 
@@ -56,14 +55,14 @@ class ComputeWorkerClient:
 
     def register(self) -> Dict[str, Any]:
         identity = local_worker_identity(self.worker_id)
-        advanced = list(advanced_handler_registry())
+        executable_agents = sorted(set(DISCOVERY_TARGETS) | set(SOCIAL_TARGETS))
         result = self.request("/workers/register", {
             "worker_id": identity.worker_id,
             "hostname": identity.hostname,
             "architecture": identity.architecture,
             "cpu_count": identity.cpu_count,
             "memory_mb": identity.memory_mb,
-            "capabilities": list(identity.capabilities) + ["lead_prepare", "advanced_agent_task"] + advanced,
+            "capabilities": list(identity.capabilities) + ["lead_prepare"] + executable_agents,
         })
         self._registered = True
         return result
@@ -121,8 +120,6 @@ def execute_compute_task(payload: Mapping[str, Any]) -> Dict[str, Any]:
         if agent in SOCIAL_TARGETS:
             result = social_research(agent, task_payload, None)
             return {"kind": kind, "agent": agent, "result": result}
-        if advanced_handler_registry().get(agent) is None:
-            raise ComputeWorkerError(f"agent_task is not supported for stateless distributed agent: {agent}")
         raise ComputeWorkerError(f"agent_task is not supported for stateless distributed agent: {agent}")
     raise ComputeWorkerError(f"unsupported compute task kind: {kind or '<missing>'}")
 
@@ -154,6 +151,8 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
             continue
         client._active_task = task["task_id"]
         try:
+            if not isinstance(task.get("physical_allocation"), Mapping):
+                raise ComputeWorkerError("coordinator did not assign a physical execution allocation")
             result = execute_compute_task(task["payload"])
             client.complete(task["task_id"], task["lease_token"], result)
         except Exception as error:
