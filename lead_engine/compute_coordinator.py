@@ -130,16 +130,23 @@ class ComputeCoordinator:
             if not self.pool.reserve_task_slot(worker_id):
                 return None
             with self._connect() as connection:
-                rows = connection.execute(
-                    "SELECT task_id,payload FROM compute_tasks WHERE status='queued' ORDER BY created_at,task_id LIMIT 100"
-                ).fetchall()
                 selected = None
-                for row in rows:
-                    payload = json.loads(row["payload"])
-                    required = self._required_capabilities(payload)
-                    if self._worker_supports(worker, required):
-                        selected = row
+                offset = 0
+                while selected is None:
+                    rows = connection.execute(
+                        "SELECT task_id,payload FROM compute_tasks "
+                        "WHERE status='queued' ORDER BY created_at,task_id LIMIT 100 OFFSET ?",
+                        (offset,),
+                    ).fetchall()
+                    if not rows:
                         break
+                    for row in rows:
+                        payload = json.loads(row["payload"])
+                        required = self._required_capabilities(payload)
+                        if self._worker_supports(worker, required):
+                            selected = row
+                            break
+                    offset += len(rows)
                 if selected is None:
                     connection.rollback()
                     self.pool.release_task_slot(worker_id)
