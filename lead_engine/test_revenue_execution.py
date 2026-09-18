@@ -70,6 +70,6 @@ def test_stale_queued_closer_cannot_bypass_airtable_handoff(tmp_path):
         assert result["completed_count"] == 0
         assert result["failed_count"] == 1
         assert transport.calls == []
-        assert "Airtable handoff" in result["results"][0]["error"]
+        assert "sales-eligible opportunity" in result["results"][0]["error"]
     finally:
         register_revenue_transport(None)
