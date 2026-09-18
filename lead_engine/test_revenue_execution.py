@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
+import threading
 import pytest
 from .active_processing import airtable_integrity
 from .agent_queue import pending
 from .agent_workers import run_worker_once
 from .agent_queue import enqueue
 from .database import LeadDB
-from .revenue_execution import RevenueAuthorizationError, execute_outbound, register_revenue_transport
+from .revenue_execution import RevenueActionInProgress, RevenueAuthorizationError, execute_outbound, register_revenue_transport
 from .sales_handoff import package_digest
 
 class FakeTransport:
@@ -73,3 +74,109 @@ def test_stale_queued_closer_cannot_bypass_airtable_handoff(tmp_path):
         assert "sales-eligible opportunity" in result["results"][0]["error"]
     finally:
         register_revenue_transport(None)
+
+
+def test_concurrent_same_idempotency_key_has_one_external_send(tmp_path):
+    key = "outreach:concurrent:conversation-1:1"
+    barrier = threading.Barrier(2)
+    calls = []
+    calls_lock = threading.Lock()
+
+    class RaceDB(LeadDB):
+        def get_state(self, state_key):
+            if state_key == "revenue_execution":
+                barrier.wait(timeout=5)
+            return super().get_state(state_key)
+
+    class ConcurrentTransport:
+        def send(self, **kwargs):
+            with calls_lock:
+                calls.append(dict(kwargs))
+            return {"provider": "fake", "delivery_id": "delivery-1", "status": "accepted"}
+
+        def reconcile(self, *, idempotency_key):
+            return None
+
+    errors = []
+    results = []
+
+    def worker():
+        db = RaceDB(data_dir=tmp_path)
+        try:
+            results.append(
+                execute_outbound(
+                    db,
+                    worker_capability="high_ticket_sales_closer",
+                    opportunity_id="concurrent",
+                    conversation_id="conversation-1",
+                    channel="email",
+                    recipient={"email": "taylor@example.com"},
+                    subject="Hello",
+                    body="Hello Taylor",
+                    transport=ConcurrentTransport(),
+                    idempotency_key=key,
+                )
+            )
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            db.close()
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(calls) == 1
+    assert len(results) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], RevenueActionInProgress)
+
+
+def test_uncertain_send_without_provider_reconciliation_never_resends(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    key = "outreach:uncertain:conversation-1:1"
+
+    class UnknownTransport:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("connection lost after possible provider acceptance")
+
+        def reconcile(self, *, idempotency_key):
+            return None
+
+    transport = UnknownTransport()
+    with pytest.raises(RuntimeError):
+        execute_outbound(
+            db,
+            worker_capability="high_ticket_sales_closer",
+            opportunity_id="uncertain",
+            conversation_id="conversation-1",
+            channel="email",
+            recipient={"email": "taylor@example.com"},
+            subject="Hello",
+            body="Hello Taylor",
+            transport=transport,
+            idempotency_key=key,
+        )
+
+    with pytest.raises(RevenueActionInProgress):
+        execute_outbound(
+            db,
+            worker_capability="high_ticket_sales_closer",
+            opportunity_id="uncertain",
+            conversation_id="conversation-1",
+            channel="email",
+            recipient={"email": "taylor@example.com"},
+            subject="Hello",
+            body="Hello Taylor",
+            transport=transport,
+            idempotency_key=key,
+        )
+
+    assert transport.calls == 1
