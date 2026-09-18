@@ -93,6 +93,18 @@ def probe(definition) -> Dict[str, Any]:
         }
 
 
+def _probe_definitions(catalog):
+    """Return every enabled source used by production collection.
+
+    allowed_for_thorio controls downstream route use, not collection.
+    """
+    effective_definitions = _apply_overrides(tuple(catalog))
+    definitions = [item for item in effective_definitions if item.enabled]
+    excluded_sources = sorted(
+        item.name for item in effective_definitions if not item.enabled
+    )
+    return definitions, excluded_sources
+
 def main() -> int:
     os.environ.setdefault("LEAD_ENGINE_FREE_SOURCES_ENABLED", "1")
     os.environ["THORIO_SOURCE_DIAGNOSTIC"] = "1"
@@ -101,17 +113,7 @@ def main() -> int:
     # same explicit source corrections used by configured_sources(). Probe the
     # effective definitions so this diagnostic cannot report stale historical
     # endpoints as production failures.
-    effective_definitions = _apply_overrides(tuple(catalog))
-    definitions = [
-        item
-        for item in effective_definitions
-        if item.enabled and item.allowed_for_thorio
-    ]
-    excluded_sources = sorted(
-        item.name
-        for item in effective_definitions
-        if not (item.enabled and item.allowed_for_thorio)
-    )
+    definitions, excluded_sources = _probe_definitions(catalog)
 
     results = []
     with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, max(1, len(definitions))), thread_name_prefix="source-probe") as executor:
