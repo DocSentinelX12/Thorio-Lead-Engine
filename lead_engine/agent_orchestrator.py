@@ -104,6 +104,32 @@ class AgentOrchestrator:
             return int(row[0]) if row else 0
         return len(pending(self.db))
 
+    def _queue_health(self) -> Dict[str, int]:
+        """Report durable specialist queue state without materializing backlog payloads.
+
+        Queued and actively leased work are legitimate durable backlog when a
+        bounded production cycle ends. Failed work is terminal until repaired
+        or explicitly retried, so it must remain visible to production
+        verification rather than being mistaken for healthy backlog.
+        """
+        if isinstance(self.db, LeadDB):
+            rows = self.db.conn.execute(
+                "SELECT status, COUNT(*) FROM agent_queue "
+                "WHERE status IN ('queued', 'running', 'failed') GROUP BY status"
+            ).fetchall()
+            counts = {str(row[0]): int(row[1]) for row in rows}
+            return {
+                "queued_count": counts.get("queued", 0),
+                "running_count": counts.get("running", 0),
+                "failed_count": counts.get("failed", 0),
+            }
+        tasks = pending(self.db)
+        return {
+            "queued_count": sum(1 for task in tasks if task.get("status") == "queued"),
+            "running_count": sum(1 for task in tasks if task.get("status") == "running"),
+            "failed_count": 0,
+        }
+
     def _run_role_slot(self, role_name: str, slot: int) -> Dict[str, Any]:
         """Run one claimed specialist slot with an isolated SQLite connection.
 
@@ -215,7 +241,8 @@ class AgentOrchestrator:
             if claimed == 0:
                 break
 
-        remaining_count = self._pending_count()
+        queue_health = self._queue_health()
+        remaining_count = queue_health["queued_count"] + queue_health["running_count"]
         return {
             "agent_count": len(ALL_AGENT_ROLES),
             "claimed_count": total_claimed,
@@ -224,6 +251,7 @@ class AgentOrchestrator:
             "round_count": len(rounds),
             "drain_complete": remaining_count == 0,
             "remaining_queue_count": remaining_count,
+            "queue_health": queue_health,
             "rounds": rounds,
             "agents": rounds[-1]["agents"] if rounds else [],
             "execution_workers": self._execution_workers(),
