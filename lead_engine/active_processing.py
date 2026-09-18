@@ -78,8 +78,11 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
         if readiness["ready"]:
             try: research_sync_result = sync_research(stored)
             except Exception as exc: research_sync_result = {"status": "failed", "error": str(exc)}
-            enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a_verified:{fingerprint}")
-            result.update({"decision_maker_handoff": "qualification_a", "lead": stored, "research_sync": research_sync_result})
+            if isinstance(record, Mapping):
+                enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": "complete", "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a_verified:{fingerprint}")
+                result.update({"decision_maker_handoff": "qualification_a", "lead": stored, "research_sync": research_sync_result})
+            else:
+                result.update({"decision_maker_handoff": "routing", "lead": stored, "research_sync": research_sync_result})
         else:
             result.update({"decision_maker_handoff": "research_required", "lead": stored, "research_readiness": readiness, "research_sync": {"status": "not_ready"}})
 
