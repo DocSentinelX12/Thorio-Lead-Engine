@@ -150,3 +150,20 @@ def test_coordinator_rejects_invalid_auth(tmp_path):
             raise AssertionError("unauthenticated coordinator request was accepted")
     finally:
         _stop_server(server, thread)
+
+
+def test_claim_finds_compatible_work_beyond_oldest_scan_window(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
+        "specialist-worker", "host", "x86_64", 2, 4096, ("lead-processing", "target-capability")
+    ))
+    for index in range(100):
+        coordinator.enqueue({"kind": "agent_task", "agent": "incompatible", "required_capabilities": ["other-capability"], "index": index})
+    target_id = coordinator.enqueue({
+        "kind": "agent_task",
+        "agent": "target",
+        "required_capabilities": ["target-capability"],
+    })
+    claimed = coordinator.claim("specialist-worker")
+    assert claimed is not None
+    assert claimed["task_id"] == target_id
