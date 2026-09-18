@@ -108,4 +108,3 @@ def test_active_airtable_search_theme_without_url_is_skipped_from_direct_catalog
     records = {"records": [{"id": "rec-search-theme", "fields": {"Active": True, "Source / Search": "LinkedIn hiring", "Source URL": "", "Collector Type": ""}}]}
     with patch.dict("os.environ", {"AIRTABLE_BASE_ID": "app-test", "AIRTABLE_API_KEY": "pat-test"}, clear=True), patch("lead_engine.source_registry._request", return_value=records):
         assert _load_airtable_source_catalog() == ()
-}
