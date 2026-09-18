@@ -95,3 +95,25 @@ def test_merge_canonical_section_keeps_existing_and_new_observed_evidence():
     assert {item["evidence"] for item in merged["evidence"]} == {"new", "old"}
     assert set(merged["provenance"]["source_sections"]) == {"new", "old"}
     assert merged["provenance"]["evidence_count"] == 2
+
+
+def test_route_research_keeps_evidence_scoped_to_supported_routes():
+    lead = {"fingerprint": "route-scope", "company": "Acme"}
+    company_research = {
+        "public_hiring_facts": [
+            {
+                "url": "https://acme.example/careers",
+                "evidence": "Acme is hiring a remote software engineer.",
+                "observed_at": "2026-09-17T00:00:00+00:00",
+            }
+        ],
+        "public_product_facts": [],
+        "public_business_need_facts": [],
+        "public_commercial_facts": [],
+        "social_findings": [],
+    }
+    package = build_canonical_research_package(lead, company_research, {})
+    routes = package["route_research"]["routes"]
+    assert routes["Thorio"]["evidence"]
+    assert routes["Shiftr"]["evidence"]
+    assert routes["Paxus"]["evidence"] == []
