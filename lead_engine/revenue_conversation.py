@@ -145,7 +145,9 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         history = list(updated.get("route_switch_history") or []) if isinstance(updated.get("route_switch_history"), list) else []
         history.append({"at": event["at"], "from": updated.get("outreach_route"), "to": switched_route, "evidence": switch_evidence, "evidence_text": switch_evidence_text}); updated["route_switch_history"] = history; updated["outreach_route"] = switched_route; updated["active_route"] = switched_route
     if switch_evidence and not switched_route:
+        event.setdefault("warnings", []).append(switch_evidence)
         conversation.setdefault("warnings", []).append(switch_evidence)
+        conversation["events"][-1] = event
     if classified in {"converted", "referred"}:
         updated["revenue_lifecycle_state"] = classified
         updated["outreach_state"] = classified
