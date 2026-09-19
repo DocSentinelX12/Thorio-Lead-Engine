@@ -270,12 +270,14 @@ def execute_outbound(
         _save(db, state)
         raise
 
+    confirmed_at = _now()
+    provider_result.setdefault("confirmed_at", confirmed_at)
     state = _load(db)
     state["actions"][idem] = {
         **state["actions"].get(idem, initial_action),
         "status": "sent",
         "provider_result": provider_result,
-        "updated_at": _now(),
+        "updated_at": confirmed_at,
     }
     _save(db, state)
     return RevenueAction(
