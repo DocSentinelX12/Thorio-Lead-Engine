@@ -38,3 +38,12 @@ from .company_research_handler_override import install as _install_company_resea
 
 _install_company_research_override()
 del _install_company_research_override
+
+# Airtable's configured batch size is intentionally only the size of one
+# durable API batch. Install the drain wrapper before scheduler imports the
+# batch-delivery function so a production cycle continues through additional
+# batches until the backlog is drained or the bounded drain budget expires.
+from .airtable_drain_override import install as _install_airtable_drain_override
+
+_install_airtable_drain_override()
+del _install_airtable_drain_override
