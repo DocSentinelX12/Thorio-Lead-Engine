@@ -47,3 +47,10 @@ from .airtable_drain_override import install as _install_airtable_drain_override
 
 _install_airtable_drain_override()
 del _install_airtable_drain_override
+
+# Production uses the same durable specialist roles but needs enough dependency
+# rounds for real network research to advance in the same bounded cycle.
+from .production_throughput_override import install as _install_production_throughput_override
+
+_install_production_throughput_override()
+del _install_production_throughput_override
