@@ -891,9 +891,64 @@ class JsonSourceAdapter:
 
             visited_urls.add(request_url)
 
-            payload = self._fetch_json(
-                request_url
-            )
+            try:
+                payload = self._fetch_json(
+                    request_url
+                )
+            except ValueError as exc:
+                cause = exc.__cause__
+                if (
+                    pagination_type in {"page", "offset"}
+                    and isinstance(cause, HTTPRetryError)
+                ):
+                    markers = definition.metadata.get(
+                        "pagination_end_error_markers",
+                        [],
+                    )
+                    response_body = (
+                        cause.response_body
+                        or ""
+                    ).lower()
+                    if (
+                        cause.status == 400
+                        and any(
+                            str(marker).lower()
+                            in response_body
+                            for marker in markers
+                        )
+                    ):
+                        final_checkpoint = None
+                        break
+
+                    if (
+                        definition.metadata.get(
+                            "reset_checkpoint_on_http_error"
+                        )
+                        and current_checkpoint is not None
+                        and requests_made == 0
+                    ):
+                        current_checkpoint = None
+                        final_checkpoint = None
+                        if pagination_type == "page":
+                            current_page = (
+                                definition.page_start
+                            )
+                            request_url = _with_query_parameter(
+                                self.url,
+                                definition.page_parameter,
+                                current_page,
+                            )
+                        else:
+                            current_offset = (
+                                definition.offset_start
+                            )
+                            request_url = _with_query_parameter(
+                                self.url,
+                                definition.offset_parameter,
+                                current_offset,
+                            )
+                        continue
+                raise
 
             requests_made += 1
             pages_seen += 1
@@ -902,6 +957,18 @@ class JsonSourceAdapter:
                 payload,
                 definition,
             )
+
+            if pagination_type == "offset":
+                pagination = (
+                    payload.get("pagination")
+                    if isinstance(payload, dict)
+                    else None
+                )
+                if (
+                    isinstance(pagination, dict)
+                    and pagination.get("has_more") is False
+                ):
+                    final_checkpoint = None
 
             for item in records:
                 record = normalize_job_record(
@@ -949,6 +1016,18 @@ class JsonSourceAdapter:
                 )
 
                 continue
+
+            if (
+                pagination_type == "offset"
+                and isinstance(
+                    payload.get("pagination")
+                    if isinstance(payload, dict)
+                    else None,
+                    dict,
+                )
+                and payload["pagination"].get("has_more") is False
+            ):
+                break
 
             if pagination_type == "page":
                 current_page += 1
