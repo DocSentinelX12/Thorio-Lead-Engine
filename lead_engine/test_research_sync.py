@@ -16,6 +16,7 @@ def test_research_payload_preserves_research_and_raw_lead():
             "decision_maker_verification_status": "verified",
         },
         "business_need_research": {"need": "engineering expansion", "verified": True, "verification_status": "verified"},
+        "technical_product_hiring_research": {"need": "engineering expansion", "verified": True, "verification_status": "verified"},
         "evidence_events": [{"source": "https://example.com", "observed_at": "2026-09-13"}],
         "unknown_field": "must survive in raw package",
     }
@@ -29,6 +30,7 @@ def test_research_payload_preserves_research_and_raw_lead():
     assert json.loads(fields["Company Research"])["decision_maker"] == "Taylor"
     assert "Technical/Product/Hiring Research" not in fields
     assert "Technical Product Hiring Research" in fields
+    assert json.loads(fields["Technical Product Hiring Research"])["need"] == "engineering expansion"
     assert json.loads(fields["Evidence and Provenance"])[0]["source"] == "https://example.com"
     raw = json.loads(fields["Raw Research Package"])
     assert raw["unknown_field"] == "must survive in raw package"
