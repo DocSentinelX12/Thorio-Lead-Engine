@@ -123,6 +123,11 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
                 timeout=timeout,
                 deadline=deadline,
             )
+            if time.monotonic() >= deadline:
+                raise HTTPRetryError(
+                    f"Source-specific collection deadline exceeded for {source}.",
+                    url=listing_url,
+                )
             for record in _jsonld_records(detail, source, link):
                 records[record["url"]] = record
         except HTTPRetryError:
