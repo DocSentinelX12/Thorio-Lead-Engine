@@ -70,22 +70,37 @@ def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypa
 
     calls = []
 
+    listing_url = "https://nodesk.co/remote-jobs/"
+    detail_urls = (
+        "https://nodesk.co/remote-jobs/modus-create-ai-engineer-python-machine-learning-generative-ai-llms/",
+        "https://nodesk.co/remote-jobs/sticker-mule-software-engineer/",
+    )
+
     def fake_fetch(request, timeout, deadline=None):
         calls.append(request.full_url)
-        if request.full_url.endswith("/listing"):
-            return b'<a href="https://example.com/remote-jobs/job/1">job</a><a href="https://example.com/remote-jobs/job/2">job</a>'
+        if request.full_url == listing_url:
+            return (
+                f'<a href="{detail_urls[0]}">job</a>'
+                f'<a href="{detail_urls[1]}">job</a>'
+            ).encode("utf-8")
         clock[0] = 102.0
-        return b"<script type=\"application/ld+json\">{\"@type\":\"JobPosting\",\"title\":\"Engineer\",\"hiringOrganization\":{\"name\":\"Acme\"},\"url\":\"https://example.com/remote-jobs/job/1\"}</script>"
+        return (
+            '<script type="application/ld+json">'
+            '{"@type":"JobPosting","title":"Engineer",'
+            '"hiringOrganization":{"name":"Acme"},'
+            f'"url":"{detail_urls[0]}"'
+            "</script>"
+        ).encode("utf-8")
 
     monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
-    adapter = create_adapter(definition=_definition("NoDesk", "https://example.com/listing"), timeout=5)
+    adapter = create_adapter(definition=_definition("NoDesk", listing_url), timeout=5)
     try:
         adapter.collect()
     except collectors.HTTPRetryError as exc:
         assert "deadline" in str(exc).lower()
     else:
         raise AssertionError("Expected the source-specific collection deadline to stop collection")
-    assert calls == ["https://example.com/listing", "https://example.com/remote-jobs/job/1"]
+    assert calls == [listing_url, detail_urls[0]]
 
 
 def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
