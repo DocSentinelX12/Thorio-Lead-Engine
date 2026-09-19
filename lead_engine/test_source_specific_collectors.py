@@ -73,9 +73,9 @@ def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypa
     def fake_fetch(request, timeout, deadline=None):
         calls.append(request.full_url)
         if request.full_url.endswith("/listing"):
-            return b'<a href="https://example.com/job/1">job</a><a href="https://example.com/job/2">job</a>'
+            return b'<a href="https://example.com/remote-jobs/job/1">job</a><a href="https://example.com/remote-jobs/job/2">job</a>'
         clock[0] = 102.0
-        return b"<script type=\"application/ld+json\">{\"@type\":\"JobPosting\",\"title\":\"Engineer\",\"hiringOrganization\":{\"name\":\"Acme\"},\"url\":\"https://example.com/job/1\"}</script>"
+        return b"<script type=\"application/ld+json\">{\"@type\":\"JobPosting\",\"title\":\"Engineer\",\"hiringOrganization\":{\"name\":\"Acme\"},\"url\":\"https://example.com/remote-jobs/job/1\"}</script>"
 
     monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
     adapter = create_adapter(definition=_definition("NoDesk", "https://example.com/listing"), timeout=5)
@@ -85,7 +85,7 @@ def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypa
         assert "deadline" in str(exc).lower()
     else:
         raise AssertionError("Expected the source-specific collection deadline to stop collection")
-    assert calls == ["https://example.com/listing", "https://example.com/job/1"]
+    assert calls == ["https://example.com/listing", "https://example.com/remote-jobs/job/1"]
 
 
 def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
