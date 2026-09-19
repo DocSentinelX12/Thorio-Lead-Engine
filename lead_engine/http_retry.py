@@ -144,7 +144,10 @@ def fetch_url(
             )
 
             try:
-                response_body = exc.read().decode(
+                response_bytes = exc.read()
+                if not response_bytes and getattr(exc, "fp", None) is not None:
+                    response_bytes = exc.fp.read()
+                response_body = response_bytes.decode(
                     "utf-8",
                     errors="replace",
                 )
