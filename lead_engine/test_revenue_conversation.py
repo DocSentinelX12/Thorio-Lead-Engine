@@ -43,3 +43,59 @@ def test_opt_out_is_terminal_and_never_sends(tmp_path):
 
 def test_conversation_can_switch_to_preserved_route(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead("switch-test"); db.insert_if_new(lead); record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-4", text="We actually need a dedicated team", outcome="interested", suggested_route="Paxus"); stored = db.get(lead["fingerprint"]); assert stored["outreach_route"] == "Paxus" and stored["route_switch_history"][0]["from"] == "Shiftr" and stored["route_switch_history"][0]["to"] == "Paxus"
+
+
+def test_completed_commercial_response_becomes_durable_conversion(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("conversion-test")
+    db.insert_if_new(lead)
+
+    result = record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-convert",
+        text="We signed the contract and are ready to start.",
+    )
+
+    stored = db.get(lead["fingerprint"])
+    assert result["events"][-1]["outcome"] == "converted"
+    assert stored["revenue_lifecycle_state"] == "converted"
+    assert stored["outreach_state"] == "converted"
+    assert stored["next_follow_up_at"] is None
+    assert stored["follow_up_due"] is False
+    assert stored["commercial_outcome"]["type"] == "converted"
+    assert stored["commercial_outcome"]["evidence"] == "We signed the contract and are ready to start."
+    assert pending(db, "follow_up") == []
+
+
+def test_referred_outcome_requires_durable_referral_submission(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("referred-test")
+    db.insert_if_new(lead)
+
+    with pytest.raises(ValueError, match="referral submission"):
+        record_inbound_event(
+            db,
+            opportunity_id=lead["fingerprint"],
+            conversation_id=lead["conversation_id"],
+            event_id="evt-referral-invalid",
+            text="Please connect me with Paxus.",
+            outcome="referred",
+        )
+
+    lead["referral_submitted"] = True
+    db.update_payload(lead["fingerprint"], lead)
+    result = record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-referral-valid",
+        text="Please connect me with Paxus.",
+        outcome="referred",
+    )
+    stored = db.get(lead["fingerprint"])
+    assert result["events"][-1]["outcome"] == "referred"
+    assert stored["revenue_lifecycle_state"] == "referred"
+    assert stored["commercial_outcome"]["type"] == "referred"
+    assert pending(db, "follow_up") == []
