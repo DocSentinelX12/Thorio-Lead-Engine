@@ -78,7 +78,7 @@ def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypa
         assert "deadline" in str(exc).lower()
     else:
         raise AssertionError("Expected the source-specific collection deadline to stop collection")
-    assert calls == ["https://example.com/listing"]
+    assert calls == ["https://example.com/listing", "https://example.com/job/1"]
 
 
 def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
