@@ -34,14 +34,87 @@ def _classify(text: str) -> str:
     if any(token in value for token in ("later", "next month", "not now", "timing")): return "objection"
     return "replied"
 
-def _route_switch(lead: Mapping[str, Any], suggested_route: Optional[str]) -> tuple[str | None, str | None]:
+def _route_switch(
+    lead: Mapping[str, Any],
+    suggested_route: Optional[str],
+    text: str,
+) -> tuple[str | None, str | None, str | None]:
     candidate = str(suggested_route or "").strip()
-    if not candidate: return None, None
-    allowed = {str(item).strip() for item in (lead.get("preserved_routes") or lead.get("eligible_routes") or lead.get("potential_routes") or [])}
-    if candidate not in allowed: return None, "suggested_route_not_preserved"
+    if not candidate:
+        return None, None, None
+    allowed = {
+        str(item).strip()
+        for item in (
+            lead.get("preserved_routes")
+            or lead.get("eligible_routes")
+            or lead.get("potential_routes")
+            or []
+        )
+    }
+    if candidate not in allowed:
+        return None, "suggested_route_not_preserved", None
+
+    qualification_results = lead.get("qualification_results")
+    route_result = (
+        qualification_results.get(candidate)
+        if isinstance(qualification_results, Mapping)
+        else None
+    )
+    if not isinstance(route_result, Mapping) or route_result.get("qualified") is not True:
+        return None, "route_switch_candidate_not_qualified", None
+    route_research = route_result.get("route_research")
+    if not isinstance(route_research, Mapping) or route_research.get("verified") is not True:
+        return None, "route_switch_candidate_research_not_verified", None
+    if candidate == "Paxus" and route_result.get("true_referral") is not True:
+        return None, "route_switch_paxus_true_referral_not_verified", None
+
+    value = str(text or "").strip().lower()
+    route_terms = {
+        "Thorio": (
+            "remote",
+            "remote hiring",
+            "remote engineer",
+            "remote developer",
+            "remote software",
+            "remote tech",
+            "remote team",
+        ),
+        "Shiftr": (
+            "build",
+            "software",
+            "saas",
+            "ai",
+            "automation",
+            "llm",
+            "engineering team",
+            "development team",
+            "dedicated team",
+            "staff augmentation",
+            "outsourcing",
+        ),
+        "Paxus": (
+            "hire",
+            "hiring",
+            "recruit",
+            "recruiting",
+            "staffing",
+            "talent",
+            "developers",
+            "engineers",
+            "technology staffing",
+            "technical hiring",
+        ),
+    }
+    terms = route_terms.get(candidate, ())
+    matched = next((term for term in terms if term in value), None)
+    if matched is None:
+        return None, "route_switch_evidence_not_verified", None
+
     current = str(lead.get("outreach_route") or "").strip()
-    if current and current != candidate: return candidate, f"conversation_evidence_switch:{current}->{candidate}"
-    return None, None
+    if current and current != candidate:
+        evidence_text = str(text or "").strip()
+        return candidate, f"conversation_evidence_switch:{current}->{candidate}", evidence_text
+    return None, None, None
 
 def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, event_id: str, text: str, outcome: Optional[str] = None, objection: Optional[str] = None, suggested_route: Optional[str] = None, commercial_evidence: Optional[str] = None) -> Dict[str, Any]:
     opportunity_id = str(opportunity_id or "").strip(); conversation_id = str(conversation_id or "").strip(); event_id = str(event_id or "").strip()
@@ -65,12 +138,13 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
     event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified}
     if objection: event["objection"] = str(objection)
     conversation["events"].append(event); conversation["processed_event_ids"].append(event_id); conversation["last_inbound_at"] = event["at"]; conversation["response_count"] = int(conversation.get("response_count", 0) or 0) + 1
-    switched_route, switch_evidence = _route_switch(lead, suggested_route)
+    switched_route, switch_evidence, switch_evidence_text = _route_switch(lead, suggested_route, text)
     updated = dict(lead); updated.update({"conversation_id": conversation_id, "conversation_events": list(conversation["events"]), "response_count": conversation["response_count"], "last_response_at": event["at"], "last_response_outcome": classified, "outreach_state": classified, "revenue_lifecycle_state": "conversation_active"})
     if switched_route:
         history = list(updated.get("route_switch_history") or []) if isinstance(updated.get("route_switch_history"), list) else []
-        history.append({"at": event["at"], "from": updated.get("outreach_route"), "to": switched_route, "evidence": switch_evidence}); updated["route_switch_history"] = history; updated["outreach_route"] = switched_route; updated["active_route"] = switched_route
-    if switch_evidence and not switched_route: conversation.setdefault("warnings", []).append(switch_evidence)
+        history.append({"at": event["at"], "from": updated.get("outreach_route"), "to": switched_route, "evidence": switch_evidence, "evidence_text": switch_evidence_text}); updated["route_switch_history"] = history; updated["outreach_route"] = switched_route; updated["active_route"] = switched_route
+    if switch_evidence and not switched_route:
+        conversation.setdefault("warnings", []).append(switch_evidence)
     if classified in {"converted", "referred"}:
         updated["revenue_lifecycle_state"] = classified
         updated["outreach_state"] = classified
