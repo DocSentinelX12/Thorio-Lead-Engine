@@ -6,7 +6,7 @@ from typing import Callable, Tuple
 from .source_definition import SourceDefinition
 
 _SOURCE_OVERRIDES = {
-    "The Muse": {"url": "https://www.themuse.com/api/public/jobs?page=1", "page_start": 1, "metadata": {"pagination_end_error_markers": ["page is too high"]}},
+    "The Muse": {"url": "https://www.themuse.com/api/public/jobs?page=1", "page_start": 1, "metadata": {"pagination_end_error_markers": ["page is too high", "value `page` is too high"]}},
     "EURES": {"enabled": False, "allowed_for_thorio": False},
     "Jobicy": {"collector_type": "json", "url": "https://jobicy.com/api/v2/remote-jobs?count=200", "record_path": "jobs", "title_field": "jobTitle", "company_field": "companyName", "description_field": "jobDescription", "url_field": "url", "source_id_field": "id", "location_field": "jobGeo", "pagination_type": "none", "max_pages": 1, "max_requests": 1, "max_records": 200},
     "RemoteJobs.org": {"collector_type": "json", "url": "https://remotejobs.org/api/v1/jobs?limit=50", "record_path": "data", "title_field": "title", "company_field": "company.name", "description_field": "description", "url_field": "url", "source_id_field": "id", "location_field": "location", "pagination_type": "offset", "offset_parameter": "offset", "offset_start": 0, "offset_step": 50, "page_limit": 50, "max_pages": 10, "max_requests": 10, "max_records": 500, "metadata": {"reset_checkpoint_on_http_error": True}},
