@@ -86,6 +86,7 @@ def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int
     if not isinstance(inbound_result, Mapping):
         raise RuntimeError("revenue inbound observer returned an invalid result")
     health = dict(inbound_result)
+    health["status"] = "failed" if int(inbound_result.get("failed_count", 0) or 0) > 0 else str(inbound_result.get("status") or "completed")
     health["checked_at"] = _now()
     if hasattr(db, "set_state"):
         db.set_state("revenue_inbound_health", health)
