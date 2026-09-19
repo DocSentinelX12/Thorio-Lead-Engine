@@ -59,22 +59,12 @@ def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypa
     import lead_engine.source_specific_collectors as collectors
 
     monkeypatch.setenv("THORIO_SOURCE_DETAIL_COLLECTION_DEADLINE_SECONDS", "1")
-    clock_values = iter([100.0, 100.0, 100.0])
+    clock = [100.0]
 
-    def fake_monotonic():
-        try:
-            return next(clock_values)
-        except StopIteration:
-            return 102.0
-
-    # Replace the module's clock reference instead of mutating the process-wide
-    # stdlib time.monotonic. Pytest and other libraries may call time.monotonic
-    # independently, which would otherwise consume the finite test clock and
-    # make this deadline regression test nondeterministic.
     class _FakeClock:
         @staticmethod
         def monotonic():
-            return fake_monotonic()
+            return clock[0]
 
     monkeypatch.setattr(collectors, "time", _FakeClock())
 
@@ -84,6 +74,7 @@ def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypa
         calls.append(request.full_url)
         if request.full_url.endswith("/listing"):
             return b'<a href="https://example.com/job/1">job</a><a href="https://example.com/job/2">job</a>'
+        clock[0] = 102.0
         return b"<script type=\"application/ld+json\">{\"@type\":\"JobPosting\",\"title\":\"Engineer\",\"hiringOrganization\":{\"name\":\"Acme\"},\"url\":\"https://example.com/job/1\"}</script>"
 
     monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
