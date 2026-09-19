@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from html import unescape
 from html.parser import HTMLParser
 from typing import Any, Dict, List
@@ -18,6 +19,8 @@ _HTML_DETAIL_SOURCES = frozenset({
     "NoDesk", "EU Remote Jobs", "AI Jobs", "Total", "FlexJobs", "US Remotely",
     "USA Remote Work", "Rocketship", "Remote Landers", "JobFill.AI", "Remote Woman", "Wellfound",
 })
+
+_DEFAULT_DETAIL_COLLECTION_DEADLINE_SECONDS = 60.0
 
 
 class _LinkParser(HTMLParser):
@@ -69,8 +72,27 @@ def _jsonld_records(raw: bytes, source: str, url: str) -> List[Dict[str, Any]]:
     return records
 
 
+def _detail_collection_deadline(timeout: int) -> float:
+    raw = os.environ.get(
+        "THORIO_SOURCE_DETAIL_COLLECTION_DEADLINE_SECONDS",
+        str(_DEFAULT_DETAIL_COLLECTION_DEADLINE_SECONDS),
+    ).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        value = _DEFAULT_DETAIL_COLLECTION_DEADLINE_SECONDS
+    if value <= 0:
+        raise ValueError("THORIO_SOURCE_DETAIL_COLLECTION_DEADLINE_SECONDS must be positive")
+    return time.monotonic() + max(value, float(timeout))
+
+
 def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResult:
-    raw = fetch_url(Request(listing_url, headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "text/html,application/xhtml+xml"}), timeout=timeout)
+    deadline = _detail_collection_deadline(timeout)
+    raw = fetch_url(
+        Request(listing_url, headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "text/html,application/xhtml+xml"}),
+        timeout=timeout,
+        deadline=deadline,
+    )
     parser = _LinkParser(listing_url)
     parser.feed(raw.decode("utf-8", errors="replace"))
     source_hints = {
@@ -90,13 +112,29 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
             break
     records: Dict[str, Dict[str, Any]] = {}
     for link in candidates:
+        if time.monotonic() >= deadline:
+            raise HTTPRetryError(
+                f"Source-specific collection deadline exceeded for {source}.",
+                url=listing_url,
+            )
         try:
-            detail = fetch_url(Request(link, headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "text/html,application/xhtml+xml"}), timeout=timeout)
+            detail = fetch_url(
+                Request(link, headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "text/html,application/xhtml+xml"}),
+                timeout=timeout,
+                deadline=deadline,
+            )
             for record in _jsonld_records(detail, source, link):
                 records[record["url"]] = record
         except HTTPRetryError:
+            if time.monotonic() >= deadline:
+                raise
             continue
         except Exception:
+            if time.monotonic() >= deadline:
+                raise HTTPRetryError(
+                    f"Source-specific collection deadline exceeded for {source}.",
+                    url=listing_url,
+                )
             continue
     return AdapterResult(records=list(records.values()), checkpoint=None)
 
@@ -150,13 +188,14 @@ class _WelcomeToTheJungleAdapter:
         self.timeout = timeout
 
     def collect(self, checkpoint=None):
-        env_raw = fetch_url(Request("https://www.welcometothejungle.com/api/env", headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "application/json,application/javascript,text/javascript,*/*;q=0.1", "Referer": "https://www.welcometothejungle.com/"}), timeout=self.timeout)
+        deadline = _detail_collection_deadline(self.timeout)
+        env_raw = fetch_url(Request("https://www.welcometothejungle.com/api/env", headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "application/json,application/javascript,text/javascript,*/*;q=0.1", "Referer": "https://www.welcometothejungle.com/"}), timeout=self.timeout, deadline=deadline)
         app_id, api_key = _extract_algolia_credentials(env_raw)
         endpoint = "https://%s-dsn.algolia.net/1/indexes/*/queries" % app_id
         params = urlencode({"hitsPerPage": 100, "page": 0, "query": ""})
         payload = json.dumps({"requests": [{"indexName": "wk_cms_jobs_production", "params": params}]}).encode("utf-8")
         request = Request(endpoint, data=payload, headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "*/*", "Content-Type": "application/x-www-form-urlencoded", "Origin": "https://www.welcometothejungle.com", "Referer": "https://www.welcometothejungle.com/", "X-Algolia-Application-Id": app_id, "X-Algolia-API-Key": api_key})
-        data = json.loads(fetch_url(request, timeout=self.timeout).decode("utf-8", errors="replace"))
+        data = json.loads(fetch_url(request, timeout=self.timeout, deadline=deadline).decode("utf-8", errors="replace"))
         results = data.get("results", []) if isinstance(data, dict) else []
         first_result = results[0] if results and isinstance(results[0], dict) else {}
         hits = first_result.get("hits", []) if isinstance(first_result, dict) else []
