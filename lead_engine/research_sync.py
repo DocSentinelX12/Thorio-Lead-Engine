@@ -13,7 +13,7 @@ _RESEARCH_FIELD_MAP = {
     "Decision Maker Research": "decision_maker_research",
     "Business Need Research": "business_need_research",
     "Current Intent Research": "current_intent_research",
-    "Technical/Product/Hiring Research": "technical_product_hiring_research",
+    "Technical Product Hiring Research": "technical_product_hiring_research",
     "Commercial Research": "commercial_research",
     "Route Research": "route_research",
     "Evidence and Provenance": "evidence_events",
