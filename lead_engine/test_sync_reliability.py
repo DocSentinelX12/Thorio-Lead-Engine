@@ -167,7 +167,7 @@ def test_autonomous_revenue_eligibility_syncs_outreach_without_human_delivery_ap
         "outreach_state": "awaiting_response",
         "outreach_attempt": 1,
         "last_outreach_action_id": "action-001",
-        "last_outreach_delivery": {"transport": "fake", "thread_url": "https://example.com/thread/1"},
+        "last_outreach_delivery": {"transport": "fake", "thread_url": "https://example.com/thread/1", "confirmed_at": "2026-09-19T00:00:00+00:00"},
         "conversation_id": "conversation:autonomous-outreach-airtable-001:shiftr",
         "next_follow_up_at": "2026-09-22T12:00:00+00:00",
         "last_response_outcome": "",
@@ -194,5 +194,5 @@ def test_autonomous_revenue_eligibility_syncs_outreach_without_human_delivery_ap
     outreach_payload = mock_outreach.call_args.args[0]
     assert outreach_payload["route"] == "Shiftr"
     assert outreach_payload["outreach_status"] == "Contacted"
-    assert outreach_payload["next_action_date"] == "2026-09-22T12:00:00+00:00"
+    assert outreach_payload["next_action_date"] == "2026-09-22T12:00:00+00:00"\n    assert outreach_payload["date_sent"] == "2026-09-19T00:00:00+00:00"
     mock_master.assert_called_once()
