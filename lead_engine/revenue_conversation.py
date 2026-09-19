@@ -82,7 +82,16 @@ def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> li
 
 def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int = 100) -> int:
     from .browser_revenue_inbound import poll_browser_revenue_inbound
-    poll_browser_revenue_inbound(db, limit=limit); queued = 0
+    inbound_result = poll_browser_revenue_inbound(db, limit=limit)
+    if not isinstance(inbound_result, Mapping):
+        raise RuntimeError("revenue inbound observer returned an invalid result")
+    health = dict(inbound_result)
+    health["checked_at"] = _now()
+    if hasattr(db, "set_state"):
+        db.set_state("revenue_inbound_health", health)
+    if int(inbound_result.get("failed_count", 0) or 0) > 0:
+        return 0
+    queued = 0
     for lead in due_followups(db, now=now, limit=limit):
         fingerprint = str(lead.get("fingerprint") or "").strip()
         if not fingerprint: continue
