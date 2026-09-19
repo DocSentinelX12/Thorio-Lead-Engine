@@ -22,14 +22,15 @@ def test_source_specific_html_adapter_uses_definition_url(monkeypatch):
 
     requested = []
 
-    def fake_fetch(request, timeout):
-        requested.append(request.full_url)
+    def fake_fetch(request, timeout, deadline=None):
+        requested.append((request.full_url, deadline))
         return b"<html><body>No job links</body></html>"
 
     monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
     adapter = create_adapter(definition=_definition("NoDesk", "https://nodesk.co/remote-jobs/"), timeout=12)
     adapter.collect()
-    assert requested == ["https://nodesk.co/remote-jobs/"]
+    assert requested[0][0] == "https://nodesk.co/remote-jobs/"
+    assert requested[0][1] is not None
 
 
 def test_renamed_html_detail_sources_keep_their_specialized_adapter(monkeypatch):
@@ -37,7 +38,7 @@ def test_renamed_html_detail_sources_keep_their_specialized_adapter(monkeypatch)
 
     requested = []
 
-    def fake_fetch(request, timeout):
+    def fake_fetch(request, timeout, deadline=None):
         requested.append(request.full_url)
         return b"<html><body></body></html>"
 
@@ -54,12 +55,38 @@ def test_renamed_html_detail_sources_keep_their_specialized_adapter(monkeypatch)
     ]
 
 
+def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypatch):
+    import lead_engine.source_specific_collectors as collectors
+
+    monkeypatch.setenv("THORIO_SOURCE_DETAIL_COLLECTION_DEADLINE_SECONDS", "1")
+    clock = iter([100.0, 100.0, 100.0, 102.0])
+    monkeypatch.setattr(collectors.time, "monotonic", lambda: next(clock))
+
+    calls = []
+
+    def fake_fetch(request, timeout, deadline=None):
+        calls.append(request.full_url)
+        if request.full_url.endswith("/listing"):
+            return b'<a href="https://example.com/job/1">job</a><a href="https://example.com/job/2">job</a>'
+        return b"<script type=\"application/ld+json\">{\"@type\":\"JobPosting\",\"title\":\"Engineer\",\"hiringOrganization\":{\"name\":\"Acme\"},\"url\":\"https://example.com/job/1\"}</script>"
+
+    monkeypatch.setattr(collectors, "fetch_url", fake_fetch)
+    adapter = create_adapter(definition=_definition("NoDesk", "https://example.com/listing"), timeout=5)
+    try:
+        adapter.collect()
+    except collectors.HTTPRetryError as exc:
+        assert "deadline" in str(exc).lower()
+    else:
+        raise AssertionError("Expected the source-specific collection deadline to stop collection")
+    assert calls == ["https://example.com/listing"]
+
+
 def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
     import lead_engine.source_adapters as source_adapters
 
     requested = []
 
-    def fake_fetch(request, timeout):
+    def fake_fetch(request, timeout, deadline=None):
         requested.append(request.full_url)
         return b'{"jobs": []}'
 
@@ -93,7 +120,7 @@ def test_welcome_to_the_jungle_uses_current_algolia_query_shape(monkeypatch):
 
     requests = []
 
-    def fake_fetch(request, timeout):
+    def fake_fetch(request, timeout, deadline=None):
         requests.append(request)
         if request.full_url.endswith("/api/env"):
             return b'window.__ENV__={"algoliaApplicationId":"CSEKHVMS53","algoliaSearchApiKey":"0123456789abcdef0123456789abcdef"};'
