@@ -782,21 +782,6 @@ class JsonSourceAdapter:
 
             normalized = []
 
-            if pagination_type == "page":
-                final_checkpoint = str(
-                    current_page + 1
-                )
-            elif pagination_type == "offset":
-                step = (
-                    definition.offset_step
-                    or definition.page_limit
-                    or len(records)
-                    or 1
-                )
-                final_checkpoint = str(
-                    current_offset + step
-                )
-
             for item in records:
                 record = normalize_job_record(
                     item,
@@ -984,6 +969,21 @@ class JsonSourceAdapter:
                     and pagination.get("has_more") is False
                 ):
                     final_checkpoint = None
+
+            if pagination_type == "page":
+                final_checkpoint = str(
+                    current_page + 1
+                )
+            elif pagination_type == "offset":
+                step = (
+                    definition.offset_step
+                    or definition.page_limit
+                    or len(records)
+                    or 1
+                )
+                final_checkpoint = str(
+                    current_offset + step
+                )
 
             for item in records:
                 record = normalize_job_record(
