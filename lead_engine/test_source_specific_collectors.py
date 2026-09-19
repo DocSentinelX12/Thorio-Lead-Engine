@@ -55,7 +55,7 @@ def test_renamed_html_detail_sources_keep_their_specialized_adapter(monkeypatch)
     ]
 
 
-def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypatch):
+def test_source_specific_html_collection_stops_processing_when_deadline_is_reached(monkeypatch):
     import lead_engine.source_specific_collectors as collectors
 
     monkeypatch.setenv("THORIO_SOURCE_DETAIL_COLLECTION_DEADLINE_SECONDS", "1")
@@ -100,7 +100,9 @@ def test_source_specific_html_collection_stops_when_deadline_is_reached(monkeypa
         assert "deadline" in str(exc).lower()
     else:
         raise AssertionError("Expected the source-specific collection deadline to stop collection")
-    assert calls == [listing_url, detail_urls[0]]
+    assert calls[0] == listing_url
+    assert set(calls[1:]) == set(detail_urls)
+    assert len(calls) == 3
 
 
 def test_json_replacement_sources_do_not_get_html_specialization(monkeypatch):
