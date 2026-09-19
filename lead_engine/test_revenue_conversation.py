@@ -42,7 +42,7 @@ def test_opt_out_is_terminal_and_never_sends(tmp_path):
     finally: register_revenue_transport(None)
 
 def test_conversation_can_switch_to_preserved_route(tmp_path):
-    db = LeadDB(data_dir=tmp_path); lead = _lead("switch-test"); db.insert_if_new(lead); record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-4", text="We actually need a dedicated team", outcome="interested", suggested_route="Paxus"); stored = db.get(lead["fingerprint"]); assert stored["outreach_route"] == "Paxus" and stored["route_switch_history"][0]["from"] == "Shiftr" and stored["route_switch_history"][0]["to"] == "Paxus"
+    db = LeadDB(data_dir=tmp_path); lead = _lead("switch-test"); db.insert_if_new(lead); record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-4", text="We need to hire ten engineers and want a staffing partner", outcome="interested", suggested_route="Paxus"); stored = db.get(lead["fingerprint"]); assert stored["outreach_route"] == "Paxus" and stored["route_switch_history"][0]["from"] == "Shiftr" and stored["route_switch_history"][0]["to"] == "Paxus" and "hire ten engineers" in stored["route_switch_history"][0]["evidence_text"]
 
 
 def test_completed_commercial_response_becomes_durable_conversion(tmp_path):
@@ -99,3 +99,46 @@ def test_referred_outcome_requires_durable_referral_submission(tmp_path):
     assert stored["revenue_lifecycle_state"] == "referred"
     assert stored["commercial_outcome"]["type"] == "referred"
     assert pending(db, "follow_up") == []
+
+
+def test_route_switch_is_rejected_when_conversation_lacks_candidate_evidence(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("switch-evidence-test")
+    db.insert_if_new(lead)
+
+    record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-switch-no-evidence",
+        text="Thanks, sounds good.",
+        outcome="interested",
+        suggested_route="Paxus",
+    )
+
+    stored = db.get(lead["fingerprint"])
+    assert stored["outreach_route"] == "Shiftr"
+    assert stored["route_switch_history"] == []
+    assert stored["conversation_events"][-1]["warnings"] == ["route_switch_evidence_not_verified"]
+
+
+def test_route_switch_requires_independently_qualified_candidate(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("switch-qualification-test")
+    lead["qualification_results"]["Paxus"]["qualified"] = False
+    db.insert_if_new(lead)
+
+    record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-switch-unqualified",
+        text="We need to hire ten engineers and want a staffing partner",
+        outcome="interested",
+        suggested_route="Paxus",
+    )
+
+    stored = db.get(lead["fingerprint"])
+    assert stored["outreach_route"] == "Shiftr"
+    assert stored["route_switch_history"] == []
+    assert stored["conversation_events"][-1]["warnings"] == ["route_switch_candidate_not_qualified"]
