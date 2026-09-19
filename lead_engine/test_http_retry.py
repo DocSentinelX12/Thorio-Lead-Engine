@@ -232,3 +232,41 @@ def test_fetch_url_allows_zero_retries():
             )
 
     assert mocked.call_count == 1
+
+def test_fetch_url_preserves_http_error_diagnostics():
+    from urllib.error import HTTPError
+
+    request = object()
+    error = HTTPError(
+        "https://example.com/jobs",
+        400,
+        "Bad Request",
+        {
+            "Content-Type": "application/json",
+            "Server": "example",
+        },
+        None,
+    )
+    error.fp = type("Body", (), {
+        "read": lambda self: b'{"error":"invalid request"}'
+    })()
+
+    with patch(
+        "lead_engine.http_retry.urlopen",
+        side_effect=error,
+    ):
+        with pytest.raises(HTTPRetryError) as raised:
+            fetch_url(
+                request,
+                timeout=20,
+            )
+
+    exc = raised.value
+    assert exc.status == 400
+    assert exc.url == "https://example.com/jobs"
+    assert exc.reason == "Bad Request"
+    assert exc.response_body == '{"error":"invalid request"}'
+    assert exc.response_headers["Content-Type"] == "application/json"
+    assert exc.response_headers["Server"] == "example"
+    assert exc.attempts == 1
+    assert "response_body=" in str(exc)
