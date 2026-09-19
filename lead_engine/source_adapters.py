@@ -958,18 +958,6 @@ class JsonSourceAdapter:
                 definition,
             )
 
-            if pagination_type == "offset":
-                pagination = (
-                    payload.get("pagination")
-                    if isinstance(payload, dict)
-                    else None
-                )
-                if (
-                    isinstance(pagination, dict)
-                    and pagination.get("has_more") is False
-                ):
-                    final_checkpoint = None
-
             if pagination_type == "page":
                 final_checkpoint = str(
                     current_page + 1
@@ -984,6 +972,16 @@ class JsonSourceAdapter:
                 final_checkpoint = str(
                     current_offset + step
                 )
+                pagination = (
+                    payload.get("pagination")
+                    if isinstance(payload, dict)
+                    else None
+                )
+                if (
+                    isinstance(pagination, dict)
+                    and pagination.get("has_more") is False
+                ):
+                    final_checkpoint = None
 
             for item in records:
                 record = normalize_job_record(
