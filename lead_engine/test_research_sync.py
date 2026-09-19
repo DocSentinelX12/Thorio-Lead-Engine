@@ -26,7 +26,12 @@ def test_research_payload_preserves_research_and_raw_lead():
     assert fields["Research Key"] == "research-test-1"
     assert fields["Company"] == "Acme"
     assert fields["Research Status"] == "complete"
-    assert json.loads(fields["Verified Fields"]) == ["company_verified", "decision_maker", "business_need_research"]
+    assert json.loads(fields["Verified Fields"]) == [
+        "company_verified",
+        "decision_maker",
+        "business_need_research",
+        "technical_product_hiring_research",
+    ]
     assert json.loads(fields["Company Research"])["decision_maker"] == "Taylor"
     assert "Technical/Product/Hiring Research" not in fields
     assert "Technical Product Hiring Research" in fields
