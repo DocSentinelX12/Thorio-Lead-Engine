@@ -706,7 +706,14 @@ class JsonSourceAdapter:
             )
         except HTTPRetryError as exc:
             raise ValueError(
-                f"JSON source request failed: {exc}"
+                f"JSON source request failed: "
+                f"source={self.source!r}; "
+                f"url={request_url!r}; "
+                f"status={exc.status!r}; "
+                f"attempts={exc.attempts!r}; "
+                f"reason={exc.reason!r}; "
+                f"response_body={exc.response_body!r}; "
+                f"response_headers={exc.response_headers!r}"
             ) from exc
 
         try:
