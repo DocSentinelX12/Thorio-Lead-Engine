@@ -150,3 +150,49 @@ def test_sync_pending_rejects_non_object_payload(tmp_path):
     assert stats[0] == 1
     assert stats[1] == 0
     assert stats[2] == 1
+
+
+def test_autonomous_revenue_eligibility_syncs_outreach_without_human_delivery_approval(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {
+        "fingerprint": "autonomous-outreach-airtable-001",
+        "company": "Acme Corp",
+        "qualified": True,
+        "sales_eligibility": "eligible",
+        "delivery_status": "pending",
+        "route": "",
+        "outreach_route": "Shiftr",
+        "active_route": "Shiftr",
+        "contact_email": "jane@example.com",
+        "outreach_state": "awaiting_response",
+        "outreach_attempt": 1,
+        "last_outreach_action_id": "action-001",
+        "last_outreach_delivery": {"transport": "fake", "thread_url": "https://example.com/thread/1"},
+        "conversation_id": "conversation:autonomous-outreach-airtable-001:shiftr",
+        "next_follow_up_at": "2026-09-22T12:00:00+00:00",
+        "last_response_outcome": "",
+        "potential_routes": ["Shiftr"],
+        "eligible_routes": ["Shiftr"],
+        "preserved_routes": ["Shiftr"],
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {"company_verified": True, "decision_maker": "Jane", "decision_maker_verification_status": "verified"},
+        "current_intent_research": {"verified": True, "verification_status": "verified"},
+        "route_research": {"verified": True, "verification_status": "verified"},
+        "qualification_results": {"Shiftr": {"qualified": True, "route_research": {"verified": True}}},
+    }
+
+    with patch("lead_engine.sync_worker.sync_lead_if_missing", return_value={"status": "created", "record": {"id": "lead-001"}}), \
+         patch("lead_engine.sync_worker.sync_research", return_value={"status": "created", "record": {"id": "research-001"}}), \
+         patch("lead_engine.sync_worker.sync_outreach", return_value={"status": "created", "record": {"id": "outreach-001"}}) as mock_outreach, \
+         patch("lead_engine.sync_worker.sync_master_tracker", return_value={"status": "synced"}) as mock_master:
+        from .sync_worker import sync_one
+        result = sync_one(lead, db=db)
+
+    assert result["status"] == "synced"
+    mock_outreach.assert_called_once()
+    outreach_payload = mock_outreach.call_args.args[0]
+    assert outreach_payload["route"] == "Shiftr"
+    assert outreach_payload["outreach_status"] == "awaiting_response"
+    assert outreach_payload["next_action_date"] == "2026-09-22T12:00:00+00:00"
+    mock_master.assert_called_once()
