@@ -36,14 +36,22 @@ def _outreach_ready(
     lead: Dict[str, Any],
 ) -> bool:
     """
-    A lead is ready for Outreach only after the delivery
-    approval gate has passed and a usable contact email exists.
-    """
+    A lead is ready for Outreach when either the legacy human
+    delivery approval is present or the autonomous revenue gate
+    is machine-verified as eligible.
 
+    The autonomous closer path never requires human approval.
+    """
+    autonomous_ready = _text(lead.get("sales_eligibility")).lower() == "eligible"
+    route = _text(
+        lead.get("outreach_route")
+        or lead.get("active_route")
+        or lead.get("route")
+    )
     return bool(
-        _delivery_approved(lead)
+        (autonomous_ready or _delivery_approved(lead))
         and _text(lead.get("company"))
-        and _text(lead.get("route"))
+        and route
         and _text(lead.get("contact_email"))
     )
 
@@ -111,35 +119,53 @@ def _build_outreach_payload(
     multiple applicable partners.
     """
 
+    route = _text(
+        lead.get("outreach_route")
+        or lead.get("active_route")
+        or lead.get("route")
+    )
+    lifecycle = _text(lead.get("outreach_state")).lower()
+    response_outcome = _text(lead.get("last_response_outcome")).lower()
+    commercial_outcome = lead.get("commercial_outcome")
+    if isinstance(commercial_outcome, dict):
+        commercial_type = _text(commercial_outcome.get("type")).lower()
+    else:
+        commercial_type = ""
+
+    if commercial_type == "referred" or lifecycle == "referred":
+        response = "Referred"
+    elif commercial_type == "converted" or lifecycle == "converted" or response_outcome in {"interested", "positive"}:
+        response = "Positive"
+    elif response_outcome in {"objection", "replied"}:
+        response = "Maybe"
+    elif response_outcome in {"opted_out", "declined", "irrelevant"}:
+        response = "Not Interested"
+    elif lifecycle in {"awaiting_response", "outreach_sent"}:
+        response = "No Response"
+    else:
+        response = ""
+
+    delivery = lead.get("last_outreach_delivery")
+    delivery = delivery if isinstance(delivery, dict) else {}
+    sent_at = (
+        delivery.get("sent_at")
+        or delivery.get("confirmed_at")
+        or lead.get("last_outreach_sent_at")
+    )
+
+    attempt = int(lead.get("outreach_attempt", 0) or 0)
+    follow_up_number = max(0, attempt - 1)
     return {
-        "fingerprint": lead.get(
-            "fingerprint"
-        ),
-        "company": lead.get(
-            "company"
-        ),
-        "route": lead.get(
-            "route"
-        ),
-        "platform": (
-            lead.get("contact_method")
-            or lead.get("source")
-        ),
-        "follow_up_number": lead.get(
-            "follow_up_number",
-            0,
-        ),
-        "response": lead.get(
-            "response",
-            "",
-        ),
-        "outreach_status": lead.get(
-            "outreach_status",
-            "Not Contacted",
-        ),
-        "next_action_date": lead.get(
-            "next_action_date",
-        ),
+        "fingerprint": lead.get("fingerprint"),
+        "company": lead.get("company"),
+        "route": route,
+        "platform": lead.get("contact_method") or lead.get("outreach_channel") or lead.get("source"),
+        "follow_up_number": lead.get("follow_up_number", follow_up_number),
+        "response": response,
+        "message": _text(lead.get("outreach_draft_body")) or _text(lead.get("last_outreach_message")),
+        "outreach_status": lead.get("outreach_status") or ("Contacted" if lifecycle in {"outreach_sent", "awaiting_response", "conversation_active", "follow_up_due"} else "Not Contacted"),
+        "next_action_date": lead.get("next_action_date") or lead.get("next_follow_up_at"),
+        "date_sent": sent_at,
     }
 
 
