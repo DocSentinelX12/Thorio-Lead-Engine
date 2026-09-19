@@ -28,6 +28,7 @@ def _conversation_key(opportunity_id: str, conversation_id: str) -> str:
 def _classify(text: str) -> str:
     value = str(text or "").strip().lower()
     if any(token in value for token in ("unsubscribe", "remove me", "stop", "do not contact", "don't contact", "not interested", "no thanks")): return "opted_out"
+    if any(token in value for token in ("signed the contract", "contract is signed", "contract has been signed", "we signed", "we've signed", "we have signed", "hired you", "we hired", "we've hired", "we have hired", "payment sent", "payment received", "paid the invoice", "invoice paid", "deal closed", "closed the deal")): return "converted"
     if any(token in value for token in ("yes", "interested", "tell me more", "sounds good", "let's talk", "lets talk", "book", "schedule")): return "interested"
     if any(token in value for token in ("price", "pricing", "cost", "too expensive")): return "objection"
     if any(token in value for token in ("later", "next month", "not now", "timing")): return "objection"
@@ -42,7 +43,7 @@ def _route_switch(lead: Mapping[str, Any], suggested_route: Optional[str]) -> tu
     if current and current != candidate: return candidate, f"conversation_evidence_switch:{current}->{candidate}"
     return None, None
 
-def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, event_id: str, text: str, outcome: Optional[str] = None, objection: Optional[str] = None, suggested_route: Optional[str] = None) -> Dict[str, Any]:
+def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, event_id: str, text: str, outcome: Optional[str] = None, objection: Optional[str] = None, suggested_route: Optional[str] = None, commercial_evidence: Optional[str] = None) -> Dict[str, Any]:
     opportunity_id = str(opportunity_id or "").strip(); conversation_id = str(conversation_id or "").strip(); event_id = str(event_id or "").strip()
     if not opportunity_id or not conversation_id or not event_id: raise ValueError("opportunity_id, conversation_id, and event_id are required")
     lead = db.get(opportunity_id)
@@ -51,6 +52,16 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
     conversation = state["conversations"].setdefault(key, {"opportunity_id": opportunity_id, "conversation_id": conversation_id, "events": [], "processed_event_ids": [], "created_at": _now()})
     if event_id in conversation["processed_event_ids"]: return dict(conversation)
     classified = str(outcome or _classify(text)).strip().lower()
+    if classified == "referred":
+        referral_submitted = lead.get("referral_submitted") is True or lead.get("shiftr_referral_submitted") is True
+        if not referral_submitted:
+            raise ValueError("referred outcome requires durable referral submission")
+    if classified == "converted":
+        commercial_evidence_value = str(commercial_evidence or text or "").strip()
+        if not commercial_evidence_value:
+            raise ValueError("converted outcome requires commercial evidence")
+    else:
+        commercial_evidence_value = str(commercial_evidence or "").strip()
     event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified}
     if objection: event["objection"] = str(objection)
     conversation["events"].append(event); conversation["processed_event_ids"].append(event_id); conversation["last_inbound_at"] = event["at"]; conversation["response_count"] = int(conversation.get("response_count", 0) or 0) + 1
@@ -60,8 +71,25 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         history = list(updated.get("route_switch_history") or []) if isinstance(updated.get("route_switch_history"), list) else []
         history.append({"at": event["at"], "from": updated.get("outreach_route"), "to": switched_route, "evidence": switch_evidence}); updated["route_switch_history"] = history; updated["outreach_route"] = switched_route; updated["active_route"] = switched_route
     if switch_evidence and not switched_route: conversation.setdefault("warnings", []).append(switch_evidence)
-    if classified in STOP_STATES or classified == "opted_out":
-        updated["revenue_lifecycle_state"] = "closed_lost" if classified != "converted" else "converted"; updated["outreach_stop_reason"] = classified; updated["next_follow_up_at"] = None; updated["follow_up_due"] = False
+    if classified in {"converted", "referred"}:
+        updated["revenue_lifecycle_state"] = classified
+        updated["outreach_state"] = classified
+        updated["outreach_stop_reason"] = classified
+        updated["next_follow_up_at"] = None
+        updated["follow_up_due"] = False
+        updated["commercial_outcome"] = {
+            "type": classified,
+            "at": event["at"],
+            "evidence": commercial_evidence_value or (
+                "durable_referral_submission" if classified == "referred" else ""
+            ),
+            "route": str(updated.get("outreach_route") or "").strip(),
+        }
+    elif classified in STOP_STATES or classified == "opted_out":
+        updated["revenue_lifecycle_state"] = "closed_lost"
+        updated["outreach_stop_reason"] = classified
+        updated["next_follow_up_at"] = None
+        updated["follow_up_due"] = False
     elif classified in {"interested", "replied", "objection"}:
         updated["next_follow_up_at"] = _now(); updated["follow_up_due"] = True; updated["outreach_state"] = "awaiting_response"
         enqueue(db, "follow_up", {"lead": updated, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True, "authorized": True, "authorized_by_role": CLOSER_ROLE}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
