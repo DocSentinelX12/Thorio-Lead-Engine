@@ -83,7 +83,7 @@ def _detail_collection_deadline(timeout: int) -> float:
         value = _DEFAULT_DETAIL_COLLECTION_DEADLINE_SECONDS
     if value <= 0:
         raise ValueError("THORIO_SOURCE_DETAIL_COLLECTION_DEADLINE_SECONDS must be positive")
-    return time.monotonic() + max(value, float(timeout))
+    return time.monotonic() + value
 
 
 def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResult:
