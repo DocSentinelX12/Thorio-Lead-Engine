@@ -12,6 +12,25 @@ DEFAULT_MAX_BACKOFF = 30.0
 class HTTPRetryError(Exception):
     """Raised when a retried HTTP request ultimately fails."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: Optional[int] = None,
+        url: Optional[str] = None,
+        reason: Optional[str] = None,
+        response_body: Optional[str] = None,
+        response_headers: Optional[dict[str, str]] = None,
+        attempts: Optional[int] = None,
+    ):
+        super().__init__(message)
+        self.status = status
+        self.url = url
+        self.reason = reason
+        self.response_body = response_body
+        self.response_headers = response_headers or {}
+        self.attempts = attempts
+
 
 def _retry_delay(
     attempt: int,
@@ -124,9 +143,40 @@ def fetch_url(
                 or 500 <= exc.code <= 599
             )
 
+            try:
+                response_body = exc.read().decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            except Exception:
+                response_body = "<unable to read HTTP error response body>"
+
+            response_headers = {}
+            try:
+                for header_name in (
+                    "Content-Type",
+                    "Retry-After",
+                    "Server",
+                    "Date",
+                ):
+                    header_value = exc.headers.get(header_name)
+                    if header_value:
+                        response_headers[header_name] = header_value
+            except Exception:
+                response_headers = {}
+
             error = HTTPRetryError(
                 f"HTTP request failed with "
-                f"status {exc.code}."
+                f"status {exc.code}. "
+                f"reason={exc.reason!s}. "
+                f"url={exc.geturl()!s}. "
+                f"response_body={response_body!r}",
+                status=exc.code,
+                url=exc.geturl(),
+                reason=str(exc.reason),
+                response_body=response_body,
+                response_headers=response_headers,
+                attempts=attempt + 1,
             )
 
             if not retryable:
