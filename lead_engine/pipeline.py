@@ -820,6 +820,22 @@ class LeadPipeline:
             lead,
             referral
         )
+        updated.update(
+            {
+                "revenue_lifecycle_state": "referred",
+                "outreach_state": "referred",
+                "outreach_stop_reason": "referred",
+                "next_follow_up_at": None,
+                "follow_up_due": False,
+                "commercial_outcome": {
+                    "type": "referred",
+                    "at": referral.submitted_at,
+                    "route": "Paxus",
+                    "evidence": "durable_referral_submission",
+                    "referral_id": referral.referral_id,
+                },
+            }
+        )
 
         stored = self.db.update_payload(
             fingerprint,
