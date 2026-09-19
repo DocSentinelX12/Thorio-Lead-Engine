@@ -27,6 +27,8 @@ def test_research_payload_preserves_research_and_raw_lead():
     assert fields["Research Status"] == "complete"
     assert json.loads(fields["Verified Fields"]) == ["company_verified", "decision_maker", "business_need_research"]
     assert json.loads(fields["Company Research"])["decision_maker"] == "Taylor"
+    assert "Technical/Product/Hiring Research" not in fields
+    assert "Technical Product Hiring Research" in fields
     assert json.loads(fields["Evidence and Provenance"])[0]["source"] == "https://example.com"
     raw = json.loads(fields["Raw Research Package"])
     assert raw["unknown_field"] == "must survive in raw package"
