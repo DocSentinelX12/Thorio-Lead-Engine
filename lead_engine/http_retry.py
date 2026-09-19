@@ -69,7 +69,7 @@ def fetch_url(
     reached, no additional attempt or backoff is started.
     """
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
-        raise ValueError("HTTP timeout must be a positive integer.")
+        raise ValueError("timeout must be positive")
 
     if not isinstance(max_retries, int) or isinstance(max_retries, bool) or max_retries < 0:
         raise ValueError("HTTP max_retries must be a non-negative integer.")
