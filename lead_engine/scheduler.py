@@ -234,6 +234,7 @@ class LeadScheduler:
         db = self.runner.pipeline.db
         remote_before = self._bridge_remote()
         due_followups = enqueue_due_followups(db)
+        revenue_inbound_health = db.get_state("revenue_inbound_health") if hasattr(db, "get_state") else None
         if agent_max_rounds is None:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
         else:
@@ -254,7 +255,7 @@ class LeadScheduler:
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
-        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "post_sync_agents": post_sync_agents, "due_followups_enqueued": due_followups, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
+        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "post_sync_agents": post_sync_agents, "due_followups_enqueued": due_followups, "revenue_inbound_health": revenue_inbound_health, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 1) -> Dict[str, Any]:
         """Run a finite production window and force each supplied source through its bounded cycles."""
