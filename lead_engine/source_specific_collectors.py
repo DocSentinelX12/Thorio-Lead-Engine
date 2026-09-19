@@ -6,6 +6,7 @@ import re
 import time
 from html import unescape
 from html.parser import HTMLParser
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, List
 from urllib.parse import urljoin, urlencode
 from urllib.request import Request
@@ -111,42 +112,75 @@ def _detail_collect(source: str, listing_url: str, timeout: int) -> AdapterResul
         if len(candidates) >= (1 if os.environ.get("THORIO_SOURCE_DIAGNOSTIC") == "1" else 40):
             break
     records: Dict[str, Dict[str, Any]] = {}
-    for link in candidates:
+
+    def collect_detail(link: str) -> List[Dict[str, Any]]:
+        detail = fetch_url(
+            Request(
+                link,
+                headers={
+                    "User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0",
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+            ),
+            timeout=timeout,
+            deadline=deadline,
+        )
         if time.monotonic() >= deadline:
             raise HTTPRetryError(
                 f"Source-specific collection deadline exceeded for {source}.",
                 url=listing_url,
             )
-        try:
-            detail = fetch_url(
-                Request(link, headers={"User-Agent": "Mozilla/5.0 Thorio-Lead-Engine/1.0", "Accept": "text/html,application/xhtml+xml"}),
-                timeout=timeout,
-                deadline=deadline,
+        detail_records = _jsonld_records(detail, source, link)
+        if time.monotonic() >= deadline:
+            raise HTTPRetryError(
+                f"Source-specific collection deadline exceeded for {source}.",
+                url=listing_url,
             )
-            if time.monotonic() >= deadline:
-                raise HTTPRetryError(
-                    f"Source-specific collection deadline exceeded for {source}.",
-                    url=listing_url,
-                )
-            detail_records = _jsonld_records(detail, source, link)
-            if time.monotonic() >= deadline:
-                raise HTTPRetryError(
-                    f"Source-specific collection deadline exceeded for {source}.",
-                    url=listing_url,
-                )
-            for record in detail_records:
-                records[record["url"]] = record
-        except HTTPRetryError:
-            if time.monotonic() >= deadline:
-                raise
-            continue
-        except Exception:
-            if time.monotonic() >= deadline:
-                raise HTTPRetryError(
-                    f"Source-specific collection deadline exceeded for {source}.",
-                    url=listing_url,
-                )
-            continue
+        return detail_records
+
+    worker_count = min(8, len(candidates)) if candidates else 0
+    if worker_count:
+        try:
+            with ThreadPoolExecutor(
+                max_workers=worker_count,
+                thread_name_prefix=f"thorio-{source.lower().replace(' ', '-')}",
+            ) as executor:
+                futures = {
+                    executor.submit(collect_detail, link): link
+                    for link in candidates
+                }
+                try:
+                    for future in as_completed(
+                        futures,
+                        timeout=max(0.0, deadline - time.monotonic()),
+                    ):
+                        link = futures[future]
+                        try:
+                            detail_records = future.result()
+                        except HTTPRetryError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            continue
+                        except Exception:
+                            if time.monotonic() >= deadline:
+                                raise HTTPRetryError(
+                                    f"Source-specific collection deadline exceeded for {source}.",
+                                    url=listing_url,
+                                )
+                            continue
+                        for record in detail_records:
+                            records[record["url"]] = record
+                except FuturesTimeoutError as exc:
+                    raise HTTPRetryError(
+                        f"Source-specific collection deadline exceeded for {source}.",
+                        url=listing_url,
+                    ) from exc
+        except FuturesTimeoutError as exc:
+            raise HTTPRetryError(
+                f"Source-specific collection deadline exceeded for {source}.",
+                url=listing_url,
+            ) from exc
+
     return AdapterResult(records=list(records.values()), checkpoint=None)
 
 
