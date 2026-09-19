@@ -96,3 +96,37 @@ def test_pipeline_does_not_lose_lead_when_sync_fails(tmp_path):
     assert stats[2] == 1
 
     mock_sync.assert_called_once()
+
+
+def test_paxus_submission_marks_revenue_opportunity_referred(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {
+        "fingerprint": "paxus-referred-lifecycle",
+        "company": "Acme Corp",
+        "contact_name": "Jane Smith",
+        "contact_email": "jane@example.com",
+        "qualified": True,
+        "potential_routes": ["Paxus"],
+        "eligible_routes": ["Paxus"],
+        "preserved_routes": ["Paxus"],
+        "contact_communicated": True,
+        "contact_consent": True,
+        "warm_referral_ready": True,
+        "referral_submitted": False,
+        "revenue_lifecycle_state": "conversation_active",
+        "outreach_state": "awaiting_response",
+        "next_follow_up_at": "2026-09-20T12:00:00+00:00",
+        "follow_up_due": True,
+    }
+    db.insert_if_new(lead)
+    pipeline = LeadPipeline(db=db, sync_enabled=False)
+
+    stored = pipeline.submit_paxus_referral(lead["fingerprint"])
+
+    assert stored["revenue_lifecycle_state"] == "referred"
+    assert stored["outreach_state"] == "referred"
+    assert stored["outreach_stop_reason"] == "referred"
+    assert stored["next_follow_up_at"] is None
+    assert stored["follow_up_due"] is False
+    assert stored["commercial_outcome"]["type"] == "referred"
+    assert stored["referral_submitted"] is True
