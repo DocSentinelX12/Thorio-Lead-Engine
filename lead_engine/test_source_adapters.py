@@ -464,6 +464,119 @@ def test_json_adapter_definition_offset_pagination():
     assert result.checkpoint == "100"
 
 
+
+def test_json_adapter_stops_at_configured_pagination_end_error():
+    from .source_definition import SourceDefinition
+
+    definition = SourceDefinition(
+        name="Remote First Jobs",
+        provider="Remote First Jobs",
+        collector_type="json",
+        url="https://remotefirstjobs.com/api/search-jobs",
+        record_path="jobs",
+        pagination_type="page",
+        page_parameter="page",
+        page_start=0,
+        max_pages=5,
+        max_requests=5,
+        metadata={
+            "pagination_end_error_markers": [
+                "page must be between"
+            ]
+        },
+    )
+
+    responses = {
+        "https://remotefirstjobs.com/api/search-jobs?page=4": (
+            b'{"jobs":[]}'
+        ),
+    }
+
+    def fake_fetch(request, timeout):
+        if request.full_url.endswith("page=5"):
+            from .http_retry import HTTPRetryError
+
+            raise HTTPRetryError(
+                "page out of range",
+                url=request.full_url,
+                status=400,
+                response_body='{"message":"page must be between 0 and 4"}',
+            )
+        return responses[request.full_url]
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        side_effect=fake_fetch,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect(
+            checkpoint="4"
+        )
+
+    assert fetch.call_count == 2
+    assert result.records == []
+    assert result.checkpoint is None
+
+
+def test_json_adapter_resets_stale_remotejobs_checkpoint():
+    from .source_definition import SourceDefinition
+    from .http_retry import HTTPRetryError
+
+    definition = SourceDefinition(
+        name="RemoteJobs.org",
+        provider="RemoteJobs.org",
+        collector_type="json",
+        url="https://remotejobs.org/api/v1/jobs?limit=50",
+        record_path="data",
+        pagination_type="offset",
+        offset_parameter="offset",
+        offset_start=0,
+        offset_step=50,
+        max_pages=1,
+        max_requests=1,
+        max_records=50,
+        metadata={
+            "reset_checkpoint_on_http_error": True
+        },
+    )
+
+    payload = (
+        b'{"data":[{"id":"1","title":"Engineer",'
+        b'"company":{"name":"Remote Corp"},'
+        b'"url":"https://remotejobs.org/remote-jobs/engineer"}],'
+        b'"pagination":{"has_more":false}}'
+    )
+
+    def fake_fetch(request, timeout):
+        if "offset=4950" in request.full_url:
+            raise HTTPRetryError(
+                "Internal Server Error",
+                url=request.full_url,
+                status=500,
+                response_body='{"error":"Failed to fetch jobs"}',
+            )
+        return payload
+
+    with patch(
+        "lead_engine.source_adapters.fetch_url",
+        side_effect=fake_fetch,
+    ) as fetch:
+        adapter = create_adapter(
+            definition=definition,
+        )
+
+        result = adapter.adapter.collect(
+            checkpoint="4950"
+        )
+
+    assert fetch.call_count == 2
+    assert result.checkpoint is None
+    assert result.records[0]["source_id"] == "1"
+
+
 def test_json_adapter_definition_next_url_pagination():
     from .source_definition import SourceDefinition
 
