@@ -193,6 +193,6 @@ def test_autonomous_revenue_eligibility_syncs_outreach_without_human_delivery_ap
     mock_outreach.assert_called_once()
     outreach_payload = mock_outreach.call_args.args[0]
     assert outreach_payload["route"] == "Shiftr"
-    assert outreach_payload["outreach_status"] == "awaiting_response"
+    assert outreach_payload["outreach_status"] == "Contacted"
     assert outreach_payload["next_action_date"] == "2026-09-22T12:00:00+00:00"
     mock_master.assert_called_once()
