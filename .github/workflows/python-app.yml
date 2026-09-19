@@ -340,6 +340,21 @@ jobs:
           if not sync_evidence_found:
               print("AIRTABLE DELIVERY FAILURE: Lead Engine result did not contain synchronization evidence.")
               sys.exit(1)
+          inbound_failures = []
+          inbound_health_evidence = False
+          for result in results:
+              health = result.get("revenue_inbound_health")
+              if not isinstance(health, dict):
+                  continue
+              inbound_health_evidence = True
+              if str(health.get("status") or "").strip().lower() == "failed" or int(health.get("failed_count", 0) or 0) > 0:
+                  inbound_failures.extend(item for item in (health.get("failures") or []) if isinstance(item, dict))
+          if inbound_health_evidence and inbound_failures:
+              print(f"REVENUE INBOUND OBSERVATION FAILURE: {len(inbound_failures)} configured revenue conversation observation operation(s) failed; follow-ups were blocked.")
+              for index, item in enumerate(inbound_failures[:20], 1):
+                  print(f"INBOUND FAILURE {index}: opportunity_id={item.get('opportunity_id', '')} channel={item.get('channel', '')} error={item.get('error', '')}")
+              sys.exit(1)
+
           if sync_failed > 0:
               print(f"AIRTABLE DELIVERY FAILURE: {sync_failed} lead synchronization operation(s) failed and remain undelivered.")
               for index, item in enumerate(failures[:20], 1):
