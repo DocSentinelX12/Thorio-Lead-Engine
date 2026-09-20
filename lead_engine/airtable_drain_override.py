@@ -29,7 +29,7 @@ def drain_pending(db: Any, limit: int = 50) -> Dict[str, Any]:
         budget_seconds = 120.0
     budget_seconds = max(1.0, budget_seconds)
     batch_limit = max(1, int(limit))
-    started = time.monotonic()
+    started = time.perf_counter()
 
     aggregate: Dict[str, Any] = {
         "synced": [],
@@ -67,9 +67,9 @@ def drain_pending(db: Any, limit: int = 50) -> Dict[str, Any]:
         if processed < batch_limit:
             aggregate["drain_complete"] = True
             break
-        if time.monotonic() - started >= budget_seconds:
+        if time.perf_counter() - started >= budget_seconds:
             break
 
-    aggregate["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    aggregate["elapsed_seconds"] = round(time.perf_counter() - started, 3)
     aggregate["drain_budget_seconds"] = budget_seconds
     return aggregate
