@@ -22,7 +22,7 @@ from .compute_resources import CpuResource, GpuResource, NodeResource, ResourceS
 
 
 class NvidiaDiscoveryError(RuntimeError):
-    """Raised when NVIDIA hardware is present but cannot be truthfully probed."""
+    """Raised when NVIDIA hardware cannot be truthfully probed."""
 
 
 @dataclass(frozen=True)
@@ -118,7 +118,7 @@ class NvidiaProvider(ComputeProvider):
         observed_at = float(self._now())
         if observed_at <= 0:
             raise NvidiaDiscoveryError("discovery clock must return a positive timestamp")
-        query = self._run("--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id", "--format=csv,noheader,nounits")
+        query = self._run("--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id", "--format=csv,nounits")
         smi = self._run()
         rows = self._parse_csv(query.stdout)
         cuda_supported = self._parse_cuda_supported_version(smi.stdout)
@@ -176,8 +176,7 @@ class NvidiaProvider(ComputeProvider):
             "topology_error": topology_error,
         }
         node = NodeResource(
-            node_id=self.node_id,
-            architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
+            node_id=self.node_id, architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
             cpu=CpuResource(self.node_id, os.cpu_count() or 1, self._host_memory_bytes()),
             gpus=tuple(gpus), driver_version=driver_version, cuda_version=toolkit_version or cuda_supported,
             state=ResourceState.AVAILABLE,
