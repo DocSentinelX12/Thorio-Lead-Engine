@@ -75,13 +75,17 @@ class NvidiaProvider(ComputeProvider):
         return match.group(1) if match else None
 
     @staticmethod
-    def _parse_csv(text: str) -> list[dict[str, str]]:
+    def _normalize_header(value: str) -> str:
+        return re.sub(r"\s*\[[^\]]+\]\s*$", "", value.strip())
+
+    @classmethod
+    def _parse_csv(cls, text: str) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = []
         reader = csv.DictReader(StringIO(text), skipinitialspace=True)
         if not reader.fieldnames:
             return rows
         for raw in reader:
-            cleaned = {str(key).strip(): (str(value).strip() if value is not None else "") for key, value in raw.items()}
+            cleaned = {cls._normalize_header(str(key)): (str(value).strip() if value is not None else "") for key, value in raw.items()}
             if any(cleaned.values()):
                 rows.append(cleaned)
         return rows
