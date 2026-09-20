@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from .agent_orchestrator import AgentOrchestrator
 from .agent_registry import ALL_AGENT_ROLES
 from .batch_delivery import sync_pending_batched
+from .airtable_drain_override import drain_pending
 from .compute_bridge import bridge_once
 from .compute_worker import ComputeWorkerClient
 from .database import LeadDB
@@ -241,10 +242,7 @@ class LeadScheduler:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=agent_max_rounds)
         remote_after = self._bridge_remote()
         paxus_research = process_paxus_research_queue(db)
-        sync_result = sync_pending(db)
-        # A successful Airtable handoff may occur after the main agent drain.
-        # Re-run the authoritative queue once so the newly confirmed handoff
-        # can advance to the closer without waiting for another scheduler cycle.
+        sync_result = drain_pending(db)
         post_sync_agents = None
         if int(sync_result.get("synced_count", 0) or 0) or int(sync_result.get("already_exists_count", 0) or 0):
             if agent_max_rounds is None:
@@ -306,16 +304,10 @@ class LeadScheduler:
             raise ValueError("interval_seconds must be greater than or equal to 0.")
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be greater than or equal to 1.")
-        if agent_max_rounds is not None and agent_max_rounds < 1:
-            raise ValueError("agent_max_rounds must be greater than zero")
-        if not source_list:
-            return {"cycles": 0, "results": []}
-        cycle_results = []
         cycles = 0
         while max_cycles is None or cycles < max_cycles:
-            cycle_results.append(self.run(source_list, agent_max_rounds=agent_max_rounds))
+            self.run(source_list, agent_max_rounds=agent_max_rounds)
             cycles += 1
-            if max_cycles is not None and cycles >= max_cycles:
-                break
-            time.sleep(interval_seconds)
-        return {"cycles": cycles, "results": cycle_results}
+            if max_cycles is None or cycles < max_cycles:
+                time.sleep(interval_seconds)
+        return {"status": "completed", "cycles": cycles}
