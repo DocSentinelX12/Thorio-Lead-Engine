@@ -26,8 +26,8 @@ jobs:
           from pathlib import Path
           path = Path('lead_engine/compute_pool.py')
           text = path.read_text(encoding='utf-8')
-          old = 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)'
-          new = 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)'
+          old = 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)'
+          new = "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,0,?)"
           if text.count(old) != 1:
               raise SystemExit(f'Expected exactly one target SQL binding expression, found {text.count(old)}')
           path.write_text(text.replace(old, new), encoding='utf-8')
@@ -43,7 +43,7 @@ jobs:
           git add lead_engine/compute_pool.py .github/workflows/_surgical_gpu_fix.yml
           git diff --cached --check
           git diff --cached -- lead_engine/compute_pool.py
-          git commit -m 'Fix GPU worker registration SQL bindings'
+          git commit -m 'Fix GPU worker registration column bindings'
           git push origin HEAD:feature/gpu-fabric-foundation
 
-      # This file is intentionally self-removing after the exact source fix.
+      # One-time self-removing workflow; it exists only to apply the exact source patch.
