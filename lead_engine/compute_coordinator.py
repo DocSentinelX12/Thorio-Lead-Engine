@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
 from .compute_provider import ProviderResourceSnapshot
-from .compute_resources import ComputeRequirements, CpuResource, GpuRequirements, NodeResource, ResourceState, WorkloadClass
+from .compute_resources import ComputeRequirements, CpuResource, GpuResource, GpuRequirements, NodeResource, ResourceState, WorkloadClass
 from .compute_scheduler import ComputeScheduler, ComputeSchedulingError
 
 
@@ -112,18 +112,12 @@ class ComputeCoordinator:
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         with self._lock:
             with self._connect() as connection:
-                existing = connection.execute(
-                    "SELECT payload,status FROM compute_tasks WHERE task_id=?",
-                    (resolved_id,),
-                ).fetchone()
+                existing = connection.execute("SELECT payload,status FROM compute_tasks WHERE task_id=?", (resolved_id,)).fetchone()
                 if existing:
                     if json.dumps(json.loads(existing["payload"]), ensure_ascii=False, sort_keys=True) != serialized:
                         raise ValueError(f"task_id already exists with a different payload: {resolved_id}")
                     return resolved_id
-                connection.execute(
-                    "INSERT INTO compute_tasks(task_id,payload,created_at,updated_at) VALUES(?,?,?,?)",
-                    (resolved_id, serialized, now, now),
-                )
+                connection.execute("INSERT INTO compute_tasks(task_id,payload,created_at,updated_at) VALUES(?,?,?,?)", (resolved_id, serialized, now, now))
                 connection.commit()
         return resolved_id
 
@@ -137,8 +131,45 @@ class ComputeCoordinator:
         item["result"] = json.loads(item["result"]) if item["result"] else None
         return item
 
+    @staticmethod
+    def _gpu_resources_from_payload(value: Any, worker_id: str) -> tuple[GpuResource, ...]:
+        if value is None:
+            return ()
+        if not isinstance(value, list):
+            raise ValueError("gpu_resources must be a list")
+        result: list[GpuResource] = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError("gpu_resources entries must be objects")
+            result.append(GpuResource(
+                node_id=str(item.get("node_id") or worker_id),
+                gpu_id=str(item["gpu_id"]),
+                gpu_uuid=item.get("gpu_uuid"),
+                model=item.get("model"),
+                vram_bytes=item.get("vram_bytes"),
+                compute_capability=item.get("compute_capability"),
+                driver_version=item.get("driver_version"),
+                cuda_version=item.get("cuda_version"),
+                pci_bus_id=item.get("pci_bus_id"),
+                numa_node=item.get("numa_node"),
+                nvlink_domain=item.get("nvlink_domain"),
+                topology_domain=item.get("topology_domain"),
+                health_state=ResourceState(str(item.get("health_state", ResourceState.DISCOVERED.value))),
+                availability_state=ResourceState(str(item.get("availability_state", ResourceState.DISCOVERED.value))),
+            ))
+        return tuple(result)
+
     def _observe_worker_resources(self, identity: WorkerIdentity) -> None:
         now = time.time()
+        node_state = ResourceState.DEGRADED if identity.gpu_discovery_state == "degraded" else ResourceState.AVAILABLE
+        evidence = {
+            "source": "authenticated_worker_registration",
+            "worker_id": identity.worker_id,
+            "gpu_discovery_state": identity.gpu_discovery_state,
+            "gpu_discovery_error": identity.gpu_discovery_error,
+            "gpu_count": len(identity.gpu_resources),
+            "hardware_attestation": "worker-local-nvidia-discovery",
+        }
         snapshot = ProviderResourceSnapshot(
             provider_id="worker_pool",
             domain_id=identity.worker_id,
@@ -146,13 +177,17 @@ class ComputeCoordinator:
             expires_at=now + max(60, self.lease_seconds * 2),
             ephemeral=True,
             authentication_state="authenticated",
-            evidence={"source": "authenticated_worker_registration", "worker_id": identity.worker_id},
+            evidence=evidence,
             nodes=(NodeResource(
                 node_id=identity.worker_id,
                 architecture=identity.architecture,
                 cpu=CpuResource(identity.worker_id, identity.cpu_count, identity.memory_mb * 1024 * 1024),
-                gpus=(),
-                state=ResourceState.AVAILABLE,
+                gpus=identity.gpu_resources,
+                driver_version=identity.driver_version,
+                cuda_version=identity.cuda_version,
+                nccl_version=identity.nccl_version,
+                nic_names=identity.nic_names,
+                state=node_state,
             ),),
         )
         self.inventory.observe(snapshot)
@@ -171,6 +206,11 @@ class ComputeCoordinator:
                     worker_id=worker["worker_id"], hostname=worker["hostname"], architecture=worker["architecture"],
                     cpu_count=int(worker["cpu_count"]), memory_mb=int(worker["memory_mb"]),
                     capabilities=tuple(worker.get("capabilities", ())),
+                    gpu_resources=tuple(worker.get("gpu_resources", ())),
+                    driver_version=worker.get("driver_version"), cuda_version=worker.get("cuda_version"),
+                    nccl_version=worker.get("nccl_version"), nic_names=tuple(worker.get("nic_names", ())),
+                    gpu_discovery_state=str(worker.get("gpu_discovery_state", "not_probed")),
+                    gpu_discovery_error=str(worker.get("gpu_discovery_error", "")),
                 ))
         return ok
 
@@ -236,10 +276,7 @@ class ComputeCoordinator:
     def _release_physical_allocation(self, attempt: Dict[str, Any] | None, reason: str) -> None:
         if not attempt or not attempt.get("allocation_id"):
             return
-        self.inventory.release_allocation(
-            str(attempt["allocation_id"]), task_id=str(attempt["task_id"]),
-            attempt_id=str(attempt["attempt_id"]), generation=int(attempt["generation"]), reason=reason,
-        )
+        self.inventory.release_allocation(str(attempt["allocation_id"]), task_id=str(attempt["task_id"]), attempt_id=str(attempt["attempt_id"]), generation=int(attempt["generation"]), reason=reason)
 
     def claim(self, worker_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -254,11 +291,7 @@ class ComputeCoordinator:
                 selected = None
                 offset = 0
                 while selected is None:
-                    rows = connection.execute(
-                        "SELECT task_id,payload FROM compute_tasks "
-                        "WHERE status='queued' ORDER BY created_at,task_id LIMIT 100 OFFSET ?",
-                        (offset,),
-                    ).fetchall()
+                    rows = connection.execute("SELECT task_id,payload FROM compute_tasks WHERE status='queued' ORDER BY created_at,task_id LIMIT 100 OFFSET ?", (offset,)).fetchall()
                     if not rows:
                         break
                     for row in rows:
@@ -277,19 +310,11 @@ class ComputeCoordinator:
                 now = time.time()
                 generation = int(connection.execute("SELECT generation FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()["generation"]) + 1
                 attempt_id = str(uuid.uuid4())
-                updated = connection.execute(
-                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,lease_until=?,attempts=attempts+1,attempt_id=?,generation=?,updated_at=? WHERE task_id=? AND status='queued'",
-                    (worker_id, lease_token, now + self.lease_seconds, attempt_id, generation, now, task_id),
-                )
+                updated = connection.execute("UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,lease_until=?,attempts=attempts+1,attempt_id=?,generation=?,updated_at=? WHERE task_id=? AND status='queued'", (worker_id, lease_token, now + self.lease_seconds, attempt_id, generation, now, task_id))
                 if updated.rowcount != 1:
-                    connection.rollback()
-                    self.pool.release_task_slot(worker_id)
-                    return None
+                    connection.rollback(); self.pool.release_task_slot(worker_id); return None
                 lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
-                connection.execute(
-                    "INSERT INTO compute_execution_attempts(attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at) VALUES(?,?,?,?,?,?,?)",
-                    (attempt_id, task_id, generation, worker_id, "leased", lease_digest, now),
-                )
+                connection.execute("INSERT INTO compute_execution_attempts(attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at) VALUES(?,?,?,?,?,?,?)", (attempt_id, task_id, generation, worker_id, "leased", lease_digest, now))
                 connection.commit()
             payload = json.loads(selected["payload"])
             allocation = None
@@ -307,69 +332,27 @@ class ComputeCoordinator:
                         return None
                 except Exception as error:
                     if allocation is not None:
-                        self._release_physical_allocation(
-                            {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
-                            f"physical allocation failed: {error}",
-                        )
+                        self._release_physical_allocation({"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation}, f"physical allocation failed: {error}")
                     self.release(worker_id, task_id, lease_token, f"physical allocation unavailable: {error}")
                     return None
-            return {
-                "task_id": task_id, "attempt_id": attempt_id, "generation": generation,
-                "payload": payload, "lease_token": lease_token,
-                "physical_allocation": None if allocation is None else {
-                    "allocation_id": allocation.allocation_id, "provider_id": allocation.provider_id,
-                    "domain_id": allocation.domain_id, "node_ids": list(allocation.node_ids),
-                    "resource_ids": list(allocation.resource_ids), "resource_keys": list(allocation.resource_keys),
-                    "capability_evidence": list(allocation.capability_evidence),
-                },
-            }
-
+            return {"task_id": task_id, "attempt_id": attempt_id, "generation": generation, "payload": payload, "lease_token": lease_token,
+                    "physical_allocation": None if allocation is None else {"allocation_id": allocation.allocation_id, "provider_id": allocation.provider_id, "domain_id": allocation.domain_id, "node_ids": list(allocation.node_ids), "resource_ids": list(allocation.resource_ids), "resource_keys": list(allocation.resource_keys), "capability_evidence": list(allocation.capability_evidence)}}
 
     def execution_attempt_for_allocation(self, allocation_id: str) -> Optional[Dict[str, Any]]:
-        """Return the execution attempt that claims a physical allocation."""
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM compute_execution_attempts WHERE allocation_id=? ORDER BY generation DESC LIMIT 1",
-                (allocation_id,),
-            ).fetchone()
+            row = connection.execute("SELECT * FROM compute_execution_attempts WHERE allocation_id=? ORDER BY generation DESC LIMIT 1", (allocation_id,)).fetchone()
         if not row:
             return None
-        item = dict(row)
-        item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
-        item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]")
-        return item
+        item = dict(row); item["resource_ids"] = json.loads(item["resource_ids"] or "[]"); item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]"); return item
 
     def execution_attempt(self, attempt_id: str) -> Optional[Dict[str, Any]]:
-        """Return one durable execution attempt for resource reconciliation."""
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM compute_execution_attempts WHERE attempt_id=?",
-                (attempt_id,),
-            ).fetchone()
+            row = connection.execute("SELECT * FROM compute_execution_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
         if not row:
             return None
-        item = dict(row)
-        item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
-        item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]")
-        return item
+        item = dict(row); item["resource_ids"] = json.loads(item["resource_ids"] or "[]"); item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]"); return item
 
-    def bind_physical_allocation(
-        self,
-        *,
-        task_id: str,
-        attempt_id: str,
-        generation: int,
-        allocation_id: str,
-        provider_id: str,
-        domain_id: str,
-        resource_ids: list[str] | tuple[str, ...],
-        lease_token: str,
-    ) -> bool:
-        """Durably attach one physical allocation to one exact leased attempt.
-
-        The coordinator records the binding but does not own physical resources.
-        The resource inventory remains authoritative for physical allocation.
-        """
+    def bind_physical_allocation(self, *, task_id: str, attempt_id: str, generation: int, allocation_id: str, provider_id: str, domain_id: str, resource_ids: list[str] | tuple[str, ...], lease_token: str) -> bool:
         if not task_id.strip() or not attempt_id.strip() or not allocation_id.strip():
             raise ValueError("task, attempt, and allocation identities are required")
         if generation < 1 or not provider_id.strip() or not domain_id.strip() or not resource_ids:
@@ -378,37 +361,18 @@ class ComputeCoordinator:
         serialized_ids = json.dumps(tuple(dict.fromkeys(str(item) for item in resource_ids)), ensure_ascii=False)
         with self._lock:
             with self._connect() as connection:
-                row = connection.execute(
-                    """SELECT a.status,a.task_id,a.generation,a.worker_id,a.lease_token_digest,
-                              a.allocation_id,a.provider_id,a.domain_id,a.resource_ids
-                       FROM compute_execution_attempts a
-                       JOIN compute_tasks t ON t.attempt_id=a.attempt_id
-                       WHERE a.attempt_id=? AND a.task_id=?""",
-                    (attempt_id, task_id),
-                ).fetchone()
-                if not row or row["generation"] != generation or row["status"] != "leased":
-                    return False
-                if row["lease_token_digest"] != lease_digest:
+                row = connection.execute("""SELECT a.status,a.task_id,a.generation,a.worker_id,a.lease_token_digest,a.allocation_id,a.provider_id,a.domain_id,a.resource_ids
+                   FROM compute_execution_attempts a JOIN compute_tasks t ON t.attempt_id=a.attempt_id
+                   WHERE a.attempt_id=? AND a.task_id=?""", (attempt_id, task_id)).fetchone()
+                if not row or row["generation"] != generation or row["status"] != "leased" or row["lease_token_digest"] != lease_digest:
                     return False
                 if row["allocation_id"]:
-                    return bool(
-                        row["allocation_id"] == allocation_id
-                        and row["provider_id"] == provider_id
-                        and row["domain_id"] == domain_id
-                        and row["resource_ids"] == serialized_ids
-                    )
-                cursor = connection.execute(
-                    """UPDATE compute_execution_attempts
-                       SET allocation_id=?,provider_id=?,domain_id=?,resource_ids=?
-                       WHERE attempt_id=? AND task_id=? AND generation=?
-                         AND status='leased' AND allocation_id IS NULL""",
-                    (allocation_id, provider_id, domain_id, serialized_ids, attempt_id, task_id, generation),
-                )
+                    return bool(row["allocation_id"] == allocation_id and row["provider_id"] == provider_id and row["domain_id"] == domain_id and row["resource_ids"] == serialized_ids)
+                cursor = connection.execute("""UPDATE compute_execution_attempts SET allocation_id=?,provider_id=?,domain_id=?,resource_ids=?
+                       WHERE attempt_id=? AND task_id=? AND generation=? AND status='leased' AND allocation_id IS NULL""", (allocation_id, provider_id, domain_id, serialized_ids, attempt_id, task_id, generation))
                 if cursor.rowcount != 1:
-                    connection.rollback()
-                    return False
-                connection.commit()
-                return True
+                    connection.rollback(); return False
+                connection.commit(); return True
 
     def _valid_lease(self, connection: sqlite3.Connection, worker_id: str, task_id: str, lease_token: str) -> bool:
         row = connection.execute("SELECT status,worker_id,lease_token,lease_until FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()
@@ -421,31 +385,18 @@ class ComputeCoordinator:
         lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
         with self._lock:
             with self._connect() as connection:
-                row = connection.execute(
-                    "SELECT status,completed_worker_id,completed_lease_digest,completed_result_digest,attempt_id FROM compute_tasks WHERE task_id=?",
-                    (task_id,),
-                ).fetchone()
+                row = connection.execute("SELECT status,completed_worker_id,completed_lease_digest,completed_result_digest,attempt_id FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()
                 if row and row["status"] == "completed":
-                    return bool(
-                        row["completed_worker_id"] == worker_id
-                        and row["completed_lease_digest"] == lease_digest
-                        and row["completed_result_digest"] == result_digest
-                    )
+                    return bool(row["completed_worker_id"] == worker_id and row["completed_lease_digest"] == lease_digest and row["completed_result_digest"] == result_digest)
                 if not self._valid_lease(connection, worker_id, task_id, lease_token):
                     return False
                 now = time.time()
-                connection.execute(
-                    "UPDATE compute_tasks SET status='completed',result=?,error='',lease_token=NULL,lease_until=NULL,completed_worker_id=?,completed_lease_digest=?,completed_result_digest=?,updated_at=? WHERE task_id=?",
-                    (json.dumps(result, ensure_ascii=False), worker_id, lease_digest, result_digest, now, task_id),
-                )
+                connection.execute("UPDATE compute_tasks SET status='completed',result=?,error='',lease_token=NULL,lease_until=NULL,completed_worker_id=?,completed_lease_digest=?,completed_result_digest=?,updated_at=? WHERE task_id=?", (json.dumps(result, ensure_ascii=False), worker_id, lease_digest, result_digest, now, task_id))
                 attempt_id = row["attempt_id"] if row else None
                 attempt = None
                 if attempt_id:
                     attempt = connection.execute("SELECT * FROM compute_execution_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
-                    connection.execute(
-                        "UPDATE compute_execution_attempts SET status='completed',finished_at=?,authoritative_acceptance='pending' WHERE attempt_id=?",
-                        (now, attempt_id),
-                    )
+                    connection.execute("UPDATE compute_execution_attempts SET status='completed',finished_at=?,authoritative_acceptance='pending' WHERE attempt_id=?", (now, attempt_id))
                 connection.commit()
             if attempt:
                 self._release_physical_allocation(dict(attempt), "execution completed")
@@ -462,15 +413,9 @@ class ComputeCoordinator:
                 attempt = None
                 if row and row["attempt_id"]:
                     attempt = connection.execute("SELECT * FROM compute_execution_attempts WHERE attempt_id=?", (row["attempt_id"],)).fetchone()
-                connection.execute(
-                    "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error=?,updated_at=? WHERE task_id=?",
-                    (str(error)[:4000], now, task_id),
-                )
+                connection.execute("UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error=?,updated_at=? WHERE task_id=?", (str(error)[:4000], now, task_id))
                 if row and row["attempt_id"]:
-                    connection.execute(
-                        "UPDATE compute_execution_attempts SET status='released',finished_at=?,error=? WHERE attempt_id=?",
-                        (now, str(error)[:4000], row["attempt_id"]),
-                    )
+                    connection.execute("UPDATE compute_execution_attempts SET status='released',finished_at=?,error=? WHERE attempt_id=?", (now, str(error)[:4000], row["attempt_id"]))
                 connection.commit()
             if attempt:
                 self._release_physical_allocation(dict(attempt), "execution released")
@@ -481,40 +426,26 @@ class ComputeCoordinator:
         now = time.time()
         with self._lock:
             with self._connect() as connection:
-                rows = connection.execute(
-                    "SELECT task_id,worker_id,attempt_id FROM compute_tasks WHERE status='leased' AND lease_until <= ?",
-                    (now,),
-                ).fetchall()
+                rows = connection.execute("SELECT task_id,worker_id,attempt_id FROM compute_tasks WHERE status='leased' AND lease_until <= ?", (now,)).fetchall()
                 attempts = []
                 for row in rows:
                     if row["attempt_id"]:
                         attempt = connection.execute("SELECT * FROM compute_execution_attempts WHERE attempt_id=?", (row["attempt_id"],)).fetchone()
-                        if attempt:
-                            attempts.append(dict(attempt))
-                if not rows:
-                    return 0
-                connection.execute(
-                    "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error='lease expired',updated_at=? WHERE status='leased' AND lease_until <= ?",
-                    (now, now),
-                )
+                        if attempt: attempts.append(dict(attempt))
+                if not rows: return 0
+                connection.execute("UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,error='lease expired',updated_at=? WHERE status='leased' AND lease_until <= ?", (now, now))
                 for row in rows:
                     if row["attempt_id"]:
-                        connection.execute(
-                            "UPDATE compute_execution_attempts SET status='expired',finished_at=?,error='lease expired' WHERE attempt_id=?",
-                            (now, row["attempt_id"]),
-                        )
+                        connection.execute("UPDATE compute_execution_attempts SET status='expired',finished_at=?,error='lease expired' WHERE attempt_id=?", (now, row["attempt_id"]))
                 connection.commit()
-            for attempt in attempts:
-                self._release_physical_allocation(attempt, "execution lease expired")
+            for attempt in attempts: self._release_physical_allocation(attempt, "execution lease expired")
             for row in rows:
-                if row["worker_id"]:
-                    self.pool.release_task_slot(row["worker_id"])
+                if row["worker_id"]: self.pool.release_task_slot(row["worker_id"])
             return len(rows)
 
     def health(self) -> Dict[str, Any]:
         with self._lock:
-            self.pool.reap_stale_workers()
-            self.recover_expired_tasks()
+            self.pool.reap_stale_workers(); self.recover_expired_tasks()
             with self._connect() as connection:
                 queued = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='queued'").fetchone()[0]
                 leased = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]
@@ -533,63 +464,48 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
 
     def do_GET(self) -> None:
-        if not self._authorized():
-            self._send(401, {"error": "unauthorized"})
-            return
-        if self.path == "/health":
-            self._send(200, self.server.coordinator.health())
-            return
+        if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
+        if self.path == "/health": self._send(200, self.server.coordinator.health()); return
         if self.path.startswith("/work/status/"):
-            task_id = self.path.rsplit("/", 1)[-1]
-            task = self.server.coordinator.task(task_id)
-            self._send(200 if task else 404, task or {"error": "task not found"})
-            return
+            task_id = self.path.rsplit("/", 1)[-1]; task = self.server.coordinator.task(task_id); self._send(200 if task else 404, task or {"error": "task not found"}); return
         self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:
-        if not self._authorized():
-            self._send(401, {"error": "unauthorized"})
-            return
+        if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length > 1_000_000:
-                self._send(413, {"error": "request too large"})
-                return
+            if length > 1_000_000: self._send(413, {"error": "request too large"}); return
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
-            if not isinstance(body, dict):
-                raise ValueError("request body must be an object")
+            if not isinstance(body, dict): raise ValueError("request body must be an object")
             if self.path == "/workers/register":
-                identity = WorkerIdentity(str(body["worker_id"]), str(body["hostname"]), str(body["architecture"]), int(body["cpu_count"]), int(body["memory_mb"]), tuple(str(x) for x in body.get("capabilities", ["lead-processing"])))
+                worker_id = str(body["worker_id"])
+                identity = WorkerIdentity(
+                    worker_id, str(body["hostname"]), str(body["architecture"]), int(body["cpu_count"]), int(body["memory_mb"]),
+                    tuple(str(x) for x in body.get("capabilities", ["lead-processing"])),
+                    ComputeCoordinator._gpu_resources_from_payload(body.get("gpu_resources"), worker_id),
+                    body.get("driver_version"), body.get("cuda_version"), body.get("nccl_version"),
+                    tuple(str(x) for x in body.get("nic_names", ())), str(body.get("gpu_discovery_state", "not_probed")),
+                    str(body.get("gpu_discovery_error", "")),
+                )
                 self._send(200, self.server.coordinator.register_worker(identity))
             elif self.path == "/workers/heartbeat":
                 self._send(200, {"ok": self.server.coordinator.heartbeat(str(body["worker_id"]), int(body.get("current_load", 0)))})
             elif self.path == "/work/enqueue":
                 payload = body.get("payload")
-                if not isinstance(payload, dict):
-                    raise ValueError("payload must be an object")
+                if not isinstance(payload, dict): raise ValueError("payload must be an object")
                 task_id = body.get("task_id")
-                if task_id is not None and not isinstance(task_id, str):
-                    raise ValueError("task_id must be a string")
-                created_id = self.server.coordinator.enqueue(payload, task_id=task_id)
-                self._send(201, {"task_id": created_id})
+                if task_id is not None and not isinstance(task_id, str): raise ValueError("task_id must be a string")
+                self._send(201, {"task_id": self.server.coordinator.enqueue(payload, task_id=task_id)})
             elif self.path == "/work/claim":
-                item = self.server.coordinator.claim(str(body["worker_id"]))
-                self._send(200, item or {"task": None})
+                item = self.server.coordinator.claim(str(body["worker_id"])); self._send(200, item or {"task": None})
             elif self.path == "/work/complete":
-                ok = self.server.coordinator.complete(str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), body["result"])
-                self._send(200 if ok else 409, {"completed": ok})
+                ok = self.server.coordinator.complete(str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), body["result"]); self._send(200 if ok else 409, {"completed": ok})
             elif self.path == "/work/release":
-                ok = self.server.coordinator.release(str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), str(body.get("error", "")))
-                self._send(200 if ok else 409, {"released": ok})
-            else:
-                self._send(404, {"error": "not found"})
+                ok = self.server.coordinator.release(str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), str(body.get("error", ""))); self._send(200 if ok else 409, {"released": ok})
+            else: self._send(404, {"error": "not found"})
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             self._send(400, {"error": str(error)})
         except sqlite3.IntegrityError as error:
@@ -611,33 +527,18 @@ class ComputeCoordinatorServer(ThreadingHTTPServer):
 
 def coordinator_from_environment() -> ComputeCoordinator:
     token = os.environ.get("THORIO_COMPUTE_AUTH_TOKEN", "")
-    if not token:
-        raise RuntimeError("THORIO_COMPUTE_AUTH_TOKEN is required")
-    return ComputeCoordinator(
-        os.environ.get("THORIO_COMPUTE_DB", os.environ.get("LEAD_ENGINE_DATA_DIR", "data") + "/coordinator.sqlite3"),
-        token,
-        int(os.environ.get("THORIO_COMPUTE_LEASE_SECONDS", "300")),
-    )
+    if not token: raise RuntimeError("THORIO_COMPUTE_AUTH_TOKEN is required")
+    return ComputeCoordinator(os.environ.get("THORIO_COMPUTE_DB", os.environ.get("LEAD_ENGINE_DATA_DIR", "data") + "/coordinator.sqlite3"), token, int(os.environ.get("THORIO_COMPUTE_LEASE_SECONDS", "300")))
 
 
 def serve_from_environment() -> None:
-    coordinator = coordinator_from_environment()
-    host = os.environ.get("THORIO_COMPUTE_BIND_HOST", "127.0.0.1")
-    port = int(os.environ.get("THORIO_COMPUTE_PORT", "8787"))
-    server = ComputeCoordinatorServer(coordinator, host, port)
+    coordinator = coordinator_from_environment(); host = os.environ.get("THORIO_COMPUTE_BIND_HOST", "127.0.0.1"); port = int(os.environ.get("THORIO_COMPUTE_PORT", "8787")); server = ComputeCoordinatorServer(coordinator, host, port)
     if host not in {"127.0.0.1", "localhost", "::1"}:
-        cert = os.environ.get("THORIO_COMPUTE_TLS_CERT", "")
-        key = os.environ.get("THORIO_COMPUTE_TLS_KEY", "")
-        if not cert or not key:
-            server.server_close()
-            raise RuntimeError("non-local coordinator binding requires THORIO_COMPUTE_TLS_CERT and THORIO_COMPUTE_TLS_KEY")
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certfile=cert, keyfile=key)
-        server.socket = context.wrap_socket(server.socket, server_side=True)
-    try:
-        server.serve_forever(poll_interval=1.0)
-    finally:
-        server.server_close()
+        cert = os.environ.get("THORIO_COMPUTE_TLS_CERT", ""); key = os.environ.get("THORIO_COMPUTE_TLS_KEY", "")
+        if not cert or not key: server.server_close(); raise RuntimeError("non-local coordinator binding requires THORIO_COMPUTE_TLS_CERT and THORIO_COMPUTE_TLS_KEY")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(certfile=cert, keyfile=key); server.socket = context.wrap_socket(server.socket, server_side=True)
+    try: server.serve_forever(poll_interval=1.0)
+    finally: server.server_close()
 
 
 if __name__ == "__main__":
