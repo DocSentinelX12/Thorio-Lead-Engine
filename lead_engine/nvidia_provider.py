@@ -147,7 +147,7 @@ class NvidiaProvider(ComputeProvider):
             gpus.append(GpuResource(
                 node_id=self.node_id, gpu_id=gpu_id, gpu_uuid=gpu_uuid,
                 model=row.get("name", "").strip() or None, vram_bytes=self._int_bytes(row.get("memory.total", "")),
-                compute_capability=compute_capability, driver_version=driver, cuda_version=cuda_supported,
+                compute_capability=compute_capability, driver_version=driver, cuda_version=None,
                 pci_bus_id=pci, numa_node=self._numa_node(pci) if pci else None,
                 health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
             ))
@@ -171,18 +171,26 @@ class NvidiaProvider(ComputeProvider):
             except (OSError, subprocess.TimeoutExpired):
                 toolkit_version = None
 
+        if toolkit_version:
+            gpus = [GpuResource(
+                node_id=g.node_id, gpu_id=g.gpu_id, gpu_uuid=g.gpu_uuid, model=g.model, vram_bytes=g.vram_bytes,
+                compute_capability=g.compute_capability, driver_version=g.driver_version, cuda_version=toolkit_version,
+                pci_bus_id=g.pci_bus_id, numa_node=g.numa_node, nvlink_domain=g.nvlink_domain,
+                topology_domain=g.topology_domain, health_state=g.health_state, availability_state=g.availability_state,
+            ) for g in gpus]
+
         evidence: Mapping[str, object] = {
             "source": "nvidia-smi", "nvidia_smi_command": self.command,
             "gpu_query": "index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id",
             "gpu_count": len(gpus), "driver_versions": sorted(driver_versions),
             "driver_supported_cuda_version": cuda_supported, "cuda_toolkit_version": toolkit_version,
-            "cuda_version_semantics": "driver_supported_maximum", "topology_matrix": topology,
-            "topology_error": topology_error,
+            "cuda_version_semantics": "toolkit_only_on_gpu_resource; driver_supported_version_is_separate_evidence",
+            "topology_matrix": topology, "topology_error": topology_error,
         }
         node = NodeResource(
             node_id=self.node_id, architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
             cpu=CpuResource(self.node_id, os.cpu_count() or 1, self._host_memory_bytes()),
-            gpus=tuple(gpus), driver_version=driver_version, cuda_version=toolkit_version or cuda_supported,
+            gpus=tuple(gpus), driver_version=driver_version, cuda_version=toolkit_version,
             state=ResourceState.AVAILABLE,
         )
         return ProviderResourceSnapshot(provider_id=self.provider_id, domain_id=self.domain_id, observed_at=observed_at, nodes=(node,), authentication_state="authenticated", evidence=evidence)
