@@ -6,7 +6,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, Mapping, Optional
 
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_finding, social_research
@@ -56,6 +56,12 @@ class ComputeWorkerClient:
     def register(self) -> Dict[str, Any]:
         identity = local_worker_identity(self.worker_id)
         executable_agents = sorted(set(DISCOVERY_TARGETS) | set(SOCIAL_TARGETS))
+        gpu_resources = []
+        for gpu in identity.gpu_resources:
+            item = asdict(gpu)
+            item["health_state"] = gpu.health_state.value
+            item["availability_state"] = gpu.availability_state.value
+            gpu_resources.append(item)
         result = self.request("/workers/register", {
             "worker_id": identity.worker_id,
             "hostname": identity.hostname,
@@ -63,6 +69,13 @@ class ComputeWorkerClient:
             "cpu_count": identity.cpu_count,
             "memory_mb": identity.memory_mb,
             "capabilities": list(identity.capabilities) + ["lead_prepare"] + executable_agents,
+            "gpu_resources": gpu_resources,
+            "driver_version": identity.driver_version,
+            "cuda_version": identity.cuda_version,
+            "nccl_version": identity.nccl_version,
+            "nic_names": list(identity.nic_names),
+            "gpu_discovery_state": identity.gpu_discovery_state,
+            "gpu_discovery_error": identity.gpu_discovery_error,
         })
         self._registered = True
         return result
