@@ -169,8 +169,24 @@ class ComputePool:
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_workers (
                 worker_id TEXT PRIMARY KEY, hostname TEXT NOT NULL, architecture TEXT NOT NULL,
                 cpu_count INTEGER NOT NULL, memory_mb INTEGER NOT NULL, capabilities_json TEXT NOT NULL,
+                gpu_resources_json TEXT NOT NULL DEFAULT '[]', driver_version TEXT, cuda_version TEXT,
+                nccl_version TEXT, nic_names_json TEXT NOT NULL DEFAULT '[]',
+                gpu_discovery_state TEXT NOT NULL DEFAULT 'not_probed', gpu_discovery_error TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'ready', last_heartbeat REAL NOT NULL,
                 current_load INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL)""")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(compute_workers)").fetchall()}
+            migrations = {
+                "gpu_resources_json": "ALTER TABLE compute_workers ADD COLUMN gpu_resources_json TEXT NOT NULL DEFAULT '[]'",
+                "driver_version": "ALTER TABLE compute_workers ADD COLUMN driver_version TEXT",
+                "cuda_version": "ALTER TABLE compute_workers ADD COLUMN cuda_version TEXT",
+                "nccl_version": "ALTER TABLE compute_workers ADD COLUMN nccl_version TEXT",
+                "nic_names_json": "ALTER TABLE compute_workers ADD COLUMN nic_names_json TEXT NOT NULL DEFAULT '[]'",
+                "gpu_discovery_state": "ALTER TABLE compute_workers ADD COLUMN gpu_discovery_state TEXT NOT NULL DEFAULT 'not_probed'",
+                "gpu_discovery_error": "ALTER TABLE compute_workers ADD COLUMN gpu_discovery_error TEXT NOT NULL DEFAULT ''",
+            }
+            for column, statement in migrations.items():
+                if column not in columns:
+                    connection.execute(statement)
             connection.execute("""CREATE TABLE IF NOT EXISTS work_leases (
                 lead_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL, lease_token TEXT NOT NULL UNIQUE,
                 claimed_at REAL NOT NULL, lease_until REAL NOT NULL)""")
@@ -178,19 +194,56 @@ class ComputePool:
             connection.execute("CREATE INDEX IF NOT EXISTS idx_work_leases_worker ON work_leases(worker_id)")
             connection.commit()
 
+    @staticmethod
+    def _gpu_json(gpus: tuple[GpuResource, ...]) -> str:
+        return json.dumps([
+            {**asdict(gpu), "health_state": gpu.health_state.value, "availability_state": gpu.availability_state.value}
+            for gpu in gpus
+        ], ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
+    def _gpu_resources(value: str) -> tuple[GpuResource, ...]:
+        raw = json.loads(value or "[]")
+        if not isinstance(raw, list):
+            raise ValueError("gpu_resources_json must contain a list")
+        result = []
+        from .compute_resources import ResourceState
+        for item in raw:
+            if not isinstance(item, dict):
+                raise ValueError("GPU resource payload must contain objects")
+            result.append(GpuResource(
+                node_id=str(item["node_id"]), gpu_id=str(item["gpu_id"]),
+                gpu_uuid=item.get("gpu_uuid"), model=item.get("model"),
+                vram_bytes=item.get("vram_bytes"), compute_capability=item.get("compute_capability"),
+                driver_version=item.get("driver_version"), cuda_version=item.get("cuda_version"),
+                pci_bus_id=item.get("pci_bus_id"), numa_node=item.get("numa_node"),
+                nvlink_domain=item.get("nvlink_domain"), topology_domain=item.get("topology_domain"),
+                health_state=ResourceState(str(item.get("health_state", ResourceState.DISCOVERED.value))),
+                availability_state=ResourceState(str(item.get("availability_state", ResourceState.DISCOVERED.value))),
+            ))
+        return tuple(result)
+
     def register(self, identity: WorkerIdentity) -> Dict[str, Any]:
         if identity.cpu_count < 1 or identity.memory_mb < 1:
             raise ValueError("worker resources must be positive")
         now = time.time()
         with self._connect() as connection:
             connection.execute("""INSERT INTO compute_workers
-                (worker_id,hostname,architecture,cpu_count,memory_mb,capabilities_json,status,last_heartbeat,current_load,updated_at)
-                VALUES (?,?,?,?,?,?,'ready',?,0,?)
+                (worker_id,hostname,architecture,cpu_count,memory_mb,capabilities_json,
+                 gpu_resources_json,driver_version,cuda_version,nccl_version,nic_names_json,
+                 gpu_discovery_state,gpu_discovery_error,status,last_heartbeat,current_load,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,0,?)
                 ON CONFLICT(worker_id) DO UPDATE SET hostname=excluded.hostname,
                 architecture=excluded.architecture,cpu_count=excluded.cpu_count,memory_mb=excluded.memory_mb,
-                capabilities_json=excluded.capabilities_json,status='ready',last_heartbeat=excluded.last_heartbeat,updated_at=excluded.updated_at""",
+                capabilities_json=excluded.capabilities_json,gpu_resources_json=excluded.gpu_resources_json,
+                driver_version=excluded.driver_version,cuda_version=excluded.cuda_version,
+                nccl_version=excluded.nccl_version,nic_names_json=excluded.nic_names_json,
+                gpu_discovery_state=excluded.gpu_discovery_state,gpu_discovery_error=excluded.gpu_discovery_error,
+                status='ready',last_heartbeat=excluded.last_heartbeat,updated_at=excluded.updated_at""",
                 (identity.worker_id, identity.hostname, identity.architecture, identity.cpu_count,
-                 identity.memory_mb, json.dumps(identity.capabilities), now, now))
+                 identity.memory_mb, json.dumps(identity.capabilities), self._gpu_json(identity.gpu_resources),
+                 identity.driver_version, identity.cuda_version, identity.nccl_version, json.dumps(identity.nic_names),
+                 identity.gpu_discovery_state, identity.gpu_discovery_error, now, now))
             connection.commit()
         return self.worker(identity.worker_id) or {}
 
@@ -220,6 +273,8 @@ class ComputePool:
                 return None
             item = dict(row)
             item["capabilities"] = json.loads(item.pop("capabilities_json"))
+            item["gpu_resources"] = self._gpu_resources(item.pop("gpu_resources_json", "[]"))
+            item["nic_names"] = tuple(json.loads(item.pop("nic_names_json", "[]")))
             return item
 
     def workers(self, include_stale: bool = True) -> list[Dict[str, Any]]:
@@ -227,7 +282,14 @@ class ComputePool:
             self.reap_stale_workers()
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM compute_workers ORDER BY worker_id").fetchall()
-            return [{**dict(row), "capabilities": json.loads(row["capabilities_json"])} for row in rows]
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["capabilities"] = json.loads(item.pop("capabilities_json"))
+            item["gpu_resources"] = self._gpu_resources(item.pop("gpu_resources_json", "[]"))
+            item["nic_names"] = tuple(json.loads(item.pop("nic_names_json", "[]")))
+            result.append(item)
+        return result
 
     def reserve_task_slot(self, worker_id: str) -> bool:
         """Atomically reserve the worker's single logical execution slot."""
@@ -297,13 +359,15 @@ class ComputePool:
         self.reap_stale_workers()
         with self._connect() as connection:
             rows = connection.execute("""SELECT worker_id,hostname,architecture,cpu_count,memory_mb,
-                status,current_load,last_heartbeat,capabilities_json
+                status,current_load,last_heartbeat,capabilities_json,gpu_resources_json,
+                gpu_discovery_state,gpu_discovery_error
                 FROM compute_workers ORDER BY worker_id""").fetchall()
         worker_items = []
         for row in rows:
             status = row["status"]
             active = int(row["current_load"])
             logical_slots = self.LOGICAL_SLOTS_PER_WORKER if status == "ready" else 0
+            gpus = self._gpu_resources(row["gpu_resources_json"])
             worker_items.append({
                 "worker_id": row["worker_id"],
                 "hostname": row["hostname"],
@@ -312,6 +376,9 @@ class ComputePool:
                 "memory_mb": int(row["memory_mb"]),
                 "status": status,
                 "capabilities": json.loads(row["capabilities_json"]),
+                "gpu_count": len(gpus),
+                "gpu_discovery_state": row["gpu_discovery_state"],
+                "gpu_discovery_error": row["gpu_discovery_error"],
                 "logical_slots": logical_slots,
                 "recommended_slots": self.LOGICAL_SLOTS_PER_WORKER,
                 "active_load": active,
