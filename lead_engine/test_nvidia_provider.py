@@ -41,10 +41,11 @@ def test_nvidia_discovery_records_stable_gpu_truth_and_topology():
     assert node.gpus[0].vram_bytes == 81920 * 1024 * 1024
     assert node.gpus[0].compute_capability == "9.0"
     assert node.gpus[0].driver_version == "580.95.05"
-    assert node.gpus[0].cuda_version == "13.0"
+    assert node.gpus[0].cuda_version is None
     assert node.gpus[0].health_state == ResourceState.HEALTHY
     assert snapshot.evidence["topology_matrix"] == TOPO
     assert snapshot.evidence["driver_supported_cuda_version"] == "13.0"
+    assert snapshot.evidence["cuda_toolkit_version"] is None
 
 
 def test_nvidia_discovery_refuses_missing_uuid():
