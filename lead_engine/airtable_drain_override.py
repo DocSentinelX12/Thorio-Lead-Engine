@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 
 def install() -> None:
@@ -14,7 +14,7 @@ def install() -> None:
     return None
 
 
-def drain_pending(db: Any, limit: int = 50) -> Dict[str, Any]:
+def drain_pending(\n    db: Any,\n    limit: int = 50,\n    sync_batch: Callable[..., Dict[str, Any]] | None = None,\n) -> Dict[str, Any]:
     """Durably drain pending Airtable work through repeated real batches.
 
     The underlying sync_pending_batched() call remains exactly one batch.
@@ -43,7 +43,7 @@ def drain_pending(db: Any, limit: int = 50) -> Dict[str, Any]:
     }
 
     while True:
-        result = batch_delivery.sync_pending_batched(db, limit=batch_limit)
+        result = sync_batch(db, limit=batch_limit)
         if not isinstance(result, dict):
             raise RuntimeError("Airtable sync returned a non-object result")
 
