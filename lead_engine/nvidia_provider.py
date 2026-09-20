@@ -156,7 +156,10 @@ class NvidiaProvider(ComputeProvider):
         topology = None
         topology_error = None
         try:
-            topology = self._run("topo", "-m").stdout.strip()
+            # Preserve the provider's exact topology output as evidence. Do not
+            # normalize whitespace or line endings: formatting can be meaningful
+            # when comparing later observations for drift.
+            topology = self._run("topo", "-m").stdout
         except NvidiaDiscoveryError as exc:
             topology_error = str(exc)
 
