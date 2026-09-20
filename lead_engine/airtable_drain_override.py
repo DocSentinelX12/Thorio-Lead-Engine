@@ -14,14 +14,20 @@ def install() -> None:
     return None
 
 
-def drain_pending(\n    db: Any,\n    limit: int = 50,\n    sync_batch: Callable[..., Dict[str, Any]] | None = None,\n) -> Dict[str, Any]:
+def drain_pending(
+    db: Any,
+    limit: int = 50,
+    sync_batch: Callable[..., Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     """Durably drain pending Airtable work through repeated real batches.
 
     The underlying sync_pending_batched() call remains exactly one batch.
     This function owns repetition, bounded runtime, failure stopping, and
     durable backlog preservation for continuous production operation.
     """
-    from . import batch_delivery
+    if sync_batch is None:
+        from . import batch_delivery
+        sync_batch = batch_delivery.sync_pending_batched
 
     try:
         budget_seconds = float(os.environ.get("THORIO_AIRTABLE_DRAIN_SECONDS", "120").strip())
