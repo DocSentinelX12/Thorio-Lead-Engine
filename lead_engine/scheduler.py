@@ -242,7 +242,7 @@ class LeadScheduler:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=agent_max_rounds)
         remote_after = self._bridge_remote()
         paxus_research = process_paxus_research_queue(db)
-        sync_result = drain_pending(db)
+        sync_result = drain_pending(db, sync_batch=sync_pending)
         post_sync_agents = None
         if int(sync_result.get("synced_count", 0) or 0) or int(sync_result.get("already_exists_count", 0) or 0):
             if agent_max_rounds is None:
