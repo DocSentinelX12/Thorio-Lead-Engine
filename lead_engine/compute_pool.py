@@ -15,7 +15,9 @@ import time
 import uuid
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Mapping, Optional
+
+from .compute_resources import GpuResource
 
 
 @dataclass(frozen=True)
@@ -87,12 +89,58 @@ class WorkerIdentity:
     cpu_count: int
     memory_mb: int
     capabilities: tuple[str, ...] = ("lead-processing",)
+    gpu_resources: tuple[GpuResource, ...] = ()
+    driver_version: str | None = None
+    cuda_version: str | None = None
+    nccl_version: str | None = None
+    nic_names: tuple[str, ...] = ()
+    gpu_discovery_state: str = "not_probed"
+    gpu_discovery_error: str = ""
+
+    def __post_init__(self) -> None:
+        if self.cpu_count < 1 or self.memory_mb < 1:
+            raise ValueError("worker resources must be positive")
+        if any(gpu.node_id != self.worker_id for gpu in self.gpu_resources):
+            raise ValueError("worker GPU resources must belong to worker_id")
+        if len({gpu.identity_key for gpu in self.gpu_resources}) != len(self.gpu_resources):
+            raise ValueError("worker GPU identities must be unique")
+        if self.gpu_discovery_state not in {"not_probed", "healthy", "no_gpu", "degraded"}:
+            raise ValueError("unsupported gpu_discovery_state")
 
 
 def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
     capacity = local_capacity(node_id=worker_id)
-    return WorkerIdentity(capacity.node_id, socket.gethostname(), capacity.architecture,
-                          capacity.cpu_count, capacity.memory_mb)
+    gpu_resources: tuple[GpuResource, ...] = ()
+    driver_version = cuda_version = nccl_version = None
+    gpu_state = "not_probed"
+    gpu_error = ""
+    try:
+        from .nvidia_provider import NvidiaDiscoveryError, NvidiaProvider
+        snapshot = NvidiaProvider(node_id=capacity.node_id).discover()
+        node = snapshot.nodes[0]
+        gpu_resources = node.gpus
+        driver_version = node.driver_version
+        cuda_version = node.cuda_version
+        gpu_state = "healthy" if gpu_resources else "no_gpu"
+    except NvidiaDiscoveryError as exc:
+        gpu_state = "degraded"
+        gpu_error = str(exc)[:2000]
+
+    return WorkerIdentity(
+        capacity.node_id,
+        socket.gethostname(),
+        capacity.architecture,
+        capacity.cpu_count,
+        capacity.memory_mb,
+        ("lead-processing",),
+        gpu_resources,
+        driver_version,
+        cuda_version,
+        nccl_version,
+        (),
+        gpu_state,
+        gpu_error,
+    )
 
 
 class ComputePool:
