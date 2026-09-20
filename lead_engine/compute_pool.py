@@ -217,7 +217,7 @@ class ComputePool:
                 (worker_id,hostname,architecture,cpu_count,memory_mb,capabilities_json,
                  gpu_resources_json,driver_version,cuda_version,nccl_version,nic_names_json,
                  gpu_discovery_state,gpu_discovery_error,status,last_heartbeat,current_load,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)
                 ON CONFLICT(worker_id) DO UPDATE SET hostname=excluded.hostname,
                 architecture=excluded.architecture,cpu_count=excluded.cpu_count,memory_mb=excluded.memory_mb,
                 capabilities_json=excluded.capabilities_json,gpu_resources_json=excluded.gpu_resources_json,
