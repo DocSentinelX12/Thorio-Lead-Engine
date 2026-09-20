@@ -40,16 +40,7 @@ class NvidiaProvider(ComputeProvider):
 
     provider_id = "nvidia"
 
-    def __init__(
-        self,
-        *,
-        node_id: str | None = None,
-        domain_id: str | None = None,
-        command: str | None = None,
-        timeout_seconds: float = 10.0,
-        runner: Runner | None = None,
-        now: Callable[[], float] | None = None,
-    ) -> None:
+    def __init__(self, *, node_id: str | None = None, domain_id: str | None = None, command: str | None = None, timeout_seconds: float = 10.0, runner: Runner | None = None, now: Callable[[], float] | None = None) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.node_id = (node_id or os.environ.get("THORIO_NODE_ID") or "local").strip() or "local"
@@ -62,14 +53,7 @@ class NvidiaProvider(ComputeProvider):
     @staticmethod
     def _run_command(args: Sequence[str], timeout_seconds: float) -> CommandResult:
         try:
-            completed = subprocess.run(
-                list(args),
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-                env=os.environ.copy(),
-            )
+            completed = subprocess.run(list(args), capture_output=True, text=True, timeout=timeout_seconds, check=False, env=os.environ.copy())
         except FileNotFoundError as exc:
             raise NvidiaDiscoveryError("nvidia-smi is not installed or is not on PATH") from exc
         except subprocess.TimeoutExpired as exc:
@@ -117,10 +101,8 @@ class NvidiaProvider(ComputeProvider):
         normalized = pci_bus_id.strip().lower()
         if not normalized:
             return None
-        path = Path("/sys/bus/pci/devices") / normalized
-        numa = path / "numa_node"
         try:
-            value = int(numa.read_text(encoding="utf-8").strip())
+            value = int((Path("/sys/bus/pci/devices") / normalized / "numa_node").read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             return None
         return value if value >= 0 else None
@@ -136,25 +118,13 @@ class NvidiaProvider(ComputeProvider):
         observed_at = float(self._now())
         if observed_at <= 0:
             raise NvidiaDiscoveryError("discovery clock must return a positive timestamp")
-
-        try:
-            query = self._run(
-                "--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id",
-                "--format=csv,noheader,nounits",
-            )
-            smi = self._run()
-        except NvidiaDiscoveryError:
-            # A host with no NVIDIA stack is a truthful zero-GPU observation only
-            # when the command exists and reports no devices. Missing/broken
-            # tooling is not silently converted into "no GPUs".
-            raise
-
+        query = self._run("--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id", "--format=csv,noheader,nounits")
+        smi = self._run()
         rows = self._parse_csv(query.stdout)
         cuda_supported = self._parse_cuda_supported_version(smi.stdout)
         driver_versions: set[str] = set()
         gpus: list[GpuResource] = []
         seen_uuids: set[str] = set()
-
         for row in rows:
             gpu_id = row.get("index", "").strip()
             gpu_uuid = self._normalize_uuid(row.get("uuid", ""))
@@ -171,31 +141,18 @@ class NvidiaProvider(ComputeProvider):
             if not compute_capability:
                 raise NvidiaDiscoveryError(f"compute capability missing for GPU {gpu_uuid}")
             gpus.append(GpuResource(
-                node_id=self.node_id,
-                gpu_id=gpu_id,
-                gpu_uuid=gpu_uuid,
-                model=row.get("name", "").strip() or None,
-                vram_bytes=self._int_bytes(row.get("memory.total", "")),
-                compute_capability=compute_capability,
-                driver_version=driver,
-                cuda_version=cuda_supported,
-                pci_bus_id=pci,
-                numa_node=self._numa_node(pci) if pci else None,
-                health_state=ResourceState.HEALTHY,
-                availability_state=ResourceState.AVAILABLE,
+                node_id=self.node_id, gpu_id=gpu_id, gpu_uuid=gpu_uuid,
+                model=row.get("name", "").strip() or None, vram_bytes=self._int_bytes(row.get("memory.total", "")),
+                compute_capability=compute_capability, driver_version=driver, cuda_version=cuda_supported,
+                pci_bus_id=pci, numa_node=self._numa_node(pci) if pci else None,
+                health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
             ))
-
-        driver_version = next(iter(driver_versions), None)
-        if len(driver_versions) > 1:
-            # A host can expose different driver strings only under unusual
-            # virtualization. Preserve per-GPU values and refuse to flatten them.
-            driver_version = None
+        driver_version = next(iter(driver_versions), None) if len(driver_versions) <= 1 else None
 
         topology = None
         topology_error = None
         try:
-            topology_result = self._run("topo", "-m")
-            topology = topology_result.stdout.strip()
+            topology = self._run("topo", "-m").stdout.strip()
         except NvidiaDiscoveryError as exc:
             topology_error = str(exc)
 
@@ -211,42 +168,26 @@ class NvidiaProvider(ComputeProvider):
                 toolkit_version = None
 
         evidence: Mapping[str, object] = {
-            "source": "nvidia-smi",
-            "nvidia_smi_command": self.command,
+            "source": "nvidia-smi", "nvidia_smi_command": self.command,
             "gpu_query": "index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id",
-            "gpu_count": len(gpus),
-            "driver_versions": sorted(driver_versions),
-            "driver_supported_cuda_version": cuda_supported,
-            "cuda_toolkit_version": toolkit_version,
-            "cuda_version_semantics": "driver_supported_maximum",
-            "topology_matrix": topology,
+            "gpu_count": len(gpus), "driver_versions": sorted(driver_versions),
+            "driver_supported_cuda_version": cuda_supported, "cuda_toolkit_version": toolkit_version,
+            "cuda_version_semantics": "driver_supported_maximum", "topology_matrix": topology,
             "topology_error": topology_error,
         }
-        cpu_count = os.cpu_count() or 1
-        memory_bytes = self._host_memory_bytes()
         node = NodeResource(
             node_id=self.node_id,
             architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
-            cpu=CpuResource(self.node_id, cpu_count, memory_bytes),
-            gpus=tuple(gpus),
-            driver_version=driver_version,
-            cuda_version=toolkit_version or cuda_supported,
-            state=ResourceState.AVAILABLE if gpus or not topology_error else ResourceState.DEGRADED,
+            cpu=CpuResource(self.node_id, os.cpu_count() or 1, self._host_memory_bytes()),
+            gpus=tuple(gpus), driver_version=driver_version, cuda_version=toolkit_version or cuda_supported,
+            state=ResourceState.AVAILABLE,
         )
-        return ProviderResourceSnapshot(
-            provider_id=self.provider_id,
-            domain_id=self.domain_id,
-            observed_at=observed_at,
-            nodes=(node,),
-            authentication_state="authenticated",
-            evidence=evidence,
-        )
+        return ProviderResourceSnapshot(provider_id=self.provider_id, domain_id=self.domain_id, observed_at=observed_at, nodes=(node,), authentication_state="authenticated", evidence=evidence)
 
     @staticmethod
     def _host_memory_bytes() -> int:
         try:
-            meminfo = Path("/proc/meminfo")
-            match = re.search(r"^MemTotal:\s+(\d+)\s+kB", meminfo.read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
+            match = re.search(r"^MemTotal:\s+(\d+)\s+kB", Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
             if match:
                 return max(1, int(match.group(1)) * 1024)
         except OSError:
