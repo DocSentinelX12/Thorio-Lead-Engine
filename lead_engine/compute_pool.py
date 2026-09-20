@@ -127,19 +127,9 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
         gpu_error = str(exc)[:2000]
 
     return WorkerIdentity(
-        capacity.node_id,
-        socket.gethostname(),
-        capacity.architecture,
-        capacity.cpu_count,
-        capacity.memory_mb,
-        ("lead-processing",),
-        gpu_resources,
-        driver_version,
-        cuda_version,
-        nccl_version,
-        (),
-        gpu_state,
-        gpu_error,
+        capacity.node_id, socket.gethostname(), capacity.architecture,
+        capacity.cpu_count, capacity.memory_mb, ("lead-processing",),
+        gpu_resources, driver_version, cuda_version, nccl_version, (), gpu_state, gpu_error,
     )
 
 
@@ -196,27 +186,22 @@ class ComputePool:
 
     @staticmethod
     def _gpu_json(gpus: tuple[GpuResource, ...]) -> str:
-        return json.dumps([
-            {**asdict(gpu), "health_state": gpu.health_state.value, "availability_state": gpu.availability_state.value}
-            for gpu in gpus
-        ], ensure_ascii=False, sort_keys=True)
+        return json.dumps([{**asdict(gpu), "health_state": gpu.health_state.value, "availability_state": gpu.availability_state.value} for gpu in gpus], ensure_ascii=False, sort_keys=True)
 
     @staticmethod
     def _gpu_resources(value: str) -> tuple[GpuResource, ...]:
         raw = json.loads(value or "[]")
         if not isinstance(raw, list):
             raise ValueError("gpu_resources_json must contain a list")
-        result = []
         from .compute_resources import ResourceState
+        result = []
         for item in raw:
             if not isinstance(item, dict):
                 raise ValueError("GPU resource payload must contain objects")
             result.append(GpuResource(
-                node_id=str(item["node_id"]), gpu_id=str(item["gpu_id"]),
-                gpu_uuid=item.get("gpu_uuid"), model=item.get("model"),
-                vram_bytes=item.get("vram_bytes"), compute_capability=item.get("compute_capability"),
-                driver_version=item.get("driver_version"), cuda_version=item.get("cuda_version"),
-                pci_bus_id=item.get("pci_bus_id"), numa_node=item.get("numa_node"),
+                node_id=str(item["node_id"]), gpu_id=str(item["gpu_id"]), gpu_uuid=item.get("gpu_uuid"), model=item.get("model"),
+                vram_bytes=item.get("vram_bytes"), compute_capability=item.get("compute_capability"), driver_version=item.get("driver_version"),
+                cuda_version=item.get("cuda_version"), pci_bus_id=item.get("pci_bus_id"), numa_node=item.get("numa_node"),
                 nvlink_domain=item.get("nvlink_domain"), topology_domain=item.get("topology_domain"),
                 health_state=ResourceState(str(item.get("health_state", ResourceState.DISCOVERED.value))),
                 availability_state=ResourceState(str(item.get("availability_state", ResourceState.DISCOVERED.value))),
@@ -232,7 +217,7 @@ class ComputePool:
                 (worker_id,hostname,architecture,cpu_count,memory_mb,capabilities_json,
                  gpu_resources_json,driver_version,cuda_version,nccl_version,nic_names_json,
                  gpu_discovery_state,gpu_discovery_error,status,last_heartbeat,current_load,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,0,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)
                 ON CONFLICT(worker_id) DO UPDATE SET hostname=excluded.hostname,
                 architecture=excluded.architecture,cpu_count=excluded.cpu_count,memory_mb=excluded.memory_mb,
                 capabilities_json=excluded.capabilities_json,gpu_resources_json=excluded.gpu_resources_json,
@@ -240,10 +225,10 @@ class ComputePool:
                 nccl_version=excluded.nccl_version,nic_names_json=excluded.nic_names_json,
                 gpu_discovery_state=excluded.gpu_discovery_state,gpu_discovery_error=excluded.gpu_discovery_error,
                 status='ready',last_heartbeat=excluded.last_heartbeat,updated_at=excluded.updated_at""",
-                (identity.worker_id, identity.hostname, identity.architecture, identity.cpu_count,
-                 identity.memory_mb, json.dumps(identity.capabilities), self._gpu_json(identity.gpu_resources),
-                 identity.driver_version, identity.cuda_version, identity.nccl_version, json.dumps(identity.nic_names),
-                 identity.gpu_discovery_state, identity.gpu_discovery_error, now, now))
+                (identity.worker_id, identity.hostname, identity.architecture, identity.cpu_count, identity.memory_mb,
+                 json.dumps(identity.capabilities), self._gpu_json(identity.gpu_resources), identity.driver_version,
+                 identity.cuda_version, identity.nccl_version, json.dumps(identity.nic_names), identity.gpu_discovery_state,
+                 identity.gpu_discovery_error, now, now))
             connection.commit()
         return self.worker(identity.worker_id) or {}
 
@@ -269,13 +254,13 @@ class ComputePool:
     def worker(self, worker_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM compute_workers WHERE worker_id=?", (worker_id,)).fetchone()
-            if not row:
-                return None
-            item = dict(row)
-            item["capabilities"] = json.loads(item.pop("capabilities_json"))
-            item["gpu_resources"] = self._gpu_resources(item.pop("gpu_resources_json", "[]"))
-            item["nic_names"] = tuple(json.loads(item.pop("nic_names_json", "[]")))
-            return item
+        if not row:
+            return None
+        item = dict(row)
+        item["capabilities"] = json.loads(item.pop("capabilities_json"))
+        item["gpu_resources"] = self._gpu_resources(item.pop("gpu_resources_json", "[]"))
+        item["nic_names"] = tuple(json.loads(item.pop("nic_names_json", "[]")))
+        return item
 
     def workers(self, include_stale: bool = True) -> list[Dict[str, Any]]:
         if not include_stale:
@@ -292,35 +277,22 @@ class ComputePool:
         return result
 
     def reserve_task_slot(self, worker_id: str) -> bool:
-        """Atomically reserve the worker's single logical execution slot."""
         now = time.time()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            cursor = connection.execute(
-                "UPDATE compute_workers SET current_load=current_load+1,updated_at=? "
-                "WHERE worker_id=? AND status='ready' AND current_load < ?",
-                (now, worker_id, self.LOGICAL_SLOTS_PER_WORKER),
-            )
+            cursor = connection.execute("UPDATE compute_workers SET current_load=current_load+1,updated_at=? WHERE worker_id=? AND status='ready' AND current_load < ?", (now, worker_id, self.LOGICAL_SLOTS_PER_WORKER))
             if cursor.rowcount != 1:
-                connection.rollback()
-                return False
-            connection.commit()
-            return True
+                connection.rollback(); return False
+            connection.commit(); return True
 
     def release_task_slot(self, worker_id: str) -> bool:
         now = time.time()
         with self._connect() as connection:
-            cursor = connection.execute(
-                "UPDATE compute_workers SET current_load=MAX(0,current_load-1),updated_at=? WHERE worker_id=?",
-                (now, worker_id),
-            )
-            connection.commit()
-            return cursor.rowcount == 1
+            cursor = connection.execute("UPDATE compute_workers SET current_load=MAX(0,current_load-1),updated_at=? WHERE worker_id=?", (now, worker_id))
+            connection.commit(); return cursor.rowcount == 1
 
     def claim(self, lead_id: str | int, worker_id: str) -> Optional[str]:
-        lead_key = str(lead_id)
-        now = time.time()
-        token = str(uuid.uuid4())
+        lead_key = str(lead_id); now = time.time(); token = str(uuid.uuid4())
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             worker = connection.execute("SELECT status,current_load FROM compute_workers WHERE worker_id=?", (worker_id,)).fetchone()
@@ -331,8 +303,7 @@ class ComputePool:
                 connection.rollback(); return None
             connection.execute("DELETE FROM work_leases WHERE lead_id=?", (lead_key,))
             connection.execute("INSERT INTO work_leases VALUES (?,?,?,?,?)", (lead_key, worker_id, token, now, now + self.lease_seconds))
-            connection.execute("UPDATE compute_workers SET current_load=current_load+1,updated_at=? WHERE worker_id=?", (now, worker_id))
-            connection.commit()
+            connection.execute("UPDATE compute_workers SET current_load=current_load+1,updated_at=? WHERE worker_id=?", (now, worker_id)); connection.commit()
         return token
 
     def complete(self, lead_id: str | int, worker_id: str, lease_token: str) -> bool:
@@ -341,9 +312,7 @@ class ComputePool:
             cursor = connection.execute("DELETE FROM work_leases WHERE lead_id=? AND worker_id=? AND lease_token=?", (str(lead_id), worker_id, lease_token))
             if cursor.rowcount != 1:
                 connection.rollback(); return False
-            connection.execute("UPDATE compute_workers SET current_load=MAX(0,current_load-1),updated_at=? WHERE worker_id=?", (now, worker_id))
-            connection.commit()
-            return True
+            connection.execute("UPDATE compute_workers SET current_load=MAX(0,current_load-1),updated_at=? WHERE worker_id=?", (now, worker_id)); connection.commit(); return True
 
     def release_expired(self) -> int:
         now = time.time()
@@ -352,49 +321,16 @@ class ComputePool:
             connection.execute("DELETE FROM work_leases WHERE lease_until <= ?", (now,))
             for row in rows:
                 connection.execute("UPDATE compute_workers SET current_load=MAX(0,current_load-1),updated_at=? WHERE worker_id=?", (now, row["worker_id"]))
-            connection.commit()
-            return len(rows)
+            connection.commit(); return len(rows)
 
     def capacity_snapshot(self) -> Dict[str, Any]:
         self.reap_stale_workers()
         with self._connect() as connection:
-            rows = connection.execute("""SELECT worker_id,hostname,architecture,cpu_count,memory_mb,
-                status,current_load,last_heartbeat,capabilities_json,gpu_resources_json,
-                gpu_discovery_state,gpu_discovery_error
+            rows = connection.execute("""SELECT worker_id,hostname,architecture,cpu_count,memory_mb,status,current_load,last_heartbeat,capabilities_json,gpu_resources_json,gpu_discovery_state,gpu_discovery_error
                 FROM compute_workers ORDER BY worker_id""").fetchall()
         worker_items = []
         for row in rows:
-            status = row["status"]
-            active = int(row["current_load"])
-            logical_slots = self.LOGICAL_SLOTS_PER_WORKER if status == "ready" else 0
-            gpus = self._gpu_resources(row["gpu_resources_json"])
-            worker_items.append({
-                "worker_id": row["worker_id"],
-                "hostname": row["hostname"],
-                "architecture": row["architecture"],
-                "cpu_count": int(row["cpu_count"]),
-                "memory_mb": int(row["memory_mb"]),
-                "status": status,
-                "capabilities": json.loads(row["capabilities_json"]),
-                "gpu_count": len(gpus),
-                "gpu_discovery_state": row["gpu_discovery_state"],
-                "gpu_discovery_error": row["gpu_discovery_error"],
-                "logical_slots": logical_slots,
-                "recommended_slots": self.LOGICAL_SLOTS_PER_WORKER,
-                "active_load": active,
-                "available_slots": max(0, logical_slots - active),
-                "last_heartbeat": float(row["last_heartbeat"]),
-            })
+            status = row["status"]; active = int(row["current_load"]); logical_slots = self.LOGICAL_SLOTS_PER_WORKER if status == "ready" else 0; gpus = self._gpu_resources(row["gpu_resources_json"])
+            worker_items.append({"worker_id": row["worker_id"], "hostname": row["hostname"], "architecture": row["architecture"], "cpu_count": int(row["cpu_count"]), "memory_mb": int(row["memory_mb"]), "status": status, "capabilities": json.loads(row["capabilities_json"]), "gpu_count": len(gpus), "gpu_discovery_state": row["gpu_discovery_state"], "gpu_discovery_error": row["gpu_discovery_error"], "logical_slots": logical_slots, "recommended_slots": self.LOGICAL_SLOTS_PER_WORKER, "active_load": active, "available_slots": max(0, logical_slots - active), "last_heartbeat": float(row["last_heartbeat"])})
         ready = [item for item in worker_items if item["status"] == "ready"]
-        return {
-            "free_only": True,
-            "worker_count": len(worker_items),
-            "ready_workers": len(ready),
-            "stale_workers": sum(item["status"] == "stale" for item in worker_items),
-            "logical_slots": len(ready),
-            "active_leases": sum(item["active_load"] for item in ready),
-            "available_slots": sum(item["available_slots"] for item in ready),
-            "total_cpu": sum(item["cpu_count"] for item in ready),
-            "total_memory_mb": sum(item["memory_mb"] for item in ready),
-            "workers": worker_items,
-        }
+        return {"free_only": True, "worker_count": len(worker_items), "ready_workers": len(ready), "stale_workers": sum(item["status"] == "stale" for item in worker_items), "logical_slots": len(ready), "active_leases": sum(item["active_load"] for item in ready), "available_slots": sum(item["available_slots"] for item in ready), "total_cpu": sum(item["cpu_count"] for item in ready), "total_memory_mb": sum(item["memory_mb"] for item in ready), "workers": worker_items}
