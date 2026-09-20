@@ -49,7 +49,7 @@ def drain_pending(
     }
 
     while True:
-        result = sync_batch(db, limit=batch_limit)
+        result = sync_batch(db) if batch_limit == 50 else sync_batch(db, limit=batch_limit)
         if not isinstance(result, dict):
             raise RuntimeError("Airtable sync returned a non-object result")
 
