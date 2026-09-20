@@ -31,6 +31,13 @@ from .research_integrity import install as _install_research_integrity
 _install_research_integrity()
 del _install_research_integrity
 
+# Preserve previously verified company and decision-maker facts when a real
+# public-web refresh cannot re-verify them during the current bounded pass.
+from .research_refresh_preservation import install as _install_research_refresh_preservation
+
+_install_research_refresh_preservation()
+del _install_research_refresh_preservation
+
 # The company-research queue is stateful and must use the durable canonical
 # handoff handler. The advanced registry also exposes a stateless research
 # handler, so install the explicit precedence rule after agent_workers loads.
@@ -40,9 +47,8 @@ _install_company_research_override()
 del _install_company_research_override
 
 # Airtable's configured batch size is intentionally only the size of one
-# durable API batch. Install the drain wrapper before scheduler imports the
-# batch-delivery function so a production cycle continues through additional
-# batches until the backlog is drained or the bounded drain budget expires.
+# durable API batch. Production callers use the explicit drain orchestration
+# function, while sync_pending_batched remains a single-batch operation.
 from .airtable_drain_override import install as _install_airtable_drain_override
 
 _install_airtable_drain_override()
