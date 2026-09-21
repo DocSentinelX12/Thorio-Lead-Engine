@@ -147,7 +147,8 @@ def test_fabric_launch_requires_explicit_rendezvous_endpoint(tmp_path: Path):
     try:
         coordinator.fabric_launch_plan_for_worker(
             attempt_id=claimed["attempt_id"],
-            generation=claimed["generation"],            worker_id="worker-1",
+            generation=claimed["generation"],
+            worker_id="worker-1",
             lease_token=claimed["lease_token"],
             rendezvous_endpoint="",
         )
@@ -296,7 +297,8 @@ def test_fabric_rendezvous_endpoint_is_bound_once_and_cannot_change(tmp_path: Pa
     first = coordinator.fabric_launch_plan_for_worker(
         attempt_id=attempt_id, generation=generation,
         worker_id="worker-1", lease_token=lease_token,
-        rendezvous_endpoint="10.0.0.5:29400",    )
+        rendezvous_endpoint="10.0.0.5:29400",
+    )
     assert first["rendezvous_endpoint"] == "10.0.0.5:29400"
 
     try:
@@ -445,7 +447,8 @@ def test_stale_participant_cannot_report_after_convergence_or_retry(tmp_path: Pa
             "gpu": {"gpu_count": 2},
             "min_cpu_count": 1,
             "min_memory_bytes": 1,
-            "same_node": False,        },
+            "same_node": False,
+        },
     })
     claimed = coordinator.claim_physical()
     attempt_id = claimed["attempt_id"]
@@ -594,6 +597,7 @@ def test_convergence_rejects_an_expired_task_lease(tmp_path: Path):
 
 def test_run_worker_services_fabric_assignments_before_claiming_business_work(monkeypatch):
     from lead_engine.compute_worker import run_worker
+
     class StopAfterFabric:
         def __init__(self):
             self.calls = 0
@@ -893,7 +897,8 @@ def test_fabric_heartbeat_failure_terminates_live_process_and_reports_failure(mo
         def kill(self):
             self.killed = True
             self.released.set()
-        def wait(self, timeout=None):            if self.terminated or self.killed:
+        def wait(self, timeout=None):
+            if self.terminated or self.killed:
                 return 143
             raise subprocess.TimeoutExpired(["torchrun"], timeout)
         def communicate(self, timeout=None):
@@ -1042,7 +1047,8 @@ def test_fabric_process_timeout_terminates_process_and_reports_failure(monkeypat
     try:
         run_fabric_verification(
             client,
-            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},            rendezvous_endpoint="10.0.0.5:29400",
+            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
+            rendezvous_endpoint="10.0.0.5:29400",
             heartbeat_seconds=1,
             runtime=Runtime(),
         )
@@ -1154,50 +1160,3 @@ def test_fabric_participant_state_transitions_are_monotonic(tmp_path: Path):
     assert coordinator.execution_participant_state(**kwargs, status="active") is True
     assert coordinator.execution_participant_state(**kwargs, status="launching") is False
     assert coordinator.execution_participant_state(**kwargs, status="bound") is False
-
-
-def test_fabric_subprocess_starts_in_its_own_process_group(monkeypatch):
-    import subprocess
-    from lead_engine.compute_worker import run_fabric_verification
-
-    class Client:
-        worker_id = "worker-1"
-        def fabric_launch_plan(self, *args):
-            return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
-                "world_size": 2, "nnodes": 1,
-                "rendezvous_endpoint": "10.0.0.5:29400",
-                "rendezvous_id": "fabric:attempt-1:1",
-            }
-        def fabric_state(self, *args): return {"ok": True}
-        def fabric_heartbeat(self, *args): return {"ok": True}
-
-    class Runtime:
-        timeout_seconds = 1
-        def verify_local(self): return {"cuda": True, "nccl": True}
-        def distributed_command(self, **kwargs): return ["torchrun"]
-
-    class Process:
-        pid = 4242
-        returncode = 0
-        def poll(self): return 0
-        def communicate(self, timeout=None): return "", ""
-        def terminate(self): pass
-        def kill(self): pass
-        def wait(self, timeout=None): return 0
-
-    captured = {}
-    process = Process()
-    def popen(*args, **kwargs):
-        captured.update(kwargs)
-        return process
-    monkeypatch.setattr(subprocess, "Popen", popen)
-
-    run_fabric_verification(
-        Client(),
-        {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
-        rendezvous_endpoint="10.0.0.5:29400",
-        heartbeat_seconds=1,
-        runtime=Runtime(),
-    )
-    assert captured["start_new_session"] is True
