@@ -239,11 +239,11 @@ def test_nvidia_runtime_requires_real_cuda_and_nccl_evidence():
     def runner(args, timeout):
         calls.append(tuple(args))
         if args[0] == "nvidia-smi" and args[1:] == ("-L",):
-            return 0, "GPU 0: NVIDIA H100 (UUID: GPU-aaa)\\nGPU 1: NVIDIA H100 (UUID: GPU-bbb)\\n", ""
+            return 0, "GPU 0: NVIDIA H100 (UUID: GPU-aaa)\nGPU 1: NVIDIA H100 (UUID: GPU-bbb)\n", ""
         if args[0] == "nvcc":
-            return 0, "Cuda compilation tools, release 12.4, V12.4.131\\n", ""
+            return 0, "Cuda compilation tools, release 12.4, V12.4.131\n", ""
         if args[0] == "ldconfig":
-            return 0, "libnccl.so.2 => /usr/lib/x86_64-linux-gnu/libnccl.so.2\\n", ""
+            return 0, "libnccl.so.2 => /usr/lib/x86_64-linux-gnu/libnccl.so.2\n", ""
         raise AssertionError(args)
 
     runtime = NvidiaRuntime(runner=runner, which=lambda name: name)
@@ -257,9 +257,9 @@ def test_nvidia_runtime_requires_real_cuda_and_nccl_evidence():
 def test_nvidia_runtime_refuses_missing_nccl_instead_of_claiming_distributed_capability():
     def runner(args, timeout):
         if args[0] == "nvidia-smi":
-            return 0, "GPU 0: NVIDIA H100 (UUID: GPU-aaa)\\n", ""
+            return 0, "GPU 0: NVIDIA H100 (UUID: GPU-aaa)\n", ""
         if args[0] == "nvcc":
-            return 0, "Cuda compilation tools, release 12.4, V12.4.131\\n", ""
+            return 0, "Cuda compilation tools, release 12.4, V12.4.131\n", ""
         if args[0] == "ldconfig":
             return 0, "", ""
         raise AssertionError(args)
