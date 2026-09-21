@@ -6,6 +6,7 @@ import pytest
 from .compute_pool import ComputePool, WorkerIdentity
 from .compute_resources import GpuResource, ResourceState
 from .nvidia_provider import CommandResult, NvidiaDiscoveryError, NvidiaProvider
+from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 
 
 QUERY = """index, uuid, name, memory.total [MiB], compute_cap, driver_version, pci.bus_id
@@ -101,3 +102,23 @@ def test_worker_pool_persists_verified_gpu_inventory():
         assert worker is not None
         assert worker["gpu_resources"][0].gpu_uuid == "GPU-aaa"
         assert worker["gpu_discovery_state"] == "healthy"
+
+
+def test_nvidia_runtime_rejects_successful_process_without_probe_evidence():
+    with pytest.raises(NvidiaRuntimeError, match="without verified success evidence"):
+        NvidiaRuntime.validate_distributed_probe_output("torchrun exited successfully", 2)
+
+
+def test_nvidia_runtime_accepts_only_verified_gpu_collective_evidence():
+    stdout = 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","expected_sum":3,"verified_on_gpu":true,"world_size":2}\n'
+    probe = NvidiaRuntime.validate_distributed_probe_output(stdout, 2)
+    assert probe["backend"] == "nccl"
+    assert probe["collective"] == "all_reduce"
+    assert probe["world_size"] == 2
+    assert probe["verified_on_gpu"] is True
+
+
+def test_nvidia_runtime_rejects_inconsistent_collective_evidence():
+    stdout = 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","expected_sum":4,"verified_on_gpu":true,"world_size":2}\n'
+    with pytest.raises(NvidiaRuntimeError, match="did not verify"):
+        NvidiaRuntime.validate_distributed_probe_output(stdout, 2)
