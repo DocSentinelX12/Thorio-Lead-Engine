@@ -187,17 +187,19 @@ def execute_checkpointed_lead_prepare(
             if not item_key:
                 raise ComputeWorkerError("coordinator did not attach a checkpoint item key")
             item_keys.append(item_key)
-            prepared_input.append({key: value for key, value in lead.items() if key != "__checkpoint_item_key"})
+            prepared_item = {key: value for key, value in lead.items() if key != "__checkpoint_item_key"}
+            prepared_item["__checkpoint_item_key"] = item_key
+            prepared_input.append(prepared_item)
         result = process_leads(prepared_input, minimum_score=minimum_score)
         result_by_key = {}
         for item in result:
             if not isinstance(item, dict):
                 raise ComputeWorkerError("lead preparation returned a non-object")
-            fingerprint = item.get("fingerprint")
-            for key, original in zip(item_keys, prepared_input):
-                if original.get("fingerprint") == fingerprint:
-                    result_by_key[key] = item
-                    break
+            item_key = str(item.get("__checkpoint_item_key") or "").strip()
+            if item_key not in item_keys:
+                raise ComputeWorkerError("lead preparation lost checkpoint item identity")
+            stored_item = {key: value for key, value in item.items() if key != "__checkpoint_item_key"}
+            result_by_key[item_key] = stored_item
         checkpoint_items = [{"item_key": key, "result": result_by_key.get(key)} for key in item_keys]
         client.checkpoint_lead_prepare(task_id, lease_token, checkpoint_items)
 
