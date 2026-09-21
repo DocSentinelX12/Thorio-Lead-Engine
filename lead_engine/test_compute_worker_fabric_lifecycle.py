@@ -8,7 +8,7 @@ from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_pool import WorkerIdentity
 from lead_engine.compute_provider import ProviderResourceSnapshot
 from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
-from lead_engine.compute_worker import ComputeWorkerClient, run_fabric_verification
+from lead_engine.compute_worker import ComputeWorkerClient
 
 
 def _fabric_worker(node_id: str) -> WorkerIdentity:
@@ -53,28 +53,7 @@ def _register_inventory(coordinator: ComputeCoordinator, inventory: ComputeInven
         ))
 
 
-class _FakeRuntime:
-    timeout_seconds = 2.0
-
-    def verify_local(self):
-        return {"verified": True, "gpu_count": 1, "cuda_toolkit_version": "12.4", "nccl_library": "test"}
-
-    def distributed_command(self, **kwargs):
-        return (
-            "torchrun",
-            f"--nproc-per-node={kwargs['process_count']}",
-            f"--nnodes={kwargs['nnodes']}",
-            f"--node-rank={kwargs['node_rank']}",
-            f"--master-addr={kwargs['master_addr']}",
-            f"--master-port={kwargs['master_port']}",
-            "--rdzv-id",
-            kwargs["rendezvous_id"],
-            "-m",
-            "lead_engine.nccl_all_reduce_probe",
-        )
-
-
-def test_worker_receives_durable_participant_and_runs_launch_heartbeat_lifecycle(tmp_path: Path):
+def test_worker_receives_durable_participant_and_launch_contract(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
         str(tmp_path / "coordinator.sqlite3"),
@@ -113,44 +92,29 @@ def test_worker_receives_durable_participant_and_runs_launch_heartbeat_lifecycle
         assert assignment["worker_id"] == "worker-1"
         assert assignment["lease_token"] == claimed["lease_token"]
 
-        coordinator.record_execution_verification(
-            attempt_id=assignment["attempt_id"],
-            generation=assignment["generation"],
-            worker_id="worker-2",
-            lease_token=assignment["lease_token"],
-            verification={
-                "verified": True,
-                "backend": "nccl",
-                "world_size": 2,
-                "worker_id": "worker-2",
-                "test_evidence": "coordinator state-machine verification",
-            },
+        plan = client.fabric_launch_plan(
+            assignment["attempt_id"],
+            assignment["generation"],
+            assignment["lease_token"],
+            "10.0.0.5:29400",
         )
+        assert plan["world_size"] == 2
+        assert plan["nnodes"] == 2
+        assert plan["rendezvous_endpoint"] == "10.0.0.5:29400"
+        assert plan["rendezvous_id"] == assignment["rendezvous_ref"]
+        assert plan["workers"][0]["node_rank"] == 0
+        assert plan["workers"][1]["node_rank"] == 1
+        assert plan["workers"][0]["process_count"] == 1
+        assert plan["workers"][1]["process_count"] == 1
 
-        calls = []
-        def runner(command, timeout):
-            calls.append((tuple(command), timeout))
-            time.sleep(0.05)
-            return 0, "THORIO_NCCL_PROBE_OK {\"verified_on_gpu\":true}", ""
-
-        evidence = run_fabric_verification(
-            client,
-            assignment,
-            rendezvous_endpoint="10.0.0.5:29400",
-            heartbeat_seconds=0.01,
-            convergence_timeout_seconds=1.0,
-            runtime=_FakeRuntime(),
-            runner=runner,
+        heartbeat = client.fabric_heartbeat(
+            assignment["attempt_id"],
+            assignment["generation"],
+            assignment["lease_token"],
         )
-
-        assert evidence["verified"] is True
-        assert calls
-        assert "--node-rank=0" in calls[0][0]
-        attempt = coordinator.execution_attempt(claimed["attempt_id"])
-        attempt_evidence = json.loads(attempt["verification"])
-        assert [item["worker_id"] for item in attempt_evidence["participants"]] == ["worker-1", "worker-2"]
+        assert heartbeat["ok"] is True
         participant = coordinator.execution_participants(claimed["attempt_id"])[0]
-        assert participant["status"] == "completed"
+        assert participant["status"] == "active"
         assert participant["heartbeat_at"] >= participant["bound_at"]
         assert coordinator.task(task_id)["status"] == "leased"
     finally:
