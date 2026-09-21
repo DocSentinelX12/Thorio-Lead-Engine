@@ -310,3 +310,178 @@ def test_fabric_rendezvous_endpoint_is_bound_once_and_cannot_change(tmp_path: Pa
         assert "durable execution endpoint" in str(error)
     else:
         raise AssertionError("durable rendezvous endpoint was changed")
+
+
+def test_converged_attempt_is_not_downgraded_by_authoritative_completion(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    for worker_id in ("worker-1", "worker-2"):
+        coordinator.record_execution_verification(
+            attempt_id=attempt_id,
+            generation=generation,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+        )
+    coordinator.converge_fabric_execution(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+    )
+
+    assert coordinator.complete(
+        f"fabric:{attempt_id}",
+        task_id,
+        lease_token,
+        {"business_result": "authoritatively accepted"},
+    ) is True
+
+    attempt = coordinator.execution_attempt(attempt_id)
+    assert attempt["status"] == "completed"
+    assert attempt["authoritative_acceptance"] == "accepted"
+
+
+def test_expiration_preserves_completed_execution_and_releases_its_allocation(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    for worker_id in ("worker-1", "worker-2"):
+        coordinator.record_execution_verification(
+            attempt_id=attempt_id,
+            generation=generation,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+        )
+    coordinator.converge_fabric_execution(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+    )
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_tasks SET lease_until=? WHERE task_id=?",
+            (time.time() - 1, task_id),
+        )
+        connection.commit()
+
+    assert coordinator.recover_expired_tasks() == 1
+
+    task = coordinator.task(task_id)
+    assert task["status"] == "queued"
+    attempt = coordinator.execution_attempt(attempt_id)
+    assert attempt["status"] == "completed"
+    assert attempt["authoritative_acceptance"] == "accepted"
+    participants = coordinator.execution_participants(attempt_id)
+    assert {item["status"] for item in participants} == {"completed"}
+    allocation = inventory.allocation(claimed["physical_allocation"]["allocation_id"])
+    assert allocation["state"] == "released"
+
+
+def test_stale_participant_cannot_report_after_convergence_or_retry(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    for worker_id in ("worker-1", "worker-2"):
+        coordinator.record_execution_verification(
+            attempt_id=attempt_id,
+            generation=generation,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+        )
+    coordinator.converge_fabric_execution(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+    )
+    assert coordinator.execution_participant_state(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-2",
+        lease_token=lease_token,
+        status="failed",
+        error="late failure",
+    ) is False
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_tasks SET lease_until=? WHERE task_id=?",
+            (time.time() - 1, task_id),
+        )
+        connection.commit()
+    coordinator.recover_expired_tasks()
+
+    retry = coordinator.claim_physical()
+    assert retry["task_id"] == task_id
+    assert retry["generation"] == generation + 1
+    assert coordinator.execution_participant_state(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+        status="failed",
+        error="stale generation report",
+    ) is False
