@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import threading
 import time
@@ -210,17 +211,49 @@ def run_fabric_verification(
     def stop_process() -> None:
         with process_lock:
             process = process_holder["process"]
-        if process is None or process.poll() is not None:
+        if process is None:
             return
-        try:
-            process.terminate()
-            process.wait(timeout=2)
-        except Exception:
+
+        if os.name == "posix":
+            process_group_id = getattr(process, "pid", None)
+            if process_group_id is not None:
+                group_exists = False
+                try:
+                    os.killpg(process_group_id, 0)
+                    group_exists = True
+                except ProcessLookupError:
+                    group_exists = False
+                except PermissionError:
+                    group_exists = True
+                if group_exists:
+                    try:
+                        os.killpg(process_group_id, signal.SIGTERM)
+                    except ProcessLookupError:
+                        group_exists = False
+                    if group_exists:
+                        try:
+                            process.wait(timeout=2)
+                        except Exception:
+                            try:
+                                os.killpg(process_group_id, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            try:
+                                process.wait(timeout=2)
+                            except Exception:
+                                pass
+                return
+
+        if process.poll() is None:
             try:
-                process.kill()
+                process.terminate()
                 process.wait(timeout=2)
             except Exception:
-                pass
+                try:
+                    process.kill()
+                    process.wait(timeout=2)
+                except Exception:
+                    pass
 
     def beat() -> None:
         while not stop_heartbeat.wait(heartbeat_seconds):
@@ -249,7 +282,12 @@ def run_fabric_verification(
         client.fabric_state(attempt_id, generation, lease_token, "active")
 
         if runner is None:
-            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
+            if os.name == "posix":
+                popen_kwargs["start_new_session"] = True
+            elif os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            process = subprocess.Popen(command, **popen_kwargs)
             with process_lock:
                 process_holder["process"] = process
             thread.start()
