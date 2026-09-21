@@ -114,7 +114,7 @@ def test_worker_receives_durable_participant_and_launch_contract(tmp_path: Path)
         )
         assert heartbeat["ok"] is True
         participant = coordinator.execution_participants(claimed["attempt_id"])[0]
-        assert participant["status"] == "running"
+        assert participant["status"] == "active"
         assert participant["heartbeat_at"] >= participant["bound_at"]
         assert coordinator.task(task_id)["status"] == "leased"
     finally:
