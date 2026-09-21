@@ -360,6 +360,17 @@ def test_converged_attempt_is_not_downgraded_by_authoritative_completion(tmp_pat
     attempt = coordinator.execution_attempt(attempt_id)
     assert attempt["status"] == "completed"
     assert attempt["authoritative_acceptance"] == "accepted"
+    assert coordinator.task(task_id)["status"] == "completed"
+    allocation = inventory.allocation(claimed["physical_allocation"]["allocation_id"])
+    assert allocation["state"] == "released"
+
+    assert coordinator.complete(
+        f"fabric:{attempt_id}",
+        task_id,
+        lease_token,
+        {"business_result": "authoritatively accepted"},
+    ) is True
+    assert inventory.allocation(claimed["physical_allocation"]["allocation_id"])["state"] == "released"
 
 
 def test_expiration_preserves_completed_execution_and_releases_its_allocation(tmp_path: Path):
