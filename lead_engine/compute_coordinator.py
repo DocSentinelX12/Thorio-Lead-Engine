@@ -17,6 +17,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
@@ -99,6 +100,8 @@ class ComputeCoordinator:
             attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
             if "allocation_id" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
+            if "rendezvous_endpoint" not in attempt_columns:
+                connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN rendezvous_endpoint TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_execution_participants (
                 attempt_id TEXT NOT NULL,
                 task_id TEXT NOT NULL,
@@ -114,11 +117,18 @@ class ComputeCoordinator:
                 bound_at REAL NOT NULL,
                 heartbeat_at REAL NOT NULL,
                 last_error TEXT NOT NULL DEFAULT '',
+                verification TEXT,
+                finished_at REAL,
                 PRIMARY KEY (attempt_id, worker_id),
                 UNIQUE (attempt_id, rank),
                 UNIQUE (attempt_id, node_id)
             )""")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_participants_task ON compute_execution_participants(task_id, generation)")
+            participant_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_participants)")}
+            if "verification" not in participant_columns:
+                connection.execute("ALTER TABLE compute_execution_participants ADD COLUMN verification TEXT")
+            if "finished_at" not in participant_columns:
+                connection.execute("ALTER TABLE compute_execution_participants ADD COLUMN finished_at REAL")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_participants_status ON compute_execution_participants(status, heartbeat_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
             connection.commit()
@@ -419,6 +429,7 @@ class ComputeCoordinator:
                     domain_id=allocation.domain_id,
                     resource_ids=allocation.resource_ids,
                     lease_token=lease_token,
+                    rendezvous_ref=f"fabric:{attempt_id}:{generation}",
                 ):
                     self._release_physical_allocation(
                         {
@@ -644,9 +655,9 @@ class ComputeCoordinator:
         if not resources:
             raise ValueError("resource_ids must not be empty")
         lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
-        rendezvous = str(rendezvous_ref or f"thorio://compute/rendezvous/{attempt_id}/{generation}").strip()
+        rendezvous = str(rendezvous_ref or "").strip()
         if not rendezvous:
-            raise ValueError("rendezvous_ref must be non-empty")
+            raise ValueError("rendezvous_ref is required and must be a durable execution identity")
 
         workers = []
         for node_id in nodes:
@@ -723,6 +734,57 @@ class ComputeCoordinator:
                 connection.commit()
         return self.execution_participants(attempt_id)
 
+    @staticmethod
+    def _validate_rendezvous_endpoint(value: str) -> str:
+        endpoint = str(value).strip()
+        if not endpoint:
+            raise ValueError("rendezvous_endpoint is required")
+        parsed = urlsplit("//" + endpoint)
+        if not parsed.hostname or parsed.port is None:
+            raise ValueError("rendezvous_endpoint must be host:port")
+        if not 1 <= parsed.port <= 65535:
+            raise ValueError("rendezvous_endpoint port must be between 1 and 65535")
+        if parsed.path or parsed.query or parsed.fragment or parsed.username or parsed.password:
+            raise ValueError("rendezvous_endpoint must contain only host and port")
+        return endpoint
+
+    def _bind_rendezvous_endpoint(self, attempt_id: str, generation: int, lease_token: str, endpoint: str) -> str:
+        resolved = self._validate_rendezvous_endpoint(endpoint)
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """SELECT status,generation,lease_token_digest,rendezvous_endpoint
+                       FROM compute_execution_attempts
+                       WHERE attempt_id=?""",
+                    (attempt_id,),
+                ).fetchone()
+                if not row or row["status"] != "leased" or int(row["generation"]) != generation or row["lease_token_digest"] != lease_digest:
+                    raise ValueError("execution lease is not valid")
+                existing = str(row["rendezvous_endpoint"] or "").strip()
+                if existing and existing != resolved:
+                    raise ValueError("rendezvous_endpoint does not match the durable execution endpoint")
+                if not existing:
+                    updated = connection.execute(
+                        """UPDATE compute_execution_attempts
+                           SET rendezvous_endpoint=?
+                           WHERE attempt_id=? AND generation=? AND status='leased'
+                             AND lease_token_digest=? AND rendezvous_endpoint IS NULL""",
+                        (resolved, attempt_id, generation, lease_digest),
+                    )
+                    if updated.rowcount != 1:
+                        row = connection.execute(
+                            "SELECT rendezvous_endpoint FROM compute_execution_attempts WHERE attempt_id=?",
+                            (attempt_id,),
+                        ).fetchone()
+                        existing = str(row["rendezvous_endpoint"] or "") if row else ""
+                        if existing != resolved:
+                            raise ValueError("rendezvous_endpoint was concurrently bound to a different endpoint")
+                    else:
+                        existing = resolved
+                connection.commit()
+        return existing or resolved
+
     def fabric_launch_plan(self, attempt_id: str, rendezvous_endpoint: str) -> Dict[str, Any]:
         """Build an exact launch contract from the durable physical participants.
 
@@ -730,9 +792,19 @@ class ComputeCoordinator:
         Workers must validate their local NVIDIA runtime before executing the
         returned process specification.
         """
-        endpoint = str(rendezvous_endpoint).strip()
-        if not endpoint or ":" not in endpoint:
-            raise ValueError("rendezvous_endpoint must be host:port")
+        endpoint = self._validate_rendezvous_endpoint(rendezvous_endpoint)
+        with self._connect() as connection:
+            attempt_row = connection.execute(
+                "SELECT rendezvous_endpoint FROM compute_execution_attempts WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+        if not attempt_row:
+            raise ValueError("execution attempt does not exist")
+        durable_endpoint = str(attempt_row["rendezvous_endpoint"] or "").strip()
+        if not durable_endpoint:
+            raise ValueError("execution attempt has no durable rendezvous endpoint")
+        if endpoint != durable_endpoint:
+            raise ValueError("rendezvous_endpoint does not match the durable execution endpoint")
         participants = self.execution_participants(attempt_id)
         if not participants:
             raise ValueError("execution attempt has no bound participants")
@@ -765,9 +837,9 @@ class ComputeCoordinator:
             raise ValueError("participant node ranks are not contiguous")
         return {
             "attempt_id": attempt_id,
+            "rendezvous_endpoint": durable_endpoint,
             "world_size": total_processes,
             "nnodes": len(workers),
-            "rendezvous_endpoint": endpoint,
             "rendezvous_id": participants[0]["rendezvous_ref"],
             "workers": workers,
         }
