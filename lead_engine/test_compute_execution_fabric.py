@@ -121,6 +121,13 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
         assert [item["world_size"] for item in participants] == [2, 2]
         assert len({item["rendezvous_ref"] for item in participants}) == 1
         assert participants[0]["status"] == "bound"
+        launch = coordinator.fabric_launch_plan(claimed["attempt_id"], "10.0.0.5:29400")
+        assert launch["world_size"] == 2
+        assert launch["nnodes"] == 2
+        assert launch["rendezvous_id"] == participants[0]["rendezvous_ref"]
+        assert [item["node_rank"] for item in launch["workers"]] == [0, 1]
+        assert [item["process_count"] for item in launch["workers"]] == [1, 1]
+        assert launch["rendezvous_endpoint"] == "10.0.0.5:29400"
 
 
 def test_claim_creates_and_binds_physical_allocation_to_worker_node():
