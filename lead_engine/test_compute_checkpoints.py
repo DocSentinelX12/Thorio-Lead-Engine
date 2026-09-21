@@ -130,7 +130,7 @@ def test_checkpointed_worker_preserves_lead_without_preexisting_fingerprint():
         client,
         "task-1",
         "lease-1",
-        {"kind": "lead_prepare", "leads": [{"company": "Example", "signal": "hiring", "url": "https://example.com"}]},
+        {"kind": "lead_prepare", "leads": [{"company": "Example", "signal": "hiring", "url": "https://example.com", "__checkpoint_item_key": "item-key-1"}]},
     )
     assert result["count"] == 1
     assert result["leads"][0]["company"] == "Example"
