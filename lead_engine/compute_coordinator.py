@@ -913,7 +913,7 @@ class ComputeCoordinator:
                                AND t.status='leased' AND t.lease_until > ?
                            )
                        )""",
-                    (now, status, str(error)[:4000], attempt_id, generation, worker_id, status, status, status, status, lease_digest, now),
+                    (now, status, str(error)[:4000], attempt_id, generation, worker_id, status, status, status, status, status, lease_digest, now),
                 )
                 changed = cursor.rowcount == 1
                 connection.commit()
