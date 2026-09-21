@@ -1009,14 +1009,14 @@ class ComputeCoordinator:
                     missing = any(
                         str(p["status"]) not in {"bound", "active", "launching", "running"}
                         or float(p["heartbeat_at"]) + timeout <= now
-                        or not self.pool.worker(str(p["worker_id"]))
-                        or self.pool.worker(str(p["worker_id"])).get("status") != "ready"
+
                         for p in participants
                     )
                     if missing:
                         stale_attempts.append(attempt)
                 if not stale_attempts:
                     return {"reconciled": 0, "requeued": 0}
+                reconciled_attempts = []
                 for attempt in stale_attempts:
                     task_id = str(attempt["task_id"])
                     updated = connection.execute(
@@ -1034,19 +1034,21 @@ class ComputeCoordinator:
                            WHERE attempt_id=? AND generation=? AND status='leased'""",
                         (now, "fabric participant lost", attempt["attempt_id"], attempt["generation"]),
                     )
+                    if updated.rowcount != 1:
+                        continue
                     connection.execute(
                         """UPDATE compute_execution_participants
                            SET status='failed',last_error=?,heartbeat_at=?
                            WHERE attempt_id=? AND generation=? AND status IN ('bound','active','launching','running')""",
                         ("fabric participant lost", now, attempt["attempt_id"], attempt["generation"]),
                     )
-                    stale_attempts = stale_attempts
+                    reconciled_attempts.append(attempt)
                 connection.commit()
-            for attempt in stale_attempts:
+            for attempt in reconciled_attempts:
                 self._release_physical_allocation(attempt, "fabric participant lost")
                 if attempt.get("worker_id") and not str(attempt["worker_id"]).startswith("fabric:"):
                     self.pool.release_task_slot(str(attempt["worker_id"]))
-        return {"reconciled": len(stale_attempts), "requeued": len(stale_attempts)}
+        return {"reconciled": len(reconciled_attempts), "requeued": len(reconciled_attempts)}
 
     def recover_expired_tasks(self) -> int:
         now = time.time()
