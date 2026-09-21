@@ -178,9 +178,10 @@ class ComputeInventory:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM compute_resource_inventory "
-                "WHERE state IN (?,?) AND (expires_at IS NULL OR expires_at > ?) "
+                "WHERE state IN (?,?) AND authentication_state = ? "
+                "AND (expires_at IS NULL OR expires_at > ?) "
                 "ORDER BY provider_id,domain_id,node_id,resource_type,resource_key",
-                (ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value, current),
+                (ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value, "authenticated", current),
             ).fetchall()
         return [dict(row) for row in rows]
 
