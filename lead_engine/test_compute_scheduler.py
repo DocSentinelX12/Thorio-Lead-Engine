@@ -94,6 +94,25 @@ def test_cuda_mismatch_is_rejected(tmp_path):
         )
 
 
+def test_unauthenticated_resources_are_not_admitted(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a",
+        domain_id="domain-a",
+        observed_at=time.time(),
+        nodes=(_node("node-a", [
+            _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+        ]),),
+        authentication_state="unauthenticated",
+    ))
+    assert inventory.eligible() == []
+    with pytest.raises(ComputeSchedulingError):
+        ComputeScheduler(inventory).allocate(
+            ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+            "allocation-unauthenticated",
+        )
+
+
 def test_quarantined_gpu_is_excluded(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
