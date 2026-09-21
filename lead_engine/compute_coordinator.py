@@ -45,6 +45,9 @@ class ComputeCoordinator:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     def _initialize_tasks(self) -> None:
@@ -131,7 +134,120 @@ class ComputeCoordinator:
                 connection.execute("ALTER TABLE compute_execution_participants ADD COLUMN finished_at REAL")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_participants_status ON compute_execution_participants(status, heartbeat_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_task_checkpoints (
+                task_id TEXT NOT NULL,
+                item_key TEXT NOT NULL,
+                item_index INTEGER NOT NULL,
+                result TEXT,
+                worker_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (task_id, item_key)
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_task_checkpoints_task_index ON compute_task_checkpoints(task_id, item_index)")
             connection.commit()
+
+    @staticmethod
+    def _checkpoint_item_key(item: Any) -> str:
+        serialized = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _claim_checkpointed_payload(self, connection: sqlite3.Connection, task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if str(payload.get("kind") or "").strip() != "lead_prepare":
+            return payload
+        leads = payload.get("leads")
+        if not isinstance(leads, list):
+            return payload
+        rows = connection.execute(
+            "SELECT item_key FROM compute_task_checkpoints WHERE task_id=?",
+            (task_id,),
+        ).fetchall()
+        completed = {str(row["item_key"]) for row in rows}
+        pending = []
+        for lead in leads:
+            if not isinstance(lead, dict):
+                raise ValueError("lead_prepare leads must contain objects")
+            item_key = self._checkpoint_item_key(lead)
+            if item_key in completed:
+                continue
+            item = dict(lead)
+            item["__checkpoint_item_key"] = item_key
+            pending.append(item)
+        claimed_payload = dict(payload)
+        claimed_payload["leads"] = pending
+        return claimed_payload
+
+    def checkpoint_lead_prepare(
+        self,
+        worker_id: str,
+        task_id: str,
+        lease_token: str,
+        items: list[Dict[str, Any]],
+    ) -> Dict[str, int]:
+        if not isinstance(items, list) or not items:
+            raise ValueError("checkpoint items must be a non-empty list")
+        with self._lock:
+            with self._connect() as connection:
+                if not self._valid_lease(connection, worker_id, task_id, lease_token):
+                    raise ValueError("invalid or expired task lease")
+                task_row = connection.execute(
+                    "SELECT payload,generation FROM compute_tasks WHERE task_id=?",
+                    (task_id,),
+                ).fetchone()
+                if task_row is None:
+                    raise ValueError("task not found")
+                payload = json.loads(task_row["payload"])
+                if str(payload.get("kind") or "").strip() != "lead_prepare":
+                    raise ValueError("checkpoints are only supported for lead_prepare tasks")
+                leads = payload.get("leads")
+                if not isinstance(leads, list):
+                    raise ValueError("lead_prepare requires a leads list")
+                item_index = {
+                    self._checkpoint_item_key(lead): index
+                    for index, lead in enumerate(leads)
+                    if isinstance(lead, dict)
+                }
+                now = time.time()
+                checkpointed = 0
+                already = 0
+                for item in items:
+                    if not isinstance(item, dict):
+                        raise ValueError("checkpoint items must be objects")
+                    key = str(item.get("item_key") or "").strip()
+                    if not key or key not in item_index:
+                        raise ValueError("checkpoint item does not belong to the task")
+                    result = item.get("result")
+                    if result is not None and not isinstance(result, dict):
+                        raise ValueError("checkpoint result must be an object or null")
+                    serialized = None if result is None else json.dumps(result, ensure_ascii=False, sort_keys=True)
+                    existing = connection.execute(
+                        "SELECT result FROM compute_task_checkpoints WHERE task_id=? AND item_key=?",
+                        (task_id, key),
+                    ).fetchone()
+                    if existing is not None:
+                        if existing["result"] != serialized:
+                            raise ValueError(f"checkpoint conflict for item {key}")
+                        already += 1
+                        continue
+                    connection.execute(
+                        """INSERT INTO compute_task_checkpoints
+                           (task_id,item_key,item_index,result,worker_id,generation,created_at,updated_at)
+                           VALUES(?,?,?,?,?,?,?,?)""",
+                        (task_id, key, item_index[key], serialized, worker_id, int(task_row["generation"]), now, now),
+                    )
+                    checkpointed += 1
+                connection.commit()
+                return {"checkpointed": checkpointed, "already_checkpointed": already}
+
+    def checkpoint_results(self, task_id: str) -> Dict[str, Any]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT item_key,item_index,result FROM compute_task_checkpoints WHERE task_id=? ORDER BY item_index",
+                (task_id,),
+            ).fetchall()
+        results = [json.loads(row["result"]) for row in rows if row["result"] is not None]
+        return {"completed": len(rows), "results": results}
 
     def enqueue(self, payload: Dict[str, Any], task_id: Optional[str] = None) -> str:
         if not isinstance(payload, dict):
@@ -535,6 +651,8 @@ class ComputeCoordinator:
                 connection.execute("INSERT INTO compute_execution_attempts(attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at) VALUES(?,?,?,?,?,?,?)", (attempt_id, task_id, generation, worker_id, "leased", lease_digest, now))
                 connection.commit()
             payload = json.loads(selected["payload"])
+            with self._connect() as checkpoint_connection:
+                payload = self._claim_checkpointed_payload(checkpoint_connection, task_id, payload)
             allocation = None
             if "compute_requirements" in payload:
                 allocation_id = f"{task_id}:{attempt_id}"
@@ -1339,6 +1457,8 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/health": self._send(200, self.server.coordinator.health()); return
         if self.path.startswith("/work/status/"):
             task_id = self.path.rsplit("/", 1)[-1]; task = self.server.coordinator.task(task_id); self._send(200 if task else 404, task or {"error": "task not found"}); return
+        if self.path.startswith("/work/checkpoints/"):
+            task_id = self.path.rsplit("/", 1)[-1]; self._send(200, self.server.coordinator.checkpoint_results(task_id)); return
         self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:
@@ -1404,6 +1524,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(201, {"task_id": self.server.coordinator.enqueue(payload, task_id=task_id)})
             elif self.path == "/work/claim":
                 item = self.server.coordinator.claim(str(body["worker_id"])); self._send(200, item or {"task": None})
+            elif self.path == "/work/checkpoint":
+                result = self.server.coordinator.checkpoint_lead_prepare(
+                    str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), body["items"]
+                ); self._send(200, result)
             elif self.path == "/work/complete":
                 ok = self.server.coordinator.complete(str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), body["result"]); self._send(200 if ok else 409, {"completed": ok})
             elif self.path == "/work/release":

@@ -16,6 +16,7 @@ from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_f
 from .compute_pool import local_worker_identity
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .lead_pipeline import process_leads
+from .lead_sort import sort_by_score
 
 
 class ComputeWorkerError(RuntimeError):
@@ -137,6 +138,17 @@ class ComputeWorkerClient:
             body["task_id"] = task_id
         return self.request("/work/enqueue", body)
 
+    def checkpoint_lead_prepare(self, task_id: str, lease_token: str, items: list[Dict[str, Any]]) -> Dict[str, Any]:
+        return self.request("/work/checkpoint", {
+            "worker_id": self.worker_id,
+            "task_id": task_id,
+            "lease_token": lease_token,
+            "items": items,
+        })
+
+    def checkpoint_results(self, task_id: str) -> Dict[str, Any]:
+        return self.request(f"/work/checkpoints/{task_id}")
+
     def complete(self, task_id: str, lease_token: str, result: Dict[str, Any]) -> Dict[str, Any]:
         response = self.request("/work/complete", {"worker_id": self.worker_id, "task_id": task_id, "lease_token": lease_token, "result": result})
         if response.get("completed") is not True:
@@ -149,6 +161,50 @@ class ComputeWorkerClient:
             raise ComputeWorkerError(f"coordinator rejected release for task {task_id}")
         return response
 
+
+def execute_checkpointed_lead_prepare(
+    client: ComputeWorkerClient,
+    task_id: str,
+    lease_token: str,
+    payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    leads = payload.get("leads")
+    if not isinstance(leads, list):
+        raise ComputeWorkerError("lead_prepare requires a leads list")
+    minimum_score = payload.get("minimum_score", 0)
+    batch_size = int(payload.get("checkpoint_batch_size", 25))
+    if batch_size <= 0:
+        raise ComputeWorkerError("checkpoint_batch_size must be positive")
+
+    for start in range(0, len(leads), batch_size):
+        batch = leads[start:start + batch_size]
+        prepared_input = []
+        item_keys = []
+        for lead in batch:
+            if not isinstance(lead, dict):
+                raise ComputeWorkerError("lead_prepare leads must contain objects")
+            item_key = str(lead.get("__checkpoint_item_key") or "").strip()
+            if not item_key:
+                raise ComputeWorkerError("coordinator did not attach a checkpoint item key")
+            item_keys.append(item_key)
+            prepared_input.append({key: value for key, value in lead.items() if key != "__checkpoint_item_key"})
+        result = process_leads(prepared_input, minimum_score=minimum_score)
+        result_by_key = {}
+        for item in result:
+            if not isinstance(item, dict):
+                raise ComputeWorkerError("lead preparation returned a non-object")
+            fingerprint = item.get("fingerprint")
+            for key, original in zip(item_keys, prepared_input):
+                if original.get("fingerprint") == fingerprint:
+                    result_by_key[key] = item
+                    break
+        checkpoint_items = [{"item_key": key, "result": result_by_key.get(key)} for key in item_keys]
+        client.checkpoint_lead_prepare(task_id, lease_token, checkpoint_items)
+
+    stored = client.checkpoint_results(task_id)
+    stored_results = [item for item in stored.get("results", []) if isinstance(item, dict)]
+    ordered = sort_by_score(stored_results)
+    return {"kind": "lead_prepare", "leads": ordered, "count": len(ordered)}
 
 def execute_compute_task(payload: Mapping[str, Any]) -> Dict[str, Any]:
     if not isinstance(payload, Mapping):
@@ -417,7 +473,12 @@ def run_worker(
             payload = task["payload"]
             if "compute_requirements" in payload and not isinstance(task.get("physical_allocation"), Mapping):
                 raise ComputeWorkerError("coordinator did not assign a physical execution allocation")
-            result = execute_compute_task(payload)
+            if str(payload.get("kind") or "").strip() == "lead_prepare":
+                result = execute_checkpointed_lead_prepare(
+                    client, task["task_id"], task["lease_token"], payload
+                )
+            else:
+                result = execute_compute_task(payload)
             client.complete(task["task_id"], task["lease_token"], result)
         except Exception as error:
             try:
