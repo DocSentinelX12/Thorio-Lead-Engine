@@ -1084,9 +1084,11 @@ class ComputeCoordinator:
             with self._connect() as connection:
                 cursor = connection.execute(
                     """UPDATE compute_execution_participants
-                       SET heartbeat_at=?,status='active',last_error=''
+                       SET heartbeat_at=?,
+                           status=CASE WHEN status='running' THEN 'running' ELSE 'active' END,
+                           last_error=''
                        WHERE attempt_id=? AND generation=? AND worker_id=?
-                       AND status IN ('bound','active')
+                       AND status IN ('bound','active','running')
                        AND EXISTS (
                            SELECT 1 FROM compute_execution_attempts a
                            WHERE a.attempt_id=compute_execution_participants.attempt_id
