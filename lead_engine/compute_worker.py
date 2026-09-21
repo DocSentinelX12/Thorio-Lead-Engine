@@ -306,6 +306,7 @@ def run_fabric_verification(
             pass
         raise
     finally:
+        stop_process()
         stop_heartbeat.set()
         if thread.is_alive():
             thread.join(timeout=2)
