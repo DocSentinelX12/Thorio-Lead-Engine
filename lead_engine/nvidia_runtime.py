@@ -6,6 +6,7 @@ Distributed verification invokes a real torchrun NCCL all-reduce probe.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -143,12 +144,23 @@ class NvidiaRuntime:
         lines = [line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
         if not lines:
             raise NvidiaRuntimeError("distributed NCCL probe completed without verified success evidence")
+        try:
+            probe = json.loads(lines[-1][len(marker):])
+        except json.JSONDecodeError as exc:
+            raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
+        if (
+            probe.get("backend") != "nccl"
+            or probe.get("collective") != "all_reduce"
+            or probe.get("verified_on_gpu") is not True
+            or int(probe.get("world_size", -1)) != world_size
+        ):
+            raise NvidiaRuntimeError("distributed NCCL probe evidence did not verify the requested GPU collective")
         return {
             "verified": True,
             "backend": "nccl",
             "world_size": world_size,
             "nnodes": nnodes,
             "node_rank": node_rank,
-            "probe_output": lines[-1][len(marker):],
+            "probe_output": probe,
             "command": command,
         }
