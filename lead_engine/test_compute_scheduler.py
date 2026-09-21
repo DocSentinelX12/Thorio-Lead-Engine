@@ -263,3 +263,52 @@ def test_provider_missing_does_not_erase_reserved_allocation(tmp_path):
     )
     assert inventory.mark_provider_missing("provider-a", "domain-a") == 0
     assert inventory.get(allocation.resource_keys[-1])["state"] == ResourceState.RESERVED.value
+
+
+def test_twelve_node_request_is_not_artificially_capped(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    nodes = [
+        _node(f"node-{index:02d}", [_ready_gpu(f"node-{index:02d}", "gpu-0", gpu_uuid=f"u{index}", vram_bytes=24 * 1024**3)])
+        for index in range(12)
+    ]
+    inventory.observe(_snapshot(nodes))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=12), same_node=False),
+        "allocation-12",
+    )
+    assert len(allocation.node_ids) == 12
+    assert len([resource for resource in allocation.resource_ids if "/gpu-" in resource]) == 12
+
+
+def test_five_hundred_gpu_request_has_no_fixed_resource_ceiling(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    nodes = [
+        _node(f"node-{index:03d}", [_ready_gpu(f"node-{index:03d}", "gpu-0", gpu_uuid=f"u{index}", vram_bytes=24 * 1024**3)])
+        for index in range(500)
+    ]
+    inventory.observe(_snapshot(nodes))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=500), same_node=False),
+        "allocation-500",
+    )
+    assert len(allocation.node_ids) == 500
+    assert len([resource for resource in allocation.resource_ids if "/gpu-" in resource]) == 500
+
+
+def test_multi_node_allocation_does_not_cross_provider_or_domain_boundary(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(_node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="u-a")]),),
+        authentication_state="authenticated",
+    ))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-b", domain_id="domain-b", observed_at=time.time(),
+        nodes=(_node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="u-b")]),),
+        authentication_state="authenticated",
+    ))
+    with pytest.raises(ComputeSchedulingError, match="provider and domain"):
+        ComputeScheduler(inventory).allocate(
+            ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=2), same_node=False),
+            "allocation-cross-boundary",
+        )
