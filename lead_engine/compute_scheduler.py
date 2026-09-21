@@ -144,14 +144,35 @@ class ComputeScheduler:
 
         selected: list[dict[str, Any]] = []
         if requirements.workload_class == WorkloadClass.MULTI_NODE_GPU:
+            # A distributed allocation is one execution domain. Never mix
+            # providers or domains inside a single physical allocation.
+            groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
             for candidate in candidates:
-                if candidate["gpus"]:
-                    selected.append(candidate)
-                    total = sum(len(c["gpus"]) for c in selected)
-                    if len(selected) >= 2 and total >= needed:
+                key = (str(candidate["cpu"]["provider_id"]), str(candidate["cpu"]["domain_id"]))
+                groups.setdefault(key, []).append(candidate)
+            ranked_groups = sorted(
+                groups.items(),
+                key=lambda item: (
+                    sum(len(candidate["gpus"]) for candidate in item[1]),
+                    len(item[1]),
+                ),
+                reverse=True,
+            )
+            for (_provider_id, _domain_id), group in ranked_groups:
+                group_selected: list[dict[str, Any]] = []
+                total = 0
+                for candidate in group:
+                    if not candidate["gpus"]:
+                        continue
+                    group_selected.append(candidate)
+                    total += len(candidate["gpus"])
+                    if len(group_selected) >= 2 and total >= needed:
                         break
+                if len(group_selected) >= 2 and total >= needed:
+                    selected = group_selected
+                    break
             if len(selected) < 2 or sum(len(c["gpus"]) for c in selected) < needed:
-                raise ComputeSchedulingError("no compatible multi-node allocation")
+                raise ComputeSchedulingError("no compatible multi-node allocation within one provider and domain")
         else:
             for candidate in candidates:
                 if len(candidate["gpus"]) >= needed:
