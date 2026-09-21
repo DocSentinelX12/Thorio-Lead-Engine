@@ -279,7 +279,7 @@ def test_nvidia_runtime_distributed_probe_requires_torchrun_and_builds_real_nccl
         master_port=29500,
     )
     assert command[0] == "torchrun"
-    assert "--nproc-per-node=gpu" in command
+    assert "--nproc-per-node=1" in command
     assert "--nnodes=2" in command
     assert "--node-rank=0" in command
     assert "--master-addr=10.0.0.5" in command
