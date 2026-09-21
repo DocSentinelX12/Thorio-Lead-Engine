@@ -849,3 +849,212 @@ def test_fabric_verification_cleans_up_when_local_runtime_validation_fails():
         raise AssertionError("local runtime failure was not preserved")
 
     assert client.states == ["launching", "failed"]
+
+
+def test_fabric_heartbeat_failure_terminates_live_process_and_reports_failure(monkeypatch):
+    import subprocess
+    from lead_engine.compute_worker import ComputeWorkerError, run_fabric_verification
+
+    class Client:
+        worker_id = "worker-1"
+        def __init__(self):
+            self.states = []
+            self.heartbeats = 0
+        def fabric_launch_plan(self, *args):
+            return {
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "world_size": 2, "nnodes": 1,
+                "rendezvous_endpoint": "10.0.0.5:29400",
+                "rendezvous_id": "fabric:attempt-1:1",
+            }
+        def fabric_state(self, *args):
+            self.states.append(args[3])
+            return {"ok": True}
+        def fabric_heartbeat(self, *args):
+            self.heartbeats += 1
+            return {"ok": False}
+
+    class Runtime:
+        timeout_seconds = 5
+        def verify_local(self):
+            return {"cuda": True, "nccl": True}
+        def distributed_command(self, **kwargs):
+            return ["torchrun"]
+        def validate_distributed_probe_output(self, stdout, world_size):
+            raise AssertionError("verification must not run after heartbeat loss")
+
+    class Process:
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+            self.released = threading.Event()
+        def poll(self):
+            return 0 if self.terminated or self.killed else None
+        def terminate(self):
+            self.terminated = True
+            self.released.set()
+        def kill(self):
+            self.killed = True
+            self.released.set()
+        def wait(self, timeout=None):
+            if self.terminated or self.killed:
+                return 143
+            raise subprocess.TimeoutExpired(["torchrun"], timeout)
+        def communicate(self, timeout=None):
+            self.released.wait(timeout=2)
+            if not (self.terminated or self.killed):
+                raise AssertionError("heartbeat failure did not terminate the process")
+            return "", ""
+        @property
+        def returncode(self):
+            return 143 if self.terminated or self.killed else None
+
+    client = Client()
+    process = Process()
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
+
+    try:
+        run_fabric_verification(
+            client,
+            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
+            rendezvous_endpoint="10.0.0.5:29400",
+            heartbeat_seconds=0.001,
+            runtime=Runtime(),
+        )
+    except ComputeWorkerError as error:
+        assert "heartbeat failed" in str(error)
+    else:
+        raise AssertionError("heartbeat loss did not abort the running execution")
+
+    assert process.terminated is True
+    assert client.heartbeats >= 1
+    assert client.states == ["launching", "active", "failed"]
+
+
+def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
+    import time
+    from lead_engine.compute_worker import ComputeWorkerError, run_fabric_verification
+
+    class Client:
+        worker_id = "worker-1"
+        def __init__(self):
+            self.states = []
+            self.verified = False
+        def fabric_launch_plan(self, *args):
+            return {
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "world_size": 2, "nnodes": 1,
+                "rendezvous_endpoint": "10.0.0.5:29400",
+                "rendezvous_id": "fabric:attempt-1:1",
+            }
+        def fabric_state(self, *args):
+            self.states.append(args[3])
+            return {"ok": True}
+        def fabric_heartbeat(self, *args):
+            return {"ok": False}
+        def fabric_record_verification(self, *args):
+            self.verified = True
+            return {"ok": True}
+
+    class Runtime:
+        timeout_seconds = 5
+        def verify_local(self):
+            return {"cuda": True, "nccl": True}
+        def distributed_command(self, **kwargs):
+            return ["torchrun"]
+        def validate_distributed_probe_output(self, stdout, world_size):
+            return {"backend": "nccl", "verified_on_gpu": True, "world_size": world_size, "collective": "all_reduce", "expected_sum": 3}
+
+    client = Client()
+
+    def runner(command, timeout):
+        time.sleep(0.02)
+        return 0, "THORIO_NCCL_PROBE_OK", ""
+
+    try:
+        run_fabric_verification(
+            client,
+            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
+            rendezvous_endpoint="10.0.0.5:29400",
+            heartbeat_seconds=0.001,
+            runtime=Runtime(),
+            runner=runner,
+        )
+    except ComputeWorkerError as error:
+        assert "heartbeat failed" in str(error)
+    else:
+        raise AssertionError("successful process exit incorrectly outranked heartbeat loss")
+
+    assert client.verified is False
+    assert client.states == ["launching", "active", "failed"]
+
+
+def test_fabric_process_timeout_terminates_process_and_reports_failure(monkeypatch):
+    import subprocess
+    from lead_engine.compute_worker import ComputeWorkerError, run_fabric_verification
+
+    class Client:
+        worker_id = "worker-1"
+        def __init__(self):
+            self.states = []
+        def fabric_launch_plan(self, *args):
+            return {
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "world_size": 2, "nnodes": 1,
+                "rendezvous_endpoint": "10.0.0.5:29400",
+                "rendezvous_id": "fabric:attempt-1:1",
+            }
+        def fabric_state(self, *args):
+            self.states.append(args[3])
+            return {"ok": True}
+        def fabric_heartbeat(self, *args):
+            return {"ok": True}
+
+    class Runtime:
+        timeout_seconds = 1
+        def verify_local(self):
+            return {"cuda": True, "nccl": True}
+        def distributed_command(self, **kwargs):
+            return ["torchrun"]
+
+    class Process:
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+        def poll(self):
+            return None if not (self.terminated or self.killed) else 143
+        def terminate(self):
+            self.terminated = True
+        def kill(self):
+            self.killed = True
+        def wait(self, timeout=None):
+            if self.terminated or self.killed:
+                return 143
+            raise subprocess.TimeoutExpired(["torchrun"], timeout)
+        def communicate(self, timeout=None):
+            if self.terminated or self.killed:
+                return "", "terminated"
+            raise subprocess.TimeoutExpired(["torchrun"], timeout)
+        @property
+        def returncode(self):
+            return 143 if self.terminated or self.killed else None
+
+    client = Client()
+    process = Process()
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
+
+    try:
+        run_fabric_verification(
+            client,
+            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
+            rendezvous_endpoint="10.0.0.5:29400",
+            heartbeat_seconds=1,
+            runtime=Runtime(),
+        )
+    except ComputeWorkerError as error:
+        assert "timed out" in str(error)
+    else:
+        raise AssertionError("process timeout was not surfaced")
+
+    assert process.terminated is True
+    assert client.states == ["launching", "active", "failed"]
