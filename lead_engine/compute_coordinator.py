@@ -99,6 +99,27 @@ class ComputeCoordinator:
             attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
             if "allocation_id" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_execution_participants (
+                attempt_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                allocation_id TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                rank INTEGER NOT NULL,
+                world_size INTEGER NOT NULL,
+                rendezvous_ref TEXT NOT NULL,
+                status TEXT NOT NULL,
+                resource_ids TEXT NOT NULL DEFAULT '[]',
+                bound_at REAL NOT NULL,
+                heartbeat_at REAL NOT NULL,
+                last_error TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (attempt_id, worker_id),
+                UNIQUE (attempt_id, rank),
+                UNIQUE (attempt_id, node_id)
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_participants_task ON compute_execution_participants(task_id, generation)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_participants_status ON compute_execution_participants(status, heartbeat_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
             connection.commit()
 
@@ -410,6 +431,23 @@ class ComputeCoordinator:
                     )
                     self.release(execution_identity, task_id, lease_token, "fabric binding rejected")
                     return None
+                if not self.bind_execution_participants(
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    allocation_id=allocation.allocation_id,
+                    provider_id=allocation.provider_id,
+                    domain_id=allocation.domain_id,
+                    node_ids=allocation.node_ids,
+                    resource_ids=allocation.resource_ids,
+                    lease_token=lease_token,
+                ):
+                    self._release_physical_allocation(
+                        {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
+                        "participant binding rejected",
+                    )
+                    self.release(execution_identity, task_id, lease_token, "participant binding rejected")
+                    return None
             except Exception as error:
                 if allocation is not None:
                     self._release_physical_allocation(
@@ -499,6 +537,23 @@ class ComputeCoordinator:
                         self._release_physical_allocation({"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation}, "coordinator binding rejected")
                         self.release(worker_id, task_id, lease_token, "physical binding rejected")
                         return None
+                    if not self.bind_execution_participants(
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        generation=generation,
+                        allocation_id=allocation.allocation_id,
+                        provider_id=allocation.provider_id,
+                        domain_id=allocation.domain_id,
+                        node_ids=allocation.node_ids,
+                        resource_ids=allocation.resource_ids,
+                        lease_token=lease_token,
+                    ):
+                        self._release_physical_allocation(
+                            {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
+                            "participant binding rejected",
+                        )
+                        self.release(worker_id, task_id, lease_token, "participant binding rejected")
+                        return None
                 except Exception as error:
                     if allocation is not None:
                         self._release_physical_allocation({"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation}, f"physical allocation failed: {error}")
@@ -543,6 +598,169 @@ class ComputeCoordinator:
                     connection.rollback(); return False
                 connection.commit(); return True
 
+    def execution_participants(self, attempt_id: str) -> list[Dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM compute_execution_participants WHERE attempt_id=? ORDER BY rank",
+                (attempt_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
+            result.append(item)
+        return result
+
+    def bind_execution_participants(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        generation: int,
+        allocation_id: str,
+        provider_id: str,
+        domain_id: str,
+        node_ids: list[str] | tuple[str, ...],
+        resource_ids: list[str] | tuple[str, ...],
+        lease_token: str,
+        rendezvous_ref: str | None = None,
+    ) -> list[Dict[str, Any]]:
+        """Bind exact registered workers to an exact physical allocation.
+
+        Node IDs are the physical participant identity at this boundary. Each
+        node must currently map to a registered ready worker. Rank assignment
+        follows the scheduler's deterministic node order and world size equals
+        the exact participant count. The rendezvous value is an opaque durable
+        reference, not a claim that a transport has been established.
+        """
+        if not task_id.strip() or not attempt_id.strip() or not allocation_id.strip():
+            raise ValueError("task, attempt, and allocation identities are required")
+        if generation < 1 or not provider_id.strip() or not domain_id.strip():
+            raise ValueError("provider, domain, and generation are required")
+        nodes = tuple(dict.fromkeys(str(item) for item in node_ids if str(item).strip()))
+        resources = tuple(dict.fromkeys(str(item) for item in resource_ids if str(item).strip()))
+        if not nodes or len(nodes) != len(tuple(node_ids)):
+            raise ValueError("node_ids must contain unique non-empty node identities")
+        if not resources:
+            raise ValueError("resource_ids must not be empty")
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        rendezvous = str(rendezvous_ref or f"thorio://compute/rendezvous/{attempt_id}/{generation}").strip()
+        if not rendezvous:
+            raise ValueError("rendezvous_ref must be non-empty")
+
+        workers = []
+        for node_id in nodes:
+            worker = self.pool.worker(node_id)
+            if not worker or worker["status"] != "ready":
+                return []
+            workers.append(worker)
+
+        allocation = self.inventory.allocation(allocation_id)
+        if not allocation or allocation["state"] != "bound":
+            return []
+        if (
+            allocation["task_id"] != task_id
+            or allocation["attempt_id"] != attempt_id
+            or int(allocation["generation"] or 0) != generation
+            or allocation["provider_id"] != provider_id
+            or allocation["domain_id"] != domain_id
+            or allocation["lease_token_digest"] != lease_digest
+        ):
+            return []
+        if set(allocation["resource_keys"]) and not resources:
+            return []
+
+        with self._lock:
+            with self._connect() as connection:
+                attempt = connection.execute(
+                    "SELECT status,task_id,generation,lease_token_digest,allocation_id FROM compute_execution_attempts WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if not attempt or attempt["task_id"] != task_id or int(attempt["generation"]) != generation:
+                    return []
+                if attempt["status"] != "leased" or attempt["lease_token_digest"] != lease_digest or attempt["allocation_id"] != allocation_id:
+                    return []
+
+                existing = connection.execute(
+                    "SELECT * FROM compute_execution_participants WHERE attempt_id=? ORDER BY rank",
+                    (attempt_id,),
+                ).fetchall()
+                if existing:
+                    existing_contract = [dict(row) for row in existing]
+                    expected_workers = [node_id for node_id in nodes]
+                    if [row["worker_id"] for row in existing_contract] != expected_workers:
+                        return []
+                    if any(
+                        row["task_id"] != task_id
+                        or int(row["generation"]) != generation
+                        or row["allocation_id"] != allocation_id
+                        or row["rendezvous_ref"] != rendezvous
+                        or int(row["world_size"]) != len(nodes)
+                        for row in existing_contract
+                    ):
+                        return []
+                    return self.execution_participants(attempt_id)
+
+                now = time.time()
+                world_size = len(nodes)
+                for rank, (node_id, worker) in enumerate(zip(nodes, workers)):
+                    worker_resource_ids = [
+                        resource_id for resource_id in resources
+                        if resource_id.split("/", 1)[0] == node_id
+                    ]
+                    connection.execute(
+                        """INSERT INTO compute_execution_participants(
+                            attempt_id,task_id,generation,allocation_id,worker_id,node_id,
+                            rank,world_size,rendezvous_ref,status,resource_ids,bound_at,heartbeat_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            attempt_id, task_id, generation, allocation_id, worker["worker_id"], node_id,
+                            rank, world_size, rendezvous, "bound",
+                            json.dumps(worker_resource_ids, ensure_ascii=False, sort_keys=True),
+                            now, now,
+                        ),
+                    )
+                connection.commit()
+        return self.execution_participants(attempt_id)
+
+    def _set_execution_participant_status(self, attempt_id: str, status: str, error: str = "") -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE compute_execution_participants SET status=?,last_error=? WHERE attempt_id=?",
+                (status, str(error)[:4000], attempt_id),
+            )
+            connection.commit()
+
+    def heartbeat_execution_participant(
+        self,
+        *,
+        attempt_id: str,
+        generation: int,
+        worker_id: str,
+        lease_token: str,
+    ) -> bool:
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        now = time.time()
+        with self._lock:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """UPDATE compute_execution_participants
+                       SET heartbeat_at=?,status='active',last_error=''
+                       WHERE attempt_id=? AND generation=? AND worker_id=?
+                       AND status IN ('bound','active')
+                       AND EXISTS (
+                           SELECT 1 FROM compute_execution_attempts a
+                           WHERE a.attempt_id=compute_execution_participants.attempt_id
+                           AND a.task_id=compute_execution_participants.task_id
+                           AND a.generation=compute_execution_participants.generation
+                           AND a.status='leased'
+                           AND a.lease_token_digest=?
+                       )""",
+                    (now, attempt_id, generation, worker_id, lease_digest),
+                )
+                connection.commit()
+                return cursor.rowcount == 1
+
     def _valid_lease(self, connection: sqlite3.Connection, worker_id: str, task_id: str, lease_token: str) -> bool:
         row = connection.execute("SELECT status,worker_id,lease_token,lease_until FROM compute_tasks WHERE task_id=?", (task_id,)).fetchone()
         return bool(row and row["status"] == "leased" and row["worker_id"] == worker_id and row["lease_token"] and hmac.compare_digest(row["lease_token"], lease_token) and row["lease_until"] > time.time())
@@ -568,6 +786,7 @@ class ComputeCoordinator:
                     connection.execute("UPDATE compute_execution_attempts SET status='completed',finished_at=?,authoritative_acceptance='pending' WHERE attempt_id=?", (now, attempt_id))
                 connection.commit()
             if attempt:
+                self._set_execution_participant_status(str(attempt["attempt_id"]), "completed")
                 self._release_physical_allocation(dict(attempt), "execution completed")
             self.pool.release_task_slot(worker_id)
         return True
@@ -587,6 +806,7 @@ class ComputeCoordinator:
                     connection.execute("UPDATE compute_execution_attempts SET status='released',finished_at=?,error=? WHERE attempt_id=?", (now, str(error)[:4000], row["attempt_id"]))
                 connection.commit()
             if attempt:
+                self._set_execution_participant_status(str(attempt["attempt_id"]), "released", error)
                 self._release_physical_allocation(dict(attempt), "execution released")
             self.pool.release_task_slot(worker_id)
         return True
@@ -607,7 +827,9 @@ class ComputeCoordinator:
                     if row["attempt_id"]:
                         connection.execute("UPDATE compute_execution_attempts SET status='expired',finished_at=?,error='lease expired' WHERE attempt_id=?", (now, row["attempt_id"]))
                 connection.commit()
-            for attempt in attempts: self._release_physical_allocation(attempt, "execution lease expired")
+            for attempt in attempts:
+                self._set_execution_participant_status(str(attempt["attempt_id"]), "expired", "lease expired")
+                self._release_physical_allocation(attempt, "execution lease expired")
             for row in rows:
                 if row["worker_id"]: self.pool.release_task_slot(row["worker_id"])
             return len(rows)
