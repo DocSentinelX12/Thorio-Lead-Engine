@@ -104,7 +104,7 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
 
         claimed = coordinator.claim_physical()
 
-        assert claimed is not None
+        assert claimed is not None, coordinator.task(task_id)["error"]
         assert claimed["task_id"] == task_id
         assert claimed["physical_allocation"]["node_ids"] == ["worker-1", "worker-2"]
         assert claimed["physical_allocation"]["resource_ids"] == ["worker-1/cpu", "worker-2/cpu", "worker-1/gpu-0", "worker-2/gpu-0"]
