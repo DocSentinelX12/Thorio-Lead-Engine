@@ -632,9 +632,11 @@ def test_run_worker_services_fabric_assignments_before_claiming_business_work(mo
 
     client = Client()
     serviced = []
+    stop_event = StopAfterFabric()
 
     def fake_verify(client_arg, assignment, **kwargs):
         serviced.append((client_arg, assignment, kwargs["rendezvous_endpoint"]))
+        stop_event.calls = 1
         return {"verified": True}
 
     monkeypatch.setattr("lead_engine.compute_worker.run_fabric_verification", fake_verify)
@@ -644,7 +646,7 @@ def test_run_worker_services_fabric_assignments_before_claiming_business_work(mo
         idle_seconds=1,
         heartbeat_seconds=15,
         fabric_rendezvous_endpoint="10.0.0.5:29400",
-        stop_event=StopAfterFabric(),
+        stop_event=stop_event,
     )
 
     assert client.fabric_seen is True
