@@ -592,3 +592,60 @@ def test_convergence_rejects_an_expired_task_lease(tmp_path: Path):
         lease_token=lease_token,
     )
     assert result == {"converged": False, "reason": "execution_identity_rejected"}
+
+
+def test_run_worker_services_fabric_assignments_before_claiming_business_work(monkeypatch):
+    from lead_engine.compute_worker import run_worker
+
+    class StopAfterFabric:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            return self.calls > 0
+
+        def wait(self, seconds):
+            self.calls += 1
+            return True
+
+    class Client:
+        def __init__(self):
+            self._registered = False
+            self.worker_id = "worker-1"
+            self.fabric_seen = False
+            self.claimed = False
+
+        def register(self):
+            self._registered = True
+            return {"ok": True}
+
+        def heartbeat(self, current_load=0):
+            return {"ok": True}
+
+        def fabric_assignments(self):
+            self.fabric_seen = True
+            return [{"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"}]
+
+        def claim(self):
+            self.claimed = True
+            return None
+
+    client = Client()
+    serviced = []
+
+    def fake_verify(client_arg, assignment, **kwargs):
+        serviced.append((client_arg, assignment, kwargs["rendezvous_endpoint"]))
+        return {"verified": True}
+
+    monkeypatch.setattr("lead_engine.compute_worker.run_fabric_verification", fake_verify)
+
+    run_worker(
+        client,
+        idle_seconds=1,
+        heartbeat_seconds=15,
+        stop_event=StopAfterFabric(),
+    )
+
+    assert client.fabric_seen is True
+    assert client.claimed is False
+    assert serviced == [(client, {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"}, "10.0.0.5:29400")]
