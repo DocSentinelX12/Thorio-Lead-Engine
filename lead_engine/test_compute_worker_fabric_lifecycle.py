@@ -746,5 +746,5 @@ def test_running_fabric_participant_heartbeat_renews_lease(tmp_path: Path):
         if item["worker_id"] == "worker-1"
     )
     after = coordinator.task(task_id)["lease_until"]
-    assert participant["status"] == "active"
+    assert participant["status"] == "running"
     assert after > before
