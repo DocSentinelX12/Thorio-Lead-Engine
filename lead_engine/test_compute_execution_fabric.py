@@ -287,6 +287,38 @@ def test_nvidia_runtime_distributed_probe_requires_torchrun_and_builds_real_nccl
     assert command[-1] == "nccl_all_reduce_probe"
 
 
+def test_nvidia_runtime_accepts_only_verified_gpu_all_reduce_evidence():
+    def runner(args, timeout):
+        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4}\\n', ""
+
+    runtime = NvidiaRuntime(runner=runner, which=lambda name: "torchrun" if name == "torchrun" else None)
+    evidence = runtime.verify_distributed_nccl(
+        world_size=4,
+        node_rank=0,
+        nnodes=2,
+        master_addr="10.0.0.5",
+        master_port=29500,
+    )
+    assert evidence["verified"] is True
+    assert evidence["backend"] == "nccl"
+    assert evidence["world_size"] == 4
+
+
+def test_nvidia_runtime_rejects_unverified_distributed_probe_output():
+    def runner(args, timeout):
+        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":false,"world_size":2}\\n', ""
+
+    runtime = NvidiaRuntime(runner=runner, which=lambda name: "torchrun" if name == "torchrun" else None)
+    with pytest.raises(NvidiaRuntimeError, match="did not verify"):
+        runtime.verify_distributed_nccl(
+            world_size=2,
+            node_rank=0,
+            nnodes=1,
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+
+
 def test_nvidia_runtime_distributed_probe_refuses_missing_torchrun():
     runtime = NvidiaRuntime(which=lambda _name: None)
     with pytest.raises(NvidiaRuntimeError, match="torchrun"):
