@@ -808,3 +808,44 @@ def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fa
         raise AssertionError("runtime failure was masked by failure-state reporting")
 
     assert client.states == ["launching", "active", "failed"]
+
+
+def test_fabric_verification_cleans_up_when_local_runtime_validation_fails():
+    from lead_engine.compute_worker import run_fabric_verification
+    from lead_engine.nvidia_runtime import NvidiaRuntimeError
+
+    class Client:
+        worker_id = "worker-1"
+        def __init__(self):
+            self.states = []
+        def fabric_launch_plan(self, *args):
+            return {
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "world_size": 2, "nnodes": 1,
+                "rendezvous_endpoint": "10.0.0.5:29400",
+                "rendezvous_id": "fabric:attempt-1:1",
+            }
+        def fabric_state(self, *args):
+            self.states.append(args[3])
+            return {"ok": True}
+        def fabric_heartbeat(self, *args):
+            return {"ok": True}
+
+    class Runtime:
+        def verify_local(self):
+            raise NvidiaRuntimeError("CUDA runtime validation failed")
+
+    client = Client()
+    try:
+        run_fabric_verification(
+            client,
+            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
+            rendezvous_endpoint="10.0.0.5:29400",
+            runtime=Runtime(),
+        )
+    except NvidiaRuntimeError as error:
+        assert str(error) == "CUDA runtime validation failed"
+    else:
+        raise AssertionError("local runtime failure was not preserved")
+
+    assert client.states == ["launching", "failed"]
