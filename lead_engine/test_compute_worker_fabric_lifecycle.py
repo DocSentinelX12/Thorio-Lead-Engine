@@ -748,3 +748,63 @@ def test_running_fabric_participant_heartbeat_renews_lease(tmp_path: Path):
     after = coordinator.task(task_id)["lease_until"]
     assert participant["status"] == "running"
     assert after > before
+
+
+def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fails():
+    from lead_engine.compute_worker import ComputeWorkerError, run_fabric_verification
+    from lead_engine.nvidia_runtime import NvidiaRuntimeError
+
+    class Client:
+        worker_id = "worker-1"
+
+        def __init__(self):
+            self.states = []
+
+        def fabric_launch_plan(self, *args):
+            return {
+                "workers": [{
+                    "worker_id": "worker-1",
+                    "node_rank": 0,
+                    "process_count": 1,
+                }],
+                "world_size": 2,
+                "nnodes": 1,
+                "rendezvous_endpoint": "10.0.0.5:29400",
+                "rendezvous_id": "fabric:attempt-1:1",
+            }
+
+        def fabric_state(self, *args):
+            status = args[3]
+            self.states.append(status)
+            if status == "failed":
+                raise ComputeWorkerError("coordinator failure while recording failure")
+            return {"ok": True}
+
+        def fabric_heartbeat(self, *args):
+            return {"ok": True}
+
+    class Runtime:
+        timeout_seconds = 5
+
+        def verify_local(self):
+            return {"cuda": True, "nccl": True}
+
+        def distributed_command(self, **kwargs):
+            return ["torchrun"]
+
+    client = Client()
+    try:
+        run_fabric_verification(
+            client,
+            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
+            rendezvous_endpoint="10.0.0.5:29400",
+            heartbeat_seconds=0.01,
+            runtime=Runtime(),
+            runner=lambda command, timeout: (1, "", "NCCL exploded"),
+        )
+    except NvidiaRuntimeError as error:
+        assert "distributed NCCL launch failed" in str(error)
+    else:
+        raise AssertionError("runtime failure was masked by failure-state reporting")
+
+    assert client.states == ["launching", "active", "failed"]
