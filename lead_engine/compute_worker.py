@@ -258,8 +258,9 @@ def run_fabric_verification(
             raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
         if rc != 0:
             raise NvidiaRuntimeError(f"distributed NCCL launch failed: {(stderr or stdout).strip()[:4000]}")
+        probe = runtime.validate_distributed_probe_output(str(stdout), int(plan["world_size"]))
         evidence = {
-            "verified": True, "local_runtime": local, "attempt_id": attempt_id,
+            "verified": True, "local_runtime": local, "probe": probe, "attempt_id": attempt_id,
             "generation": generation, "worker_id": client.worker_id,
             "node_rank": int(participant["node_rank"]), "world_size": int(plan["world_size"]),
             "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
