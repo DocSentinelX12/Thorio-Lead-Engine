@@ -96,6 +96,14 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
         assert stored["attempt_id"] == claimed["attempt_id"]
         assert stored["generation"] == claimed["generation"]
 
+        participants = coordinator.execution_participants(claimed["attempt_id"])
+        assert [item["worker_id"] for item in participants] == ["worker-1", "worker-2"]
+        assert [item["node_id"] for item in participants] == ["worker-1", "worker-2"]
+        assert [item["rank"] for item in participants] == [0, 1]
+        assert [item["world_size"] for item in participants] == [2, 2]
+        assert len({item["rendezvous_ref"] for item in participants}) == 1
+        assert participants[0]["status"] == "bound"
+
 
 def test_claim_creates_and_binds_physical_allocation_to_worker_node():
     with tempfile.TemporaryDirectory() as directory:
