@@ -223,3 +223,110 @@ def test_fabric_reconciliation_requeues_entire_attempt_when_one_participant_is_l
 
     allocation = inventory.allocation(claimed["physical_allocation"]["allocation_id"])
     assert allocation["state"] == "released"
+
+
+def test_fabric_convergence_requires_every_participant_and_is_idempotent(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2, "require_nccl": True},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    coordinator.record_execution_verification(
+        attempt_id=attempt_id, generation=generation,
+        worker_id="worker-1", lease_token=lease_token,
+        verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": "worker-1"},
+    )
+    waiting = coordinator.converge_fabric_execution(
+        attempt_id=attempt_id, generation=generation,
+        worker_id="worker-1", lease_token=lease_token,
+    )
+    assert waiting["converged"] is False
+    assert waiting["reason"] == "awaiting_all_participant_verifications"
+    assert waiting["verified_participants"] == 1
+
+    coordinator.record_execution_verification(
+        attempt_id=attempt_id, generation=generation,
+        worker_id="worker-2", lease_token=lease_token,
+        verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": "worker-2"},
+    )
+    converged = coordinator.converge_fabric_execution(
+        attempt_id=attempt_id, generation=generation,
+        worker_id="worker-2", lease_token=lease_token,
+    )
+    assert converged == {"converged": True, "status": "completed", "already_completed": False}
+
+    attempt = coordinator.execution_attempt(attempt_id)
+    assert attempt["status"] == "completed"
+    assert attempt["authoritative_acceptance"] == "accepted"
+    evidence = json.loads(attempt["verification"])
+    assert [item["worker_id"] for item in evidence["participants"]] == ["worker-1", "worker-2"]
+
+    task = coordinator.task(task_id)
+    assert task["status"] == "leased"
+    allocation = inventory.allocation(claimed["physical_allocation"]["allocation_id"])
+    assert allocation["state"] == "bound"
+
+    repeated = coordinator.converge_fabric_execution(
+        attempt_id=attempt_id, generation=generation,
+        worker_id="worker-1", lease_token=lease_token,
+    )
+    assert repeated == {"converged": True, "status": "completed", "already_completed": True}
+
+
+def test_fabric_rendezvous_endpoint_is_bound_once_and_cannot_change(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    first = coordinator.fabric_launch_plan_for_worker(
+        attempt_id=attempt_id, generation=generation,
+        worker_id="worker-1", lease_token=lease_token,
+        rendezvous_endpoint="10.0.0.5:29400",
+    )
+    assert first["rendezvous_endpoint"] == "10.0.0.5:29400"
+
+    try:
+        coordinator.fabric_launch_plan_for_worker(
+            attempt_id=attempt_id, generation=generation,
+            worker_id="worker-2", lease_token=lease_token,
+            rendezvous_endpoint="10.0.0.6:29400",
+        )
+    except ValueError as error:
+        assert "durable execution endpoint" in str(error)
+    else:
+        raise AssertionError("durable rendezvous endpoint was changed")
