@@ -723,6 +723,55 @@ class ComputeCoordinator:
                 connection.commit()
         return self.execution_participants(attempt_id)
 
+    def fabric_launch_plan(self, attempt_id: str, rendezvous_endpoint: str) -> Dict[str, Any]:
+        """Build an exact launch contract from the durable physical participants.
+
+        The coordinator does not execute commands or claim network reachability.
+        Workers must validate their local NVIDIA runtime before executing the
+        returned process specification.
+        """
+        endpoint = str(rendezvous_endpoint).strip()
+        if not endpoint or ":" not in endpoint:
+            raise ValueError("rendezvous_endpoint must be host:port")
+        participants = self.execution_participants(attempt_id)
+        if not participants:
+            raise ValueError("execution attempt has no bound participants")
+        workers = []
+        total_processes = 0
+        for participant in participants:
+            worker = self.pool.worker(str(participant["worker_id"]))
+            if not worker or worker["status"] != "ready":
+                raise ValueError(f"participant worker is not ready: {participant['worker_id']}")
+            gpu_resource_ids = sorted(
+                resource_id for resource_id in participant["resource_ids"]
+                if "/gpu/" in f"/{resource_id.replace('\\\\', '/')}/" or "/gpu-" in resource_id
+            )
+            if not gpu_resource_ids:
+                raise ValueError(f"participant has no allocated GPU resources: {participant['worker_id']}")
+            process_count = len(gpu_resource_ids)
+            workers.append({
+                "worker_id": participant["worker_id"],
+                "node_id": participant["node_id"],
+                "node_rank": int(participant["rank"]),
+                "process_count": process_count,
+                "gpu_resource_ids": gpu_resource_ids,
+                "rendezvous_ref": participant["rendezvous_ref"],
+                "rendezvous_endpoint": endpoint,
+            })
+            total_processes += process_count
+        if total_processes < 2:
+            raise ValueError("distributed launch requires at least two allocated GPU processes")
+        if any(item["node_rank"] >= len(workers) for item in workers):
+            raise ValueError("participant node ranks are not contiguous")
+        return {
+            "attempt_id": attempt_id,
+            "world_size": total_processes,
+            "nnodes": len(workers),
+            "rendezvous_endpoint": endpoint,
+            "rendezvous_id": participants[0]["rendezvous_ref"],
+            "workers": workers,
+        }
+
     def _set_execution_participant_status(self, attempt_id: str, status: str, error: str = "") -> None:
         with self._connect() as connection:
             connection.execute(
