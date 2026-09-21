@@ -1037,6 +1037,9 @@ class ComputeCoordinator:
         self, *, attempt_id: str, generation: int, worker_id: str,
         lease_token: str, rendezvous_endpoint: str,
     ) -> Dict[str, Any]:
+        durable_endpoint = self._bind_rendezvous_endpoint(
+            attempt_id, generation, lease_token, rendezvous_endpoint
+        )
         lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
         with self._connect() as connection:
             row = connection.execute(
@@ -1053,7 +1056,7 @@ class ComputeCoordinator:
             ).fetchone()
         if not row:
             raise ValueError("worker is not an active participant for this execution attempt")
-        return self.fabric_launch_plan(attempt_id, rendezvous_endpoint)
+        return self.fabric_launch_plan(attempt_id, durable_endpoint)
 
     def heartbeat_execution_participant(
         self,
