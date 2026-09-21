@@ -5,7 +5,8 @@ from lead_engine.compute_bridge import REMOTE_SAFE_AGENTS
 from lead_engine.compute_coordinator import ComputeCoordinator
 from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_pool import WorkerIdentity
-from lead_engine.compute_resources import ResourceState
+from lead_engine.compute_provider import ProviderResourceSnapshot
+from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
 
 
 def _worker():
