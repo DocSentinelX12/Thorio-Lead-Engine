@@ -852,7 +852,7 @@ class ComputeCoordinator:
                        FROM compute_execution_attempts a
                        JOIN compute_execution_participants p ON p.attempt_id=a.attempt_id
                        WHERE a.attempt_id=? AND p.worker_id=? AND p.generation=? AND p.status IN ('bound','launching','active','running')""",
-                    (attempt_id,),
+                    (attempt_id, worker_id, generation),
                 ).fetchone()
                 if not row or row["status"] != "leased" or row["worker_id"] != f"fabric:{attempt_id}" or int(row["generation"]) != generation or row["lease_token_digest"] != lease_digest:
                     return False
@@ -882,7 +882,7 @@ class ComputeCoordinator:
                          SELECT 1 FROM compute_tasks t
                          WHERE t.task_id=p.task_id AND t.status='leased' AND t.lease_until > ?
                      )""",
-                (attempt_id, generation, worker_id, lease_digest),
+                (attempt_id, generation, worker_id, lease_digest, time.time()),
             ).fetchone()
         if not row:
             raise ValueError("worker is not an active participant for this execution attempt")
