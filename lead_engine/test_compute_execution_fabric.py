@@ -324,7 +324,7 @@ def test_nvidia_runtime_launch_command_carries_rendezvous_identity():
 
 def test_nvidia_runtime_accepts_only_verified_gpu_all_reduce_evidence():
     def runner(args, timeout):
-        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4}\n', ""
+        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4,"expected_sum":10}\n', ""
 
     runtime = NvidiaRuntime(runner=runner, which=lambda name: "torchrun" if name == "torchrun" else None)
     evidence = runtime.verify_distributed_nccl(
