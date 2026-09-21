@@ -744,7 +744,7 @@ class ComputeCoordinator:
                 raise ValueError(f"participant worker is not ready: {participant['worker_id']}")
             gpu_resource_ids = sorted(
                 resource_id for resource_id in participant["resource_ids"]
-                if "/gpu/" in f"/{resource_id.replace('\\\\', '/')}/" or "/gpu-" in resource_id
+                if "/gpu/" in resource_id or "/gpu-" in resource_id
             )
             if not gpu_resource_ids:
                 raise ValueError(f"participant has no allocated GPU resources: {participant['worker_id']}")
