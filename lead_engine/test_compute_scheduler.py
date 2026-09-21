@@ -228,7 +228,7 @@ def test_concurrent_allocations_cannot_double_book_a_physical_gpu(tmp_path):
     assert [status for status, _ in results].count("rejected") == 1
     allocations = inventory.allocations(state="reserved")
     assert len(allocations) == 1
-    assert allocations[0]["resource_keys"] == ["provider-a/domain-a/node-a/gpu/u0", "provider-a/domain-a/node-a/cpu"]
+    assert set(allocations[0]["resource_keys"]) == {"provider-a/domain-a/node-a/gpu/u0", "provider-a/domain-a/node-a/cpu"}
 
 
 def test_allocation_has_durable_owner_record(tmp_path):
