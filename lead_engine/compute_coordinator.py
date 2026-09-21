@@ -674,7 +674,7 @@ class ComputeCoordinator:
             with self._connect() as connection:
                 attempt = connection.execute(
                     "SELECT status,task_id,generation,lease_token_digest,allocation_id FROM compute_execution_attempts WHERE attempt_id=?",
-                    (attempt_id,),
+                    (attempt_id, worker_id, generation),
                 ).fetchone()
                 if not attempt or attempt["task_id"] != task_id or int(attempt["generation"]) != generation:
                     return []
@@ -827,8 +827,13 @@ class ComputeCoordinator:
                            AND a.task_id=compute_execution_participants.task_id
                            AND a.generation=compute_execution_participants.generation
                            AND a.status='leased' AND a.lease_token_digest=?
+                           AND EXISTS (
+                               SELECT 1 FROM compute_tasks t
+                               WHERE t.task_id=compute_execution_participants.task_id
+                               AND t.status='leased' AND t.lease_until > ?
+                           )
                        )""",
-                    (now, status, str(error)[:4000], attempt_id, generation, worker_id, lease_digest),
+                    (now, status, str(error)[:4000], attempt_id, generation, worker_id, lease_digest, now),
                 )
                 connection.commit()
                 return cursor.rowcount == 1
@@ -843,7 +848,10 @@ class ComputeCoordinator:
         with self._lock:
             with self._connect() as connection:
                 row = connection.execute(
-                    "SELECT status,worker_id,generation,lease_token_digest FROM compute_execution_attempts WHERE attempt_id=?",
+                    """SELECT a.status,a.worker_id,a.generation,a.lease_token_digest
+                       FROM compute_execution_attempts a
+                       JOIN compute_execution_participants p ON p.attempt_id=a.attempt_id
+                       WHERE a.attempt_id=? AND p.worker_id=? AND p.generation=? AND p.status IN ('bound','launching','active','running')""",
                     (attempt_id,),
                 ).fetchone()
                 if not row or row["status"] != "leased" or row["worker_id"] != f"fabric:{attempt_id}" or int(row["generation"]) != generation or row["lease_token_digest"] != lease_digest:
@@ -869,7 +877,11 @@ class ComputeCoordinator:
                    JOIN compute_execution_attempts a ON a.attempt_id=p.attempt_id
                    WHERE p.attempt_id=? AND p.generation=? AND p.worker_id=?
                      AND p.status IN ('bound','active','launching','running')
-                     AND a.status='leased' AND a.lease_token_digest=?""",
+                     AND a.status='leased' AND a.lease_token_digest=?
+                     AND EXISTS (
+                         SELECT 1 FROM compute_tasks t
+                         WHERE t.task_id=p.task_id AND t.status='leased' AND t.lease_until > ?
+                     )""",
                 (attempt_id, generation, worker_id, lease_digest),
             ).fetchone()
         if not row:
@@ -900,8 +912,13 @@ class ComputeCoordinator:
                            AND a.generation=compute_execution_participants.generation
                            AND a.status='leased'
                            AND a.lease_token_digest=?
+                           AND EXISTS (
+                               SELECT 1 FROM compute_tasks t
+                               WHERE t.task_id=compute_execution_participants.task_id
+                               AND t.status='leased' AND t.lease_until > ?
+                           )
                        )""",
-                    (now, attempt_id, generation, worker_id, lease_digest),
+                    (now, attempt_id, generation, worker_id, lease_digest, now),
                 )
                 connection.commit()
                 return cursor.rowcount == 1
