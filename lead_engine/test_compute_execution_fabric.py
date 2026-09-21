@@ -7,6 +7,7 @@ from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_pool import WorkerIdentity
 from lead_engine.compute_provider import ProviderResourceSnapshot
 from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
+from lead_engine.nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 
 
 def _worker():
@@ -229,3 +230,39 @@ def test_remote_safe_set_matches_only_stateless_worker_implementations():
     assert "qualification_a" not in REMOTE_SAFE_AGENTS
     assert "outreach_closer" not in REMOTE_SAFE_AGENTS
     assert "follow_up" not in REMOTE_SAFE_AGENTS
+
+
+def test_nvidia_runtime_requires_real_cuda_and_nccl_evidence():
+    calls = []
+
+    def runner(args, timeout):
+        calls.append(tuple(args))
+        if args[0] == "nvidia-smi" and args[1:] == ("-L",):
+            return 0, "GPU 0: NVIDIA H100 (UUID: GPU-aaa)\\nGPU 1: NVIDIA H100 (UUID: GPU-bbb)\\n", ""
+        if args[0] == "nvcc":
+            return 0, "Cuda compilation tools, release 12.4, V12.4.131\\n", ""
+        if args[0] == "ldconfig":
+            return 0, "libnccl.so.2 => /usr/lib/x86_64-linux-gnu/libnccl.so.2\\n", ""
+        raise AssertionError(args)
+
+    runtime = NvidiaRuntime(runner=runner, which=lambda name: name)
+    evidence = runtime.verify_local()
+    assert evidence["gpu_count"] == 2
+    assert evidence["cuda_toolkit_version"] == "12.4"
+    assert evidence["nccl_library"] == "/usr/lib/x86_64-linux-gnu/libnccl.so.2"
+    assert any(call[:2] == ("nvidia-smi", "-L") for call in calls)
+
+
+def test_nvidia_runtime_refuses_missing_nccl_instead_of_claiming_distributed_capability():
+    def runner(args, timeout):
+        if args[0] == "nvidia-smi":
+            return 0, "GPU 0: NVIDIA H100 (UUID: GPU-aaa)\\n", ""
+        if args[0] == "nvcc":
+            return 0, "Cuda compilation tools, release 12.4, V12.4.131\\n", ""
+        if args[0] == "ldconfig":
+            return 0, "", ""
+        raise AssertionError(args)
+
+    runtime = NvidiaRuntime(runner=runner, which=lambda name: name)
+    with pytest.raises(NvidiaRuntimeError, match="NCCL"):
+        runtime.verify_local()
