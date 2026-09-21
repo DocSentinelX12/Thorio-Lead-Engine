@@ -643,6 +643,7 @@ def test_run_worker_services_fabric_assignments_before_claiming_business_work(mo
         client,
         idle_seconds=1,
         heartbeat_seconds=15,
+        fabric_rendezvous_endpoint="10.0.0.5:29400",
         stop_event=StopAfterFabric(),
     )
 
