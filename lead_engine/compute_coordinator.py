@@ -429,7 +429,6 @@ class ComputeCoordinator:
                     domain_id=allocation.domain_id,
                     resource_ids=allocation.resource_ids,
                     lease_token=lease_token,
-                    rendezvous_ref=f"fabric:{attempt_id}:{generation}",
                 ):
                     self._release_physical_allocation(
                         {
@@ -452,6 +451,7 @@ class ComputeCoordinator:
                     node_ids=allocation.node_ids,
                     resource_ids=allocation.resource_ids,
                     lease_token=lease_token,
+                    rendezvous_ref=f"fabric:{attempt_id}:{generation}",
                 ):
                     self._release_physical_allocation(
                         {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
