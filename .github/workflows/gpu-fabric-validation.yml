@@ -1,6 +1,7 @@
 name: GPU Fabric Validation
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feature/gpu-fabric-foundation
