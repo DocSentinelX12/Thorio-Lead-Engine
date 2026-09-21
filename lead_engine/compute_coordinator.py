@@ -780,6 +780,102 @@ class ComputeCoordinator:
             )
             connection.commit()
 
+    def fabric_assignments(self, worker_id: str) -> list[Dict[str, Any]]:
+        """Return live participant assignments for one registered worker."""
+        worker_id = str(worker_id).strip()
+        if not worker_id:
+            raise ValueError("worker_id is required")
+        now = time.time()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT p.*, t.payload, t.lease_token, t.lease_until
+                   FROM compute_execution_participants p
+                   JOIN compute_tasks t ON t.task_id=p.task_id
+                   JOIN compute_execution_attempts a ON a.attempt_id=p.attempt_id
+                   WHERE p.worker_id=? AND p.status IN ('bound','active','launching','running')
+                     AND a.status='leased' AND t.status='leased' AND t.lease_until > ?
+                   ORDER BY p.bound_at,p.attempt_id""",
+                (worker_id, now),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item["payload"])
+            item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
+            result.append(item)
+        return result
+
+    def execution_participant_state(
+        self, *, attempt_id: str, generation: int, worker_id: str,
+        lease_token: str, status: str, error: str = "",
+    ) -> bool:
+        allowed = {"bound", "launching", "active", "running", "failed"}
+        if status not in allowed:
+            raise ValueError(f"unsupported participant status: {status}")
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        now = time.time()
+        with self._lock:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """UPDATE compute_execution_participants
+                       SET heartbeat_at=?,status=?,last_error=?
+                       WHERE attempt_id=? AND generation=? AND worker_id=?
+                       AND status IN ('bound','launching','active','running')
+                       AND EXISTS (
+                           SELECT 1 FROM compute_execution_attempts a
+                           WHERE a.attempt_id=compute_execution_participants.attempt_id
+                           AND a.task_id=compute_execution_participants.task_id
+                           AND a.generation=compute_execution_participants.generation
+                           AND a.status='leased' AND a.lease_token_digest=?
+                       )""",
+                    (now, status, str(error)[:4000], attempt_id, generation, worker_id, lease_digest),
+                )
+                connection.commit()
+                return cursor.rowcount == 1
+
+    def record_execution_verification(
+        self, *, attempt_id: str, generation: int, worker_id: str,
+        lease_token: str, verification: Dict[str, Any],
+    ) -> bool:
+        if not isinstance(verification, dict):
+            raise ValueError("verification must be an object")
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT status,worker_id,generation,lease_token_digest FROM compute_execution_attempts WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if not row or row["status"] != "leased" or row["worker_id"] != f"fabric:{attempt_id}" or int(row["generation"]) != generation or row["lease_token_digest"] != lease_digest:
+                    return False
+                connection.execute(
+                    "UPDATE compute_execution_attempts SET verification=? WHERE attempt_id=? AND status='leased'",
+                    (json.dumps(verification, ensure_ascii=False, sort_keys=True), attempt_id),
+                )
+                connection.commit()
+        return self.execution_participant_state(
+            attempt_id=attempt_id, generation=generation, worker_id=worker_id,
+            lease_token=lease_token, status="running",
+        )
+
+    def fabric_launch_plan_for_worker(
+        self, *, attempt_id: str, generation: int, worker_id: str,
+        lease_token: str, rendezvous_endpoint: str,
+    ) -> Dict[str, Any]:
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM compute_execution_participants p
+                   JOIN compute_execution_attempts a ON a.attempt_id=p.attempt_id
+                   WHERE p.attempt_id=? AND p.generation=? AND p.worker_id=?
+                     AND p.status IN ('bound','active','launching','running')
+                     AND a.status='leased' AND a.lease_token_digest=?""",
+                (attempt_id, generation, worker_id, lease_digest),
+            ).fetchone()
+        if not row:
+            raise ValueError("worker is not an active participant for this execution attempt")
+        return self.fabric_launch_plan(attempt_id, rendezvous_endpoint)
+
     def heartbeat_execution_participant(
         self,
         *,
@@ -933,6 +1029,35 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, self.server.coordinator.register_worker(identity))
             elif self.path == "/workers/heartbeat":
                 self._send(200, {"ok": self.server.coordinator.heartbeat(str(body["worker_id"]), int(body.get("current_load", 0)))})
+            elif self.path == "/fabric/assignments":
+                self._send(200, {"assignments": self.server.coordinator.fabric_assignments(str(body["worker_id"]))})
+            elif self.path == "/fabric/heartbeat":
+                ok = self.server.coordinator.heartbeat_execution_participant(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"])
+                )
+                self._send(200 if ok else 409, {"ok": ok})
+            elif self.path == "/fabric/state":
+                ok = self.server.coordinator.execution_participant_state(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    status=str(body["status"]), error=str(body.get("error", ""))
+                )
+                self._send(200 if ok else 409, {"ok": ok})
+            elif self.path == "/fabric/launch-plan":
+                plan = self.server.coordinator.fabric_launch_plan_for_worker(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    rendezvous_endpoint=str(body["rendezvous_endpoint"])
+                )
+                self._send(200, plan)
+            elif self.path == "/fabric/verification":
+                ok = self.server.coordinator.record_execution_verification(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    verification=body["verification"]
+                )
+                self._send(200 if ok else 409, {"ok": ok})
             elif self.path == "/work/enqueue":
                 payload = body.get("payload")
                 if not isinstance(payload, dict): raise ValueError("payload must be an object")
