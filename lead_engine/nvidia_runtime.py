@@ -95,6 +95,8 @@ class NvidiaRuntime:
         nnodes: int,
         master_addr: str,
         master_port: int,
+        rendezvous_id: str | None = None,
+        process_count: int | None = None,
     ) -> tuple[str, ...]:
         if world_size < 2:
             raise ValueError("world_size must be at least 2 for distributed NCCL verification")
@@ -102,21 +104,26 @@ class NvidiaRuntime:
             raise ValueError("node_rank must be within nnodes")
         if world_size % nnodes != 0:
             raise ValueError("world_size must divide evenly across nnodes")
+        resolved_process_count = process_count if process_count is not None else world_size // nnodes
+        if resolved_process_count < 1 or resolved_process_count * nnodes != world_size:
+            raise ValueError("process_count must multiply by nnodes to equal world_size")
         if not master_addr.strip():
             raise ValueError("master_addr is required")
         if not 1 <= master_port <= 65535:
             raise ValueError("master_port must be between 1 and 65535")
         torchrun = self._required_command("torchrun")
-        return (
+        command = [
             torchrun,
-            f"--nproc-per-node={world_size // nnodes}",
+            f"--nproc-per-node={resolved_process_count}",
             f"--nnodes={nnodes}",
             f"--node-rank={node_rank}",
             f"--master-addr={master_addr.strip()}",
             f"--master-port={master_port}",
-            "-m",
-            "lead_engine.nccl_all_reduce_probe",
-        )
+        ]
+        if rendezvous_id:
+            command.extend(["--rdzv-id", rendezvous_id, "--rdzv-backend", "c10d", "--rdzv-endpoint", f"{master_addr.strip()}:{master_port}"])
+        command.extend(["-m", "lead_engine.nccl_all_reduce_probe"])
+        return tuple(command)
 
     def verify_distributed_nccl(
         self,
