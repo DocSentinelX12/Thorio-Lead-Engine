@@ -113,6 +113,20 @@ def test_worker_receives_durable_participant_and_runs_launch_heartbeat_lifecycle
         assert assignment["worker_id"] == "worker-1"
         assert assignment["lease_token"] == claimed["lease_token"]
 
+        coordinator.record_execution_verification(
+            attempt_id=assignment["attempt_id"],
+            generation=assignment["generation"],
+            worker_id="worker-2",
+            lease_token=assignment["lease_token"],
+            verification={
+                "verified": True,
+                "backend": "nccl",
+                "world_size": 2,
+                "worker_id": "worker-2",
+                "test_evidence": "coordinator state-machine verification",
+            },
+        )
+
         calls = []
         def runner(command, timeout):
             calls.append((tuple(command), timeout))
@@ -124,6 +138,7 @@ def test_worker_receives_durable_participant_and_runs_launch_heartbeat_lifecycle
             assignment,
             rendezvous_endpoint="10.0.0.5:29400",
             heartbeat_seconds=0.01,
+            convergence_timeout_seconds=1.0,
             runtime=_FakeRuntime(),
             runner=runner,
         )
