@@ -287,6 +287,28 @@ def test_nvidia_runtime_distributed_probe_requires_torchrun_and_builds_real_nccl
     assert command[-1] == "lead_engine.nccl_all_reduce_probe"
 
 
+def test_nvidia_runtime_launch_command_carries_rendezvous_identity():
+    runtime = NvidiaRuntime(which=lambda name: "torchrun" if name == "torchrun" else None)
+    command = runtime.distributed_command(
+        world_size=4,
+        node_rank=1,
+        nnodes=2,
+        master_addr="10.0.0.5",
+        master_port=29400,
+        rendezvous_id="attempt-123-generation-4",
+        process_count=2,
+    )
+    assert "--nproc-per-node=2" in command
+    assert "--nnodes=2" in command
+    assert "--node-rank=1" in command
+    assert "--rdzv-id" in command
+    assert "attempt-123-generation-4" in command
+    assert "--rdzv-backend" in command
+    assert "c10d" in command
+    assert "--rdzv-endpoint" in command
+    assert "10.0.0.5:29400" in command
+
+
 def test_nvidia_runtime_accepts_only_verified_gpu_all_reduce_evidence():
     def runner(args, timeout):
         return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4}\n', ""
