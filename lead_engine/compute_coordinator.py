@@ -978,10 +978,12 @@ class ComputeCoordinator:
                     (attempt_id, generation),
                 ).fetchone()
                 participant = connection.execute(
-                    """SELECT worker_id,status,verification
-                       FROM compute_execution_participants
-                       WHERE attempt_id=? AND generation=? AND worker_id=?""",
-                    (attempt_id, generation, worker_id),
+                    """SELECT p.worker_id,p.status,p.verification
+                       FROM compute_execution_participants p
+                       JOIN compute_tasks t ON t.task_id=p.task_id
+                       WHERE p.attempt_id=? AND p.generation=? AND p.worker_id=?
+                         AND t.status='leased' AND t.lease_until > ?""",
+                    (attempt_id, generation, worker_id, now),
                 ).fetchone()
                 if not attempt or not participant or attempt["lease_token_digest"] != lease_digest:
                     return {"converged": False, "reason": "execution_identity_rejected"}
