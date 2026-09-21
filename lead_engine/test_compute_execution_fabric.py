@@ -267,3 +267,27 @@ def test_nvidia_runtime_refuses_missing_nccl_instead_of_claiming_distributed_cap
     runtime = NvidiaRuntime(runner=runner, which=lambda name: name)
     with pytest.raises(NvidiaRuntimeError, match="NCCL"):
         runtime.verify_local()
+
+
+def test_nvidia_runtime_distributed_probe_requires_torchrun_and_builds_real_nccl_command():
+    runtime = NvidiaRuntime(which=lambda name: name if name == "torchrun" else None)
+    command = runtime.distributed_command(
+        world_size=2,
+        node_rank=0,
+        nnodes=2,
+        master_addr="10.0.0.5",
+        master_port=29500,
+    )
+    assert command[0] == "torchrun"
+    assert "--nproc-per-node=gpu" in command
+    assert "--nnodes=2" in command
+    assert "--node-rank=0" in command
+    assert "--master-addr=10.0.0.5" in command
+    assert "--master-port=29500" in command
+    assert command[-1] == "nccl_all_reduce_probe"
+
+
+def test_nvidia_runtime_distributed_probe_refuses_missing_torchrun():
+    runtime = NvidiaRuntime(which=lambda _name: None)
+    with pytest.raises(NvidiaRuntimeError, match="torchrun"):
+        runtime.distributed_command(world_size=2, node_rank=0, nnodes=2, master_addr="10.0.0.5", master_port=29500)
