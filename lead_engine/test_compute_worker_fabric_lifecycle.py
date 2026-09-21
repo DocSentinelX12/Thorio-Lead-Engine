@@ -1058,3 +1058,71 @@ def test_fabric_process_timeout_terminates_process_and_reports_failure(monkeypat
 
     assert process.terminated is True
     assert client.states == ["launching", "active", "failed"]
+
+
+def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
+    import subprocess
+    from lead_engine.compute_worker import run_fabric_verification
+
+    class Client:
+        worker_id = "worker-1"
+        def __init__(self):
+            self.states = []
+        def fabric_launch_plan(self, *args):
+            return {
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "world_size": 2, "nnodes": 1,
+                "rendezvous_endpoint": "10.0.0.5:29400",
+                "rendezvous_id": "fabric:attempt-1:1",
+            }
+        def fabric_state(self, *args):
+            self.states.append(args[3])
+            return {"ok": True}
+        def fabric_heartbeat(self, *args):
+            return {"ok": True}
+
+    class Runtime:
+        timeout_seconds = 5
+        def verify_local(self):
+            return {"cuda": True, "nccl": True}
+        def distributed_command(self, **kwargs):
+            return ["torchrun"]
+
+    class Process:
+        def __init__(self):
+            self.terminated = False
+        def poll(self):
+            return None if not self.terminated else 143
+        def terminate(self):
+            self.terminated = True
+        def kill(self):
+            self.terminated = True
+        def wait(self, timeout=None):
+            if self.terminated:
+                return 143
+            raise subprocess.TimeoutExpired(["torchrun"], timeout)
+        def communicate(self, timeout=None):
+            raise OSError("stdout pipe failed")
+        @property
+        def returncode(self):
+            return 143 if self.terminated else None
+
+    client = Client()
+    process = Process()
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
+
+    try:
+        run_fabric_verification(
+            client,
+            {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
+            rendezvous_endpoint="10.0.0.5:29400",
+            heartbeat_seconds=1,
+            runtime=Runtime(),
+        )
+    except OSError as error:
+        assert "stdout pipe failed" in str(error)
+    else:
+        raise AssertionError("unexpected process error was not preserved")
+
+    assert process.terminated is True
+    assert client.states == ["launching", "active", "failed"]
