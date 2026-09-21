@@ -202,21 +202,47 @@ def run_fabric_verification(
     client.fabric_state(attempt_id, generation, lease_token, "active")
     stop_heartbeat = threading.Event()
     heartbeat_error = []
+    process_holder = {"process": None}
+
+    def stop_process() -> None:
+        process = process_holder["process"]
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def beat() -> None:
         while not stop_heartbeat.wait(heartbeat_seconds):
             try:
-                client.fabric_heartbeat(attempt_id, generation, lease_token)
+                response = client.fabric_heartbeat(attempt_id, generation, lease_token)
+                if response.get("ok") is not True:
+                    heartbeat_error.append("coordinator rejected fabric heartbeat")
+                    stop_process()
+                    return
             except Exception as error:
                 heartbeat_error.append(str(error))
+                stop_process()
                 return
 
     thread = threading.Thread(target=beat, daemon=True)
     thread.start()
     try:
         if runner is None:
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=runtime.timeout_seconds, check=False)
-            rc, stdout, stderr = completed.returncode, completed.stdout, completed.stderr
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            process_holder["process"] = process
+            try:
+                stdout, stderr = process.communicate(timeout=runtime.timeout_seconds)
+                rc = process.returncode
+            except subprocess.TimeoutExpired:
+                stop_process()
+                stdout, stderr = process.communicate()
+                raise ComputeWorkerError("distributed NVIDIA launch timed out")
         else:
             rc, stdout, stderr = runner(command, runtime.timeout_seconds)
         if heartbeat_error:
