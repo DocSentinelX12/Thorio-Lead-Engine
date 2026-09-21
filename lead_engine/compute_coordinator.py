@@ -851,7 +851,9 @@ class ComputeCoordinator:
                     """SELECT a.status,a.worker_id,a.generation,a.lease_token_digest
                        FROM compute_execution_attempts a
                        JOIN compute_execution_participants p ON p.attempt_id=a.attempt_id
-                       WHERE a.attempt_id=? AND p.worker_id=? AND p.generation=? AND p.status IN ('bound','launching','active','running')""",
+                       WHERE a.attempt_id=? AND p.worker_id=? AND p.generation=?
+                         AND p.status IN ('bound','launching','active','running')
+                         AND a.status='leased'""",
                     (attempt_id, worker_id, generation),
                 ).fetchone()
                 if not row or row["status"] != "leased" or row["worker_id"] != f"fabric:{attempt_id}" or int(row["generation"]) != generation or row["lease_token_digest"] != lease_digest:
@@ -973,6 +975,79 @@ class ComputeCoordinator:
             self.pool.release_task_slot(worker_id)
         return True
 
+    def reconcile_fabric(self, participant_timeout_seconds: float | None = None) -> Dict[str, int]:
+        """Fail and requeue fabric attempts whose required participant set is no longer healthy.
+
+        This is deliberately conservative: one missing/stale participant invalidates
+        the whole distributed attempt. The exact attempt lease and allocation are
+        then retired before the task is returned to the durable queue.
+        """
+        timeout = float(participant_timeout_seconds if participant_timeout_seconds is not None else max(1, self.lease_seconds))
+        if timeout <= 0:
+            raise ValueError("participant_timeout_seconds must be positive")
+        now = time.time()
+        stale_attempts: list[Dict[str, Any]] = []
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT a.*, t.lease_until
+                       FROM compute_execution_attempts a
+                       JOIN compute_tasks t ON t.attempt_id=a.attempt_id
+                       WHERE a.status='leased' AND t.status='leased'"""
+                ).fetchall()
+                for attempt_row in rows:
+                    attempt = dict(attempt_row)
+                    participants = connection.execute(
+                        """SELECT worker_id,status,heartbeat_at
+                           FROM compute_execution_participants
+                           WHERE attempt_id=? AND generation=?
+                           ORDER BY rank""",
+                        (attempt["attempt_id"], attempt["generation"]),
+                    ).fetchall()
+                    if not participants:
+                        continue
+                    missing = any(
+                        str(p["status"]) not in {"bound", "active", "launching", "running"}
+                        or float(p["heartbeat_at"]) + timeout <= now
+                        or not self.pool.worker(str(p["worker_id"]))
+                        or self.pool.worker(str(p["worker_id"])).get("status") != "ready"
+                        for p in participants
+                    )
+                    if missing:
+                        stale_attempts.append(attempt)
+                if not stale_attempts:
+                    return {"reconciled": 0, "requeued": 0}
+                for attempt in stale_attempts:
+                    task_id = str(attempt["task_id"])
+                    updated = connection.execute(
+                        """UPDATE compute_tasks
+                           SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,
+                               error=?,updated_at=?
+                           WHERE task_id=? AND status='leased' AND attempt_id=? AND generation=?""",
+                        ("fabric participant lost", now, task_id, attempt["attempt_id"], attempt["generation"]),
+                    )
+                    if updated.rowcount != 1:
+                        continue
+                    connection.execute(
+                        """UPDATE compute_execution_attempts
+                           SET status='failed',finished_at=?,error=?,authoritative_acceptance='rejected'
+                           WHERE attempt_id=? AND generation=? AND status='leased'""",
+                        (now, "fabric participant lost", attempt["attempt_id"], attempt["generation"]),
+                    )
+                    connection.execute(
+                        """UPDATE compute_execution_participants
+                           SET status='failed',last_error=?,heartbeat_at=?
+                           WHERE attempt_id=? AND generation=? AND status IN ('bound','active','launching','running')""",
+                        ("fabric participant lost", now, attempt["attempt_id"], attempt["generation"]),
+                    )
+                    stale_attempts = stale_attempts
+                connection.commit()
+            for attempt in stale_attempts:
+                self._release_physical_allocation(attempt, "fabric participant lost")
+                if attempt.get("worker_id") and not str(attempt["worker_id"]).startswith("fabric:"):
+                    self.pool.release_task_slot(str(attempt["worker_id"]))
+        return {"reconciled": len(stale_attempts), "requeued": len(stale_attempts)}
+
     def recover_expired_tasks(self) -> int:
         now = time.time()
         with self._lock:
@@ -998,7 +1073,7 @@ class ComputeCoordinator:
 
     def health(self) -> Dict[str, Any]:
         with self._lock:
-            self.pool.reap_stale_workers(); self.recover_expired_tasks()
+            self.pool.reap_stale_workers(); self.recover_expired_tasks(); self.reconcile_fabric()
             with self._connect() as connection:
                 queued = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='queued'").fetchone()[0]
                 leased = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]
