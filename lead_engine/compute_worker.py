@@ -201,14 +201,6 @@ def run_fabric_verification(
         raise ComputeWorkerError("worker is not present in the durable launch plan")
     runtime = runtime or NvidiaRuntime()
     client.fabric_state(attempt_id, generation, lease_token, "launching")
-    local = runtime.verify_local()
-    host, port_text = str(plan["rendezvous_endpoint"]).rsplit(":", 1)
-    command = runtime.distributed_command(
-        world_size=int(plan["world_size"]), node_rank=int(participant["node_rank"]),
-        nnodes=int(plan["nnodes"]), master_addr=host, master_port=int(port_text),
-        rendezvous_id=str(plan["rendezvous_id"]), process_count=int(participant["process_count"]),
-    )
-    client.fabric_state(attempt_id, generation, lease_token, "active")
     stop_heartbeat = threading.Event()
     heartbeat_error = []
     process_holder = {"process": None}
@@ -240,8 +232,16 @@ def run_fabric_verification(
                 return
 
     thread = threading.Thread(target=beat, daemon=True)
-    thread.start()
     try:
+        local = runtime.verify_local()
+        host, port_text = str(plan["rendezvous_endpoint"]).rsplit(":", 1)
+        command = runtime.distributed_command(
+            world_size=int(plan["world_size"]), node_rank=int(participant["node_rank"]),
+            nnodes=int(plan["nnodes"]), master_addr=host, master_port=int(port_text),
+            rendezvous_id=str(plan["rendezvous_id"]), process_count=int(participant["process_count"]),
+        )
+        client.fabric_state(attempt_id, generation, lease_token, "active")
+        thread.start()
         if runner is None:
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             process_holder["process"] = process
