@@ -125,6 +125,29 @@ class NvidiaRuntime:
         command.extend(["-m", "lead_engine.nccl_all_reduce_probe"])
         return tuple(command)
 
+    @staticmethod
+    def validate_distributed_probe_output(stdout: str, world_size: int) -> dict[str, object]:
+        if world_size < 2:
+            raise ValueError("world_size must be at least 2")
+        marker = "THORIO_NCCL_PROBE_OK "
+        lines = [line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
+        if not lines:
+            raise NvidiaRuntimeError("distributed NCCL probe completed without verified success evidence")
+        try:
+            probe = json.loads(lines[-1][len(marker):])
+        except json.JSONDecodeError as exc:
+            raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
+        expected_sum = world_size * (world_size + 1) // 2
+        if (
+            probe.get("backend") != "nccl"
+            or probe.get("collective") != "all_reduce"
+            or probe.get("verified_on_gpu") is not True
+            or int(probe.get("world_size", -1)) != world_size
+            or int(probe.get("expected_sum", -1)) != expected_sum
+        ):
+            raise NvidiaRuntimeError("distributed NCCL probe evidence did not verify the requested GPU collective")
+        return probe
+
     def verify_distributed_nccl(
         self,
         *,
@@ -147,21 +170,7 @@ class NvidiaRuntime:
         if rc != 0:
             detail = (stderr or stdout).strip()
             raise NvidiaRuntimeError(f"distributed NCCL all-reduce probe failed: {detail[:4000]}")
-        marker = "THORIO_NCCL_PROBE_OK "
-        lines = [line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
-        if not lines:
-            raise NvidiaRuntimeError("distributed NCCL probe completed without verified success evidence")
-        try:
-            probe = json.loads(lines[-1][len(marker):])
-        except json.JSONDecodeError as exc:
-            raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
-        if (
-            probe.get("backend") != "nccl"
-            or probe.get("collective") != "all_reduce"
-            or probe.get("verified_on_gpu") is not True
-            or int(probe.get("world_size", -1)) != world_size
-        ):
-            raise NvidiaRuntimeError("distributed NCCL probe evidence did not verify the requested GPU collective")
+        probe = self.validate_distributed_probe_output(stdout, world_size)
         return {
             "verified": True,
             "backend": "nccl",
