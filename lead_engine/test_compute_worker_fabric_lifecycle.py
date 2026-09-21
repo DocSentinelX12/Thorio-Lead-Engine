@@ -743,7 +743,7 @@ def test_running_fabric_participant_heartbeat_renews_lease(tmp_path: Path):
         if item["worker_id"] == "worker-1"
     )
     after = coordinator.task(task_id)["lease_until"]
-    assert participant["status"] == "running"    assert after > before
+    assert participant["status"] == "running"\n    assert after > before
 
 
 def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fails():
