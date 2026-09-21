@@ -237,7 +237,8 @@ class ComputeInventory:
                     raise ValueError("allocation_id already exists with different resources")
                 return
             rows = connection.execute(
-                f"SELECT resource_key,state,provider_id,domain_id FROM compute_resource_inventory "
+                f"SELECT resource_key,state,provider_id,domain_id,authentication_state,expires_at "
+                f"FROM compute_resource_inventory "
                 f"WHERE resource_key IN ({','.join('?' for _ in keys)})", keys
             ).fetchall()
             by_key = {row["resource_key"]: row for row in rows}
@@ -245,6 +246,8 @@ class ComputeInventory:
                 row["state"] not in {ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value}
                 or row["provider_id"] != provider_id
                 or row["domain_id"] != domain_id
+                or row["authentication_state"] != "authenticated"
+                or (row["expires_at"] is not None and float(row["expires_at"]) <= now)
                 for row in by_key.values()
             ):
                 connection.rollback()
