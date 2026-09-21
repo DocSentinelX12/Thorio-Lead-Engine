@@ -359,3 +359,25 @@ def test_multi_node_allocation_does_not_cross_provider_or_domain_boundary(tmp_pa
             ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=2), same_node=False),
             "allocation-cross-boundary",
         )
+
+
+def test_expired_resource_cannot_be_reserved_from_a_stale_candidate_snapshot(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a",
+        domain_id="domain-a",
+        observed_at=time.time(),
+        expires_at=time.time() + 0.05,
+        ephemeral=True,
+        nodes=(_node("node-a", [
+            _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+        ]),),
+        authentication_state="authenticated",
+    ))
+    time.sleep(0.08)
+    with pytest.raises(ComputeSchedulingError, match="no longer available"):
+        ComputeScheduler(inventory).allocate(
+            ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+            "allocation-expired",
+        )
+    assert inventory.get("provider-a/domain-a/node-a/gpu/u0")["state"] == ResourceState.AVAILABLE.value
