@@ -99,6 +99,8 @@ class NvidiaRuntime:
             raise ValueError("world_size must be at least 2 for distributed NCCL verification")
         if nnodes < 1 or not 0 <= node_rank < nnodes:
             raise ValueError("node_rank must be within nnodes")
+        if world_size % nnodes != 0:
+            raise ValueError("world_size must divide evenly across nnodes")
         if not master_addr.strip():
             raise ValueError("master_addr is required")
         if not 1 <= master_port <= 65535:
@@ -106,7 +108,7 @@ class NvidiaRuntime:
         torchrun = self._required_command("torchrun")
         return (
             torchrun,
-            f"--nproc-per-node=gpu",
+            f"--nproc-per-node={world_size // nnodes}",
             f"--nnodes={nnodes}",
             f"--node-rank={node_rank}",
             f"--master-addr={master_addr.strip()}",
@@ -131,8 +133,8 @@ class NvidiaRuntime:
             master_addr=master_addr,
             master_port=master_port,
         )
-        if world_size != nnodes:
-            raise ValueError("world_size must equal nnodes when each node contributes one GPU process per rank")
+        if world_size < 2:
+            raise ValueError("world_size must be at least 2")
         rc, stdout, stderr = self._run(command)
         if rc != 0:
             detail = (stderr or stdout).strip()
