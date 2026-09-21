@@ -281,6 +281,8 @@ def run_fabric_verification(
     except Exception as error:
         try:
             client.fabric_state(attempt_id, generation, lease_token, "failed", str(error))
+        except Exception:
+            pass
         finally:
             stop_heartbeat.set()
             thread.join(timeout=2)
