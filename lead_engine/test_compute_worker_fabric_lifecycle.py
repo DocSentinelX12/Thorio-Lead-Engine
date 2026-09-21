@@ -533,3 +533,51 @@ def test_expired_generation_cannot_complete_after_retry(tmp_path: Path):
     current_task = coordinator.task(task_id)
     assert current_task["status"] == "leased"
     assert current_task["attempt_id"] == retry["attempt_id"]
+
+
+def test_convergence_rejects_an_expired_task_lease(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    for worker_id in ("worker-1", "worker-2"):
+        coordinator.record_execution_verification(
+            attempt_id=attempt_id,
+            generation=generation,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+        )
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_tasks SET lease_until=? WHERE task_id=?",
+            (time.time() - 1, task_id),
+        )
+        connection.commit()
+
+    result = coordinator.converge_fabric_execution(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+    )
+    assert result == {"converged": False, "reason": "execution_identity_rejected"}
