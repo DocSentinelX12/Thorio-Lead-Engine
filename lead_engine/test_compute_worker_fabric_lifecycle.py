@@ -175,3 +175,51 @@ def test_fabric_launch_requires_explicit_rendezvous_endpoint(tmp_path: Path):
         assert "host:port" in str(error)
     else:
         raise AssertionError("fabric launch accepted a missing rendezvous endpoint")
+
+
+def test_fabric_reconciliation_requeues_entire_attempt_when_one_participant_is_lost(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2, "require_nccl": True},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    assert claimed["task_id"] == task_id
+    attempt_id = claimed["attempt_id"]
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_execution_participants SET heartbeat_at=? WHERE attempt_id=? AND worker_id=?",
+            (time.time() - 1000, attempt_id, "worker-2"),
+        )
+        connection.commit()
+
+    result = coordinator.reconcile_fabric(participant_timeout_seconds=30)
+    assert result == {"reconciled": 1, "requeued": 1}
+
+    task = coordinator.task(task_id)
+    assert task["status"] == "queued"
+    assert task["lease_token"] is None
+    assert task["attempt_id"] == attempt_id
+
+    attempt = coordinator.execution_attempt(attempt_id)
+    assert attempt["status"] == "failed"
+    assert attempt["authoritative_acceptance"] == "rejected"
+    participants = coordinator.execution_participants(attempt_id)
+    assert {item["status"] for item in participants} == {"failed"}
+    assert all(item["last_error"] == "fabric participant lost" for item in participants)
+
+    allocation = inventory.allocation(claimed["physical_allocation"]["allocation_id"])
+    assert allocation["state"] == "released"
