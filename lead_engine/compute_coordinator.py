@@ -674,7 +674,7 @@ class ComputeCoordinator:
             with self._connect() as connection:
                 attempt = connection.execute(
                     "SELECT status,task_id,generation,lease_token_digest,allocation_id FROM compute_execution_attempts WHERE attempt_id=?",
-                    (attempt_id, worker_id, generation),
+                    (attempt_id,),
                 ).fetchone()
                 if not attempt or attempt["task_id"] != task_id or int(attempt["generation"]) != generation:
                     return []
