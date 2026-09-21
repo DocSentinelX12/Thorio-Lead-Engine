@@ -89,7 +89,7 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
         assert claimed is not None
         assert claimed["task_id"] == task_id
         assert claimed["physical_allocation"]["node_ids"] == ["worker-1", "worker-2"]
-        assert claimed["physical_allocation"]["resource_ids"] == ["worker-1/gpu-0", "worker-2/gpu-0"]
+        assert claimed["physical_allocation"]["resource_ids"] == ["worker-1/cpu", "worker-2/cpu", "worker-1/gpu-0", "worker-2/gpu-0"]
         stored = inventory.allocation(claimed["physical_allocation"]["allocation_id"])
         assert stored["state"] == "bound"
         assert stored["task_id"] == task_id
