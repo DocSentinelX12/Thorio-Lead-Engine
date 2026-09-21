@@ -739,7 +739,7 @@ class ComputeCoordinator:
     def _validate_rendezvous_endpoint(value: str) -> str:
         endpoint = str(value).strip()
         if not endpoint:
-            raise ValueError("rendezvous_endpoint is required")
+            raise ValueError("rendezvous_endpoint is required and must be host:port")
         parsed = urlsplit("//" + endpoint)
         if not parsed.hostname or parsed.port is None:
             raise ValueError("rendezvous_endpoint must be host:port")
