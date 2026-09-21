@@ -2,8 +2,7 @@
 
 This module never simulates accelerator capability. Verification succeeds only
 when the local host exposes real NVIDIA tooling and an installed NCCL library.
-Distributed execution remains a separate operation and must be invoked only
-after local runtime evidence has been established.
+Distributed verification invokes a real torchrun NCCL all-reduce probe.
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 
 class NvidiaRuntimeError(RuntimeError):
@@ -72,10 +71,7 @@ class NvidiaRuntime:
         rc, stdout, stderr = self._run((ldconfig, "-p"))
         if rc != 0:
             raise NvidiaRuntimeError(f"ldconfig verification failed: {(stderr or stdout).strip()[:1000]}")
-        nccl_lines = [
-            line.strip() for line in stdout.splitlines()
-            if re.search(r"libnccl\.so(?:\.|\s|$)", line)
-        ]
+        nccl_lines = [line.strip() for line in stdout.splitlines() if re.search(r"libnccl\.so(?:\.|\s|$)", line)]
         if not nccl_lines:
             raise NvidiaRuntimeError("NCCL library was not found in the system linker cache")
         nccl_match = re.search(r"=>\s*(\S+libnccl\.so(?:\.[0-9]+)*)\s*$", nccl_lines[0])
@@ -88,4 +84,69 @@ class NvidiaRuntime:
             "cuda_toolkit_version": cuda_version,
             "nccl_library": nccl_library,
             "evidence_source": ("nvidia-smi", "nvcc", "ldconfig"),
+        }
+
+    def distributed_command(
+        self,
+        *,
+        world_size: int,
+        node_rank: int,
+        nnodes: int,
+        master_addr: str,
+        master_port: int,
+    ) -> tuple[str, ...]:
+        if world_size < 2:
+            raise ValueError("world_size must be at least 2 for distributed NCCL verification")
+        if nnodes < 1 or not 0 <= node_rank < nnodes:
+            raise ValueError("node_rank must be within nnodes")
+        if not master_addr.strip():
+            raise ValueError("master_addr is required")
+        if not 1 <= master_port <= 65535:
+            raise ValueError("master_port must be between 1 and 65535")
+        torchrun = self._required_command("torchrun")
+        return (
+            torchrun,
+            f"--nproc-per-node=gpu",
+            f"--nnodes={nnodes}",
+            f"--node-rank={node_rank}",
+            f"--master-addr={master_addr.strip()}",
+            f"--master-port={master_port}",
+            "-m",
+            "lead_engine.nccl_all_reduce_probe",
+        )
+
+    def verify_distributed_nccl(
+        self,
+        *,
+        world_size: int,
+        node_rank: int,
+        nnodes: int,
+        master_addr: str,
+        master_port: int,
+    ) -> dict[str, object]:
+        command = self.distributed_command(
+            world_size=world_size,
+            node_rank=node_rank,
+            nnodes=nnodes,
+            master_addr=master_addr,
+            master_port=master_port,
+        )
+        if world_size != nnodes:
+            raise ValueError("world_size must equal nnodes when each node contributes one GPU process per rank")
+        rc, stdout, stderr = self._run(command)
+        if rc != 0:
+            detail = (stderr or stdout).strip()
+            raise NvidiaRuntimeError(f"distributed NCCL all-reduce probe failed: {detail[:4000]}")
+        marker = "THORIO_NCCL_PROBE_OK "
+        lines = [line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
+        if not lines:
+            raise NvidiaRuntimeError("distributed NCCL probe completed without verified success evidence")
+        return {
+            "verified": True,
+            "backend": "nccl",
+            "world_size": world_size,
+            "nnodes": nnodes,
+            "node_rank": node_rank,
+            "probe_output": lines[-1][len(marker):],
+            "command": command,
         }
