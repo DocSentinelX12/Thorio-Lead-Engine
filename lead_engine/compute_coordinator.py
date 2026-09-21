@@ -293,6 +293,160 @@ class ComputeCoordinator:
             return
         self.inventory.release_allocation(str(attempt["allocation_id"]), task_id=str(attempt["task_id"]), attempt_id=str(attempt["attempt_id"]), generation=int(attempt["generation"]), reason=reason)
 
+
+    def claim_physical(self) -> Optional[Dict[str, Any]]:
+        """Lease the next physically schedulable task without pinning it to one worker.
+
+        The returned execution identity represents the fabric lease, not a
+        compute worker. Concrete workers participating in the allocation are
+        identified by the exact physical resource/node IDs returned by the
+        physical scheduler. The legacy claim(worker_id) path remains unchanged.
+        """
+        with self._lock:
+            self.recover_expired_tasks()
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT task_id,payload FROM compute_tasks "
+                    "WHERE status='queued' AND payload LIKE '%compute_requirements%' "
+                    "ORDER BY created_at,task_id LIMIT 100"
+                ).fetchall()
+                selected = None
+                payload = None
+                for row in rows:
+                    candidate = json.loads(row["payload"])
+                    if "compute_requirements" not in candidate:
+                        continue
+                    try:
+                        self.physical_requirements(candidate)
+                    except (TypeError, ValueError):
+                        continue
+                    selected = row
+                    payload = candidate
+                    break
+                if selected is None:
+                    connection.rollback()
+                    return None
+
+                task_id = str(selected["task_id"])
+                lease_token = str(uuid.uuid4())
+                attempt_id = str(uuid.uuid4())
+                execution_identity = f"fabric:{attempt_id}"
+                now = time.time()
+                generation_row = connection.execute(
+                    "SELECT generation FROM compute_tasks WHERE task_id=? AND status='queued'",
+                    (task_id,),
+                ).fetchone()
+                if not generation_row:
+                    connection.rollback()
+                    return None
+                generation = int(generation_row["generation"]) + 1
+                updated = connection.execute(
+                    "UPDATE compute_tasks SET status='leased',worker_id=?,lease_token=?,"
+                    "lease_until=?,attempts=attempts+1,attempt_id=?,generation=?,updated_at=? "
+                    "WHERE task_id=? AND status='queued'",
+                    (
+                        execution_identity,
+                        lease_token,
+                        now + self.lease_seconds,
+                        attempt_id,
+                        generation,
+                        now,
+                        task_id,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    connection.rollback()
+                    return None
+                lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+                connection.execute(
+                    "INSERT INTO compute_execution_attempts("
+                    "attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at"
+                    ") VALUES(?,?,?,?,?,?,?)",
+                    (
+                        attempt_id,
+                        task_id,
+                        generation,
+                        execution_identity,
+                        "leased",
+                        lease_digest,
+                        now,
+                    ),
+                )
+                connection.commit()
+
+            allocation = None
+            try:
+                requirements = self.physical_requirements(payload)
+                allocation_id = f"{task_id}:{attempt_id}"
+                allocation = self.compute_scheduler.allocate(requirements, allocation_id)
+                if not self.inventory.bind_allocation(
+                    allocation.allocation_id,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    lease_token_digest=lease_digest,
+                ):
+                    raise ComputeSchedulingError(
+                        "physical allocation could not be bound to execution attempt"
+                    )
+                if not self.bind_physical_allocation(
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    allocation_id=allocation.allocation_id,
+                    provider_id=allocation.provider_id,
+                    domain_id=allocation.domain_id,
+                    resource_ids=allocation.resource_ids,
+                    lease_token=lease_token,
+                ):
+                    self._release_physical_allocation(
+                        {
+                            "allocation_id": allocation.allocation_id,
+                            "task_id": task_id,
+                            "attempt_id": attempt_id,
+                            "generation": generation,
+                        },
+                        "fabric binding rejected",
+                    )
+                    self.release(execution_identity, task_id, lease_token, "fabric binding rejected")
+                    return None
+            except Exception as error:
+                if allocation is not None:
+                    self._release_physical_allocation(
+                        {
+                            "allocation_id": allocation.allocation_id,
+                            "task_id": task_id,
+                            "attempt_id": attempt_id,
+                            "generation": generation,
+                        },
+                        f"physical allocation failed: {error}",
+                    )
+                self.release(
+                    execution_identity,
+                    task_id,
+                    lease_token,
+                    f"physical allocation unavailable: {error}",
+                )
+                return None
+
+            return {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "generation": generation,
+                "execution_identity": execution_identity,
+                "payload": payload,
+                "lease_token": lease_token,
+                "physical_allocation": {
+                    "allocation_id": allocation.allocation_id,
+                    "provider_id": allocation.provider_id,
+                    "domain_id": allocation.domain_id,
+                    "node_ids": list(allocation.node_ids),
+                    "resource_ids": list(allocation.resource_ids),
+                    "resource_keys": list(allocation.resource_keys),
+                    "capability_evidence": list(allocation.capability_evidence),
+                },
+            }
+
     def claim(self, worker_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             self.pool.reap_stale_workers()
