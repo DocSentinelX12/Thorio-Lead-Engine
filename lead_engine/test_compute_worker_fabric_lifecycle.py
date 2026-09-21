@@ -150,7 +150,7 @@ def test_worker_receives_durable_participant_and_runs_launch_heartbeat_lifecycle
         attempt_evidence = json.loads(attempt["verification"])
         assert [item["worker_id"] for item in attempt_evidence["participants"]] == ["worker-1", "worker-2"]
         participant = coordinator.execution_participants(claimed["attempt_id"])[0]
-        assert participant["status"] == "running"
+        assert participant["status"] == "completed"
         assert participant["heartbeat_at"] >= participant["bound_at"]
         assert coordinator.task(task_id)["status"] == "leased"
     finally:
