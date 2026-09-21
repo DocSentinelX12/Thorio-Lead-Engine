@@ -86,3 +86,53 @@ def test_lead_prepare_checkpoint_survives_lease_expiry_and_is_excluded_from_retr
         assert stored["results"][0]["company"] == "Alpha"
     finally:
         _stop_server(server, thread)
+
+
+
+def test_lead_prepare_checkpoint_is_idempotent_and_rejects_conflicting_result(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
+        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
+    ))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": [{"company": "Alpha"}]})
+    claimed = coordinator.claim("worker-1")
+    key = claimed["payload"]["leads"][0]["__checkpoint_item_key"]
+    assert coordinator.checkpoint_lead_prepare(
+        "worker-1", task_id, claimed["lease_token"], [{"item_key": key, "result": {"company": "Alpha"}}]
+    ) == {"checkpointed": 1, "already_checkpointed": 0}
+    assert coordinator.checkpoint_lead_prepare(
+        "worker-1", task_id, claimed["lease_token"], [{"item_key": key, "result": {"company": "Alpha"}}]
+    ) == {"checkpointed": 0, "already_checkpointed": 1}
+    try:
+        coordinator.checkpoint_lead_prepare(
+            "worker-1", task_id, claimed["lease_token"], [{"item_key": key, "result": {"company": "Changed"}}]
+        )
+    except ValueError as error:
+        assert "checkpoint conflict" in str(error)
+    else:
+        raise AssertionError("conflicting checkpoint was accepted")
+
+
+def test_checkpointed_worker_preserves_lead_without_preexisting_fingerprint():
+    from lead_engine.compute_worker import execute_checkpointed_lead_prepare
+
+    class FakeClient:
+        def __init__(self):
+            self.items = []
+        def checkpoint_lead_prepare(self, task_id, lease_token, items):
+            self.items.extend(items)
+            return {"checkpointed": len(items), "already_checkpointed": 0}
+        def checkpoint_results(self, task_id):
+            return {"completed": len(self.items), "results": [item["result"] for item in self.items if item["result"] is not None]}
+
+    client = FakeClient()
+    result = execute_checkpointed_lead_prepare(
+        client,
+        "task-1",
+        "lease-1",
+        {"kind": "lead_prepare", "leads": [{"company": "Example", "signal": "hiring", "url": "https://example.com"}]},
+    )
+    assert result["count"] == 1
+    assert result["leads"][0]["company"] == "Example"
+    assert "__checkpoint_item_key" not in result["leads"][0]
+    assert client.items[0]["item_key"]
