@@ -946,16 +946,6 @@ class ComputeCoordinator:
                     (serialized, now, attempt_id, generation, worker_id),
                 )
                 connection.execute(
-                    """UPDATE compute_execution_attempts
-                       SET verification=?
-                       WHERE attempt_id=? AND generation=? AND status='leased'""",
-                    (json.dumps({
-                        "participant_worker_id": worker_id,
-                        "recorded_at": now,
-                        "evidence": verification,
-                    }, ensure_ascii=False, sort_keys=True), attempt_id, generation),
-                )
-                connection.execute(
                     """UPDATE compute_tasks SET lease_until=?,updated_at=?
                        WHERE task_id=? AND status='leased' AND lease_until > ?""",
                     (now + self.lease_seconds, now, row["task_id"], now),
@@ -1029,8 +1019,20 @@ class ComputeCoordinator:
                        WHERE attempt_id=? AND generation=? AND status='running'""",
                     (now, now, attempt_id, generation),
                 )
+                evidence = [
+                    {
+                        "worker_id": row["worker_id"],
+                        "verification": json.loads(row["verification"]),
+                    }
+                    for row in participants
+                ]
+                connection.execute(
+                    """UPDATE compute_execution_attempts
+                       SET verification=?
+                       WHERE attempt_id=? AND generation=? AND status='completed'""",
+                    (json.dumps({"participants": evidence}, ensure_ascii=False, sort_keys=True), attempt_id, generation),
+                )
                 connection.commit()
-            self._release_physical_allocation(dict(attempt), "distributed execution converged")
         return {"converged": True, "status": "completed", "already_completed": False}
 
     def fabric_launch_plan_for_worker(
