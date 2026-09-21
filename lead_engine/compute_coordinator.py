@@ -236,7 +236,7 @@ class ComputeCoordinator:
         return all(capability in capabilities for capability in required)
 
     @staticmethod
-    def _requirements_from_payload(payload: Dict[str, Any], worker_id: str) -> ComputeRequirements:
+    def _requirements_from_payload(payload: Dict[str, Any], worker_id: str | None = None) -> ComputeRequirements:
         raw = payload.get("compute_requirements") or {}
         if not isinstance(raw, dict):
             raise ValueError("compute_requirements must be an object")
@@ -260,9 +260,12 @@ class ComputeCoordinator:
         requested_nodes = raw.get("allowed_node_ids")
         if requested_nodes is not None and (not isinstance(requested_nodes, (list, tuple)) or any(not isinstance(item, str) for item in requested_nodes)):
             raise ValueError("compute_requirements.allowed_node_ids must be a sequence of strings")
-        allowed = (worker_id,) if requested_nodes is None else tuple(dict.fromkeys(str(item) for item in requested_nodes))
-        if allowed != (worker_id,):
-            raise ValueError("compute_requirements.allowed_node_ids must match the claiming worker")
+        if worker_id is None:
+            allowed = tuple(dict.fromkeys(str(item) for item in requested_nodes)) if requested_nodes is not None else ()
+        else:
+            allowed = (worker_id,) if requested_nodes is None else tuple(dict.fromkeys(str(item) for item in requested_nodes))
+            if allowed != (worker_id,):
+                raise ValueError("compute_requirements.allowed_node_ids must match the claiming worker")
         return ComputeRequirements(
             workload_class=workload_class,
             gpu=gpu,
@@ -272,6 +275,18 @@ class ComputeCoordinator:
             topology_domain=raw.get("topology_domain"),
             allowed_node_ids=allowed,
         )
+
+    def physical_requirements(self, payload: Dict[str, Any]) -> ComputeRequirements:
+        """Translate a queued task into global physical-fabric requirements.
+
+        This is an additive scheduling seam. It deliberately does not lease the
+        task, bind an execution attempt, or mutate authoritative business state.
+        The legacy claim() path remains worker-local until distributed execution
+        is independently verified.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be an object")
+        return self._requirements_from_payload(payload, None)
 
     def _release_physical_allocation(self, attempt: Dict[str, Any] | None, reason: str) -> None:
         if not attempt or not attempt.get("allocation_id"):
