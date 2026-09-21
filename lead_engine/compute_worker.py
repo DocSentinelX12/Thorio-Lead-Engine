@@ -116,12 +116,12 @@ class ComputeWorkerClient:
             "worker_id": self.worker_id, "lease_token": lease_token,
             "verification": verification,
         })
+
     def fabric_converge(self, attempt_id: str, generation: int, lease_token: str) -> Dict[str, Any]:
         return self.request("/fabric/converge", {
             "attempt_id": attempt_id, "generation": generation,
             "worker_id": self.worker_id, "lease_token": lease_token,
         })
-
 
     def claim(self) -> Optional[Dict[str, Any]]:
         result = self.request("/work/claim", {"worker_id": self.worker_id})
@@ -202,11 +202,14 @@ def run_fabric_verification(
     runtime = runtime or NvidiaRuntime()
     client.fabric_state(attempt_id, generation, lease_token, "launching")
     stop_heartbeat = threading.Event()
-    heartbeat_error = []
+    heartbeat_failed = threading.Event()
+    heartbeat_error: list[str] = []
+    process_lock = threading.Lock()
     process_holder = {"process": None}
 
     def stop_process() -> None:
-        process = process_holder["process"]
+        with process_lock:
+            process = process_holder["process"]
         if process is None or process.poll() is not None:
             return
         try:
@@ -215,6 +218,7 @@ def run_fabric_verification(
         except Exception:
             try:
                 process.kill()
+                process.wait(timeout=2)
             except Exception:
                 pass
 
@@ -224,10 +228,12 @@ def run_fabric_verification(
                 response = client.fabric_heartbeat(attempt_id, generation, lease_token)
                 if response.get("ok") is not True:
                     heartbeat_error.append("coordinator rejected fabric heartbeat")
+                    heartbeat_failed.set()
                     stop_process()
                     return
             except Exception as error:
                 heartbeat_error.append(str(error))
+                heartbeat_failed.set()
                 stop_process()
                 return
 
@@ -241,10 +247,15 @@ def run_fabric_verification(
             rendezvous_id=str(plan["rendezvous_id"]), process_count=int(participant["process_count"]),
         )
         client.fabric_state(attempt_id, generation, lease_token, "active")
-        thread.start()
+
         if runner is None:
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            process_holder["process"] = process
+            with process_lock:
+                process_holder["process"] = process
+            thread.start()
+            if heartbeat_failed.is_set():
+                stop_process()
+                raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
             try:
                 stdout, stderr = process.communicate(timeout=runtime.timeout_seconds)
                 rc = process.returncode
@@ -253,22 +264,32 @@ def run_fabric_verification(
                 stdout, stderr = process.communicate()
                 raise ComputeWorkerError("distributed NVIDIA launch timed out")
         else:
+            thread.start()
+            if heartbeat_failed.is_set():
+                raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
             rc, stdout, stderr = runner(command, runtime.timeout_seconds)
-        if heartbeat_error:
+
+        if heartbeat_failed.is_set():
+            stop_process()
             raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
         if rc != 0:
             raise NvidiaRuntimeError(f"distributed NCCL launch failed: {(stderr or stdout).strip()[:4000]}")
         probe = runtime.validate_distributed_probe_output(str(stdout), int(plan["world_size"]))
+        if heartbeat_failed.is_set():
+            raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
         evidence = {
             "verified": True, "local_runtime": local, "probe": probe, "attempt_id": attempt_id,
             "generation": generation, "worker_id": client.worker_id,
             "node_rank": int(participant["node_rank"]), "world_size": int(plan["world_size"]),
             "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
         }
-        client.fabric_record_verification(attempt_id, generation, lease_token, evidence)
+        if not client.fabric_record_verification(attempt_id, generation, lease_token, evidence).get("ok", True):
+            raise ComputeWorkerError("coordinator rejected execution verification")
         deadline = time.monotonic() + convergence_timeout_seconds
         convergence = client.fabric_converge(attempt_id, generation, lease_token)
         while convergence.get("converged") is not True and time.monotonic() < deadline:
+            if heartbeat_failed.is_set():
+                raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
             if stop_heartbeat.wait(min(heartbeat_seconds, 1.0)):
                 break
             convergence = client.fabric_converge(attempt_id, generation, lease_token)
@@ -288,6 +309,7 @@ def run_fabric_verification(
         stop_heartbeat.set()
         if thread.is_alive():
             thread.join(timeout=2)
+
 
 def run_worker(
     client: ComputeWorkerClient,
