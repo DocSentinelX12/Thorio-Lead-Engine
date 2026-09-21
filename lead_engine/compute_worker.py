@@ -289,10 +289,21 @@ def run_fabric_verification(
         stop_heartbeat.set()
         thread.join(timeout=2)
 
-def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartbeat_seconds: float = 15.0, stop_event=None) -> None:
+def run_worker(
+    client: ComputeWorkerClient,
+    *,
+    idle_seconds: float = 2.0,
+    heartbeat_seconds: float = 15.0,
+    fabric_rendezvous_endpoint: str | None = None,
+    stop_event=None,
+) -> None:
     if idle_seconds <= 0 or heartbeat_seconds <= 0:
         raise ValueError("worker intervals must be positive")
     stop_event = stop_event or _NeverStop()
+    fabric_rendezvous_endpoint = (
+        fabric_rendezvous_endpoint
+        or os.environ.get("THORIO_FABRIC_RENDEZVOUS_ENDPOINT", "")
+    ).strip()
     backoff = 1.0
     last_heartbeat = 0.0
     while not stop_event.is_set():
@@ -303,6 +314,28 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
             if now - last_heartbeat >= heartbeat_seconds:
                 client.heartbeat(1 if getattr(client, "_active_task", None) else 0)
                 last_heartbeat = now
+            assignments = client.fabric_assignments()
+            if assignments:
+                if not fabric_rendezvous_endpoint:
+                    for assignment in assignments:
+                        response = client.fabric_state(
+                            str(assignment["attempt_id"]),
+                            int(assignment["generation"]),
+                            str(assignment["lease_token"]),
+                            "failed",
+                            "THORIO_FABRIC_RENDEZVOUS_ENDPOINT is required for fabric execution",
+                        )
+                        if response.get("ok") is not True:
+                            raise ComputeWorkerError("coordinator rejected fabric failure state")
+                else:
+                    for assignment in assignments:
+                        run_fabric_verification(
+                            client,
+                            assignment,
+                            rendezvous_endpoint=fabric_rendezvous_endpoint,
+                        )
+                backoff = 1.0
+                continue
             task = client.claim()
             backoff = 1.0
         except ComputeWorkerError:
