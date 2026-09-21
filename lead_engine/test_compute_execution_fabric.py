@@ -44,6 +44,59 @@ def test_physical_fabric_requirements_do_not_bind_to_claiming_worker():
         assert requirements.gpu.require_nccl is True
 
 
+def test_global_physical_claim_allocates_across_registered_nodes_without_worker_pinning():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        inventory = ComputeInventory(str(root / "inventory.sqlite3"))
+        coordinator = ComputeCoordinator(
+            str(root / "coordinator.sqlite3"),
+            auth_token="token",
+            lease_seconds=30,
+            inventory=inventory,
+        )
+        for node_id in ("worker-1", "worker-2"):
+            inventory.observe(ProviderResourceSnapshot(
+                provider_id="fabric-provider",
+                domain_id="fabric-domain",
+                observed_at=1.0,
+                expires_at=9999999999.0,
+                ephemeral=True,
+                authentication_state="authenticated",
+                evidence={"source": "test"},
+                nodes=(NodeResource(
+                    node_id=node_id,
+                    architecture="x86_64",
+                    cpu=CpuResource(node_id, 4, 8192),
+                    gpus=(GpuResource(node_id=node_id, gpu_id="gpu-0", availability_state=ResourceState.AVAILABLE),),
+                    driver_version="550.1",
+                    cuda_version="12.4",
+                    nccl_version="2.20",
+                    state=ResourceState.AVAILABLE,
+                ),),
+            ))
+        task_id = coordinator.enqueue({
+            "compute_requirements": {
+                "workload_class": "multi_node_gpu",
+                "gpu": {"gpu_count": 2, "require_nccl": True},
+                "min_cpu_count": 1,
+                "min_memory_bytes": 1,
+                "same_node": False,
+            },
+        })
+
+        claimed = coordinator.claim_physical()
+
+        assert claimed is not None
+        assert claimed["task_id"] == task_id
+        assert claimed["physical_allocation"]["node_ids"] == ["worker-1", "worker-2"]
+        assert claimed["physical_allocation"]["resource_ids"] == ["worker-1/gpu-0", "worker-2/gpu-0"]
+        stored = inventory.allocation(claimed["physical_allocation"]["allocation_id"])
+        assert stored["state"] == "bound"
+        assert stored["task_id"] == task_id
+        assert stored["attempt_id"] == claimed["attempt_id"]
+        assert stored["generation"] == claimed["generation"]
+
+
 def test_claim_creates_and_binds_physical_allocation_to_worker_node():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
