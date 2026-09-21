@@ -698,3 +698,53 @@ def test_run_worker_survives_fabric_runtime_failure(monkeypatch):
     )
 
     assert client.claimed is False
+
+
+def test_running_fabric_participant_heartbeat_renews_lease(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    assert coordinator.record_execution_verification(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+        verification={"verified": True, "backend": "nccl", "world_size": 2},
+    ) is True
+
+    before = coordinator.task(task_id)["lease_until"]
+    time.sleep(0.01)
+
+    assert coordinator.heartbeat_execution_participant(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+    ) is True
+
+    participant = next(
+        item for item in coordinator.execution_participants(attempt_id)
+        if item["worker_id"] == "worker-1"
+    )
+    after = coordinator.task(task_id)["lease_until"]
+    assert participant["status"] == "active"
+    assert after > before
