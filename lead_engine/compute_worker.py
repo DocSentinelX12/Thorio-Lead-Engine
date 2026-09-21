@@ -329,11 +329,15 @@ def run_worker(
                             raise ComputeWorkerError("coordinator rejected fabric failure state")
                 else:
                     for assignment in assignments:
-                        run_fabric_verification(
-                            client,
-                            assignment,
-                            rendezvous_endpoint=fabric_rendezvous_endpoint,
-                        )
+                        try:
+                            run_fabric_verification(
+                                client,
+                                assignment,
+                                rendezvous_endpoint=fabric_rendezvous_endpoint,
+                            )
+                        except NvidiaRuntimeError:
+                            if stop_event.wait(idle_seconds):
+                                break
                 backoff = 1.0
                 continue
             task = client.claim()
