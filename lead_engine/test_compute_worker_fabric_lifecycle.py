@@ -147,7 +147,8 @@ def test_worker_receives_durable_participant_and_runs_launch_heartbeat_lifecycle
         assert calls
         assert "--node-rank=0" in calls[0][0]
         attempt = coordinator.execution_attempt(claimed["attempt_id"])
-        assert json.loads(attempt["verification"])["verified"] is True
+        attempt_evidence = json.loads(attempt["verification"])
+        assert [item["worker_id"] for item in attempt_evidence["participants"]] == ["worker-1", "worker-2"]
         participant = coordinator.execution_participants(claimed["attempt_id"])[0]
         assert participant["status"] == "running"
         assert participant["heartbeat_at"] >= participant["bound_at"]
