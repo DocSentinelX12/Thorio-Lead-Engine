@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -11,6 +13,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_finding, social_research
 from .compute_pool import local_worker_identity
+from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .lead_pipeline import process_leads
 
 
@@ -83,6 +86,37 @@ class ComputeWorkerClient:
     def heartbeat(self, current_load: int = 0) -> Dict[str, Any]:
         return self.request("/workers/heartbeat", {"worker_id": self.worker_id, "current_load": current_load})
 
+    def fabric_assignments(self) -> list[Dict[str, Any]]:
+        response = self.request("/fabric/assignments", {"worker_id": self.worker_id})
+        return list(response.get("assignments", []))
+
+    def fabric_heartbeat(self, attempt_id: str, generation: int, lease_token: str) -> Dict[str, Any]:
+        return self.request("/fabric/heartbeat", {
+            "attempt_id": attempt_id, "generation": generation,
+            "worker_id": self.worker_id, "lease_token": lease_token,
+        })
+
+    def fabric_state(self, attempt_id: str, generation: int, lease_token: str, status: str, error: str = "") -> Dict[str, Any]:
+        return self.request("/fabric/state", {
+            "attempt_id": attempt_id, "generation": generation,
+            "worker_id": self.worker_id, "lease_token": lease_token,
+            "status": status, "error": error,
+        })
+
+    def fabric_launch_plan(self, attempt_id: str, generation: int, lease_token: str, rendezvous_endpoint: str) -> Dict[str, Any]:
+        return self.request("/fabric/launch-plan", {
+            "attempt_id": attempt_id, "generation": generation,
+            "worker_id": self.worker_id, "lease_token": lease_token,
+            "rendezvous_endpoint": rendezvous_endpoint,
+        })
+
+    def fabric_record_verification(self, attempt_id: str, generation: int, lease_token: str, verification: Dict[str, Any]) -> Dict[str, Any]:
+        return self.request("/fabric/verification", {
+            "attempt_id": attempt_id, "generation": generation,
+            "worker_id": self.worker_id, "lease_token": lease_token,
+            "verification": verification,
+        })
+
     def claim(self) -> Optional[Dict[str, Any]]:
         result = self.request("/work/claim", {"worker_id": self.worker_id})
         return result if result.get("task_id") else None
@@ -136,6 +170,77 @@ def execute_compute_task(payload: Mapping[str, Any]) -> Dict[str, Any]:
         raise ComputeWorkerError(f"agent_task is not supported for stateless distributed agent: {agent}")
     raise ComputeWorkerError(f"unsupported compute task kind: {kind or '<missing>'}")
 
+
+def run_fabric_verification(
+    client: ComputeWorkerClient,
+    assignment: Mapping[str, Any],
+    *,
+    rendezvous_endpoint: str,
+    heartbeat_seconds: float = 10.0,
+    runtime: NvidiaRuntime | None = None,
+    runner=None,
+) -> Dict[str, Any]:
+    """Run the real NVIDIA distributed probe without completing business work."""
+    if heartbeat_seconds <= 0:
+        raise ValueError("heartbeat_seconds must be positive")
+    attempt_id = str(assignment["attempt_id"])
+    generation = int(assignment["generation"])
+    lease_token = str(assignment["lease_token"])
+    plan = client.fabric_launch_plan(attempt_id, generation, lease_token, rendezvous_endpoint)
+    participant = next((item for item in plan["workers"] if item["worker_id"] == client.worker_id), None)
+    if participant is None:
+        raise ComputeWorkerError("worker is not present in the durable launch plan")
+    runtime = runtime or NvidiaRuntime()
+    client.fabric_state(attempt_id, generation, lease_token, "launching")
+    local = runtime.verify_local()
+    host, port_text = str(plan["rendezvous_endpoint"]).rsplit(":", 1)
+    command = runtime.distributed_command(
+        world_size=int(plan["world_size"]), node_rank=int(participant["node_rank"]),
+        nnodes=int(plan["nnodes"]), master_addr=host, master_port=int(port_text),
+        rendezvous_id=str(plan["rendezvous_id"]), process_count=int(participant["process_count"]),
+    )
+    client.fabric_state(attempt_id, generation, lease_token, "active")
+    stop_heartbeat = threading.Event()
+    heartbeat_error = []
+
+    def beat() -> None:
+        while not stop_heartbeat.wait(heartbeat_seconds):
+            try:
+                client.fabric_heartbeat(attempt_id, generation, lease_token)
+            except Exception as error:
+                heartbeat_error.append(str(error))
+                return
+
+    thread = threading.Thread(target=beat, daemon=True)
+    thread.start()
+    try:
+        if runner is None:
+            completed = subprocess.run(command, capture_output=True, text=True, timeout=runtime.timeout_seconds, check=False)
+            rc, stdout, stderr = completed.returncode, completed.stdout, completed.stderr
+        else:
+            rc, stdout, stderr = runner(command, runtime.timeout_seconds)
+        if heartbeat_error:
+            raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
+        if rc != 0:
+            raise NvidiaRuntimeError(f"distributed NCCL launch failed: {(stderr or stdout).strip()[:4000]}")
+        evidence = {
+            "verified": True, "local_runtime": local, "attempt_id": attempt_id,
+            "generation": generation, "worker_id": client.worker_id,
+            "node_rank": int(participant["node_rank"]), "world_size": int(plan["world_size"]),
+            "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
+        }
+        client.fabric_record_verification(attempt_id, generation, lease_token, evidence)
+        return evidence
+    except Exception as error:
+        try:
+            client.fabric_state(attempt_id, generation, lease_token, "failed", str(error))
+        finally:
+            stop_heartbeat.set()
+            thread.join(timeout=2)
+        raise
+    finally:
+        stop_heartbeat.set()
+        thread.join(timeout=2)
 
 def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartbeat_seconds: float = 15.0, stop_event=None) -> None:
     if idle_seconds <= 0 or heartbeat_seconds <= 0:
