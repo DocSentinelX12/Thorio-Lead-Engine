@@ -755,10 +755,11 @@ class ComputeCoordinator:
         with self._lock:
             with self._connect() as connection:
                 row = connection.execute(
-                    """SELECT status,generation,lease_token_digest,rendezvous_endpoint
-                       FROM compute_execution_attempts
-                       WHERE attempt_id=?""",
-                    (attempt_id,),
+                    """SELECT a.status,a.generation,a.lease_token_digest,a.rendezvous_endpoint
+                       FROM compute_execution_attempts a
+                       JOIN compute_tasks t ON t.attempt_id=a.attempt_id
+                       WHERE a.attempt_id=? AND t.status='leased' AND t.lease_until > ?""",
+                    (attempt_id, time.time()),
                 ).fetchone()
                 if not row or row["status"] != "leased" or int(row["generation"]) != generation or row["lease_token_digest"] != lease_digest:
                     raise ValueError("execution lease is not valid")
@@ -908,8 +909,11 @@ class ComputeCoordinator:
                        )""",
                     (now, status, str(error)[:4000], attempt_id, generation, worker_id, lease_digest, now),
                 )
+                changed = cursor.rowcount == 1
                 connection.commit()
-                return cursor.rowcount == 1
+            if changed and status == "failed":
+                self.reconcile_fabric(participant_timeout_seconds=0.000001)
+            return changed
 
     def record_execution_verification(
         self, *, attempt_id: str, generation: int, worker_id: str,
@@ -928,8 +932,12 @@ class ComputeCoordinator:
                        FROM compute_execution_attempts a
                        JOIN compute_execution_participants p
                          ON p.attempt_id=a.attempt_id AND p.generation=a.generation
-                       WHERE a.attempt_id=? AND a.generation=? AND p.worker_id=?""",
-                    (attempt_id, generation, worker_id),
+                       WHERE a.attempt_id=? AND a.generation=? AND p.worker_id=?
+                         AND EXISTS (
+                             SELECT 1 FROM compute_tasks t
+                             WHERE t.task_id=a.task_id AND t.status='leased' AND t.lease_until > ?
+                         )""",
+                    (attempt_id, generation, worker_id, now),
                 ).fetchone()
                 if (
                     not row
