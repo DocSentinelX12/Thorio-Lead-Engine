@@ -284,7 +284,7 @@ def test_nvidia_runtime_distributed_probe_requires_torchrun_and_builds_real_nccl
     assert "--node-rank=0" in command
     assert "--master-addr=10.0.0.5" in command
     assert "--master-port=29500" in command
-    assert command[-1] == "nccl_all_reduce_probe"
+    assert command[-1] == "lead_engine.nccl_all_reduce_probe"
 
 
 def test_nvidia_runtime_accepts_only_verified_gpu_all_reduce_evidence():
