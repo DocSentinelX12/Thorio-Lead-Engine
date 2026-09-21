@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -201,6 +202,33 @@ def test_second_allocation_cannot_double_book_reserved_gpu(tmp_path):
     scheduler.allocate(ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)), "allocation-1")
     with pytest.raises(ComputeSchedulingError):
         scheduler.allocate(ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)), "allocation-2")
+
+
+def test_concurrent_allocations_cannot_double_book_a_physical_gpu(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+    ])]))
+    scheduler = ComputeScheduler(inventory)
+    requirements = ComputeRequirements(
+        WorkloadClass.GPU_REQUIRED,
+        GpuRequirements(gpu_count=1),
+    )
+
+    def allocate(index):
+        try:
+            return ("ok", scheduler.allocate(requirements, f"concurrent-{index}"))
+        except ComputeSchedulingError:
+            return ("rejected", None)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(allocate, range(2)))
+
+    assert [status for status, _ in results].count("ok") == 1
+    assert [status for status, _ in results].count("rejected") == 1
+    allocations = inventory.allocations(state="reserved")
+    assert len(allocations) == 1
+    assert allocations[0]["resource_keys"] == ["provider-a/domain-a/node-a/gpu/u0", "provider-a/domain-a/node-a/cpu"]
 
 
 def test_allocation_has_durable_owner_record(tmp_path):
