@@ -19,6 +19,30 @@ def _worker():
     )
 
 
+def test_physical_fabric_requirements_do_not_bind_to_claiming_worker():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        coordinator = ComputeCoordinator(
+            str(root / "coordinator.sqlite3"),
+            auth_token="token",
+            inventory=ComputeInventory(str(root / "inventory.sqlite3")),
+        )
+        requirements = coordinator.physical_requirements({
+            "compute_requirements": {
+                "workload_class": "multi_node_gpu",
+                "gpu": {"gpu_count": 2, "require_nccl": True},
+                "min_cpu_count": 2,
+                "min_memory_bytes": 1024,
+                "same_node": False,
+            },
+        })
+
+        assert requirements.allowed_node_ids == ()
+        assert requirements.workload_class.value == "multi_node_gpu"
+        assert requirements.gpu.gpu_count == 2
+        assert requirements.gpu.require_nccl is True
+
+
 def test_claim_creates_and_binds_physical_allocation_to_worker_node():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
