@@ -183,12 +183,15 @@ def run_fabric_verification(
     *,
     rendezvous_endpoint: str,
     heartbeat_seconds: float = 10.0,
+    convergence_timeout_seconds: float = 60.0,
     runtime: NvidiaRuntime | None = None,
     runner=None,
 ) -> Dict[str, Any]:
     """Run the real NVIDIA distributed probe without completing business work."""
     if heartbeat_seconds <= 0:
         raise ValueError("heartbeat_seconds must be positive")
+    if convergence_timeout_seconds <= 0:
+        raise ValueError("convergence_timeout_seconds must be positive")
     attempt_id = str(assignment["attempt_id"])
     generation = int(assignment["generation"])
     lease_token = str(assignment["lease_token"])
@@ -262,7 +265,12 @@ def run_fabric_verification(
             "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
         }
         client.fabric_record_verification(attempt_id, generation, lease_token, evidence)
+        deadline = time.monotonic() + convergence_timeout_seconds
         convergence = client.fabric_converge(attempt_id, generation, lease_token)
+        while convergence.get("converged") is not True and time.monotonic() < deadline:
+            if stop_heartbeat.wait(min(heartbeat_seconds, 1.0)):
+                break
+            convergence = client.fabric_converge(attempt_id, generation, lease_token)
         if convergence.get("converged") is not True:
             raise ComputeWorkerError(
                 f"distributed execution did not converge: {convergence.get('reason', 'unknown')}"
