@@ -55,6 +55,22 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
             inventory=inventory,
         )
         for node_id in ("worker-1", "worker-2"):
+            coordinator.pool.register(WorkerIdentity(
+                node_id,
+                f"{node_id}.host",
+                "x86_64",
+                4,
+                8192,
+                ("lead-processing",),
+                (GpuResource(
+                    node_id=node_id,
+                    gpu_id="gpu-0",
+                    availability_state=ResourceState.AVAILABLE,
+                ),),
+                "550.1",
+                "12.4",
+                "2.20",
+            ))
             inventory.observe(ProviderResourceSnapshot(
                 provider_id="fabric-provider",
                 domain_id="fabric-domain",
