@@ -283,13 +283,11 @@ def run_fabric_verification(
             client.fabric_state(attempt_id, generation, lease_token, "failed", str(error))
         except Exception:
             pass
-        finally:
-            stop_heartbeat.set()
-            thread.join(timeout=2)
         raise
     finally:
         stop_heartbeat.set()
-        thread.join(timeout=2)
+        if thread.is_alive():
+            thread.join(timeout=2)
 
 def run_worker(
     client: ComputeWorkerClient,
