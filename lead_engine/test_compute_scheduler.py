@@ -375,9 +375,12 @@ def test_expired_resource_cannot_be_reserved_from_a_stale_candidate_snapshot(tmp
         authentication_state="authenticated",
     ))
     time.sleep(0.08)
-    with pytest.raises(ComputeSchedulingError, match="no longer available"):
-        ComputeScheduler(inventory).allocate(
-            ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+    row = inventory.get("provider-a/domain-a/node-a/gpu/u0")
+    with pytest.raises(ValueError, match="no longer available"):
+        inventory.reserve_allocation(
             "allocation-expired",
+            "provider-a",
+            "domain-a",
+            ("provider-a/domain-a/node-a/gpu/u0",),
         )
-    assert inventory.get("provider-a/domain-a/node-a/gpu/u0")["state"] == ResourceState.AVAILABLE.value
+    assert row["state"] == ResourceState.AVAILABLE.value
