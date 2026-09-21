@@ -894,7 +894,13 @@ class ComputeCoordinator:
                     """UPDATE compute_execution_participants
                        SET heartbeat_at=?,status=?,last_error=?
                        WHERE attempt_id=? AND generation=? AND worker_id=?
-                       AND status IN ('bound','launching','active','running')
+                       AND (
+                           status=?
+                           OR (status='bound' AND ? IN ('launching','failed'))
+                           OR (status='launching' AND ? IN ('active','failed'))
+                           OR (status='active' AND ? IN ('running','failed'))
+                           OR (status='running' AND ? = 'failed')
+                       )
                        AND EXISTS (
                            SELECT 1 FROM compute_execution_attempts a
                            WHERE a.attempt_id=compute_execution_participants.attempt_id
@@ -907,7 +913,7 @@ class ComputeCoordinator:
                                AND t.status='leased' AND t.lease_until > ?
                            )
                        )""",
-                    (now, status, str(error)[:4000], attempt_id, generation, worker_id, lease_digest, now),
+                    (now, status, str(error)[:4000], attempt_id, generation, worker_id, status, status, status, status, lease_digest, now),
                 )
                 changed = cursor.rowcount == 1
                 connection.commit()
