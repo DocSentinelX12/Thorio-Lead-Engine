@@ -558,6 +558,7 @@ class ComputeCoordinator:
                         node_ids=allocation.node_ids,
                         resource_ids=allocation.resource_ids,
                         lease_token=lease_token,
+                        rendezvous_ref=f"worker:{worker_id}:{attempt_id}:{generation}",
                     ):
                         self._release_physical_allocation(
                             {"allocation_id": allocation.allocation_id, "task_id": task_id, "attempt_id": attempt_id, "generation": generation},
@@ -914,31 +915,123 @@ class ComputeCoordinator:
         self, *, attempt_id: str, generation: int, worker_id: str,
         lease_token: str, verification: Dict[str, Any],
     ) -> bool:
-        if not isinstance(verification, dict):
-            raise ValueError("verification must be an object")
+        if not isinstance(verification, dict) or not verification:
+            raise ValueError("verification must be a non-empty object")
         lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        serialized = json.dumps(verification, ensure_ascii=False, sort_keys=True)
+        now = time.time()
         with self._lock:
             with self._connect() as connection:
                 row = connection.execute(
-                    """SELECT a.status,a.worker_id,a.generation,a.lease_token_digest
+                    """SELECT a.status,a.task_id,a.generation,a.lease_token_digest,
+                              p.status AS participant_status
                        FROM compute_execution_attempts a
-                       JOIN compute_execution_participants p ON p.attempt_id=a.attempt_id
-                       WHERE a.attempt_id=? AND p.worker_id=? AND p.generation=?
-                         AND p.status IN ('bound','launching','active','running')
-                         AND a.status='leased'""",
-                    (attempt_id, worker_id, generation),
+                       JOIN compute_execution_participants p
+                         ON p.attempt_id=a.attempt_id AND p.generation=a.generation
+                       WHERE a.attempt_id=? AND a.generation=? AND p.worker_id=?""",
+                    (attempt_id, generation, worker_id),
                 ).fetchone()
-                if not row or row["status"] != "leased" or row["worker_id"] != f"fabric:{attempt_id}" or int(row["generation"]) != generation or row["lease_token_digest"] != lease_digest:
+                if (
+                    not row
+                    or row["status"] != "leased"
+                    or row["participant_status"] not in {"bound", "launching", "active", "running"}
+                    or row["lease_token_digest"] != lease_digest
+                ):
                     return False
                 connection.execute(
-                    "UPDATE compute_execution_attempts SET verification=? WHERE attempt_id=? AND status='leased'",
-                    (json.dumps(verification, ensure_ascii=False, sort_keys=True), attempt_id),
+                    """UPDATE compute_execution_participants
+                       SET verification=?,status='running',heartbeat_at=?,last_error=''
+                       WHERE attempt_id=? AND generation=? AND worker_id=?
+                         AND status IN ('bound','launching','active','running')""",
+                    (serialized, now, attempt_id, generation, worker_id),
+                )
+                connection.execute(
+                    """UPDATE compute_execution_attempts
+                       SET verification=?
+                       WHERE attempt_id=? AND generation=? AND status='leased'""",
+                    (json.dumps({
+                        "participant_worker_id": worker_id,
+                        "recorded_at": now,
+                        "evidence": verification,
+                    }, ensure_ascii=False, sort_keys=True), attempt_id, generation),
+                )
+                connection.execute(
+                    """UPDATE compute_tasks SET lease_until=?,updated_at=?
+                       WHERE task_id=? AND status='leased' AND lease_until > ?""",
+                    (now + self.lease_seconds, now, row["task_id"], now),
                 )
                 connection.commit()
-        return self.execution_participant_state(
-            attempt_id=attempt_id, generation=generation, worker_id=worker_id,
-            lease_token=lease_token, status="running",
-        )
+        return True
+
+    def converge_fabric_execution(
+        self, *, attempt_id: str, generation: int, worker_id: str, lease_token: str,
+    ) -> Dict[str, Any]:
+        """Converge an execution attempt only after every participant has verified.
+
+        This closes the distributed execution attempt, not the business task.
+        The business result still requires the separate authoritative completion path.
+        """
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        now = time.time()
+        with self._lock:
+            with self._connect() as connection:
+                attempt = connection.execute(
+                    "SELECT * FROM compute_execution_attempts WHERE attempt_id=? AND generation=?",
+                    (attempt_id, generation),
+                ).fetchone()
+                participant = connection.execute(
+                    """SELECT worker_id,status,verification
+                       FROM compute_execution_participants
+                       WHERE attempt_id=? AND generation=? AND worker_id=?""",
+                    (attempt_id, generation, worker_id),
+                ).fetchone()
+                if not attempt or not participant or attempt["lease_token_digest"] != lease_digest:
+                    return {"converged": False, "reason": "execution_identity_rejected"}
+                if attempt["status"] == "completed" and attempt["authoritative_acceptance"] == "accepted":
+                    return {"converged": True, "status": "completed", "already_completed": True}
+                if attempt["status"] != "leased" or participant["status"] not in {"running", "completed"}:
+                    return {"converged": False, "reason": "participant_not_running"}
+                participants = connection.execute(
+                    """SELECT worker_id,status,verification
+                       FROM compute_execution_participants
+                       WHERE attempt_id=? AND generation=?
+                       ORDER BY rank""",
+                    (attempt_id, generation),
+                ).fetchall()
+                if not participants or any(
+                    row["status"] != "running" or not row["verification"]
+                    for row in participants
+                ):
+                    return {
+                        "converged": False,
+                        "reason": "awaiting_all_participant_verifications",
+                        "verified_participants": sum(1 for row in participants if row["verification"]),
+                        "participant_count": len(participants),
+                    }
+                updated = connection.execute(
+                    """UPDATE compute_execution_attempts
+                       SET status='completed',finished_at=?,authoritative_acceptance='accepted'
+                       WHERE attempt_id=? AND generation=? AND status='leased'
+                         AND lease_token_digest=?""",
+                    (now, attempt_id, generation, lease_digest),
+                )
+                if updated.rowcount != 1:
+                    row = connection.execute(
+                        "SELECT status,authoritative_acceptance FROM compute_execution_attempts WHERE attempt_id=?",
+                        (attempt_id,),
+                    ).fetchone()
+                    if row and row["status"] == "completed" and row["authoritative_acceptance"] == "accepted":
+                        return {"converged": True, "status": "completed", "already_completed": True}
+                    return {"converged": False, "reason": "concurrent_convergence"}
+                connection.execute(
+                    """UPDATE compute_execution_participants
+                       SET status='completed',finished_at=?,heartbeat_at=?
+                       WHERE attempt_id=? AND generation=? AND status='running'""",
+                    (now, now, attempt_id, generation),
+                )
+                connection.commit()
+            self._release_physical_allocation(dict(attempt), "distributed execution converged")
+        return {"converged": True, "status": "completed", "already_completed": False}
 
     def fabric_launch_plan_for_worker(
         self, *, attempt_id: str, generation: int, worker_id: str,
@@ -994,6 +1087,15 @@ class ComputeCoordinator:
                        )""",
                     (now, attempt_id, generation, worker_id, lease_digest, now),
                 )
+                if cursor.rowcount == 1:
+                    connection.execute(
+                        """UPDATE compute_tasks
+                           SET lease_until=?,updated_at=?
+                           WHERE task_id=(SELECT task_id FROM compute_execution_participants
+                                          WHERE attempt_id=? AND generation=? AND worker_id=?)
+                             AND status='leased' AND lease_until > ?""",
+                        (now + self.lease_seconds, now, attempt_id, generation, worker_id, now),
+                    )
                 connection.commit()
                 return cursor.rowcount == 1
 
@@ -1217,6 +1319,12 @@ class _Handler(BaseHTTPRequestHandler):
                     rendezvous_endpoint=str(body["rendezvous_endpoint"])
                 )
                 self._send(200, plan)
+            elif self.path == "/fabric/converge":
+                result = self.server.coordinator.converge_fabric_execution(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"])
+                )
+                self._send(200 if result.get("converged") else 409, result)
             elif self.path == "/fabric/verification":
                 ok = self.server.coordinator.record_execution_verification(
                     attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
