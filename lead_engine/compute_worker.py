@@ -116,6 +116,12 @@ class ComputeWorkerClient:
             "worker_id": self.worker_id, "lease_token": lease_token,
             "verification": verification,
         })
+    def fabric_converge(self, attempt_id: str, generation: int, lease_token: str) -> Dict[str, Any]:
+        return self.request("/fabric/converge", {
+            "attempt_id": attempt_id, "generation": generation,
+            "worker_id": self.worker_id, "lease_token": lease_token,
+        })
+
 
     def claim(self) -> Optional[Dict[str, Any]]:
         result = self.request("/work/claim", {"worker_id": self.worker_id})
@@ -256,6 +262,12 @@ def run_fabric_verification(
             "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
         }
         client.fabric_record_verification(attempt_id, generation, lease_token, evidence)
+        convergence = client.fabric_converge(attempt_id, generation, lease_token)
+        if convergence.get("converged") is not True:
+            raise ComputeWorkerError(
+                f"distributed execution did not converge: {convergence.get('reason', 'unknown')}"
+            )
+        evidence["convergence"] = convergence
         return evidence
     except Exception as error:
         try:
