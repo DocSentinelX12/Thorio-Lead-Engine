@@ -71,6 +71,86 @@ class NvidiaProvider(ComputeProvider):
             raise NvidiaDiscoveryError(f"nvidia-smi failed ({result.returncode}): {detail[:1000]}")
         return result
 
+    @staticmethod
+    def _rdma_pci_bus_id(device: str) -> str | None:
+        try:
+            target = (Path("/sys/class/infiniband") / device / "device").resolve()
+            if target.name:
+                return target.name
+        except OSError:
+            pass
+        return None
+
+    def _discover_rdma(self) -> dict[str, object]:
+        evidence: dict[str, object] = {
+            "source": "rdma-core",
+            "device_command": "rdma -j dev show",
+            "link_command": "rdma -j link show",
+        }
+        try:
+            devices_result = self._runner(("rdma", "-j", "dev", "show"), self.timeout_seconds)
+            if devices_result.returncode != 0:
+                detail = (devices_result.stderr or devices_result.stdout).strip().replace("\n", " ")
+                return {**evidence, "error": f"RDMA device discovery failed ({devices_result.returncode}): {detail[:1000]}"}
+            links_result = self._runner(("rdma", "-j", "link", "show"), self.timeout_seconds)
+            if links_result.returncode != 0:
+                detail = (links_result.stderr or links_result.stdout).strip().replace("\n", " ")
+                return {**evidence, "error": f"RDMA link discovery failed ({links_result.returncode}): {detail[:1000]}"}
+            devices = json.loads(devices_result.stdout)
+            links = json.loads(links_result.stdout)
+        except (json.JSONDecodeError, NvidiaDiscoveryError) as exc:
+            return {**evidence, "error": f"invalid RDMA discovery evidence: {exc}"}
+        if not isinstance(devices, list) or not isinstance(links, list):
+            return {**evidence, "error": "RDMA discovery output is not a list"}
+
+        normalized_devices: list[dict[str, object]] = []
+        for item in devices:
+            if not isinstance(item, dict):
+                continue
+            device = str(item.get("ifname") or item.get("device") or "").strip()
+            if not device:
+                continue
+            normalized_devices.append({
+                "device": device,
+                "node_type": item.get("node_type"),
+                "node_guid": item.get("node_guid"),
+                "sys_image_guid": item.get("sys_image_guid"),
+                "state": item.get("state"),
+                "physical_state": item.get("physical_state"),
+                "pci_bus_id": item.get("pci_bus_id") or self._rdma_pci_bus_id(device),
+            })
+        normalized_devices.sort(key=lambda item: str(item["device"]))
+        normalized_links: list[dict[str, object]] = []
+        for item in links:
+            if not isinstance(item, dict):
+                continue
+            device = str(item.get("ifname") or item.get("device") or "").strip()
+            netdev = str(item.get("netdev") or "").strip()
+            if not device:
+                device = next(
+                    (
+                        str(candidate.get("ifname") or candidate.get("device"))
+                        for candidate in links
+                        if isinstance(candidate, dict)
+                        and str(candidate.get("netdev") or "").strip() == netdev
+                        and (candidate.get("ifname") or candidate.get("device"))
+                    ),
+                    "",
+                )
+            if not device:
+                continue
+            normalized_links.append({
+                "rdma_device": device,
+                "netdev": item.get("netdev"),
+                "state": item.get("state"),
+                "physical_state": item.get("physical_state"),
+            })
+        normalized_links.sort(key=lambda item: (str(item.get("rdma_device")), str(item.get("netdev") or "")))
+        evidence["devices"] = normalized_devices
+        evidence["links"] = normalized_links
+        evidence["available"] = bool(normalized_devices)
+        return evidence
+
     def _discover_network(self) -> dict[str, object]:
         result = self._runner(("ip", "-j", "address", "show"), self.timeout_seconds)
         if result.returncode != 0:
@@ -431,6 +511,8 @@ class NvidiaProvider(ComputeProvider):
                 topology_parse_error = str(exc)
 
         network_evidence = self._discover_network()
+        if isinstance(network_evidence, dict):
+            network_evidence["rdma"] = self._discover_rdma()
 
         toolkit_version = None
         nvcc = shutil.which(os.environ.get("THORIO_NVCC", "nvcc"))
