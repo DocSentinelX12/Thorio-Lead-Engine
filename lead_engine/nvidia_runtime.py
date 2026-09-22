@@ -216,7 +216,12 @@ class NvidiaRuntime:
 
     @classmethod
     def validate_nccl_transport_against_rdma(
-        cls, log_output: str, rdma_evidence: Mapping[str, object]
+        cls,
+        log_output: str,
+        rdma_evidence: Mapping[str, object],
+        *,
+        gpu_uuid: str | None = None,
+        gpu_nic_locality: Sequence[Mapping[str, object]] | None = None,
     ) -> dict[str, object]:
         network = cls.parse_nccl_network_evidence(log_output)
         devices = rdma_evidence.get("devices") if isinstance(rdma_evidence, Mapping) else None
@@ -243,10 +248,37 @@ class NvidiaRuntime:
         else:
             used_devices = ()
             verified = ()
+        locality_evidence: dict[str, object] | None = None
+        if network["network_transport"] == "IB" and gpu_uuid is not None:
+            locality_rows = [
+                row for row in (gpu_nic_locality or ())
+                if isinstance(row, Mapping) and str(row.get("gpu_uuid") or "").strip() == gpu_uuid
+            ]
+            matched = []
+            for row in locality_rows:
+                nic = str(row.get("nic") or "").strip()
+                nic_pci = str(row.get("nic_pci_bus_id") or "").strip()
+                for link in rdma_evidence.get("links", ()) if isinstance(rdma_evidence, Mapping) else ():
+                    if not isinstance(link, Mapping):
+                        continue
+                    if str(link.get("rdma_device") or "").strip() in verified and (
+                        str(link.get("netdev") or "").strip() == nic or str(link.get("pci_bus_id") or "").strip() == nic_pci
+                    ):
+                        matched.append({
+                            **dict(row),
+                            "rdma_device": str(link.get("rdma_device")),
+                            "rdma_pci_bus_id": link.get("pci_bus_id"),
+                        })
+            if not matched:
+                raise NvidiaRuntimeError(
+                    f"NCCL IB device is not reconciled to verified NIC locality for GPU {gpu_uuid}"
+                )
+            locality_evidence = matched[0]
         return {
             **network,
             "rdma_devices": rdma_devices,
             "verified_rdma_devices": verified,
+            "gpu_nic_locality": locality_evidence,
         }
 
     @staticmethod
