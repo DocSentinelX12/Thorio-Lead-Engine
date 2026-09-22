@@ -237,6 +237,30 @@ def test_multi_node_prefers_verified_common_network_fabric(tmp_path):
     assert set(allocation.node_ids) == {"node-a", "node-b"}
 
 
+def test_multi_node_placement_records_verified_network_fabric_evidence(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(
+            _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua")]),
+            _node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="ub")]),
+        ),
+        authentication_state="authenticated",
+        evidence={
+            "network": {
+                "source": "verified-test-network-discovery",
+                "fabric_domains": {"node-a": "network-a", "node-b": "network-a"},
+            },
+        },
+    ))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=2, require_nccl=True), same_node=False),
+        "allocation-network-evidence",
+    )
+    evidence = [item for item in allocation.capability_evidence if item.get("gpu_uuid")]
+    assert all(item["placement_decision"]["network_fabric_domain"] == "network-a" for item in evidence)
+    assert all(item["placement_decision"]["network_source"] == "verified-test-network-discovery" for item in evidence)
+
 def test_topology_domain_is_enforced(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
