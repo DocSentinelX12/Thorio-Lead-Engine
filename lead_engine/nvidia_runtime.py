@@ -33,13 +33,7 @@ class NvidiaRuntime:
         try:
             if self.runner is not None:
                 return self.runner(args, self.timeout_seconds)
-            result = subprocess.run(
-                list(args),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_seconds,
-                check=False,
-            )
+            result = subprocess.run(list(args), capture_output=True, text=True, timeout=self.timeout_seconds, check=False)
             return result.returncode, result.stdout, result.stderr
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise NvidiaRuntimeError(f"runtime probe failed for {args[0]}: {exc}") from exc
@@ -75,17 +69,9 @@ class NvidiaRuntime:
             raise NvidiaRuntimeError("NCCL library was not found in the system linker cache")
         nccl_match = re.search(r"=>\s*(\S+libnccl\.so(?:\.[0-9]+)*)\s*$", nccl_lines[0])
         nccl_library = nccl_match.group(1) if nccl_match else nccl_lines[0]
-        return {
-            "verified": True,
-            "gpu_count": len(gpu_lines),
-            "gpu_enumeration": tuple(gpu_lines),
-            "cuda_toolkit_version": cuda_version,
-            "nccl_library": nccl_library,
-            "evidence_source": ("nvidia-smi", "nvcc", "ldconfig"),
-        }
+        return {"verified": True, "gpu_count": len(gpu_lines), "gpu_enumeration": tuple(gpu_lines), "cuda_toolkit_version": cuda_version, "nccl_library": nccl_library, "evidence_source": ("nvidia-smi", "nvcc", "ldconfig")}
 
     def verify_gpu_bindings(self, gpu_bindings: Sequence[Mapping[str, object]]) -> dict[str, object]:
-        """Verify every allocated GPU index still maps to its durable UUID."""
         if not gpu_bindings:
             raise NvidiaRuntimeError("at least one GPU binding is required")
         nvidia_smi = self._required_command("nvidia-smi")
@@ -107,31 +93,46 @@ class NvidiaRuntime:
             if device_id in expected:
                 raise NvidiaRuntimeError(f"duplicate allocated NVIDIA device index: {device_id}")
             expected[device_id] = gpu_uuid
-        mismatches = [
-            f"{gpu_id}: expected {gpu_uuid}, observed {observed.get(gpu_id, '<missing>')}"
-            for gpu_id, gpu_uuid in expected.items()
-            if observed.get(gpu_id) != gpu_uuid
-        ]
+        mismatches = [f"{gpu_id}: expected {gpu_uuid}, observed {observed.get(gpu_id, '<missing>')}" for gpu_id, gpu_uuid in expected.items() if observed.get(gpu_id) != gpu_uuid]
         if mismatches:
             raise NvidiaRuntimeError("allocated NVIDIA GPU identity verification failed: " + "; ".join(mismatches))
         return {"verified": True, "gpu_bindings": [dict(binding) for binding in gpu_bindings]}
 
     def distributed_process_command(self) -> tuple[str, ...]:
-        """Return the exact command used for one manually ranked NCCL process."""
         python = sys.executable
         if not python:
             raise NvidiaRuntimeError("current Python executable is required for distributed NVIDIA verification")
         return (python, "-m", "lead_engine.nccl_all_reduce_probe")
 
+    def distributed_command(self, *, world_size: int, node_rank: int, nnodes: int, master_addr: str, master_port: int, rendezvous_id: str | None = None, process_count: int | None = None) -> tuple[str, ...]:
+        if world_size < 2:
+            raise ValueError("world_size must be at least 2 for distributed NCCL verification")
+        if nnodes < 1 or not 0 <= node_rank < nnodes:
+            raise ValueError("node_rank must be within nnodes")
+        if world_size % nnodes != 0:
+            raise ValueError("world_size must divide evenly across nnodes")
+        resolved_process_count = process_count if process_count is not None else world_size // nnodes
+        if resolved_process_count < 1 or resolved_process_count * nnodes != world_size:
+            raise ValueError("process_count must multiply by nnodes to equal world_size")
+        if not master_addr.strip():
+            raise ValueError("master_addr is required")
+        if not 1 <= master_port <= 65535:
+            raise ValueError("master_port must be between 1 and 65535")
+        torchrun = self._required_command("torchrun")
+        command = [torchrun, f"--nproc-per-node={resolved_process_count}", f"--nnodes={nnodes}", f"--node-rank={node_rank}", f"--master-addr={master_addr.strip()}", f"--master-port={master_port}"]
+        if rendezvous_id:
+            command.extend(["--rdzv-id", rendezvous_id, "--rdzv-backend", "c10d", "--rdzv-endpoint", f"{master_addr.strip()}:{master_port}"])
+        command.extend(["-m", "lead_engine.nccl_all_reduce_probe"])
+        return tuple(command)
+
     @staticmethod
     def parse_nccl_network_evidence(log_output: str) -> dict[str, object]:
-        """Extract only explicit NCCL network-selection and peer-edge evidence."""
         if not isinstance(log_output, str):
             raise NvidiaRuntimeError("NCCL process log output must be text")
-        transports: list[str] = []
-        hca_selections: list[dict[str, object]] = []
-        peer_connections: list[dict[str, object]] = []
-        evidence_lines: list[str] = []
+        transports = []
+        hca_selections = []
+        peer_connections = []
+        evidence_lines = []
         gpu_direct_rdma = False
         for raw_line in log_output.splitlines():
             line = raw_line.strip()
@@ -139,53 +140,27 @@ class NvidiaRuntime:
                 continue
             match = re.search(r"NCCL INFO Using network ([A-Za-z0-9_.-]+)", line, re.IGNORECASE)
             if match:
-                transports.append(match.group(1))
-                evidence_lines.append(line[-1000:])
+                transports.append(match.group(1)); evidence_lines.append(line[-1000:])
             match = re.search(r"NCCL INFO NET/([A-Za-z0-9_.-]+)\s*:\s*Using\b", line, re.IGNORECASE)
             if match:
-                transport = match.group(1)
-                transports.append(transport)
+                transport = match.group(1); transports.append(transport)
                 hca_match = re.search(r"\b(mlx[45]_[A-Za-z0-9_.-]+):(\d+)\/(?:IB|RoCE)\b", line, re.IGNORECASE)
                 if hca_match:
                     hca_selections.append({"device": hca_match.group(1), "port": int(hca_match.group(2)), "transport": transport})
                 evidence_lines.append(line[-1000:])
-            channel_match = re.search(
-                r"NCCL INFO Channel\s+([^\s:]+)\s*:\s*(\d+)\[(\d+)\]\s*->\s*(\d+)\[(\d+)\](?:\s+\[(send|recv)\])?\s+via\s+NET/([^\s]+)",
-                line,
-                re.IGNORECASE,
-            )
+            channel_match = re.search(r"NCCL INFO Channel\s+([^\s:]+)\s*:\s*(\d+)\[(\d+)\]\s*->\s*(\d+)\[(\d+)\](?:\s+\[(send|recv)\])?\s+via\s+NET/([^\s]+)", line, re.IGNORECASE)
             if channel_match:
-                peer_connections.append({
-                    "channel": channel_match.group(1),
-                    "local_rank": int(channel_match.group(2)),
-                    "peer_rank": int(channel_match.group(4)),
-                    "direction": (channel_match.group(6) or "unknown").lower(),
-                    "transport": channel_match.group(7),
-                })
+                peer_connections.append({"channel": channel_match.group(1), "local_rank": int(channel_match.group(2)), "peer_rank": int(channel_match.group(4)), "direction": (channel_match.group(6) or "unknown").lower(), "transport": channel_match.group(7)})
                 evidence_lines.append(line[-1000:])
             if re.search(r"GPU Direct RDMA Enabled", line, re.IGNORECASE) or re.search(r"GDRDMA", line, re.IGNORECASE):
-                gpu_direct_rdma = True
-                evidence_lines.append(line[-1000:])
+                gpu_direct_rdma = True; evidence_lines.append(line[-1000:])
         unique_transports = tuple(sorted({transport.strip() for transport in transports if transport.strip()}))
         if len(unique_transports) > 1:
             raise NvidiaRuntimeError("NCCL reported multiple network transports for one rank: " + ", ".join(unique_transports))
-        return {
-            "network_transport": unique_transports[0] if unique_transports else None,
-            "hca_selections": tuple(dict(items) for items in sorted({tuple(sorted(item.items())) for item in hca_selections})),
-            "peer_connections": tuple(peer_connections),
-            "network_evidence_lines": tuple(evidence_lines[-8:]),
-            "gpu_direct_rdma": gpu_direct_rdma,
-        }
+        return {"network_transport": unique_transports[0] if unique_transports else None, "hca_selections": tuple(dict(items) for items in sorted({tuple(sorted(item.items())) for item in hca_selections})), "peer_connections": tuple(peer_connections), "network_evidence_lines": tuple(evidence_lines[-8:]), "gpu_direct_rdma": gpu_direct_rdma}
 
     @classmethod
-    def validate_nccl_transport_against_rdma(
-        cls,
-        log_output: str,
-        rdma_evidence: Mapping[str, object],
-        *,
-        gpu_uuid: str | None = None,
-        gpu_nic_locality: Sequence[Mapping[str, object]] | None = None,
-    ) -> dict[str, object]:
+    def validate_nccl_transport_against_rdma(cls, log_output: str, rdma_evidence: Mapping[str, object], *, gpu_uuid: str | None = None, gpu_nic_locality: Sequence[Mapping[str, object]] | None = None) -> dict[str, object]:
         network = cls.parse_nccl_network_evidence(log_output)
         devices = rdma_evidence.get("devices") if isinstance(rdma_evidence, Mapping) else None
         if not isinstance(devices, list):
@@ -199,12 +174,10 @@ class NvidiaRuntime:
             missing_devices = tuple(device for device in used_devices if device not in rdma_devices)
             if not used_devices or missing_devices:
                 raise NvidiaRuntimeError("NCCL selected RDMA devices absent from verified host RDMA inventory: " + ", ".join(missing_devices))
-            verified_selections = []
-            verified_links = []
+            verified_selections = []; verified_links = []
             links = rdma_evidence.get("links", ()) if isinstance(rdma_evidence, Mapping) else ()
             for selection in selections:
-                device = str(selection.get("device") or "").strip()
-                port = int(selection.get("port"))
+                device = str(selection.get("device") or "").strip(); port = int(selection.get("port"))
                 matching_links = [link for link in links if isinstance(link, Mapping) and str(link.get("rdma_device") or "").strip() == device and int(link.get("port") or -1) == port]
                 if not matching_links:
                     raise NvidiaRuntimeError(f"RDMA port {device}:{port} selected by NCCL is not present in verified RDMA link evidence")
@@ -213,103 +186,88 @@ class NvidiaRuntime:
                 verified_selections.append(dict(selection))
             verified = tuple(sorted(used_devices))
         else:
-            used_devices = ()
-            verified = ()
-        locality_evidence: dict[str, object] | None = None
+            used_devices = (); verified = (); verified_selections = []; verified_links = []
+        locality_evidence = None
         if network["network_transport"] == "IB" and gpu_uuid is not None:
             locality_rows = [row for row in (gpu_nic_locality or ()) if isinstance(row, Mapping) and str(row.get("gpu_uuid") or "").strip() == gpu_uuid]
             matched = []
             for row in locality_rows:
-                nic = str(row.get("nic") or "").strip()
-                nic_pci = str(row.get("nic_pci_bus_id") or "").strip()
+                nic = str(row.get("nic") or "").strip(); nic_pci = str(row.get("nic_pci_bus_id") or "").strip()
                 for link in rdma_evidence.get("links", ()) if isinstance(rdma_evidence, Mapping) else ():
-                    if not isinstance(link, Mapping):
-                        continue
-                    if str(link.get("rdma_device") or "").strip() in verified and (str(link.get("netdev") or "").strip() == nic or str(link.get("pci_bus_id") or "").strip() == nic_pci):
+                    if isinstance(link, Mapping) and str(link.get("rdma_device") or "").strip() in verified and (str(link.get("netdev") or "").strip() == nic or str(link.get("pci_bus_id") or "").strip() == nic_pci):
                         matched.append({**dict(row), "rdma_device": str(link.get("rdma_device")), "rdma_port": link.get("port"), "rdma_pci_bus_id": link.get("pci_bus_id"), "link_layer": link.get("link_layer")})
             if not matched:
                 raise NvidiaRuntimeError(f"NCCL IB device is not reconciled to verified NIC locality for GPU {gpu_uuid}")
             locality_evidence = matched[0]
-        return {
-            **network,
-            "rdma_devices": rdma_devices,
-            "verified_rdma_devices": verified,
-            "verified_hca_selections": tuple(verified_selections) if network["network_transport"] == "IB" else (),
-            "verified_rdma_links": tuple(verified_links) if network["network_transport"] == "IB" else (),
-            "gpu_nic_locality": locality_evidence,
-        }
+        return {**network, "rdma_devices": rdma_devices, "verified_rdma_devices": verified, "verified_hca_selections": tuple(verified_selections) if network["network_transport"] == "IB" else (), "verified_rdma_links": tuple(verified_links) if network["network_transport"] == "IB" else (), "gpu_nic_locality": locality_evidence}
 
     @staticmethod
     def reconcile_distributed_network_paths(process_evidence: Sequence[Mapping[str, object]], *, world_size: int, nnodes: int) -> dict[str, object]:
-        """Reconcile the complete set of verified per-rank network paths."""
-        if world_size < 2:
-            raise ValueError("world_size must be at least 2")
-        if nnodes < 1:
-            raise ValueError("nnodes must be at least 1")
-        if not isinstance(process_evidence, Sequence) or isinstance(process_evidence, (str, bytes)):
-            raise NvidiaRuntimeError("distributed process evidence must be a sequence")
-        if len(process_evidence) != world_size:
-            raise NvidiaRuntimeError(f"distributed network reconciliation received {len(process_evidence)} ranks; expected {world_size}")
-        rank_keys: set[tuple[int, str]] = set()
-        transports: set[str] = set()
-        paths: list[dict[str, object]] = []
+        if world_size < 2: raise ValueError("world_size must be at least 2")
+        if nnodes < 1: raise ValueError("nnodes must be at least 1")
+        if not isinstance(process_evidence, Sequence) or isinstance(process_evidence, (str, bytes)): raise NvidiaRuntimeError("distributed process evidence must be a sequence")
+        if len(process_evidence) != world_size: raise NvidiaRuntimeError(f"distributed network reconciliation received {len(process_evidence)} ranks; expected {world_size}")
+        rank_keys=set(); transports=set(); paths=[]
         for item in process_evidence:
-            if not isinstance(item, Mapping):
-                raise NvidiaRuntimeError("distributed process evidence contains a non-object")
-            try:
-                rank = int(item.get("rank", -1))
-            except (TypeError, ValueError):
-                raise NvidiaRuntimeError("distributed process evidence contains an invalid rank")
-            if not 0 <= rank < world_size:
-                raise NvidiaRuntimeError(f"distributed process evidence rank {rank} is outside world size")
-            gpu_binding = item.get("gpu_binding")
-            if not isinstance(gpu_binding, Mapping):
-                raise NvidiaRuntimeError(f"rank {rank} is missing its exact GPU binding")
-            gpu_uuid = str(gpu_binding.get("gpu_uuid") or "").strip()
-            if not gpu_uuid:
-                raise NvidiaRuntimeError(f"rank {rank} is missing its GPU UUID")
-            key = (rank, gpu_uuid)
-            if key in rank_keys or any(existing_rank == rank for existing_rank, _ in rank_keys):
-                raise NvidiaRuntimeError(f"duplicate distributed rank evidence: {rank}")
-            if any(existing_uuid == gpu_uuid for _, existing_uuid in rank_keys):
-                raise NvidiaRuntimeError(f"GPU UUID {gpu_uuid} is claimed by multiple distributed ranks")
+            if not isinstance(item, Mapping): raise NvidiaRuntimeError("distributed process evidence contains a non-object")
+            try: rank=int(item.get("rank", -1))
+            except (TypeError, ValueError): raise NvidiaRuntimeError("distributed process evidence contains an invalid rank")
+            if not 0 <= rank < world_size: raise NvidiaRuntimeError(f"distributed process evidence rank {rank} is outside world size")
+            gpu_binding=item.get("gpu_binding")
+            if not isinstance(gpu_binding, Mapping): raise NvidiaRuntimeError(f"rank {rank} is missing its exact GPU binding")
+            gpu_uuid=str(gpu_binding.get("gpu_uuid") or "").strip()
+            if not gpu_uuid: raise NvidiaRuntimeError(f"rank {rank} is missing its GPU UUID")
+            key=(rank,gpu_uuid)
+            if key in rank_keys or any(existing_rank == rank for existing_rank,_ in rank_keys): raise NvidiaRuntimeError(f"duplicate distributed rank evidence: {rank}")
+            if any(existing_uuid == gpu_uuid for _,existing_uuid in rank_keys): raise NvidiaRuntimeError(f"GPU UUID {gpu_uuid} is claimed by multiple distributed ranks")
             rank_keys.add(key)
-            probe = item.get("probe")
-            if not isinstance(probe, Mapping):
-                raise NvidiaRuntimeError(f"rank {rank} is missing NCCL probe evidence")
-            if int(probe.get("rank", -1)) != rank or str(probe.get("gpu_uuid") or "").strip() != gpu_uuid:
-                raise NvidiaRuntimeError(f"rank {rank} NCCL probe does not match its allocated GPU identity")
-            if int(probe.get("world_size", -1)) != world_size:
-                raise NvidiaRuntimeError(f"rank {rank} NCCL probe world size does not match the launch contract")
-            transport = str(item.get("network_transport") or probe.get("network_transport") or "").strip().upper()
-            if nnodes > 1 and not transport:
-                raise NvidiaRuntimeError(f"rank {rank} has no verified NCCL network transport")
-            if transport:
-                transports.add(transport)
+            probe=item.get("probe")
+            if not isinstance(probe, Mapping): raise NvidiaRuntimeError(f"rank {rank} is missing NCCL probe evidence")
+            if int(probe.get("rank",-1)) != rank or str(probe.get("gpu_uuid") or "").strip() != gpu_uuid: raise NvidiaRuntimeError(f"rank {rank} NCCL probe does not match its allocated GPU identity")
+            if int(probe.get("world_size",-1)) != world_size: raise NvidiaRuntimeError(f"rank {rank} NCCL probe world size does not match the launch contract")
+            transport=str(item.get("network_transport") or probe.get("network_transport") or "").strip().upper()
+            if nnodes > 1 and not transport: raise NvidiaRuntimeError(f"rank {rank} has no verified NCCL network transport")
+            if transport: transports.add(transport)
+            peer_connections=[dict(edge) for edge in item.get("peer_connections", ()) if isinstance(edge, Mapping)]
             if transport == "IB":
-                selections = item.get("hca_selections")
-                verified_selections = item.get("verified_hca_selections")
-                rdma_devices = item.get("rdma_devices")
-                verified_devices = item.get("verified_rdma_devices")
-                verified_links = item.get("verified_rdma_links")
-                locality = item.get("gpu_nic_locality")
-                if (not isinstance(selections, list) or not selections or not isinstance(verified_selections, list) or verified_selections != selections or not isinstance(rdma_devices, list) or not rdma_devices or not isinstance(verified_devices, list) or sorted(set(str(device).strip() for device in verified_devices)) != sorted(set(str(device).strip() for device in rdma_devices)) or not isinstance(verified_links, list) or not verified_links or not isinstance(locality, Mapping)):
-                    raise NvidiaRuntimeError(f"rank {rank} has incomplete verified IB path evidence")
-                locality_device = str(locality.get("rdma_device") or "").strip()
-                locality_port = locality.get("rdma_port")
-                if not locality_device or not isinstance(locality_port, int):
-                    raise NvidiaRuntimeError(f"rank {rank} has incomplete GPU-to-RDMA locality evidence")
-                matching_selection = any(isinstance(selection, Mapping) and str(selection.get("device") or "").strip() == locality_device and selection.get("port") == locality_port and str(selection.get("transport") or "").strip().upper() == "IB" for selection in verified_selections)
-                if not matching_selection:
-                    raise NvidiaRuntimeError(f"rank {rank} GPU locality does not match its NCCL-selected HCA port")
-                matching_link = any(isinstance(link, Mapping) and str(link.get("rdma_device") or "").strip() == locality_device and link.get("port") == locality_port and str(link.get("link_layer") or "").strip() for link in verified_links)
-                if not matching_link:
-                    raise NvidiaRuntimeError(f"rank {rank} NCCL-selected HCA port lacks verified physical RDMA link identity")
-                paths.append({"rank": rank, "gpu_uuid": gpu_uuid, "network_transport": transport, "hca_selections": [dict(selection) for selection in selections if isinstance(selection, Mapping)], "verified_rdma_links": [dict(link) for link in verified_links if isinstance(link, Mapping)], "peer_connections": [dict(edge) for edge in item.get("peer_connections", ()) if isinstance(edge, Mapping)], "rdma_device": locality_device, "rdma_port": locality_port, "link_layer": locality.get("link_layer")})
+                selections=item.get("hca_selections"); verified_selections=item.get("verified_hca_selections"); rdma_devices=item.get("rdma_devices"); verified_devices=item.get("verified_rdma_devices"); verified_links=item.get("verified_rdma_links"); locality=item.get("gpu_nic_locality")
+                if not isinstance(selections,list) or not selections or not isinstance(verified_selections,list) or verified_selections != selections or not isinstance(rdma_devices,list) or not rdma_devices or not isinstance(verified_devices,list) or sorted(set(str(device).strip() for device in verified_devices)) != sorted(set(str(device).strip() for device in rdma_devices)) or not isinstance(verified_links,list) or not verified_links or not isinstance(locality,Mapping): raise NvidiaRuntimeError(f"rank {rank} has incomplete verified IB path evidence")
+                locality_device=str(locality.get("rdma_device") or "").strip(); locality_port=locality.get("rdma_port")
+                if not locality_device or not isinstance(locality_port,int): raise NvidiaRuntimeError(f"rank {rank} has incomplete GPU-to-RDMA locality evidence")
+                if not any(isinstance(s,Mapping) and str(s.get("device") or "").strip()==locality_device and s.get("port")==locality_port and str(s.get("transport") or "").strip().upper()=="IB" for s in verified_selections): raise NvidiaRuntimeError(f"rank {rank} GPU locality does not match its NCCL-selected HCA port")
+                if not any(isinstance(link,Mapping) and str(link.get("rdma_device") or "").strip()==locality_device and link.get("port")==locality_port and str(link.get("link_layer") or "").strip() for link in verified_links): raise NvidiaRuntimeError(f"rank {rank} NCCL-selected HCA port lacks verified physical RDMA link identity")
+                paths.append({"rank":rank,"gpu_uuid":gpu_uuid,"network_transport":transport,"hca_selections":[dict(s) for s in selections if isinstance(s,Mapping)],"verified_rdma_links":[dict(link) for link in verified_links if isinstance(link,Mapping)],"peer_connections":peer_connections,"rdma_device":locality_device,"rdma_port":locality_port,"link_layer":locality.get("link_layer")})
             else:
-                paths.append({"rank": rank, "gpu_uuid": gpu_uuid, "network_transport": transport or None, "peer_connections": [dict(edge) for edge in item.get("peer_connections", ()) if isinstance(edge, Mapping)]})
-        if nnodes > 1 and len(transports) != 1:
-            raise NvidiaRuntimeError("distributed ranks selected inconsistent NCCL network transports: " + ", ".join(sorted(transports)))
-        if sorted(rank for rank, _ in rank_keys) != list(range(world_size)):
-            raise NvidiaRuntimeError("distributed network evidence does not cover every global rank")
-        return {"verified": True, "world_size": world_size, "nnodes": nnodes, "network_transport": next(iter(transports)) if len(transports) == 1 else None, "rank_paths": sorted(paths, key=lambda item: int(item["rank"]))}
+                paths.append({"rank":rank,"gpu_uuid":gpu_uuid,"network_transport":transport or None,"peer_connections":peer_connections})
+        if nnodes > 1 and len(transports) != 1: raise NvidiaRuntimeError("distributed ranks selected inconsistent NCCL network transports: " + ", ".join(sorted(transports)))
+        if sorted(rank for rank,_ in rank_keys) != list(range(world_size)): raise NvidiaRuntimeError("distributed network evidence does not cover every global rank")
+        return {"verified":True,"world_size":world_size,"nnodes":nnodes,"network_transport":next(iter(transports)) if len(transports)==1 else None,"rank_paths":sorted(paths,key=lambda item:int(item["rank"]))}
+
+    @staticmethod
+    def validate_distributed_probe_output(stdout: str, world_size: int, *, expected_rank: int | None = None, expected_gpu_uuid: str | None = None, log_output: str | None = None) -> dict[str, object]:
+        if world_size < 2: raise ValueError("world_size must be at least 2")
+        marker="THORIO_NCCL_PROBE_OK "; lines=[line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
+        if not lines: raise NvidiaRuntimeError("distributed NCCL probe completed without verified success evidence")
+        try: probe=json.loads(lines[-1][len(marker):])
+        except json.JSONDecodeError as exc: raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
+        expected_sum=world_size*(world_size+1)//2; expected_nnodes=int(probe.get("nnodes",1))
+        if expected_nnodes < 1: raise NvidiaRuntimeError("distributed NCCL probe reported an invalid node count")
+        if probe.get("backend")!="nccl" or probe.get("collective")!="all_reduce" or probe.get("verified_on_gpu") is not True or int(probe.get("world_size",-1))!=world_size or int(probe.get("expected_sum",-1))!=expected_sum: raise NvidiaRuntimeError("distributed NCCL probe evidence did not verify the requested GPU collective")
+        if expected_rank is not None and int(probe.get("rank",-1)) != expected_rank: raise NvidiaRuntimeError(f"distributed NCCL probe rank mismatch: expected {expected_rank}, got {probe.get('rank')}")
+        if expected_gpu_uuid is not None and str(probe.get("gpu_uuid") or "").strip()!=expected_gpu_uuid: raise NvidiaRuntimeError("distributed NCCL probe GPU UUID does not match the allocated physical GPU")
+        network=NvidiaRuntime.parse_nccl_network_evidence(log_output if log_output is not None else stdout); probe.update(network)
+        if expected_nnodes > 1 and not str(probe.get("network_transport") or "").strip(): raise NvidiaRuntimeError("multi-node NCCL execution completed without explicit network transport evidence")
+        return probe
+
+    def verify_distributed_nccl(self, *, world_size: int, node_rank: int, nnodes: int, master_addr: str, master_port: int) -> dict[str, object]:
+        command=self.distributed_command(world_size=world_size,node_rank=node_rank,nnodes=nnodes,master_addr=master_addr,master_port=master_port)
+        if world_size < 2: raise ValueError("world_size must be at least 2")
+        rc,stdout,stderr=self._run(command)
+        if rc != 0: raise NvidiaRuntimeError(f"distributed NCCL all-reduce probe failed: {(stderr or stdout).strip()[:4000]}")
+        marker="THORIO_NCCL_PROBE_OK "; lines=[line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
+        if not lines: raise NvidiaRuntimeError("distributed NCCL probe completed without verified success evidence")
+        try: probe=json.loads(lines[-1][len(marker):])
+        except json.JSONDecodeError as exc: raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
+        probe["nnodes"]=nnodes
+        probe=self.validate_distributed_probe_output("THORIO_NCCL_PROBE_OK " + json.dumps(probe,sort_keys=True),world_size,log_output=stdout+"\n"+stderr)
+        return {"verified":True,"backend":"nccl","world_size":world_size,"nnodes":nnodes,"node_rank":node_rank,"network_transport":probe["network_transport"],"gpu_direct_rdma":probe["gpu_direct_rdma"],"network_evidence_lines":probe["network_evidence_lines"],"probe_output":probe,"command":command}
