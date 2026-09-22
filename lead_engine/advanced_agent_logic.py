@@ -198,6 +198,7 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
             "pages_collected": int(progress.get("pages_collected", 0) or 0),
             "checkpointed_at": datetime.now(timezone.utc).isoformat(),
         }
+        prior["public_web_research_checkpoint"] = dict(existing_research["public_web_research_checkpoint"])
         stored = ctx.db.update_payload(fingerprint, {"company_research": existing_research, "research_status": "researching"})
         if stored is None:
             raise ValueError(f"Lead disappeared while checkpointing public research: {fingerprint}")
