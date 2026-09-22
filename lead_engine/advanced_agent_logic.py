@@ -189,7 +189,20 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         raise ValueError("company_research requires lead fingerprint")
     existing = lead.get("company_research")
     prior = dict(existing) if isinstance(existing, Mapping) else {}
-    public_research = research_public_web(lead)
+    def checkpoint_public_research(progress: Mapping[str, Any]) -> None:
+        existing_research = dict(prior)
+        existing_research["public_web_research_checkpoint"] = {
+            "pages": [dict(page) for page in progress.get("pages", []) if isinstance(page, Mapping)],
+            "sources": [dict(source) for source in progress.get("sources", []) if isinstance(source, Mapping)],
+            "pages_attempted": int(progress.get("pages_attempted", 0) or 0),
+            "pages_collected": int(progress.get("pages_collected", 0) or 0),
+            "checkpointed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        stored = ctx.db.update_payload(fingerprint, {"company_research": existing_research, "research_status": "researching"})
+        if stored is None:
+            raise ValueError(f"Lead disappeared while checkpointing public research: {fingerprint}")
+
+    public_research = research_public_web(lead, checkpoint=checkpoint_public_research)
     public_facts = public_research.get("facts", {}) if isinstance(public_research, Mapping) else {}
     observed_input = {"company": company, "source_url": source_url, "signal": str(lead.get("signal") or "").strip(), "evidence": str(lead.get("evidence") or "").strip(), "evidence_event_count": len(events), "provenance": [dict(event.get("provenance") or {}) for event in events if isinstance(event.get("provenance"), Mapping)]}
     company_verified, company_verification_evidence = _company_identity_verified(company, public_research)
