@@ -306,8 +306,10 @@ def run_fabric_verification(
             "local_rank": local_rank,
         })
 
-    if sorted(seen_ranks) != list(range(world_size)):
-        raise ComputeWorkerError("launch plan does not cover every distributed rank exactly once")
+    # This worker owns only its participant-local subset of the global ranks.
+    # The coordinator's durable launch plan is responsible for proving complete
+    # world coverage; this worker must only validate that its own bindings are
+    # unique, in-range, and internally unambiguous.
 
     if isinstance(runtime, NvidiaRuntime):
         gpu_identity = runtime.verify_gpu_bindings(normalized_bindings)
