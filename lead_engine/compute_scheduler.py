@@ -299,7 +299,15 @@ class ComputeScheduler:
             ),
             resource_keys=tuple(keys),
             capability_evidence=tuple(
-                json.loads(row["payload_json"]) | {"resource_key": row["resource_key"]}
+                json.loads(row["payload_json"]) | {"resource_key": row["resource_key"]} | (
+                    {"placement_decision": {
+                        "signal": "verified_topology_domain",
+                        "topology_domain": json.loads(row["payload_json"]).get("topology_domain"),
+                        "topology_source": json.loads(row["payload_json"]).get("topology_source"),
+                    }}
+                    if row["resource_type"] == "gpu" and json.loads(row["payload_json"]).get("topology_domain")
+                    else {}
+                )
                 for row in resources
             ),
         )
