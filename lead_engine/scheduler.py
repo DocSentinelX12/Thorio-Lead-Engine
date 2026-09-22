@@ -12,6 +12,7 @@ from .compute_worker import ComputeWorkerClient
 from .database import LeadDB
 from .revenue_conversation import enqueue_due_followups
 from .research_queue import process_paxus_research_queue
+from .handoff_recovery import recover_processing_handoffs
 from .runner import LeadEngineRunner
 from .sources import LeadSource
 
@@ -233,6 +234,7 @@ class LeadScheduler:
 
         db = self.runner.pipeline.db
         remote_before = self._bridge_remote()
+        handoff_recovery = recover_processing_handoffs(db)
         due_followups = enqueue_due_followups(db)
         if agent_max_rounds is None:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
@@ -245,7 +247,7 @@ class LeadScheduler:
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
-        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "due_followups_enqueued": due_followups, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
+        return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "handoff_recovery": handoff_recovery, "due_followups_enqueued": due_followups, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 1) -> Dict[str, Any]:
         """Run a finite production window and force each supplied source through its bounded cycles."""
