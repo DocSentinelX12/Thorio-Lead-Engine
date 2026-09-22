@@ -203,7 +203,25 @@ class ComputeInventory:
                 "ORDER BY provider_id,domain_id,node_id,resource_type,resource_key",
                 (ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value, "authenticated", current),
             ).fetchall()
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+        quarantined = self.quarantined_fabric_paths()
+        by_gpu: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for path in quarantined:
+            by_gpu.setdefault((str(path["node_id"]), str(path["gpu_uuid"])), []).append({
+                "path_key": path["path_key"],
+                "nic": path["nic"],
+                "rdma_device": path["rdma_device"],
+                "rdma_port": int(path["rdma_port"]),
+                "link_layer": path["link_layer"],
+                "reason": path["reason"],
+            })
+        for row in result:
+            if row["resource_type"] == "gpu":
+                payload = json.loads(row["payload_json"])
+                row["quarantined_fabric_paths"] = by_gpu.get(
+                    (str(row["node_id"]), str(payload.get("gpu_uuid") or "")), []
+                )
+        return result
 
     @staticmethod
     def fabric_path_key(path: dict[str, Any]) -> str:
@@ -257,6 +275,9 @@ class ComputeInventory:
     def revalidate_fabric_path(self, path: dict[str, Any], *, verification: dict[str, Any]) -> bool:
         if verification.get("verified") is not True:
             raise ValueError("path quarantine can only be cleared by verified evidence")
+        for field in ("node_id", "gpu_uuid", "nic", "rdma_device", "rdma_port", "link_layer"):
+            if verification.get(field) != path.get(field):
+                raise ValueError(f"path revalidation evidence does not match {field}")
         path_key = self.fabric_path_key(path)
         now = time.time()
         with self._connect() as connection:
