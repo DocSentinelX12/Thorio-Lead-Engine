@@ -1001,7 +1001,7 @@ def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
         timeout_seconds = 5
         def verify_local(self):
             return {"cuda": True, "nccl": True}
-        def distributed_command(self, **kwargs):
+        def distributed_process_command(self):
             return ["torchrun"]
         def validate_distributed_probe_output(self, stdout, world_size, **kwargs):
             return {"backend": "nccl", "verified_on_gpu": True, "world_size": world_size, "collective": "all_reduce", "expected_sum": 3, "rank": kwargs["expected_rank"], "gpu_uuid": kwargs["expected_gpu_uuid"]}
