@@ -135,3 +135,29 @@ def test_inventory_quarantines_one_failed_physical_path_with_durable_reason(tmp_
     evidence = json.loads(resource["evidence_json"])
     assert evidence["quarantine"]["failure_class"] == "planned_actual_physical_path_mismatch"
     assert key not in {row["resource_key"] for row in inventory.eligible()}
+
+
+def test_nvidia_runtime_rejects_inactive_rdma_link_as_verified_path():
+    log = "NCCL INFO Using network IB\nNCCL INFO NET/IB : Using [0]mlx5_1:1/IB"
+    with pytest.raises(NvidiaRuntimeError, match="not active"):
+        NvidiaRuntime.validate_nccl_transport_against_rdma(
+            log,
+            {
+                "devices": [{"device": "mlx5_1"}],
+                "links": [{
+                    "rdma_device": "mlx5_1",
+                    "port": 1,
+                    "netdev": "eth1",
+                    "pci_bus_id": "0000:41:00.0",
+                    "state": "DOWN",
+                    "physical_state": "LINK_DOWN",
+                    "link_layer": "InfiniBand",
+                }],
+            },
+            gpu_uuid="GPU-1",
+            gpu_nic_locality=[{
+                "gpu_uuid": "GPU-1",
+                "nic": "eth1",
+                "nic_pci_bus_id": "0000:41:00.0",
+            }],
+        )
