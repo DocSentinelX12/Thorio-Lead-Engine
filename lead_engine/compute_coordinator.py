@@ -982,7 +982,7 @@ class ComputeCoordinator:
         with self._connect() as connection:
             attempt_row = connection.execute(
                 """SELECT a.status,a.generation,a.lease_token_digest,a.rendezvous_endpoint,
-                          t.status AS task_status,t.lease_until
+                          t.status AS task_status,t.lease_until,t.payload
                    FROM compute_execution_attempts a
                    JOIN compute_tasks t ON t.attempt_id=a.attempt_id
                    WHERE a.attempt_id=?""",
@@ -1007,6 +1007,16 @@ class ComputeCoordinator:
         participants = self.execution_participants(attempt_id)
         if not participants:
             raise ValueError("execution attempt has no bound participants")
+
+        try:
+            task_payload = json.loads(attempt_row["payload"] or "{}")
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("execution task payload is invalid") from exc
+        compute_requirements = task_payload.get("compute_requirements") or {}
+        gpu_requirements = compute_requirements.get("gpu") or {}
+        min_fabric_bandwidth_gbps = gpu_requirements.get("min_fabric_bandwidth_gbps")
+        max_fabric_latency_us = gpu_requirements.get("max_fabric_latency_us")
+        require_redundant_fabric_path = bool(gpu_requirements.get("require_redundant_fabric_path"))
 
         workers = []
         total_processes = 0
@@ -1091,6 +1101,21 @@ class ComputeCoordinator:
                         raise ValueError(
                             f"allocated GPU is not currently reserved for execution: {resource_id}"
                         )
+                    path_contract = self.compute_scheduler._fabric_path_contract(
+                        bound_resource,
+                        gpu_uuid,
+                        min_bandwidth_gbps=min_fabric_bandwidth_gbps,
+                        max_latency_us=max_fabric_latency_us,
+                        require_redundant=require_redundant_fabric_path,
+                    )
+                    if (
+                        min_fabric_bandwidth_gbps is not None
+                        or max_fabric_latency_us is not None
+                        or require_redundant_fabric_path
+                    ) and path_contract is None:
+                        raise ValueError(
+                            f"allocated GPU does not satisfy fabric performance/redundancy contract: {resource_id}"
+                        )
                     planned_path = self._planned_physical_path(bound_resource, gpu_uuid)
                     if planned_path is not None:
                         if self.inventory.is_fabric_path_quarantined(planned_path):
@@ -1121,12 +1146,35 @@ class ComputeCoordinator:
             for binding in worker["gpu_bindings"]
         ) != list(range(total_processes)):
             raise ValueError("distributed process ranks are not contiguous")
+        route_pairs = []
+        for index, source in enumerate(workers):
+            for target in workers[index + 1:]:
+                source_paths = [
+                    binding.get("planned_physical_path")
+                    for binding in source["gpu_bindings"]
+                    if binding.get("planned_physical_path")
+                ]
+                target_paths = [
+                    binding.get("planned_physical_path")
+                    for binding in target["gpu_bindings"]
+                    if binding.get("planned_physical_path")
+                ]
+                route_pairs.append({
+                    "source_node_id": source["node_id"],
+                    "target_node_id": target["node_id"],
+                    "source_paths": source_paths,
+                    "target_paths": target_paths,
+                    "route_type": "verified_gpu_nic_rdma_fabric",
+                    "redundant_source_paths": len(source_paths) > 1,
+                    "redundant_target_paths": len(target_paths) > 1,
+                })
         return {
             "attempt_id": attempt_id,
             "rendezvous_endpoint": durable_endpoint,
             "world_size": total_processes,
             "nnodes": len(workers),
             "rendezvous_id": participants[0]["rendezvous_ref"],
+            "fabric_routes": route_pairs,
             "workers": workers,
         }
 
