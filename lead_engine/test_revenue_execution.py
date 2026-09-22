@@ -147,6 +147,8 @@ def test_closer_reconciles_sent_provider_action_into_lead_after_worker_death(tmp
     from .agent_workers import _outreach_closer, AgentExecutionContext
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("closer-recovery-test")
+    lead["sales_eligibility"] = "eligible"
+    lead["eligible_routes"] = ["Thorio", "Shiftr"]
     db.insert_if_new(lead)
     transport = ProcessDeathAfterAcceptanceTransport()
     ctx = AgentExecutionContext(db=db, worker_id="closer-worker", revenue_transport=transport)
@@ -195,5 +197,6 @@ def test_follow_up_reconciles_sent_provider_action_into_lead_after_worker_death(
     stored = db.get(lead["fingerprint"])
     assert stored["last_outreach_action_id"]
     assert stored["outreach_attempt"] == 2
-    assert len(stored["outreach_history"]) == 2
+    assert len(stored["outreach_history"]) == 3
+    assert stored["outreach_history"][-1]["kind"] == "follow_up"
     assert stored["outreach_state"] == "awaiting_response"
