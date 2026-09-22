@@ -1211,12 +1211,38 @@ class ComputeCoordinator:
                         or sorted(set(verified_rdma_devices)) != sorted(set(rdma_devices))
                     ):
                         return False
+                    hca_selections = item.get("hca_selections")
+                    verified_hca_selections = item.get("verified_hca_selections")
+                    if (
+                        not isinstance(hca_selections, list)
+                        or not hca_selections
+                        or not isinstance(verified_hca_selections, list)
+                        or verified_hca_selections != hca_selections
+                    ):
+                        return False
+                    for selection in hca_selections:
+                        if (
+                            not isinstance(selection, dict)
+                            or not str(selection.get("device") or "").strip()
+                            or not isinstance(selection.get("port"), int)
+                            or selection.get("port") < 1
+                            or str(selection.get("transport") or "").strip().upper() != "IB"
+                        ):
+                            return False
                     gpu_nic_locality = item.get("gpu_nic_locality")
                     if not isinstance(gpu_nic_locality, dict):
                         return False
                     if str(gpu_nic_locality.get("rdma_device") or "").strip() not in {
                         str(device).strip() for device in rdma_devices
                     }:
+                        return False
+                    locality_port = gpu_nic_locality.get("rdma_port")
+                    if not isinstance(locality_port, int) or not any(
+                        str(selection.get("device") or "").strip() == str(gpu_nic_locality.get("rdma_device") or "").strip()
+                        and selection.get("port") == locality_port
+                        for selection in verified_hca_selections
+                        if isinstance(selection, dict)
+                    ):
                         return False
                 gpu_uuid = str(gpu_binding.get("gpu_uuid") or "").strip()
                 key = (rank, gpu_uuid)
