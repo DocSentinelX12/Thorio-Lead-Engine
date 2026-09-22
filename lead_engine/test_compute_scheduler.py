@@ -740,7 +740,7 @@ def test_quarantined_physical_path_does_not_poison_a_gpu_with_a_healthy_alternat
     )
     evidence = [item for item in allocation.capability_evidence if item.get("gpu_uuid") == "u0"][0]
     assert evidence["placement_decision"]["signal"] == "verified_gpu_nic_rdma_path"
-    assert evidence["placement_decision"]["gpu_nic_rdma_path"][0]["rdma_device"] == "mlx5_1"
+    assert evidence["placement_decision"]["verified_gpu_nic_rdma_path"][0]["rdma_device"] == "mlx5_1"
 
 
 def test_explicitly_quarantined_only_physical_path_is_not_used_for_multinode_nccl(tmp_path):
