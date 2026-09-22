@@ -153,6 +153,28 @@ class NvidiaProvider(ComputeProvider):
                 })
         return correlations
 
+    @staticmethod
+    def _rdma_port_gids(device: str, port: int) -> list[str]:
+        if not device or not isinstance(port, int) or port < 1:
+            return []
+        gids_path = Path("/sys/class/infiniband") / device / "ports" / str(port) / "gids"
+        try:
+            entries = sorted(
+                (entry for entry in gids_path.iterdir() if entry.is_file()),
+                key=lambda entry: entry.name,
+            )
+        except OSError:
+            return []
+        gids: list[str] = []
+        for entry in entries:
+            try:
+                value = entry.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if value:
+                gids.append(value)
+        return gids
+
     def _discover_rdma(self) -> dict[str, object]:
         evidence: dict[str, object] = {
             "source": "rdma-core",
@@ -216,14 +238,16 @@ class NvidiaProvider(ComputeProvider):
                 )
             if not device:
                 continue
+            port = item.get("port")
             normalized_links.append({
                 "rdma_device": device,
-                "port": item.get("port"),
+                "port": port,
                 "netdev": item.get("netdev"),
                 "pci_bus_id": pci_by_device.get(device),
                 "state": item.get("state"),
                 "physical_state": item.get("physical_state"),
                 "link_layer": item.get("link_layer"),
+                "gids": self._rdma_port_gids(device, port) if isinstance(port, int) else [],
             })
         normalized_links.sort(key=lambda item: (str(item.get("rdma_device")), str(item.get("netdev") or "")))
         evidence["devices"] = normalized_devices
