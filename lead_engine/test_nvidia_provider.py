@@ -137,6 +137,62 @@ supports-priv-flags: yes
     assert network["link_capabilities"]["eth0"]["link_detected"] is True
 
 
+def test_nvidia_discovery_correlates_gpu_to_nic_pci_locality_without_inventing_fabric_affinity(monkeypatch):
+    ethtool = {
+        "eth0": """driver: mlx5_core
+firmware-version: 32.42.1000
+bus-info: 0000:41:00.0
+""",
+        "eth1": """driver: mlx5_core
+firmware-version: 32.42.1001
+bus-info: 0000:81:00.0
+""",
+    }
+    network_addresses = """[
+      {"ifname": "eth0", "operstate": "UP", "mtu": 9000, "address": "aa:bb:cc:dd:ee:ff", "addr_info": [{"family": "inet", "local": "10.10.20.15", "prefixlen": 24, "scope": "global"}]},
+      {"ifname": "eth1", "operstate": "UP", "mtu": 9000, "address": "aa:bb:cc:dd:ee:11", "addr_info": [{"family": "inet", "local": "10.10.30.15", "prefixlen": 24, "scope": "global"}]}
+    ]"""
+
+    def runner(args, timeout):
+        args = tuple(args)
+        if args[:2] == ("ethtool", "-i"):
+            return CommandResult(0, ethtool[args[2]], "")
+        if args[0] == "ethtool":
+            return CommandResult(0, "Settings for interface:\n\tLink detected: yes\n", "")
+        if args[0] == "ip":
+            return CommandResult(0, network_addresses, "")
+        return fake_runner(args, timeout)
+
+    numa_by_pci = {
+        "00000000:17:00.0": 0,
+        "00000000:18:00.0": 1,
+        "0000:41:00.0": 0,
+        "0000:81:00.0": 2,
+    }
+    monkeypatch.setattr(NvidiaProvider, "_numa_node", staticmethod(lambda pci: numa_by_pci.get(pci)))
+    monkeypatch.setattr(NvidiaProvider, "_pci_numa_node", staticmethod(lambda pci: numa_by_pci.get(pci)))
+    monkeypatch.setattr(
+        NvidiaProvider,
+        "_pci_common_ancestor",
+        classmethod(
+            lambda cls, left, right: "0000:40:00.0" if {left, right} == {"00000000:17:00.0", "0000:41:00.0"} else None
+        ),
+    )
+
+    snapshot = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=runner, now=lambda: 1234.5).discover()
+    locality = snapshot.evidence["network"]["gpu_nic_locality"]
+
+    match = next(item for item in locality if item["gpu_uuid"] == "GPU-aaa" and item["nic"] == "eth0")
+    assert match["gpu_pci_bus_id"] == "00000000:17:00.0"
+    assert match["nic_pci_bus_id"] == "0000:41:00.0"
+    assert match["shared_pci_ancestor"] == "0000:40:00.0"
+    assert match["gpu_numa_node"] == 0
+    assert match["nic_numa_node"] == 0
+    assert match["same_numa_node"] is True
+    assert match["source"] == "sysfs"
+    assert not any(item["gpu_uuid"] == "GPU-bbb" and item["nic"] == "eth1" and item["shared_pci_ancestor"] for item in locality)
+
+
 def test_nvidia_discovery_records_rdma_device_capability_separately_from_l3_network():
     rdma_devices = """[
       {"ifname": "mlx5_0", "node_type": "RNIC", "node_guid": "0x0011223344556677", "sys_image_guid": "0x0011223344556688", "state": "ACTIVE", "physical_state": "LINK_UP", "pci_bus_id": "0000:41:00.0"}
