@@ -626,7 +626,21 @@ class ComputeScheduler:
                         } if self._verified_gpu_nic_rdma_path(
                             row, json.loads(row["payload_json"]).get("gpu_uuid")
                         ) else {}),
-
+                        **({
+                            "fabric_path_contract": self._fabric_path_contract(
+                                row,
+                                json.loads(row["payload_json"]).get("gpu_uuid"),
+                                min_bandwidth_gbps=requirements.gpu.min_fabric_bandwidth_gbps,
+                                max_latency_us=requirements.gpu.max_fabric_latency_us,
+                                require_redundant=requirements.gpu.require_redundant_fabric_path,
+                            ),
+                        } if row["resource_type"] == "gpu" and self._fabric_path_contract(
+                            row,
+                            json.loads(row["payload_json"]).get("gpu_uuid"),
+                            min_bandwidth_gbps=requirements.gpu.min_fabric_bandwidth_gbps,
+                            max_latency_us=requirements.gpu.max_fabric_latency_us,
+                            require_redundant=requirements.gpu.require_redundant_fabric_path,
+                        ) else {}),
                     }}
                     if row["resource_type"] == "gpu" and (
                         json.loads(row["payload_json"]).get("topology_domain")
