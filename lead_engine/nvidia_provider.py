@@ -7,6 +7,8 @@ from local NVIDIA tooling (or an injected runner in tests).
 from __future__ import annotations
 
 import csv
+import ipaddress
+import json
 import os
 import re
 import shutil
@@ -68,6 +70,56 @@ class NvidiaProvider(ComputeProvider):
             detail = (result.stderr or result.stdout).strip().replace("\n", " ")
             raise NvidiaDiscoveryError(f"nvidia-smi failed ({result.returncode}): {detail[:1000]}")
         return result
+
+    def _discover_network(self) -> dict[str, object]:
+        result = self._runner(("ip", "-j", "address", "show"), self.timeout_seconds)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().replace("\n", " ")
+            return {"source": "iproute2", "error": f"ip address discovery failed ({result.returncode}): {detail[:1000]}"}
+        try:
+            interfaces = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            return {"source": "iproute2", "error": f"invalid iproute2 JSON: {exc}"}
+        if not isinstance(interfaces, list):
+            return {"source": "iproute2", "error": "iproute2 address output is not a list"}
+        normalized: dict[str, dict[str, object]] = {}
+        domains: set[str] = set()
+        for item in interfaces:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("ifname") or "").strip()
+            if not name or name == "lo":
+                continue
+            addresses: list[str] = []
+            for address in item.get("addr_info") or []:
+                if not isinstance(address, dict) or address.get("scope") != "global":
+                    continue
+                local = str(address.get("local") or "").strip()
+                prefixlen = address.get("prefixlen")
+                if not local or not isinstance(prefixlen, int):
+                    continue
+                try:
+                    network = ipaddress.ip_network(f"{local}/{prefixlen}", strict=False)
+                except ValueError:
+                    continue
+                addresses.append(f"{local}/{prefixlen}")
+                domains.add(str(network))
+            normalized[name] = {
+                "operstate": str(item.get("operstate") or "").strip(),
+                "mtu": int(item.get("mtu") or 0),
+                "address": str(item.get("address") or "").strip(),
+                "addresses": sorted(addresses),
+            }
+        ordered_domains = sorted(domains)
+        evidence: dict[str, object] = {
+            "source": "iproute2",
+            "command": "ip -j address show",
+            "interfaces": normalized,
+            "network_domains": ordered_domains,
+        }
+        if len(ordered_domains) == 1:
+            evidence["fabric_domains"] = {self.node_id: ordered_domains[0]}
+        return evidence
 
     @staticmethod
     def _parse_cuda_supported_version(text: str) -> str | None:
@@ -309,6 +361,8 @@ class NvidiaProvider(ComputeProvider):
             except NvidiaDiscoveryError as exc:
                 topology_parse_error = str(exc)
 
+        network_evidence = self._discover_network()
+
         toolkit_version = None
         nvcc = shutil.which(os.environ.get("THORIO_NVCC", "nvcc"))
         if nvcc:
@@ -337,6 +391,7 @@ class NvidiaProvider(ComputeProvider):
             "cuda_version_semantics": "toolkit_only_on_gpu_resource; driver_supported_version_is_separate_evidence",
             "topology_matrix": topology, "topology_error": topology_error,
             "topology": structured_topology, "topology_parse_error": topology_parse_error,
+            "network": network_evidence,
         }
         node = NodeResource(
             node_id=self.node_id, architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
