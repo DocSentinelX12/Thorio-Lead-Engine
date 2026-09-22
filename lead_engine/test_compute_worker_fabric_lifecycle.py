@@ -246,6 +246,41 @@ def test_fabric_reconciliation_requeues_entire_attempt_when_one_participant_is_l
     assert allocation["state"] == "released"
 
 
+
+def test_execution_verification_rejects_gpu_identity_not_in_launch_contract(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2, "require_nccl": True},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    verification = _valid_execution_verification(coordinator, attempt_id, "worker-1")
+    verification["process_evidence"][0]["probe"]["gpu_uuid"] = "GPU-not-allocated"
+    assert coordinator.record_execution_verification(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+        verification=verification,
+    ) is False
+
+
 def test_fabric_convergence_requires_every_participant_and_is_idempotent(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
