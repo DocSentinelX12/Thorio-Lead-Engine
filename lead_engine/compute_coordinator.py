@@ -920,6 +920,33 @@ class ComputeCoordinator:
                 connection.commit()
         return existing or resolved
 
+    @staticmethod
+    def _planned_physical_path(resource: dict[str, Any], gpu_uuid: str) -> dict[str, Any] | None:
+        paths = ComputeScheduler._verified_gpu_nic_rdma_path(resource, gpu_uuid)
+        if not paths:
+            return None
+        path = dict(paths[0])
+        link = path.pop("verified_rdma_link", None)
+        if isinstance(link, dict):
+            path.update({
+                "rdma_pci_bus_id": link.get("pci_bus_id"),
+                "rdma_link_state": link.get("state"),
+                "rdma_physical_state": link.get("physical_state"),
+            })
+        return {
+            "gpu_uuid": gpu_uuid,
+            "nic": path.get("nic"),
+            "nic_pci_bus_id": path.get("nic_pci_bus_id"),
+            "rdma_device": path.get("rdma_device"),
+            "rdma_port": path.get("rdma_port"),
+            "rdma_pci_bus_id": path.get("rdma_pci_bus_id"),
+            "link_layer": path.get("link_layer"),
+            "gpu_nic_distance": path.get("gpu_nic_distance"),
+            "shared_pci_ancestor": path.get("shared_pci_ancestor"),
+            "rdma_link_state": path.get("rdma_link_state"),
+            "rdma_physical_state": path.get("rdma_physical_state"),
+            "physical_evidence": path.get("physical_evidence"),
+        }
     def fabric_launch_plan(self, attempt_id: str, rendezvous_endpoint: str) -> Dict[str, Any]:
         """Build the exact per-process launch contract from durable physical participants.
 
@@ -994,14 +1021,31 @@ class ComputeCoordinator:
                     raise ValueError(
                         f"allocated GPU lacks immutable physical identity: {resource_id}"
                     )
-                gpu_bindings.append({
+                binding = {
                     "resource_id": resource_id,
                     "gpu_id": gpu_id,
                     "gpu_uuid": gpu_uuid,
                     "pci_bus_id": gpu.get("pci_bus_id"),
                     "rank": total_processes + local_rank,
                     "local_rank": local_rank,
-                })
+                }
+                bound_resource = next(
+                    (
+                        self.inventory.get(str(resource_key))
+                        for resource_key in allocation["resource_keys"]
+                        if (
+                            (self.inventory.get(str(resource_key)) or {}).get("resource_type") == "gpu"
+                            and str((self.inventory.get(str(resource_key)) or {}).get("node_id") or "") + "/"
+                            + str((self.inventory.get(str(resource_key)) or {}).get("gpu_id") or "") == resource_id
+                        )
+                    ),
+                    None,
+                )
+                if bound_resource is not None:
+                    planned_path = self._planned_physical_path(bound_resource, gpu_uuid)
+                    if planned_path is not None:
+                        binding["planned_physical_path"] = planned_path
+                gpu_bindings.append(binding)
 
             process_count = len(gpu_bindings)
             workers.append({
