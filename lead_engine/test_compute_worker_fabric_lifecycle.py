@@ -478,7 +478,7 @@ def test_expiration_preserves_completed_execution_and_releases_its_allocation(tm
             generation=generation,
             worker_id=worker_id,
             lease_token=lease_token,
-            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+            verification=_valid_execution_verification(coordinator, attempt_id, worker_id),
         )
     coordinator.converge_fabric_execution(
         attempt_id=attempt_id,
@@ -536,7 +536,7 @@ def test_stale_participant_cannot_report_after_convergence_or_retry(tmp_path: Pa
             generation=generation,
             worker_id=worker_id,
             lease_token=lease_token,
-            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+            verification=_valid_execution_verification(coordinator, attempt_id, worker_id),
         )
     coordinator.converge_fabric_execution(
         attempt_id=attempt_id,
@@ -651,7 +651,7 @@ def test_convergence_rejects_an_expired_task_lease(tmp_path: Path):
             generation=generation,
             worker_id=worker_id,
             lease_token=lease_token,
-            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+            verification=_valid_execution_verification(coordinator, attempt_id, worker_id),
         )
 
     with coordinator._connect() as connection:
