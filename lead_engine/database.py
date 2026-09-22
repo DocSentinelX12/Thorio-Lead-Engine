@@ -402,7 +402,7 @@ class LeadDB:
         self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
         self.conn.commit()
 
-    def queue_update_owned(self, task_id, worker_id, lease_token, **updates):
+    def queue_update_owned(self, task_id, expected_worker_id, lease_token, **updates):
         allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result", "lease_token"}
         unknown = set(updates) - allowed
         if unknown:
@@ -411,7 +411,7 @@ class LeadDB:
             return False
         assignments = ", ".join(f"{field} = ?" for field in updates)
         now_iso = datetime.now(timezone.utc).isoformat()
-        values = list(updates.values()) + [task_id, worker_id, lease_token, now_iso]
+        values = list(updates.values()) + [task_id, expected_worker_id, lease_token, now_iso]
         cursor = self.conn.execute(
             f"UPDATE agent_queue SET {assignments} WHERE task_id = ? AND status = 'running' AND worker_id = ? AND lease_token = ? AND lease_until IS NOT NULL AND lease_until > ?",
             values,
