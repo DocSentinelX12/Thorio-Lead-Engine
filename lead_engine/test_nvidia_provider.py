@@ -122,3 +122,18 @@ def test_nvidia_runtime_rejects_inconsistent_collective_evidence():
     stdout = 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","expected_sum":4,"verified_on_gpu":true,"world_size":2}\n'
     with pytest.raises(NvidiaRuntimeError, match="did not verify"):
         NvidiaRuntime.validate_distributed_probe_output(stdout, 2)
+
+
+def test_nvidia_discovery_derives_verified_local_topology_graph():
+    provider = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=fake_runner, now=lambda: 1234.5)
+    snapshot = provider.discover()
+
+    topology = snapshot.evidence["topology"]
+    assert topology["source"] == "nvidia-smi topo -m"
+    assert topology["gpu_ids"] == ["0", "1"]
+    assert topology["gpu_uuids"] == ["GPU-aaa", "GPU-bbb"]
+    assert topology["links"]["0"]["1"] == "NV18"
+    assert topology["links"]["1"]["0"] == "NV18"
+    assert topology["gpu_affinity"]["0"]["numa"] == 0
+    assert topology["gpu_affinity"]["1"]["numa"] == 0
+    assert topology["connectivity_components"] == [["0", "1"]]
