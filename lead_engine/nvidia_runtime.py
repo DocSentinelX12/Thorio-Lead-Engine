@@ -250,6 +250,7 @@ class NvidiaRuntime:
                     "NCCL selected RDMA devices absent from verified host RDMA inventory: " + missing
                 )
             verified_selections = []
+            verified_links = []
             links = rdma_evidence.get("links", ()) if isinstance(rdma_evidence, Mapping) else ()
             for selection in selections:
                 device = str(selection.get("device") or "").strip()
@@ -264,6 +265,17 @@ class NvidiaRuntime:
                     raise NvidiaRuntimeError(
                         f"RDMA port {device}:{port} selected by NCCL is not present in verified RDMA link evidence"
                     )
+                for link in matching_links:
+                    verified_links.append({
+                        "rdma_device": device,
+                        "port": port,
+                        "netdev": link.get("netdev"),
+                        "pci_bus_id": link.get("pci_bus_id"),
+                        "state": link.get("state"),
+                        "physical_state": link.get("physical_state"),
+                        "link_layer": link.get("link_layer"),
+                        "gids": list(link.get("gids") or ()),
+                    })
                 verified_selections.append(dict(selection))
             verified = tuple(sorted(used_devices))
         else:
@@ -302,6 +314,7 @@ class NvidiaRuntime:
             "rdma_devices": rdma_devices,
             "verified_rdma_devices": verified,
             "verified_hca_selections": tuple(verified_selections) if network["network_transport"] == "IB" else (),
+            "verified_rdma_links": tuple(verified_links) if network["network_transport"] == "IB" else (),
             "gpu_nic_locality": locality_evidence,
         }
 
