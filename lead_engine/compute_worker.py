@@ -380,6 +380,7 @@ def run_fabric_verification(
             else lambda args, timeout: CommandResult(*runtime.runner(args, timeout))
         )
         rdma_evidence: Mapping[str, Any] | None = None
+        gpu_nic_locality: Sequence[Mapping[str, object]] = ()
         host, port_text = str(plan["rendezvous_endpoint"]).rsplit(":", 1)
         port = int(port_text)
         command = runtime.distributed_process_command()
@@ -477,9 +478,17 @@ def run_fabric_verification(
                 if not isinstance(rdma_candidate, Mapping):
                     raise NvidiaRuntimeError("IB execution requires verified local RDMA discovery evidence")
                 rdma_evidence = rdma_candidate
+                network_payload = network_evidence.get("network")
+                locality_candidate = network_payload.get("gpu_nic_locality") if isinstance(network_payload, Mapping) else None
+                if isinstance(locality_candidate, list):
+                    gpu_nic_locality = tuple(
+                        row for row in locality_candidate if isinstance(row, Mapping)
+                    )
             path_evidence = runtime.validate_nccl_transport_against_rdma(
                 stdout + "\n" + stderr,
                 rdma_evidence or {},
+                gpu_uuid=str(binding["gpu_uuid"]),
+                gpu_nic_locality=gpu_nic_locality,
             ) if int(plan["nnodes"]) > 1 else {
                 "rdma_devices": (),
                 "verified_rdma_devices": (),
@@ -494,6 +503,7 @@ def run_fabric_verification(
                 "network_evidence_lines": list(probe.get("network_evidence_lines") or ()),
                 "rdma_devices": list(path_evidence.get("rdma_devices") or ()),
                 "verified_rdma_devices": list(path_evidence.get("verified_rdma_devices") or ()),
+                "gpu_nic_locality": path_evidence.get("gpu_nic_locality"),
                 "stdout": stdout[-4000:],
             })
 
