@@ -221,6 +221,7 @@ class NvidiaRuntime:
         *,
         expected_rank: int | None = None,
         expected_gpu_uuid: str | None = None,
+        log_output: str | None = None,
     ) -> dict[str, object]:
         if world_size < 2:
             raise ValueError("world_size must be at least 2")
@@ -252,6 +253,10 @@ class NvidiaRuntime:
             raise NvidiaRuntimeError(
                 "distributed NCCL probe GPU UUID does not match the allocated physical GPU"
             )
+        network = NvidiaRuntime.parse_nccl_network_evidence(
+            log_output if log_output is not None else stdout
+        )
+        probe.update(network)
         if expected_nnodes > 1 and not str(probe.get("network_transport") or "").strip():
             raise NvidiaRuntimeError(
                 "multi-node NCCL execution completed without explicit network transport evidence"
@@ -280,7 +285,6 @@ class NvidiaRuntime:
         if rc != 0:
             detail = (stderr or stdout).strip()
             raise NvidiaRuntimeError(f"distributed NCCL all-reduce probe failed: {detail[:4000]}")
-        network = self.parse_nccl_network_evidence(stdout + "\n" + stderr)
         marker = "THORIO_NCCL_PROBE_OK "
         lines = [line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
         if not lines:
@@ -289,11 +293,11 @@ class NvidiaRuntime:
             probe = json.loads(lines[-1][len(marker):])
         except json.JSONDecodeError as exc:
             raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
-        probe.update(network)
         probe["nnodes"] = nnodes
         probe = self.validate_distributed_probe_output(
             "THORIO_NCCL_PROBE_OK " + json.dumps(probe, sort_keys=True),
             world_size,
+            log_output=stdout + "\n" + stderr,
         )
         return {
             "verified": True,
