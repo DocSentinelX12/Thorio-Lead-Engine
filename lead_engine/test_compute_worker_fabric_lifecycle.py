@@ -841,10 +841,16 @@ def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fa
                 "workers": [{
                     "worker_id": "worker-1",
                     "node_rank": 0,
-                    "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
+                }, {
+                    "worker_id": "worker-2",
+                    "node_rank": 1,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-2/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-2-0", "rank": 1, "local_rank": 0}],
                 }],
                 "world_size": 2,
-                "nnodes": 1,
+                "nnodes": 2,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
             }
@@ -896,8 +902,19 @@ def test_fabric_verification_cleans_up_when_local_runtime_validation_fails():
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
-                "world_size": 2, "nnodes": 1,
+                "workers": [{
+                    "worker_id": "worker-1",
+                    "node_rank": 0,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
+                }, {
+                    "worker_id": "worker-2",
+                    "node_rank": 1,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-2/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-2-0", "rank": 1, "local_rank": 0}],
+                }],
+                "world_size": 2,
+                "nnodes": 2,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
             }
@@ -938,8 +955,19 @@ def test_fabric_heartbeat_failure_terminates_live_process_and_reports_failure(mo
             self.heartbeats = 0
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
-                "world_size": 2, "nnodes": 1,
+                "workers": [{
+                    "worker_id": "worker-1",
+                    "node_rank": 0,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
+                }, {
+                    "worker_id": "worker-2",
+                    "node_rank": 1,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-2/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-2-0", "rank": 1, "local_rank": 0}],
+                }],
+                "world_size": 2,
+                "nnodes": 2,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
             }
@@ -1018,8 +1046,19 @@ def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
             self.verified = False
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
-                "world_size": 2, "nnodes": 1,
+                "workers": [{
+                    "worker_id": "worker-1",
+                    "node_rank": 0,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
+                }, {
+                    "worker_id": "worker-2",
+                    "node_rank": 1,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-2/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-2-0", "rank": 1, "local_rank": 0}],
+                }],
+                "world_size": 2,
+                "nnodes": 2,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
             }
@@ -1075,8 +1114,19 @@ def test_fabric_process_timeout_terminates_process_and_reports_failure(monkeypat
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
-                "world_size": 2, "nnodes": 1,
+                "workers": [{
+                    "worker_id": "worker-1",
+                    "node_rank": 0,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
+                }, {
+                    "worker_id": "worker-2",
+                    "node_rank": 1,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-2/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-2-0", "rank": 1, "local_rank": 0}],
+                }],
+                "world_size": 2,
+                "nnodes": 2,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
             }
@@ -1146,8 +1196,19 @@ def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
-                "world_size": 2, "nnodes": 1,
+                "workers": [{
+                    "worker_id": "worker-1",
+                    "node_rank": 0,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
+                }, {
+                    "worker_id": "worker-2",
+                    "node_rank": 1,
+                    "process_count": 1,
+                    "gpu_bindings": [{"resource_id": "worker-2/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-2-0", "rank": 1, "local_rank": 0}],
+                }],
+                "world_size": 2,
+                "nnodes": 2,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
             }
