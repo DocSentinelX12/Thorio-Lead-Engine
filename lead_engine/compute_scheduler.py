@@ -127,6 +127,8 @@ class ComputeScheduler:
                 and str(link.get("rdma_device") or "").strip() == device
                 and link.get("port") == port
                 and str(link.get("link_layer") or "").strip() == link_layer
+                and str(link.get("state") or "").strip().upper() == "ACTIVE"
+                and str(link.get("physical_state") or "").strip().upper() in {"LINK_UP", "LINK_ACTIVE"}
             ]
             if matches:
                 verified.append({
