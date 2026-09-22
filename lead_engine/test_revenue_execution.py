@@ -141,3 +141,59 @@ def test_unresolved_inflight_action_cannot_be_sent_again(tmp_path):
             idempotency_key=key,
         )
     assert transport.calls == []
+
+
+def test_closer_reconciles_sent_provider_action_into_lead_after_worker_death(tmp_path):
+    from .agent_workers import _outreach_closer, AgentExecutionContext
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("closer-recovery-test")
+    db.insert_if_new(lead)
+    transport = ProcessDeathAfterAcceptanceTransport()
+    ctx = AgentExecutionContext(db=db, worker_id="closer-worker", revenue_transport=transport)
+
+    with pytest.raises(SystemExit):
+        _outreach_closer("outreach_closer", {"lead": lead}, ctx)
+
+    stale = db.get(lead["fingerprint"])
+    assert not stale.get("last_outreach_action_id")
+    result = _outreach_closer("outreach_closer", {"lead": stale}, ctx)
+
+    assert result["action"] == "send_outreach"
+    assert len(transport.calls) == 1
+    stored = db.get(lead["fingerprint"])
+    assert stored["last_outreach_action_id"]
+    assert stored["outreach_attempt"] == 1
+    assert len(stored["outreach_history"]) == 1
+    assert stored["outreach_state"] == "awaiting_response"
+
+
+def test_follow_up_reconciles_sent_provider_action_into_lead_after_worker_death(tmp_path):
+    from .agent_workers import _follow_up, AgentExecutionContext
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("followup-recovery-test")
+    lead.update({
+        "conversation_id": "conversation:followup-recovery-test:Thorio",
+        "outreach_route": "Thorio",
+        "outreach_state": "awaiting_response",
+        "outreach_attempt": 1,
+        "outreach_history": [{"action_id": "prior-action", "conversation_id": "conversation:followup-recovery-test:Thorio", "route": "Thorio", "channel": "email", "status": "sent"}],
+        "last_outreach_action_id": "prior-action",
+    })
+    db.insert_if_new(lead)
+    transport = ProcessDeathAfterAcceptanceTransport()
+    ctx = AgentExecutionContext(db=db, worker_id="followup-worker", revenue_transport=transport)
+    payload = {"lead": lead, "outcome": "interested", "execute": True}
+
+    with pytest.raises(SystemExit):
+        _follow_up("follow_up", payload, ctx)
+
+    stale = db.get(lead["fingerprint"])
+    result = _follow_up("follow_up", {"lead": stale, "outcome": "interested", "execute": True}, ctx)
+
+    assert result["action"] == "send_follow_up"
+    assert len(transport.calls) == 1
+    stored = db.get(lead["fingerprint"])
+    assert stored["last_outreach_action_id"]
+    assert stored["outreach_attempt"] == 2
+    assert len(stored["outreach_history"]) == 2
+    assert stored["outreach_state"] == "awaiting_response"
