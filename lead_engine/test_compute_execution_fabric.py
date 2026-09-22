@@ -86,7 +86,7 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
                     node_id=node_id,
                     architecture="x86_64",
                     cpu=CpuResource(node_id, 4, 8192),
-                    gpus=(GpuResource(node_id=node_id, gpu_id="gpu-0", availability_state=ResourceState.AVAILABLE),),
+                    gpus=(GpuResource(node_id=node_id, gpu_id="gpu-0", gpu_uuid=f"GPU-{node_id}-0", availability_state=ResourceState.AVAILABLE),),
                     driver_version="550.1",
                     cuda_version="12.4",
                     nccl_version="2.20",
