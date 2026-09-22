@@ -237,6 +237,36 @@ def test_multi_node_prefers_verified_common_network_fabric(tmp_path):
     assert set(allocation.node_ids) == {"node-a", "node-b"}
 
 
+def test_multi_node_prefers_overlapping_verified_network_domain(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(
+            _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua", topology_domain="a")]),
+            _node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="ub", topology_domain="b")]),
+            _node("node-c", [
+                _ready_gpu("node-c", "gpu-0", gpu_uuid="uc0", topology_domain="c"),
+                _ready_gpu("node-c", "gpu-1", gpu_uuid="uc1", topology_domain="c"),
+            ]),
+        ),
+        authentication_state="authenticated",
+        evidence={
+            "network": {
+                "source": "verified-test-network-discovery",
+                "network_domains": {
+                    "node-a": ["network-a", "network-shared"],
+                    "node-b": ["network-b", "network-shared"],
+                    "node-c": ["network-c"],
+                },
+            },
+        },
+    ))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=2, require_nccl=True), same_node=False),
+        "allocation-overlap-network",
+    )
+    assert set(allocation.node_ids) == {"node-a", "node-b"}
+
 def test_multi_node_placement_records_verified_network_fabric_evidence(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(ProviderResourceSnapshot(
