@@ -157,6 +157,24 @@ def test_multi_gpu_does_not_claim_topology_locality_when_domains_are_disconnecte
     assert {e["topology_domain"] for e in allocation.capability_evidence if e.get("gpu_uuid")} == {"domain-a", "domain-b"}
 
 
+def test_topology_placement_records_verified_decision_evidence(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="domain-a", numa_node=0),
+        _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="domain-a", numa_node=0),
+        _ready_gpu("node-a", "gpu-2", gpu_uuid="u2", topology_domain="domain-b", numa_node=1),
+    ])]))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_GPU, GpuRequirements(gpu_count=2, require_nccl=True)),
+        "allocation-topology-evidence",
+    )
+    evidence = [item for item in allocation.capability_evidence if item.get("gpu_uuid")]
+    assert {item["gpu_uuid"] for item in evidence} == {"u0", "u1"}
+    assert all(item["placement_decision"]["signal"] == "verified_topology_domain" for item in evidence)
+    assert all(item["placement_decision"]["topology_domain"] == "domain-a" for item in evidence)
+    assert all(item["placement_decision"]["topology_source"] == "nvidia-smi topo -m" for item in evidence)
+
+
 def test_topology_domain_is_enforced(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
