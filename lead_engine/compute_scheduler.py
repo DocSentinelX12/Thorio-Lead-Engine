@@ -140,16 +140,24 @@ class ComputeScheduler:
         return nodes
 
     @staticmethod
-    def _verified_network_fabric_domain(candidate: dict[str, Any]) -> str | None:
-        evidence = json.loads(candidate["cpu"]["evidence_json"])
+    def _verified_network_fabric_evidence(row: dict[str, Any]) -> dict[str, str] | None:
+        evidence = json.loads(row["evidence_json"])
         network = evidence.get("network")
         if not isinstance(network, dict) or not network.get("source"):
             return None
         fabric_domains = network.get("fabric_domains")
         if not isinstance(fabric_domains, dict):
             return None
-        value = fabric_domains.get(str(candidate["node_id"]))
-        return str(value).strip() if value is not None and str(value).strip() else None
+        value = fabric_domains.get(str(row["node_id"]))
+        domain = str(value).strip() if value is not None and str(value).strip() else None
+        if domain is None:
+            return None
+        return {"domain": domain, "source": str(network["source"]).strip()}
+
+    @classmethod
+    def _verified_network_fabric_domain(cls, candidate: dict[str, Any]) -> str | None:
+        evidence = cls._verified_network_fabric_evidence(candidate["cpu"])
+        return evidence["domain"] if evidence else None
 
     def _candidates(self, requirements: ComputeRequirements) -> list[dict[str, Any]]:
         rows = self.inventory.eligible()
@@ -341,6 +349,10 @@ class ComputeScheduler:
                         "numa_source": json.loads(row["payload_json"]).get("topology_source") or (
                             json.loads(row["evidence_json"]).get("topology") or {}
                         ).get("source"),
+                        **({
+                            "network_fabric_domain": network_evidence["domain"],
+                            "network_source": network_evidence["source"],
+                        } if (network_evidence := self._verified_network_fabric_evidence(row)) else {}),
                     }}
                     if row["resource_type"] == "gpu" and json.loads(row["payload_json"]).get("topology_domain")
                     else {}
