@@ -7,6 +7,7 @@ crash can be reconciled without blindly sending the same message twice.
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -181,7 +182,7 @@ def _claim_action(db: Any, *, idem: str, opportunity_id: str, conversation_id: s
         }
         db.conn.execute(
             "INSERT INTO state (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
-            (STATE_KEY, __import__("json").dumps(state, ensure_ascii=False)),
+            (STATE_KEY, json.dumps(state, ensure_ascii=False)),
         )
         db.conn.commit()
         return dict(state["actions"][idem]), True
