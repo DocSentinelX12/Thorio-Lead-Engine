@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import re
-import os
 import shutil
+import sys
 import subprocess
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
@@ -137,9 +137,9 @@ class NvidiaRuntime:
         environment by the worker. This avoids torchrun's homogeneous
         nproc-per-node requirement while preserving real NCCL initialization.
         """
-        python = shutil.which("python") or os.environ.get("PYTHON", "")
+        python = sys.executable
         if not python:
-            raise NvidiaRuntimeError("python is required for distributed NVIDIA verification")
+            raise NvidiaRuntimeError("current Python executable is required for distributed NVIDIA verification")
         return (python, "-m", "lead_engine.nccl_all_reduce_probe")
 
     def distributed_command(
@@ -181,7 +181,13 @@ class NvidiaRuntime:
         return tuple(command)
 
     @staticmethod
-    def validate_distributed_probe_output(stdout: str, world_size: int) -> dict[str, object]:
+    def validate_distributed_probe_output(
+        stdout: str,
+        world_size: int,
+        *,
+        expected_rank: int | None = None,
+        expected_gpu_uuid: str | None = None,
+    ) -> dict[str, object]:
         if world_size < 2:
             raise ValueError("world_size must be at least 2")
         marker = "THORIO_NCCL_PROBE_OK "
@@ -201,6 +207,14 @@ class NvidiaRuntime:
             or int(probe.get("expected_sum", -1)) != expected_sum
         ):
             raise NvidiaRuntimeError("distributed NCCL probe evidence did not verify the requested GPU collective")
+        if expected_rank is not None and int(probe.get("rank", -1)) != expected_rank:
+            raise NvidiaRuntimeError(
+                f"distributed NCCL probe rank mismatch: expected {expected_rank}, got {probe.get('rank')}"
+            )
+        if expected_gpu_uuid is not None and str(probe.get("gpu_uuid") or "").strip() != expected_gpu_uuid:
+            raise NvidiaRuntimeError(
+                "distributed NCCL probe GPU UUID does not match the allocated physical GPU"
+            )
         return probe
 
     def verify_distributed_nccl(
