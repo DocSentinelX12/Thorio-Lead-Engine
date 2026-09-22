@@ -348,7 +348,8 @@ class LeadDB:
         return {"task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3], "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6], "created_at": row[7], "updated_at": row[8], "attempts": row[9], "lease_until": row[10], "worker_id": row[11], "last_error": row[12], "result": json.loads(row[13]) if row[13] is not None else None, "lease_token": row[14]}
 
     def queue_insert_many(self, rows):
-        self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        normalized = [tuple(row) + (None,) if len(tuple(row)) == 14 else tuple(row) for row in rows]
+        self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", normalized)
         self.conn.commit()
 
     def queue_find_duplicate(self, agent, dedupe_key):
