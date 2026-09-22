@@ -1259,3 +1259,40 @@ def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
     except OSError as error:
         assert "stdout pipe failed" in str(error)
     else:
+        raise AssertionError("unexpected process error was not preserved")
+
+    assert process.terminated is True
+    assert client.states == ["launching", "active", "failed"]
+
+
+def test_fabric_participant_state_transitions_are_monotonic(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    assert claimed["task_id"] == task_id
+    kwargs = {
+        "attempt_id": claimed["attempt_id"],
+        "generation": claimed["generation"],
+        "worker_id": "worker-1",
+        "lease_token": claimed["lease_token"],
+    }
+
+    assert coordinator.execution_participant_state(**kwargs, status="launching") is True
+    assert coordinator.execution_participant_state(**kwargs, status="active") is True
+    assert coordinator.execution_participant_state(**kwargs, status="launching") is False
+    assert coordinator.execution_participant_state(**kwargs, status="bound") is False
