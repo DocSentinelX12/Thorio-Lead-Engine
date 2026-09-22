@@ -138,3 +138,21 @@ def test_provider_observation_preserves_reserved_resource_state(tmp_path):
     inventory.mark_state(key, ResourceState.RESERVED)
     inventory.observe(snapshot)
     assert inventory.get(key)["state"] == ResourceState.RESERVED.value
+
+
+def test_inventory_quarantines_one_failed_physical_path_with_durable_reason(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    snapshot = _snapshot_with_gpu("GPU-0")
+    inventory.observe(snapshot)
+    key = "provider/domain/node-1/gpu/GPU-0"
+    assert inventory.quarantine_resource(
+        key,
+        reason="NCCL selected an HCA port different from the scheduler's verified physical path",
+        evidence={"failure_class": "planned_actual_physical_path_mismatch", "rdma_device": "mlx5_0", "rdma_port": 2},
+    )
+    resource = inventory.get(key)
+    assert resource["state"] == ResourceState.QUARANTINED.value
+    evidence = json.loads(resource["evidence_json"])
+    assert evidence["quarantine"]["reason"].startswith("NCCL selected an HCA")
+    assert evidence["quarantine"]["failure_class"] == "planned_actual_physical_path_mismatch"
+    assert key not in {row["resource_key"] for row in inventory.eligible()}
