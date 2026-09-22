@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -127,6 +128,19 @@ class NvidiaRuntime:
                 "allocated NVIDIA GPU identity verification failed: " + "; ".join(mismatches)
             )
         return {"verified": True, "gpu_bindings": [dict(binding) for binding in gpu_bindings]}
+
+    def distributed_process_command(self) -> tuple[str, ...]:
+        """Return the exact command used for one manually ranked NCCL process.
+
+        The fabric launches one process per allocated GPU. RANK/WORLD_SIZE,
+        MASTER_ADDR/MASTER_PORT, and LOCAL_RANK are supplied in that process's
+        environment by the worker. This avoids torchrun's homogeneous
+        nproc-per-node requirement while preserving real NCCL initialization.
+        """
+        python = shutil.which("python") or os.environ.get("PYTHON", "")
+        if not python:
+            raise NvidiaRuntimeError("python is required for distributed NVIDIA verification")
+        return (python, "-m", "lead_engine.nccl_all_reduce_probe")
 
     def distributed_command(
         self,
