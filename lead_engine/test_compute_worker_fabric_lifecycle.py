@@ -989,6 +989,60 @@ def test_running_fabric_participant_heartbeat_renews_lease(tmp_path: Path):
     assert after > before
 
 
+def test_stale_fabric_participant_cannot_be_revived(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    lease_token = claimed["lease_token"]
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_execution_participants SET heartbeat_at=? WHERE attempt_id=? AND worker_id=?",
+            (time.time() - 3600, attempt_id, "worker-1"),
+        )
+        connection.commit()
+
+    assert coordinator.heartbeat_execution_participant(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+    ) is False
+
+    participant = next(
+        item for item in coordinator.execution_participants(attempt_id)
+        if item["worker_id"] == "worker-1"
+    )
+    assert participant["heartbeat_at"] < time.time() - coordinator.lease_seconds
+
+    try:
+        coordinator.fabric_launch_plan(
+            attempt_id,
+            "10.0.0.1:29500",
+        )
+    except ValueError as error:
+        assert "participant heartbeat is stale" in str(error)
+    else:
+        raise AssertionError("stale participant was allowed to launch")
+
+
 def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fails():
     from lead_engine.compute_worker import ComputeWorkerError, run_fabric_verification
     from lead_engine.nvidia_runtime import NvidiaRuntimeError
