@@ -122,9 +122,37 @@ def test_nvidia_runtime_rejects_planned_physical_path_when_nccl_selects_differen
         NvidiaRuntime.reconcile_planned_physical_path(planned, actual)
 
 
+
+
+def _inventory_snapshot_for_quarantine():
+    return ProviderResourceSnapshot(
+        provider_id="provider",
+        domain_id="domain",
+        observed_at=1.0,
+        nodes=(
+            NodeResource(
+                node_id="node-1",
+                architecture="x86_64",
+                cpu=CpuResource("node-1", 4, 8192),
+                gpus=(GpuResource(
+                    node_id="node-1",
+                    gpu_id="gpu-0",
+                    gpu_uuid="GPU-0",
+                    vram_bytes=1,
+                    health_state=ResourceState.HEALTHY,
+                    availability_state=ResourceState.AVAILABLE,
+                ),),
+                state=ResourceState.AVAILABLE,
+            ),
+        ),
+        authentication_state="authenticated",
+        evidence={},
+    )
+
+
 def test_inventory_quarantines_one_failed_physical_path_with_durable_reason(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    inventory.observe(_snapshot_with_gpu("GPU-0"))
+    inventory.observe(_inventory_snapshot_for_quarantine())
     key = "provider/domain/node-1/gpu/GPU-0"
     assert inventory.quarantine_resource(
         key,
