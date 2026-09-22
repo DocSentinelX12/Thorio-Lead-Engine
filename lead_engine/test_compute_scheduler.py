@@ -291,6 +291,70 @@ def test_multi_node_placement_records_verified_network_fabric_evidence(tmp_path)
     assert all(item["placement_decision"]["network_fabric_domain"] == "network-a" for item in evidence)
     assert all(item["placement_decision"]["network_source"] == "verified-test-network-discovery" for item in evidence)
 
+def test_multi_node_overlapping_network_domain_is_recorded_as_the_actual_placement_signal(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(
+            _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua")]),
+            _node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="ub")]),
+        ),
+        authentication_state="authenticated",
+        evidence={
+            "network": {
+                "source": "verified-test-network-discovery",
+                "network_domains": {
+                    "node-a": ["network-a", "network-shared"],
+                    "node-b": ["network-b", "network-shared"],
+                },
+            },
+        },
+    ))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=2, require_nccl=True), same_node=False),
+        "allocation-network-shared-evidence",
+    )
+    evidence = [item for item in allocation.capability_evidence if item.get("gpu_uuid")]
+    assert all(item["placement_decision"]["signal"] == "verified_network_domain" for item in evidence)
+    assert all(item["placement_decision"]["network_domain"] == "network-shared" for item in evidence)
+    assert all(item["placement_decision"]["network_source"] == "verified-test-network-discovery" for item in evidence)
+
+
+def test_gpu_nic_locality_is_preserved_as_provenance_for_selected_gpu(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(
+            _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua", topology_domain="topology-a")]),
+        ),
+        authentication_state="authenticated",
+        evidence={
+            "network": {
+                "source": "iproute2",
+                "gpu_nic_locality": [{
+                    "gpu_uuid": "ua",
+                    "gpu_pci_bus_id": "00000000:17:00.0",
+                    "nic": "eth0",
+                    "nic_pci_bus_id": "0000:41:00.0",
+                    "same_numa_node": True,
+                    "shared_pci_ancestor": "0000:40:00.0",
+                    "source": "sysfs",
+                }],
+            },
+            "topology": {"source": "nvidia-smi topo -m"},
+        },
+    ))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+        "allocation-gpu-nic-provenance",
+    )
+    evidence = next(item for item in allocation.capability_evidence if item.get("gpu_uuid") == "ua")
+    locality = evidence["placement_decision"]["gpu_nic_locality"]
+    assert locality[0]["nic"] == "eth0"
+    assert locality[0]["shared_pci_ancestor"] == "0000:40:00.0"
+    assert locality[0]["source"] == "sysfs"
+
+
 def test_topology_domain_is_enforced(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
