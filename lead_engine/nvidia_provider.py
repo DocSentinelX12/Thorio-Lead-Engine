@@ -118,11 +118,145 @@ class NvidiaProvider(ComputeProvider):
             raise NvidiaDiscoveryError("NVIDIA GPU UUID is missing; refusing to invent physical identity")
         return value
 
+    @staticmethod
+    def _parse_topology_matrix(text: str, gpus: Sequence[GpuResource]) -> dict[str, object]:
+        """Parse nvidia-smi's physical GPU matrix without inventing topology.
+
+        The matrix is columnar but its affinity headings vary slightly between
+        driver versions. GPU columns are therefore discovered from the header,
+        while affinity data is taken only from the trailing row fields. Every
+        discovered GPU must have one complete row and every pairwise link must
+        be present and symmetric.
+        """
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            raise NvidiaDiscoveryError("NVIDIA topology output is empty")
+        header_index = next((i for i, line in enumerate(lines) if re.search(r"\bGPU\d+\b", line)), None)
+        if header_index is None:
+            raise NvidiaDiscoveryError("NVIDIA topology header is missing GPU columns")
+
+        header_tokens = lines[header_index].split()
+        gpu_ids = [token[3:] for token in header_tokens if re.fullmatch(r"GPU\d+", token)]
+        expected_ids = [gpu.gpu_id for gpu in gpus]
+        if gpu_ids != expected_ids:
+            raise NvidiaDiscoveryError(
+                f"NVIDIA topology GPU columns do not match discovery: expected {expected_ids!r}, got {gpu_ids!r}"
+            )
+
+        rows: dict[str, list[str]] = {}
+        for line in lines[header_index + 1:]:
+            tokens = line.split()
+            if not tokens or not re.fullmatch(r"GPU\d+", tokens[0]):
+                continue
+            gpu_id = tokens[0][3:]
+            if gpu_id in rows:
+                raise NvidiaDiscoveryError(f"duplicate NVIDIA topology row for GPU {gpu_id}")
+            rows[gpu_id] = tokens[1:]
+
+        if set(rows) != set(gpu_ids):
+            raise NvidiaDiscoveryError(
+                f"NVIDIA topology rows are incomplete: expected {gpu_ids!r}, got {sorted(rows)!r}"
+            )
+
+        links: dict[str, dict[str, str]] = {}
+        affinity: dict[str, dict[str, object]] = {}
+        nvlink_pattern = re.compile(r"^NV(?:L|\d+)$", re.IGNORECASE)
+
+        for row_gpu in gpu_ids:
+            values = rows[row_gpu]
+            if len(values) < len(gpu_ids) + 1:
+                raise NvidiaDiscoveryError(f"NVIDIA topology row for GPU {row_gpu} is incomplete")
+            link_values = values[:len(gpu_ids)]
+            links[row_gpu] = dict(zip(gpu_ids, link_values, strict=True))
+
+            trailing = values[len(gpu_ids):]
+            numa_match = next((re.fullmatch(r"-?\d+", value) for value in reversed(trailing)), None)
+            if numa_match is None:
+                raise NvidiaDiscoveryError(f"NVIDIA topology NUMA affinity is missing for GPU {row_gpu}")
+            numa_index = len(trailing) - 1 - next(
+                i for i, value in enumerate(reversed(trailing)) if re.fullmatch(r"-?\d+", value)
+            )
+            cpu_affinity_tokens = trailing[:numa_index]
+            affinity[row_gpu] = {
+                "cpu_affinity": " ".join(cpu_affinity_tokens),
+                "numa": int(numa_match.group(0)),
+            }
+
+        for left in gpu_ids:
+            for right in gpu_ids:
+                if links[left][right] != links[right][left]:
+                    raise NvidiaDiscoveryError(
+                        f"NVIDIA topology link is asymmetric between GPU {left} and GPU {right}"
+                    )
+
+        adjacency = {
+            gpu_id: {
+                other
+                for other in gpu_ids
+                if other != gpu_id and nvlink_pattern.fullmatch(links[gpu_id][other])
+            }
+            for gpu_id in gpu_ids
+        }
+        components: list[list[str]] = []
+        unseen = set(gpu_ids)
+        while unseen:
+            root = min(unseen, key=lambda value: gpu_ids.index(value))
+            stack = [root]
+            component: list[str] = []
+            unseen.remove(root)
+            while stack:
+                current = stack.pop()
+                component.append(current)
+                for neighbor in sorted(adjacency[current], key=lambda value: gpu_ids.index(value)):
+                    if neighbor in unseen:
+                        unseen.remove(neighbor)
+                        stack.append(neighbor)
+            components.append(sorted(component, key=lambda value: gpu_ids.index(value)))
+
+        uuid_by_id = {gpu.gpu_id: gpu.gpu_uuid for gpu in gpus}
+        topology_domain_by_gpu: dict[str, str] = {}
+        nvlink_domain_by_gpu: dict[str, str | None] = {}
+        for component in components:
+            domain_key = "nvlink:" + ",".join(uuid_by_id[gpu_id] or gpu_id for gpu_id in component)
+            for gpu_id in component:
+                topology_domain_by_gpu[gpu_id] = domain_key
+                nvlink_domain_by_gpu[gpu_id] = domain_key if len(component) > 1 else None
+
+        return {
+            "source": "nvidia-smi topo -m",
+            "gpu_ids": gpu_ids,
+            "gpu_uuids": [uuid_by_id[gpu_id] for gpu_id in gpu_ids],
+            "links": links,
+            "gpu_affinity": affinity,
+            "connectivity_components": components,
+            "topology_domains": topology_domain_by_gpu,
+            "nvlink_domains": nvlink_domain_by_gpu,
+        }
+
+    @staticmethod
+    def _apply_topology_domains(gpus: Sequence[GpuResource], topology: Mapping[str, object]) -> list[GpuResource]:
+        domains = topology.get("topology_domains")
+        nvlink_domains = topology.get("nvlink_domains")
+        if not isinstance(domains, Mapping) or not isinstance(nvlink_domains, Mapping):
+            raise NvidiaDiscoveryError("structured NVIDIA topology is missing domain mappings")
+        updated: list[GpuResource] = []
+        for gpu in gpus:
+            updated.append(GpuResource(
+                node_id=gpu.node_id, gpu_id=gpu.gpu_id, gpu_uuid=gpu.gpu_uuid, model=gpu.model,
+                vram_bytes=gpu.vram_bytes, compute_capability=gpu.compute_capability,
+                driver_version=gpu.driver_version, cuda_version=gpu.cuda_version,
+                pci_bus_id=gpu.pci_bus_id, numa_node=gpu.numa_node,
+                nvlink_domain=nvlink_domains.get(gpu.gpu_id),
+                topology_domain=domains.get(gpu.gpu_id),
+                health_state=gpu.health_state, availability_state=gpu.availability_state,
+            ))
+        return updated
+
     def discover(self) -> ProviderResourceSnapshot:
         observed_at = float(self._now())
         if observed_at <= 0:
             raise NvidiaDiscoveryError("discovery clock must return a positive timestamp")
-        query = self._run("--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id", "--format=csv,nounits")
+        query = self._run(" --query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id".strip(), "--format=csv,nounits")
         smi = self._run()
         rows = self._parse_csv(query.stdout)
         cuda_supported = self._parse_cuda_supported_version(smi.stdout)
@@ -156,12 +290,18 @@ class NvidiaProvider(ComputeProvider):
         topology = None
         topology_error = None
         try:
-            # Preserve the provider's exact topology output as evidence. Do not
-            # normalize whitespace or line endings: formatting can be meaningful
-            # when comparing later observations for drift.
             topology = self._run("topo", "-m").stdout
         except NvidiaDiscoveryError as exc:
             topology_error = str(exc)
+
+        structured_topology = None
+        topology_parse_error = None
+        if topology:
+            try:
+                structured_topology = self._parse_topology_matrix(topology, gpus)
+                gpus = self._apply_topology_domains(gpus, structured_topology)
+            except NvidiaDiscoveryError as exc:
+                topology_parse_error = str(exc)
 
         toolkit_version = None
         nvcc = shutil.which(os.environ.get("THORIO_NVCC", "nvcc"))
@@ -189,6 +329,7 @@ class NvidiaProvider(ComputeProvider):
             "driver_supported_cuda_version": cuda_supported, "cuda_toolkit_version": toolkit_version,
             "cuda_version_semantics": "toolkit_only_on_gpu_resource; driver_supported_version_is_separate_evidence",
             "topology_matrix": topology, "topology_error": topology_error,
+            "topology": structured_topology, "topology_parse_error": topology_parse_error,
         }
         node = NodeResource(
             node_id=self.node_id, architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
@@ -203,7 +344,7 @@ class NvidiaProvider(ComputeProvider):
         try:
             match = re.search(r"^MemTotal:\s+(\d+)\s+kB", Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
             if match:
-                return max(1, int(match.group(1)) * 1024)
+                return max(1, int(match.group(1) * 1024))
         except OSError:
             pass
         return 1
