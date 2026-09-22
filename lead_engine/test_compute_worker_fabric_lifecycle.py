@@ -98,6 +98,42 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
         ],
     }
 
+def test_recorded_verification_persists_verified_rdma_path_evidence(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2, "require_nccl": True},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    lease_token = claimed["lease_token"]
+    verification = _valid_execution_verification(coordinator, attempt_id, "worker-1")
+    for item in verification["process_evidence"]:
+        item["rdma_devices"] = ["mlx5_0"]
+        item["verified_rdma_devices"] = ["mlx5_0"]
+    assert coordinator.record_execution_verification(
+        attempt_id=attempt_id,
+        generation=claimed["generation"],
+        worker_id="worker-1",
+        lease_token=lease_token,
+        verification=verification,
+    ) is True
+    participant = coordinator.execution_participants(attempt_id)[0]
+    assert participant["verification"]["process_evidence"][0]["verified_rdma_devices"] == ["mlx5_0"]
+
+
 def test_worker_receives_durable_participant_and_launch_contract(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
