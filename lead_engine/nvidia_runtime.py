@@ -390,6 +390,7 @@ class NvidiaRuntime:
                 verified_selections = item.get("verified_hca_selections")
                 rdma_devices = item.get("rdma_devices")
                 verified_devices = item.get("verified_rdma_devices")
+                verified_links = item.get("verified_rdma_links")
                 locality = item.get("gpu_nic_locality")
                 if (
                     not isinstance(selections, list)
@@ -400,6 +401,8 @@ class NvidiaRuntime:
                     or not rdma_devices
                     or not isinstance(verified_devices, list)
                     or sorted(set(str(device).strip() for device in verified_devices)) != sorted(set(str(device).strip() for device in rdma_devices))
+                    or not isinstance(verified_links, list)
+                    or not verified_links
                     or not isinstance(locality, Mapping)
                 ):
                     raise NvidiaRuntimeError(f"rank {rank} has incomplete verified IB path evidence")
@@ -416,11 +419,21 @@ class NvidiaRuntime:
                 )
                 if not matching_selection:
                     raise NvidiaRuntimeError(f"rank {rank} GPU locality does not match its NCCL-selected HCA port")
+                matching_link = any(
+                    isinstance(link, Mapping)
+                    and str(link.get("rdma_device") or "").strip() == locality_device
+                    and link.get("port") == locality_port
+                    and str(link.get("link_layer") or "").strip()
+                    for link in verified_links
+                )
+                if not matching_link:
+                    raise NvidiaRuntimeError(f"rank {rank} NCCL-selected HCA port lacks verified physical RDMA link identity")
                 paths.append({
                     "rank": rank,
                     "gpu_uuid": gpu_uuid,
                     "network_transport": transport,
                     "hca_selections": [dict(selection) for selection in selections if isinstance(selection, Mapping)],
+                    "verified_rdma_links": [dict(link) for link in verified_links if isinstance(link, Mapping)],
                     "rdma_device": locality_device,
                     "rdma_port": locality_port,
                     "link_layer": locality.get("link_layer"),
