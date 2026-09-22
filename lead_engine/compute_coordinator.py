@@ -978,13 +978,26 @@ class ComputeCoordinator:
         contract. The coordinator never treats allocation as execution proof.
         """
         endpoint = self._validate_rendezvous_endpoint(rendezvous_endpoint)
+        now = time.time()
         with self._connect() as connection:
             attempt_row = connection.execute(
-                "SELECT rendezvous_endpoint FROM compute_execution_attempts WHERE attempt_id=?",
+                """SELECT a.status,a.generation,a.lease_token_digest,a.rendezvous_endpoint,
+                          t.status AS task_status,t.lease_until
+                   FROM compute_execution_attempts a
+                   JOIN compute_tasks t ON t.attempt_id=a.attempt_id
+                   WHERE a.attempt_id=?""",
                 (attempt_id,),
             ).fetchone()
         if not attempt_row:
             raise ValueError("execution attempt does not exist")
+        if (
+            attempt_row["status"] != "leased"
+            or int(attempt_row["generation"]) < 1
+            or attempt_row["task_status"] != "leased"
+            or attempt_row["lease_until"] is None
+            or float(attempt_row["lease_until"]) <= now
+        ):
+            raise ValueError("execution attempt lease is not active")
         durable_endpoint = str(attempt_row["rendezvous_endpoint"] or "").strip()
         if not durable_endpoint:
             raise ValueError("execution attempt has no durable rendezvous endpoint")
