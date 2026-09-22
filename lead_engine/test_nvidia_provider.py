@@ -84,6 +84,58 @@ def test_nvidia_discovery_records_verified_network_topology_evidence():
     assert network["network_domains"] == ["10.10.20.0/24"]
     assert network["fabric_domains"]["node-01"] == "10.10.20.0/24"
 
+def test_nvidia_discovery_records_verified_nic_identity_and_link_capability():
+    ethtool_driver = """driver: mlx5_core
+version: 6.14.0
+firmware-version: 32.42.1000
+expansion-rom-version:
+bus-info: 0000:41:00.0
+supports-statistics: yes
+supports-test: yes
+supports-eeprom: yes
+supports-register-dump: yes
+supports-priv-flags: yes
+"""
+    ethtool_link = """Settings for eth0:
+	Speed: 100000Mb/s
+	Duplex: Full
+	Auto-negotiation: off
+	Link detected: yes
+"""
+    network_addresses = """[
+      {
+        "ifname": "eth0",
+        "operstate": "UP",
+        "mtu": 9000,
+        "address": "aa:bb:cc:dd:ee:ff",
+        "addr_info": [
+          {"family": "inet", "local": "10.10.20.15", "prefixlen": 24, "scope": "global"}
+        ]
+      }
+    ]"""
+
+    def runner(args, timeout):
+        args = tuple(args)
+        if args[:3] == ("ethtool", "-i", "eth0"):
+            return CommandResult(0, ethtool_driver, "")
+        if args[:2] == ("ethtool", "eth0"):
+            return CommandResult(0, ethtool_link, "")
+        if args[0] == "ip":
+            return CommandResult(0, network_addresses, "")
+        return fake_runner(args, timeout)
+
+    snapshot = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=runner, now=lambda: 1234.5).discover()
+    network = snapshot.evidence["network"]
+    assert snapshot.nodes[0].nic_names == ("eth0",)
+    assert network["link_capabilities"]["eth0"]["driver"] == "mlx5_core"
+    assert network["link_capabilities"]["eth0"]["firmware_version"] == "32.42.1000"
+    assert network["link_capabilities"]["eth0"]["bus_info"] == "0000:41:00.0"
+    assert network["link_capabilities"]["eth0"]["speed_mbps"] == 100000
+    assert network["link_capabilities"]["eth0"]["duplex"] == "full"
+    assert network["link_capabilities"]["eth0"]["autonegotiation"] is False
+    assert network["link_capabilities"]["eth0"]["link_detected"] is True
+
+
 def test_nvidia_discovery_refuses_missing_uuid():
     def runner(args, timeout):
         if "--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id" in args:
