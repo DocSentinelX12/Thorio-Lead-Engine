@@ -110,3 +110,42 @@ def test_scheduler_recovers_sales_eligibility_to_outreach_and_is_idempotent(tmp_
     assert rows, {"first": first, "second": second}
     assert len(rows) == 1
     assert rows[0][2] == f"sales:{lead['fingerprint']}"
+
+
+def test_scheduler_recovers_missing_routing_handoff_from_verified_state(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _research_complete_lead("handoff-recovery-routing")
+    lead.update({"verification_state": "verified", "qualification_review_stage": "validated"})
+    db.insert_if_new(lead)
+
+    result = LeadScheduler(_Runner(db)).run([], agent_max_rounds=1)
+
+    rows = _queue_rows(db, "routing", lead["fingerprint"])
+    assert rows, result
+    assert len(rows) == 1
+    assert rows[0][2] == f"routing:{lead['fingerprint']}"
+
+
+def test_scheduler_recovers_missing_airtable_handoff_from_routing_state(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _sales_eligible_lead("handoff-recovery-airtable")
+    lead.update(
+        {
+            "sales_eligibility": "",
+            "revenue_lifecycle_state": "dedup_checked",
+            "routing_state": "routed",
+            "routing_result": {
+                "destinations": ["Thorio"],
+                "review_required": False,
+                "multi_route": False,
+            },
+        }
+    )
+    db.insert_if_new(lead)
+
+    result = LeadScheduler(_Runner(db)).run([], agent_max_rounds=1)
+
+    rows = _queue_rows(db, "airtable_integrity", lead["fingerprint"])
+    assert rows, result
+    assert len(rows) == 1
+    assert rows[0][2] == f"airtable_integrity:{lead['fingerprint']}"
