@@ -1373,3 +1373,41 @@ def test_fabric_participant_state_transitions_are_monotonic(tmp_path: Path):
     assert coordinator.execution_participant_state(**kwargs, status="active") is True
     assert coordinator.execution_participant_state(**kwargs, status="launching") is False
     assert coordinator.execution_participant_state(**kwargs, status="bound") is False
+
+
+def test_fabric_heartbeat_refreshes_registered_worker_liveness(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    assert claimed["task_id"] == task_id
+
+    with coordinator.pool._connect() as connection:
+        connection.execute(
+            "UPDATE compute_workers SET status='stale',last_heartbeat=? WHERE worker_id=?",
+            (time.time() - 3600, "worker-1"),
+        )
+        connection.commit()
+
+    assert coordinator.pool.worker("worker-1")["status"] == "stale"
+    assert coordinator.heartbeat_execution_participant(
+        attempt_id=claimed["attempt_id"],
+        generation=claimed["generation"],
+        worker_id="worker-1",
+        lease_token=claimed["lease_token"],
+    ) is True
+    assert coordinator.pool.worker("worker-1")["status"] == "ready"
