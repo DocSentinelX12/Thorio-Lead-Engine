@@ -1767,25 +1767,27 @@ def test_fabric_launch_plan_constructs_verified_routes_between_participants(tmp_
             authentication_state="authenticated",
             evidence={
                 "source": "verified-fabric-test",
-                "network_domains": {"worker-1": "fabric-a", "worker-2": "fabric-a"},
-                "gpu_nic_locality": [{
-                    "gpu_uuid": gpu_uuid,
-                    "nic": nic,
-                    "rdma_device": rdma_device,
-                    "rdma_port": 1,
-                    "link_layer": "InfiniBand",
-                }],
-                "rdma": {
-                    "devices": [{"device": rdma_device}],
-                    "links": [{
+                "network": {
+                    "network_domains": {"worker-1": "fabric-a", "worker-2": "fabric-a"},
+                    "gpu_nic_locality": [{
+                        "gpu_uuid": gpu_uuid,
+                        "nic": nic,
                         "rdma_device": rdma_device,
-                        "port": 1,
+                        "rdma_port": 1,
                         "link_layer": "InfiniBand",
-                        "state": "ACTIVE",
-                        "physical_state": "LINK_UP",
-                        "bandwidth_gbps": 200,
-                        "latency_us": 4,
                     }],
+                    "rdma": {
+                        "devices": [{"device": rdma_device}],
+                        "links": [{
+                            "rdma_device": rdma_device,
+                            "port": 1,
+                            "link_layer": "InfiniBand",
+                            "state": "ACTIVE",
+                            "physical_state": "LINK_UP",
+                            "bandwidth_gbps": 200,
+                            "latency_us": 4,
+                        }],
+                    },
                 },
             },
             nodes=(NodeResource(
