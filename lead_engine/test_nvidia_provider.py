@@ -1,9 +1,10 @@
 import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
-from .compute_pool import ComputePool, WorkerIdentity
+from .compute_pool import ComputePool, WorkerIdentity, local_worker_identity
 from .compute_resources import GpuResource, ResourceState
 from .nvidia_provider import CommandResult, NvidiaDiscoveryError, NvidiaProvider
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
@@ -171,6 +172,16 @@ def test_nvidia_discovery_records_rdma_device_capability_separately_from_l3_netw
     assert network["rdma"]["links"][0]["pci_bus_id"] is not None
     assert "fabric_domains" in network
     assert network["fabric_domains"]["node-01"] == "10.10.20.0/24"
+
+
+def test_local_worker_identity_persists_discovered_nic_names(monkeypatch):
+    node = SimpleNamespace(gpus=(), driver_version=None, cuda_version=None, nic_names=("eth0", "ib0"))
+    snapshot = SimpleNamespace(nodes=(node,))
+    monkeypatch.setattr(NvidiaProvider, "discover", lambda self: snapshot)
+
+    identity = local_worker_identity("node-01")
+
+    assert identity.nic_names == ("eth0", "ib0")
 
 
 def test_nvidia_discovery_refuses_missing_uuid():
