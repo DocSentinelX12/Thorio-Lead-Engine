@@ -95,6 +95,8 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
                 },
                 "rdma_devices": ["mlx5_0"],
                 "verified_rdma_devices": ["mlx5_0"],
+                "hca_selections": [{"device": "mlx5_0", "port": 1, "transport": "IB"}],
+                "verified_hca_selections": [{"device": "mlx5_0", "port": 1, "transport": "IB"}],
                 "gpu_nic_locality": {
                     "gpu_uuid": binding["gpu_uuid"],
                     "nic": "eth0",
@@ -102,7 +104,9 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
                     "shared_pci_ancestor": "0000:40",
                     "source": "sysfs",
                     "rdma_device": "mlx5_0",
+                    "rdma_port": 1,
                     "rdma_pci_bus_id": "0000:41:00.0",
+                    "link_layer": "InfiniBand",
                 },
             }
             for binding in participant["gpu_bindings"]
