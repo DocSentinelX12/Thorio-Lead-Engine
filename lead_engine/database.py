@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from uuid import uuid4
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,8 +50,14 @@ class LeadDB:
             lease_until TEXT,
             worker_id TEXT,
             last_error TEXT,
-            result TEXT
+            result TEXT,
+            lease_token TEXT
         )""")
+        try:
+            self.conn.execute("ALTER TABLE agent_queue ADD COLUMN lease_token TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_lead_work (
@@ -338,7 +345,7 @@ class LeadDB:
         return value if isinstance(value, dict) else None
 
     def _queue_row_to_dict(self, row):
-        return {"task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3], "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6], "created_at": row[7], "updated_at": row[8], "attempts": row[9], "lease_until": row[10], "worker_id": row[11], "last_error": row[12], "result": json.loads(row[13]) if row[13] is not None else None}
+        return {"task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3], "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6], "created_at": row[7], "updated_at": row[8], "attempts": row[9], "lease_until": row[10], "worker_id": row[11], "last_error": row[12], "result": json.loads(row[13]) if row[13] is not None else None, "lease_token": row[14]}
 
     def queue_insert_many(self, rows):
         self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
@@ -353,7 +360,7 @@ class LeadDB:
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone()
 
     def queue_recover_stale(self, now_iso):
-        cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
+        cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, lease_token = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
         self.conn.commit()
         return cursor.rowcount > 0
 
@@ -374,7 +381,7 @@ class LeadDB:
             if not claimed_ids:
                 self.conn.commit()
                 return []
-            self.conn.executemany("UPDATE agent_queue SET status = 'running', worker_id = ?, lease_until = ?, attempts = attempts + 1, updated_at = ? WHERE task_id = ? AND status = 'queued'", [(worker_id, lease_until, now_iso, task_id) for task_id in claimed_ids])
+            self.conn.executemany("UPDATE agent_queue SET status = 'running', worker_id = ?, lease_until = ?, lease_token = ?, attempts = attempts + 1, updated_at = ? WHERE task_id = ? AND status = 'queued'", [(worker_id, lease_until, uuid4().hex, now_iso, task_id) for task_id in claimed_ids])
             claimed = [task_id for task_id in claimed_ids if self.conn.execute("SELECT worker_id, status FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone() == (worker_id, "running")]
             self.conn.commit()
             return [self.queue_get(task_id) for task_id in claimed]
@@ -383,7 +390,7 @@ class LeadDB:
             raise
 
     def queue_update(self, task_id, **updates):
-        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result"}
+        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result", "lease_token"}
         unknown = set(updates) - allowed
         if unknown:
             raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
