@@ -1721,7 +1721,7 @@ def test_verification_cannot_revive_retired_execution_generation(tmp_path: Path,
             )
             connection.execute(
                 "UPDATE compute_tasks SET status='queued',worker_id=NULL,attempt_id=NULL,"
-                "lease_token=NULL,lease_token_digest=NULL,lease_until=NULL WHERE task_id=? "
+                "lease_token=NULL,lease_until=NULL WHERE task_id=? "
                 "AND attempt_id=? AND status='leased'",
                 (task_id, attempt_id),
             )
