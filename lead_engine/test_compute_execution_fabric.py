@@ -489,6 +489,17 @@ def test_nvidia_runtime_launch_command_carries_rendezvous_identity():
     assert "10.0.0.5:29400" in command
 
 
+def test_nvidia_runtime_correlates_nccl_ib_transport_to_verified_rdma_device():
+    runtime = NvidiaRuntime()
+    evidence = runtime.validate_nccl_transport_against_rdma(
+        "node-a:1:1 [0] NCCL INFO NET/IB : Using [0]mlx5_0:1/IB\n",
+        {"devices": [{"device": "mlx5_0", "state": "ACTIVE", "physical_state": "LINK_UP"}]},
+    )
+    assert evidence["network_transport"] == "IB"
+    assert evidence["rdma_devices"] == ("mlx5_0",)
+    assert evidence["verified_rdma_devices"] == ("mlx5_0",)
+
+
 def test_nvidia_runtime_extracts_actual_network_transport_from_nccl_logs():
     runtime = NvidiaRuntime()
     evidence = runtime.parse_nccl_network_evidence(
