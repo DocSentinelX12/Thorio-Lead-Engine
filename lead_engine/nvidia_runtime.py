@@ -306,6 +306,135 @@ class NvidiaRuntime:
         }
 
     @staticmethod
+    def reconcile_distributed_network_paths(
+        process_evidence: Sequence[Mapping[str, object]],
+        *,
+        world_size: int,
+        nnodes: int,
+    ) -> dict[str, object]:
+        """Reconcile the complete set of verified per-rank network paths.
+
+        Each rank must have exactly one globally unique rank/GPU identity. For
+        multi-node execution, every rank must expose the same NCCL transport.
+        IB ranks must additionally carry an exact NCCL HCA/port selection,
+        matching verified selection, and GPU-to-NIC/RDMA locality. HCA device
+        names may legitimately differ between nodes; the invariant is that
+        each rank's selected path is independently verified and internally
+        consistent.
+        """
+        if world_size < 2:
+            raise ValueError("world_size must be at least 2")
+        if nnodes < 1:
+            raise ValueError("nnodes must be at least 1")
+        if not isinstance(process_evidence, Sequence) or isinstance(process_evidence, (str, bytes)):
+            raise NvidiaRuntimeError("distributed process evidence must be a sequence")
+        if len(process_evidence) != world_size:
+            raise NvidiaRuntimeError(
+                f"distributed network reconciliation received {len(process_evidence)} ranks; expected {world_size}"
+            )
+
+        rank_keys: set[tuple[int, str]] = set()
+        transports: set[str] = set()
+        paths: list[dict[str, object]] = []
+
+        for item in process_evidence:
+            if not isinstance(item, Mapping):
+                raise NvidiaRuntimeError("distributed process evidence contains a non-object")
+            try:
+                rank = int(item.get("rank", -1))
+            except (TypeError, ValueError):
+                raise NvidiaRuntimeError("distributed process evidence contains an invalid rank")
+            if not 0 <= rank < world_size:
+                raise NvidiaRuntimeError(f"distributed process evidence rank {rank} is outside world size")
+            gpu_binding = item.get("gpu_binding")
+            if not isinstance(gpu_binding, Mapping):
+                raise NvidiaRuntimeError(f"rank {rank} is missing its exact GPU binding")
+            gpu_uuid = str(gpu_binding.get("gpu_uuid") or "").strip()
+            if not gpu_uuid:
+                raise NvidiaRuntimeError(f"rank {rank} is missing its GPU UUID")
+            key = (rank, gpu_uuid)
+            if key in rank_keys or any(existing_rank == rank for existing_rank, _ in rank_keys):
+                raise NvidiaRuntimeError(f"duplicate distributed rank evidence: {rank}")
+            if any(existing_uuid == gpu_uuid for _, existing_uuid in rank_keys):
+                raise NvidiaRuntimeError(f"GPU UUID {gpu_uuid} is claimed by multiple distributed ranks")
+            rank_keys.add(key)
+
+            probe = item.get("probe")
+            if not isinstance(probe, Mapping):
+                raise NvidiaRuntimeError(f"rank {rank} is missing NCCL probe evidence")
+            if int(probe.get("rank", -1)) != rank or str(probe.get("gpu_uuid") or "").strip() != gpu_uuid:
+                raise NvidiaRuntimeError(f"rank {rank} NCCL probe does not match its allocated GPU identity")
+            if int(probe.get("world_size", -1)) != world_size:
+                raise NvidiaRuntimeError(f"rank {rank} NCCL probe world size does not match the launch contract")
+            transport = str(item.get("network_transport") or probe.get("network_transport") or "").strip().upper()
+            if nnodes > 1 and not transport:
+                raise NvidiaRuntimeError(f"rank {rank} has no verified NCCL network transport")
+            if transport:
+                transports.add(transport)
+
+            if transport == "IB":
+                selections = item.get("hca_selections")
+                verified_selections = item.get("verified_hca_selections")
+                rdma_devices = item.get("rdma_devices")
+                verified_devices = item.get("verified_rdma_devices")
+                locality = item.get("gpu_nic_locality")
+                if (
+                    not isinstance(selections, list)
+                    or not selections
+                    or not isinstance(verified_selections, list)
+                    or verified_selections != selections
+                    or not isinstance(rdma_devices, list)
+                    or not rdma_devices
+                    or not isinstance(verified_devices, list)
+                    or sorted(set(str(device).strip() for device in verified_devices)) != sorted(set(str(device).strip() for device in rdma_devices))
+                    or not isinstance(locality, Mapping)
+                ):
+                    raise NvidiaRuntimeError(f"rank {rank} has incomplete verified IB path evidence")
+                locality_device = str(locality.get("rdma_device") or "").strip()
+                locality_port = locality.get("rdma_port")
+                if not locality_device or not isinstance(locality_port, int):
+                    raise NvidiaRuntimeError(f"rank {rank} has incomplete GPU-to-RDMA locality evidence")
+                matching_selection = any(
+                    isinstance(selection, Mapping)
+                    and str(selection.get("device") or "").strip() == locality_device
+                    and selection.get("port") == locality_port
+                    and str(selection.get("transport") or "").strip().upper() == "IB"
+                    for selection in verified_selections
+                )
+                if not matching_selection:
+                    raise NvidiaRuntimeError(f"rank {rank} GPU locality does not match its NCCL-selected HCA port")
+                paths.append({
+                    "rank": rank,
+                    "gpu_uuid": gpu_uuid,
+                    "network_transport": transport,
+                    "hca_selections": [dict(selection) for selection in selections if isinstance(selection, Mapping)],
+                    "rdma_device": locality_device,
+                    "rdma_port": locality_port,
+                    "link_layer": locality.get("link_layer"),
+                })
+            else:
+                paths.append({
+                    "rank": rank,
+                    "gpu_uuid": gpu_uuid,
+                    "network_transport": transport or None,
+                })
+
+        if nnodes > 1 and len(transports) != 1:
+            raise NvidiaRuntimeError(
+                "distributed ranks selected inconsistent NCCL network transports: "
+                + ", ".join(sorted(transports))
+            )
+        if sorted(rank for rank, _ in rank_keys) != list(range(world_size)):
+            raise NvidiaRuntimeError("distributed network evidence does not cover every global rank")
+        return {
+            "verified": True,
+            "world_size": world_size,
+            "nnodes": nnodes,
+            "network_transport": next(iter(transports)) if len(transports) == 1 else None,
+            "rank_paths": sorted(paths, key=lambda item: int(item["rank"])),
+        }
+
+    @staticmethod
     def validate_distributed_probe_output(
         stdout: str,
         world_size: int,
