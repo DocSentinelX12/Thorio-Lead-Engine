@@ -136,6 +136,42 @@ supports-priv-flags: yes
     assert network["link_capabilities"]["eth0"]["link_detected"] is True
 
 
+def test_nvidia_discovery_records_rdma_device_capability_separately_from_l3_network():
+    rdma_devices = """[
+      {"ifname": "mlx5_0", "node_type": "RNIC", "node_guid": "0x0011223344556677", "sys_image_guid": "0x0011223344556688", "state": "ACTIVE", "physical_state": "LINK_UP"}
+    ]"""
+    rdma_links = """[
+      {"ifname": "mlx5_0", "state": "ACTIVE", "physical_state": "LINK_UP", "netdev": "eth0"}
+    ]"""
+    network_addresses = """[
+      {"ifname": "eth0", "operstate": "UP", "mtu": 9000, "address": "aa:bb:cc:dd:ee:ff", "addr_info": [{"family": "inet", "local": "10.10.20.15", "prefixlen": 24, "scope": "global"}]}
+    ]"""
+
+    def runner(args, timeout):
+        args = tuple(args)
+        if args[:4] == ("rdma", "-j", "dev", "show"):
+            return CommandResult(0, rdma_devices, "")
+        if args[:4] == ("rdma", "-j", "link", "show"):
+            return CommandResult(0, rdma_links, "")
+        if args[0] == "ip":
+            return CommandResult(0, network_addresses, "")
+        return fake_runner(args, timeout)
+
+    snapshot = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=runner, now=lambda: 1234.5).discover()
+    network = snapshot.evidence["network"]
+    assert network["rdma"]["source"] == "rdma-core"
+    assert network["rdma"]["devices"][0]["device"] == "mlx5_0"
+    assert network["rdma"]["devices"][0]["state"] == "ACTIVE"
+    assert network["rdma"]["devices"][0]["physical_state"] == "LINK_UP"
+    assert network["rdma"]["links"][0]["netdev"] == "eth0"
+    assert network["rdma"]["links"][0]["state"] == "ACTIVE"
+    assert network["rdma"]["links"][0]["physical_state"] == "LINK_UP"
+    assert network["rdma"]["links"][0]["rdma_device"] == "mlx5_0"
+    assert network["rdma"]["links"][0]["pci_bus_id"] is not None
+    assert "fabric_domains" in network
+    assert network["fabric_domains"]["node-01"] == "10.10.20.0/24"
+
+
 def test_nvidia_discovery_refuses_missing_uuid():
     def runner(args, timeout):
         if "--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id" in args:
