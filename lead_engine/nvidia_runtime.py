@@ -181,6 +181,17 @@ class NvidiaRuntime:
                 matching_links = [link for link in links if isinstance(link, Mapping) and str(link.get("rdma_device") or "").strip() == device and int(link.get("port") or -1) == port]
                 if not matching_links:
                     raise NvidiaRuntimeError(f"RDMA port {device}:{port} selected by NCCL is not present in verified RDMA link evidence")
+                if not any(
+                    str(link.get("state") or "").strip().upper() == "ACTIVE"
+                    and str(link.get("physical_state") or "").strip().upper() in {"LINK_UP", "LINK_ACTIVE"}
+                    for link in matching_links
+                ):
+                    raise NvidiaRuntimeError(f"RDMA port {device}:{port} is not active in verified physical link evidence")
+                matching_links = [
+                    link for link in matching_links
+                    if str(link.get("state") or "").strip().upper() == "ACTIVE"
+                    and str(link.get("physical_state") or "").strip().upper() in {"LINK_UP", "LINK_ACTIVE"}
+                ]
                 for link in matching_links:
                     verified_links.append({"rdma_device": device, "port": port, "netdev": link.get("netdev"), "pci_bus_id": link.get("pci_bus_id"), "state": link.get("state"), "physical_state": link.get("physical_state"), "link_layer": link.get("link_layer"), "gids": list(link.get("gids") or ())})
                 verified_selections.append(dict(selection))
