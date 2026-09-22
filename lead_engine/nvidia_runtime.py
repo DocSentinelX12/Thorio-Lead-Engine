@@ -87,6 +87,47 @@ class NvidiaRuntime:
             "evidence_source": ("nvidia-smi", "nvcc", "ldconfig"),
         }
 
+    def verify_gpu_bindings(self, gpu_bindings: Sequence[Mapping[str, object]]) -> dict[str, object]:
+        """Verify every allocated GPU index still maps to its durable UUID."""
+        if not gpu_bindings:
+            raise NvidiaRuntimeError("at least one GPU binding is required")
+        nvidia_smi = self._required_command("nvidia-smi")
+        rc, stdout, stderr = self._run((
+            nvidia_smi,
+            "--query-gpu=index,uuid",
+            "--format=csv,noheader,nounits",
+        ))
+        if rc != 0:
+            raise NvidiaRuntimeError(
+                f"nvidia-smi GPU identity verification failed: {(stderr or stdout).strip()[:1000]}"
+            )
+        observed = {}
+        for line in stdout.splitlines():
+            parts = [part.strip() for part in line.split(",", 1)]
+            if len(parts) != 2 or not parts[0] or not parts[1]:
+                continue
+            observed[parts[0]] = parts[1]
+        expected = {}
+        for binding in gpu_bindings:
+            gpu_id = str(binding.get("gpu_id") or "").strip()
+            gpu_uuid = str(binding.get("gpu_uuid") or "").strip()
+            device_id = gpu_id if gpu_id.isdigit() else gpu_id.removeprefix("gpu-")
+            if not device_id.isdigit() or not gpu_uuid:
+                raise NvidiaRuntimeError(f"invalid allocated GPU identity: {gpu_id}/{gpu_uuid}")
+            if device_id in expected:
+                raise NvidiaRuntimeError(f"duplicate allocated NVIDIA device index: {device_id}")
+            expected[device_id] = gpu_uuid
+        mismatches = [
+            f"{gpu_id}: expected {gpu_uuid}, observed {observed.get(gpu_id, '<missing>')}"
+            for gpu_id, gpu_uuid in expected.items()
+            if observed.get(gpu_id) != gpu_uuid
+        ]
+        if mismatches:
+            raise NvidiaRuntimeError(
+                "allocated NVIDIA GPU identity verification failed: " + "; ".join(mismatches)
+            )
+        return {"verified": True, "gpu_bindings": [dict(binding) for binding in gpu_bindings]}
+
     def distributed_command(
         self,
         *,
