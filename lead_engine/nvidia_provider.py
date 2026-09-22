@@ -120,6 +120,11 @@ class NvidiaProvider(ComputeProvider):
                 "pci_bus_id": item.get("pci_bus_id") or self._rdma_pci_bus_id(device),
             })
         normalized_devices.sort(key=lambda item: str(item["device"]))
+        pci_by_device = {
+            str(item["device"]): item.get("pci_bus_id")
+            for item in normalized_devices
+            if item.get("pci_bus_id")
+        }
         normalized_links: list[dict[str, object]] = []
         for item in links:
             if not isinstance(item, dict):
@@ -142,6 +147,7 @@ class NvidiaProvider(ComputeProvider):
             normalized_links.append({
                 "rdma_device": device,
                 "netdev": item.get("netdev"),
+                "pci_bus_id": pci_by_device.get(device),
                 "state": item.get("state"),
                 "physical_state": item.get("physical_state"),
             })
