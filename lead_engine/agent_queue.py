@@ -26,8 +26,8 @@ def _iso(value: datetime) -> str:
 def _row_to_task(row) -> Dict[str, Any]:
     if row is None:
         return None
-    (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) = row
-    return {"task_id": task_id, "agent": agent, "queue": queue, "status": status, "priority": int(priority), "payload": json.loads(payload) if isinstance(payload, str) else dict(payload or {}), "dedupe_key": dedupe_key, "created_at": created_at, "updated_at": updated_at, "attempts": int(attempts), "lease_until": lease_until, "worker_id": worker_id, "last_error": last_error, "result": json.loads(result) if isinstance(result, str) and result else None}
+    (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) = row
+    return {"task_id": task_id, "agent": agent, "queue": queue, "status": status, "priority": int(priority), "payload": json.loads(payload) if isinstance(payload, str) else dict(payload or {}), "dedupe_key": dedupe_key, "created_at": created_at, "updated_at": updated_at, "attempts": int(attempts), "lease_until": lease_until, "worker_id": worker_id, "last_error": last_error, "result": json.loads(result) if isinstance(result, str) and result else None, "lease_token": row[14]}
 
 
 def _load(db) -> Dict[str, Any]:
@@ -183,12 +183,12 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
     return claimed
 
 
-def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) -> Dict[str, Any]:
+def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300, lease_token: str | None = None) -> Dict[str, Any]:
     if lease_seconds <= 0: raise ValueError("lease_seconds must be positive")
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
-        if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
+        if task.get("status") != RUNNING or task.get("worker_id") != worker_id or (lease_token is not None and task.get("lease_token") != lease_token): raise ValueError("Task is not leased to this worker")
         now = _now(); db.queue_update(task_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now)); return _row_to_task(db.queue_get(task_id))
     state = _load(db); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
@@ -196,11 +196,11 @@ def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) -> 
     now = _now(); task["lease_until"] = _iso(now + timedelta(seconds=lease_seconds)); task["updated_at"] = _iso(now); _save(db, state); return dict(task)
 
 
-def complete(db, task_id: str, *, worker_id: str, result: Dict[str, Any] | None = None) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, status=COMPLETE, result=result, error=None)
+def complete(db, task_id: str, *, worker_id: str, lease_token: str | None = None, result: Dict[str, Any] | None = None) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, lease_token=lease_token, status=COMPLETE, result=result, error=None)
 
-def fail(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, status=FAILED, result=None, error=error)
+def fail(db, task_id: str, *, worker_id: str, lease_token: str | None = None, error: str) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, lease_token=lease_token, status=FAILED, result=None, error=error)
 
-def retry(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]:
+def retry(db, task_id: str, *, worker_id: str, lease_token: str | None = None, error: str) -> Dict[str, Any]:
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
@@ -212,7 +212,7 @@ def retry(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]:
     task["status"] = QUEUED; task["last_error"] = error; task["worker_id"] = None; task["lease_until"] = None; task["updated_at"] = _iso(_now()); _save(db, state); return dict(task)
 
 
-def _finish(db, task_id: str, *, worker_id: str, status: str, result: Dict[str, Any] | None, error: str | None) -> Dict[str, Any]:
+def _finish(db, task_id: str, *, worker_id: str, lease_token: str | None, status: str, result: Dict[str, Any] | None, error: str | None) -> Dict[str, Any]:
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
