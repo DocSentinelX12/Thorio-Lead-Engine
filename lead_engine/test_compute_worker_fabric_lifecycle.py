@@ -92,9 +92,9 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
                     "rank": binding["rank"],
                     "gpu_uuid": binding["gpu_uuid"],
                     "network_transport": "IB",
+                },
                 "rdma_devices": ["mlx5_0"],
                 "verified_rdma_devices": ["mlx5_0"],
-                },
             }
             for binding in participant["gpu_bindings"]
         ],
