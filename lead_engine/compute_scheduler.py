@@ -90,7 +90,7 @@ class ComputeScheduler:
         topology_domain = payload.get("topology_domain")
         if topology_domain:
             return f"topology:{topology_domain}"
-        return f"isolated:{gpu["resource_key"]}"
+        return f'isolated:{gpu["resource_key"]}'
 
     @classmethod
     def _rank_gpus_for_placement(cls, gpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
