@@ -139,6 +139,18 @@ class ComputeScheduler:
             nodes.setdefault(str(row["node_id"]), []).append(row)
         return nodes
 
+    @staticmethod
+    def _verified_network_fabric_domain(candidate: dict[str, Any]) -> str | None:
+        evidence = json.loads(candidate["cpu"]["evidence_json"])
+        network = evidence.get("network")
+        if not isinstance(network, dict) or not network.get("source"):
+            return None
+        fabric_domains = network.get("fabric_domains")
+        if not isinstance(fabric_domains, dict):
+            return None
+        value = fabric_domains.get(str(candidate["node_id"]))
+        return str(value).strip() if value is not None and str(value).strip() else None
+
     def _candidates(self, requirements: ComputeRequirements) -> list[dict[str, Any]]:
         rows = self.inventory.eligible()
         grouped = self._node_from_rows(rows)
@@ -207,10 +219,29 @@ class ComputeScheduler:
                 reverse=True,
             )
             for (_provider_id, _domain_id), group in ranked_groups:
+                network_groups: dict[str | None, list[dict[str, Any]]] = {}
+                for candidate in group:
+                    network_groups.setdefault(self._verified_network_fabric_domain(candidate), []).append(candidate)
+                network_group_options = [
+                    (fabric, members)
+                    for fabric, members in network_groups.items()
+                    if fabric is not None and len(members) >= 2
+                ]
+                if network_group_options:
+                    network_group_options.sort(
+                        key=lambda item: (
+                            -sum(len(candidate["gpus"]) for candidate in item[1]),
+                            -sum(self._node_topology_score(candidate)[0] for candidate in item[1]),
+                            tuple(sorted(candidate["node_id"] for candidate in item[1])),
+                        )
+                    )
+                    candidate_pool = network_group_options[0][1]
+                else:
+                    candidate_pool = group
                 group_selected: list[dict[str, Any]] = []
                 total = 0
                 ranked_group = sorted(
-                    group,
+                    candidate_pool,
                     key=lambda candidate: (
                         -self._node_topology_score(candidate)[0],
                         -self._node_topology_score(candidate)[1],
