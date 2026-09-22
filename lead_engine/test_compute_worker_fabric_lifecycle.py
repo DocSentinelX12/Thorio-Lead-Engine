@@ -358,6 +358,51 @@ def test_execution_verification_rejects_gpu_identity_not_in_launch_contract(tmp_
     ) is False
 
 
+def test_fabric_launch_plan_rejects_inactive_execution_attempt(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    attempt_id = claimed["attempt_id"]
+    lease_token = claimed["lease_token"]
+
+    coordinator.fabric_launch_plan_for_worker(
+        attempt_id=attempt_id,
+        generation=claimed["generation"],
+        worker_id="worker-1",
+        lease_token=lease_token,
+        rendezvous_endpoint="10.0.0.5:29400",
+    )
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_execution_attempts SET status='completed',authoritative_acceptance='accepted' WHERE attempt_id=?",
+            (attempt_id,),
+        )
+        connection.commit()
+
+    try:
+        coordinator.fabric_launch_plan(attempt_id, "10.0.0.5:29400")
+    except ValueError as error:
+        assert str(error) == "execution attempt lease is not active"
+    else:
+        raise AssertionError("launch planning accepted a completed execution attempt")
+
+
 def test_fabric_convergence_requires_every_participant_and_is_idempotent(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
