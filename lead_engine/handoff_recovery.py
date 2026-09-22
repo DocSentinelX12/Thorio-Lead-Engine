@@ -61,6 +61,35 @@ def recover_processing_handoffs(db: Any, *, limit: int = 500) -> Dict[str, Any]:
                 recovered.append({"fingerprint": fingerprint, "agent": "outreach_closer"})
             continue
 
+        routing_state = str(lead.get("routing_state") or "").strip().lower()
+        if routing_state == "routed":
+            if not _queued_or_running(db, "airtable_integrity", fingerprint):
+                enqueue(
+                    db,
+                    "airtable_integrity",
+                    {
+                        "lead": dict(lead),
+                        "routing_result": dict(lead.get("routing_result") or {}),
+                    },
+                    priority=6,
+                    dedupe_key=f"airtable_integrity:{fingerprint}",
+                )
+                recovered.append({"fingerprint": fingerprint, "agent": "airtable_integrity"})
+            continue
+
+        verification_state = str(lead.get("verification_state") or "").strip().lower()
+        if verification_state == "verified":
+            if not _queued_or_running(db, "routing", fingerprint):
+                enqueue(
+                    db,
+                    "routing",
+                    {"lead": dict(lead), "verified": True},
+                    priority=7,
+                    dedupe_key=f"routing:{fingerprint}",
+                )
+                recovered.append({"fingerprint": fingerprint, "agent": "routing"})
+            continue
+
         if stage == "primary":
             if not _queued_or_running(db, "qualification_b", fingerprint):
                 enqueue(
