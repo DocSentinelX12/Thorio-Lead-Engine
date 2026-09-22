@@ -5,6 +5,7 @@ deliberately separate from the authoritative Thorio work queue.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -66,6 +67,25 @@ class ComputeInventory:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_inventory_state "
                 "ON compute_resource_inventory(state)"
+            )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_path_health (
+                path_key TEXT PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                gpu_uuid TEXT NOT NULL,
+                nic TEXT NOT NULL,
+                rdma_device TEXT NOT NULL,
+                rdma_port INTEGER NOT NULL,
+                link_layer TEXT NOT NULL,
+                state TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                first_quarantined_at REAL NOT NULL,
+                last_updated_at REAL NOT NULL,
+                cleared_at REAL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_fabric_path_health_identity "
+                "ON compute_fabric_path_health(node_id,gpu_uuid,rdma_device,rdma_port)"
             )
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_allocations (
                 allocation_id TEXT PRIMARY KEY,
@@ -184,6 +204,68 @@ class ComputeInventory:
                 (ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value, "authenticated", current),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    @staticmethod
+    def fabric_path_key(path: dict[str, Any]) -> str:
+        required = ("node_id", "gpu_uuid", "nic", "rdma_device", "rdma_port", "link_layer")
+        values = {name: path.get(name) for name in required}
+        if any(values[name] in (None, "") for name in required):
+            raise ValueError("fabric path identity is incomplete")
+        if not isinstance(values["rdma_port"], int) or values["rdma_port"] < 1:
+            raise ValueError("fabric path rdma_port must be a positive integer")
+        canonical = json.dumps(values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def quarantine_fabric_path(self, path: dict[str, Any], *, reason: str, evidence: dict[str, Any] | None = None) -> str:
+        path_key = self.fabric_path_key(path)
+        now = time.time()
+        identity = {name: path[name] for name in ("node_id", "gpu_uuid", "nic", "rdma_device", "rdma_port", "link_layer")}
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO compute_fabric_path_health
+                   (path_key,node_id,gpu_uuid,nic,rdma_device,rdma_port,link_layer,state,reason,evidence_json,first_quarantined_at,last_updated_at,cleared_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+                   ON CONFLICT(path_key) DO UPDATE SET
+                     state='quarantined',reason=excluded.reason,evidence_json=excluded.evidence_json,
+                     last_updated_at=excluded.last_updated_at,cleared_at=NULL""",
+                (
+                    path_key, identity["node_id"], identity["gpu_uuid"], identity["nic"],
+                    identity["rdma_device"], identity["rdma_port"], identity["link_layer"],
+                    ResourceState.QUARANTINED.value, str(reason)[:4000],
+                    json.dumps(dict(evidence or {}), ensure_ascii=False, sort_keys=True), now, now,
+                ),
+            )
+            connection.commit()
+        return path_key
+
+    def quarantined_fabric_paths(self, *, node_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM compute_fabric_path_health WHERE state=?"
+        args: list[Any] = [ResourceState.QUARANTINED.value]
+        if node_id is not None:
+            query += " AND node_id=?"
+            args.append(node_id)
+        query += " ORDER BY node_id,gpu_uuid,nic,rdma_device,rdma_port"
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(query, tuple(args)).fetchall()]
+
+    def is_fabric_path_quarantined(self, path: dict[str, Any]) -> bool:
+        path_key = self.fabric_path_key(path)
+        with self._connect() as connection:
+            row = connection.execute("SELECT state FROM compute_fabric_path_health WHERE path_key=?", (path_key,)).fetchone()
+        return bool(row and row["state"] == ResourceState.QUARANTINED.value)
+
+    def revalidate_fabric_path(self, path: dict[str, Any], *, verification: dict[str, Any]) -> bool:
+        if verification.get("verified") is not True:
+            raise ValueError("path quarantine can only be cleared by verified evidence")
+        path_key = self.fabric_path_key(path)
+        now = time.time()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE compute_fabric_path_health SET state=?,last_updated_at=?,cleared_at=? WHERE path_key=? AND state=?",
+                (ResourceState.AVAILABLE.value, now, now, path_key, ResourceState.QUARANTINED.value),
+            )
+            connection.commit()
+            return cursor.rowcount == 1
 
     def get(self, resource_key: str) -> dict[str, Any] | None:
         with self._connect() as connection:
