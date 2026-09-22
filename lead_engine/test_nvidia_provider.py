@@ -138,7 +138,7 @@ supports-priv-flags: yes
 
 def test_nvidia_discovery_records_rdma_device_capability_separately_from_l3_network():
     rdma_devices = """[
-      {"ifname": "mlx5_0", "node_type": "RNIC", "node_guid": "0x0011223344556677", "sys_image_guid": "0x0011223344556688", "state": "ACTIVE", "physical_state": "LINK_UP"}
+      {"ifname": "mlx5_0", "node_type": "RNIC", "node_guid": "0x0011223344556677", "sys_image_guid": "0x0011223344556688", "state": "ACTIVE", "physical_state": "LINK_UP", "pci_bus_id": "0000:41:00.0"}
     ]"""
     rdma_links = """[
       {"ifname": "mlx5_0", "state": "ACTIVE", "physical_state": "LINK_UP", "netdev": "eth0"}
