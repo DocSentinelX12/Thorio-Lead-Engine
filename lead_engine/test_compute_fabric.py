@@ -129,14 +129,14 @@ def test_allocate_and_release_remain_scheduler_authority():
         fabric = ComputeFabricOrchestrator(inventory, registry=registry)
         fabric.refresh()
 
-        requirements = __import__("lead_engine.compute_resources", fromlist=["ComputeRequirements"]).ComputeRequirements(
-            workload_class=__import__("lead_engine.compute_resources", fromlist=["WorkloadClass"]).WorkloadClass.GPU_REQUIRED,
+        requirements = ComputeRequirements(
+            workload_class=WorkloadClass.GPU_REQUIRED,
             gpu=GpuRequirements(gpu_count=1),
         )
         allocation = fabric.allocate(requirements, allocation_id="alloc-1")
 
-        assert allocation.resource_ids == ("node-1/0",)
-        assert fabric.release(allocation.resource_keys) == 1
+        assert allocation.resource_ids == ("node-1/cpu", "node-1/0")
+        assert fabric.release(allocation.resource_keys) == 2
 
 
 def test_coordinator_exposes_fabric_control_plane_without_replacing_scheduler():
