@@ -1152,6 +1152,34 @@ class ComputeCoordinator:
                 self.reconcile_fabric(participant_timeout_seconds=0.000001)
             return changed
 
+    def _quarantine_allocation_gpu_for_path_failure(
+        self,
+        allocation_id: str,
+        gpu_uuid: str,
+        *,
+        reason: str,
+        evidence: dict[str, Any],
+    ) -> None:
+        allocation = self.inventory.allocation(allocation_id)
+        if not allocation:
+            return
+        for resource_key in allocation["resource_keys"]:
+            resource = self.inventory.get(str(resource_key))
+            if not resource or resource.get("resource_type") != "gpu":
+                continue
+            try:
+                payload = json.loads(resource.get("payload_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if str(payload.get("gpu_uuid") or "").strip() != gpu_uuid:
+                continue
+            self.inventory.quarantine_resource(
+                str(resource_key),
+                reason=reason,
+                evidence=evidence,
+            )
+            return
+
     def record_execution_verification(
         self, *, attempt_id: str, generation: int, worker_id: str,
         lease_token: str, verification: Dict[str, Any],
@@ -1288,6 +1316,36 @@ class ComputeCoordinator:
                         for selection in verified_hca_selections
                         if isinstance(selection, dict)
                     ):
+                        return False
+                planned_path = gpu_binding.get("planned_physical_path")
+                if isinstance(planned_path, dict) and (
+                    int(launch["nnodes"]) > 1
+                    and str(item.get("network_transport") or probe.get("network_transport") or "").strip().upper() == "IB"
+                ):
+                    try:
+                        NvidiaRuntime.reconcile_planned_physical_path(
+                            planned_path,
+                            {
+                                "gpu_nic_locality": item.get("gpu_nic_locality"),
+                                "verified_hca_selections": item.get("verified_hca_selections"),
+                            },
+                        )
+                    except NvidiaRuntimeError as error:
+                        gpu_uuid_for_quarantine = str(gpu_binding.get("gpu_uuid") or "").strip()
+                        self._quarantine_allocation_gpu_for_path_failure(
+                            str(row["allocation_id"]),
+                            gpu_uuid_for_quarantine,
+                            reason=f"distributed physical path reconciliation failed: {error}",
+                            evidence={
+                                "failure_class": "planned_actual_physical_path_mismatch",
+                                "attempt_id": attempt_id,
+                                "worker_id": worker_id,
+                                "gpu_uuid": gpu_uuid_for_quarantine,
+                                "planned_physical_path": planned_path,
+                                "actual_gpu_nic_locality": item.get("gpu_nic_locality"),
+                                "verified_hca_selections": item.get("verified_hca_selections"),
+                            },
+                        )
                         return False
                 gpu_uuid = str(gpu_binding.get("gpu_uuid") or "").strip()
                 key = (rank, gpu_uuid)
