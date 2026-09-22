@@ -38,7 +38,7 @@ def snapshot(*, provider_id="provider-a", domain_id="domain-a", expires_at=None)
     )
     return ProviderResourceSnapshot(
         provider_id=provider_id, domain_id=domain_id, observed_at=time.time(),
-        nodes=(NodeResource("node-1", "x86_64", CpuResource("node-1", 16, 128 * 1024**3), (gpu,)),),
+        nodes=(NodeResource("node-1", "x86_64", CpuResource("node-1", 16, 128 * 1024**3), (gpu,), state=ResourceState.AVAILABLE),),
         expires_at=expires_at, evidence={"source": "provider-test"},
     )
 
