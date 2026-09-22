@@ -7,6 +7,7 @@ from typing import Any, Dict, Mapping
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim_task, complete, enqueue, pending, retry
 from .compute_worker import ComputeWorkerClient, ComputeWorkerError
+from .compute_lead_persistence import lead_compute_once
 
 # Only stateless agents whose worker implementation actually executes them may
 # cross the remote boundary. Stateful specialists stay on the authoritative
@@ -130,7 +131,10 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
     return {"completed_count": len(completed), "retried_count": len(retried), "completed": completed, "retried": retried}
 
 
-def bridge_once(db: Any, client: ComputeWorkerClient, *, publish_limit: int = 20, reconcile_limit: int = 50) -> Dict[str, Any]:
+def bridge_once(db: Any, client: ComputeWorkerClient, *, publish_limit: int = 20, reconcile_limit: int = 50, include_lead_compute: bool = False) -> Dict[str, Any]:
     reconciled = reconcile_remote_work(db, client, limit=reconcile_limit)
     published = publish_remote_work(db, client, limit=publish_limit)
-    return {"status": "ok", "completed_count": reconciled["completed_count"], "retried_count": reconciled["retried_count"], "published_count": published["published_count"], "reconciled": reconciled, "published": published}
+    result = {"status": "ok", "completed_count": reconciled["completed_count"], "retried_count": reconciled["retried_count"], "published_count": published["published_count"], "reconciled": reconciled, "published": published}
+    if include_lead_compute:
+        result["lead_compute"] = lead_compute_once(db, client, dispatch_limit=publish_limit, reconcile_limit=reconcile_limit)
+    return result
