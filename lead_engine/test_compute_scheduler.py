@@ -635,3 +635,60 @@ def test_expired_resource_cannot_be_reserved_from_a_stale_candidate_snapshot(tmp
             ("provider-a/domain-a/node-a/gpu/u0",),
         )
     assert row["state"] == ResourceState.AVAILABLE.value
+
+
+def test_scheduler_prefers_verified_physical_gpu_nic_rdma_path(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a",
+        domain_id="domain-a",
+        observed_at=time.time(),
+        nodes=(_node("node-a", [
+            _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="shared", numa_node=0),
+            _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="shared", numa_node=0),
+        ]),),
+        authentication_state="authenticated",
+        evidence={
+            "topology": {"source": "nvidia-smi topo -m"},
+            "network": {
+                "source": "iproute2",
+                "gpu_nic_locality": [
+                    {
+                        "gpu_uuid": "u1",
+                        "gpu_pci_bus_id": "0000:17:00.0",
+                        "nic": "eth1",
+                        "nic_pci_bus_id": "0000:41:00.0",
+                        "same_numa_node": True,
+                        "shared_pci_ancestor": "0000:40:00.0",
+                        "rdma_device": "mlx5_1",
+                        "rdma_port": 1,
+                        "link_layer": "InfiniBand",
+                        "rdma_pci_bus_id": "0000:41:00.0",
+                        "source": "sysfs",
+                    },
+                ],
+                "rdma": {
+                    "devices": [{"device": "mlx5_1"}],
+                    "links": [{
+                        "rdma_device": "mlx5_1",
+                        "port": 1,
+                        "netdev": "eth1",
+                        "pci_bus_id": "0000:41:00.0",
+                        "state": "ACTIVE",
+                        "physical_state": "LINK_UP",
+                        "link_layer": "InfiniBand",
+                    }],
+                },
+            },
+        },
+    ))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+        "allocation-physical-path",
+    )
+    assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-1")
+    evidence = next(item for item in allocation.capability_evidence if item.get("gpu_uuid") == "u1")
+    path = evidence["placement_decision"]["gpu_nic_locality"][0]
+    assert path["rdma_device"] == "mlx5_1"
+    assert path["rdma_port"] == 1
+    assert path["link_layer"] == "InfiniBand"
