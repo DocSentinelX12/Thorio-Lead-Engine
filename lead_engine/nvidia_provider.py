@@ -81,6 +81,78 @@ class NvidiaProvider(ComputeProvider):
             pass
         return None
 
+    @staticmethod
+    def _pci_hierarchy(pci_bus_id: str) -> tuple[str, ...]:
+        normalized = pci_bus_id.strip().lower()
+        if not normalized:
+            return ()
+        device = Path("/sys/bus/pci/devices") / normalized
+        try:
+            resolved = device.resolve()
+        except OSError:
+            return ()
+        hierarchy: list[str] = []
+        current = resolved
+        while current != current.parent:
+            name = current.name.lower()
+            if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-7]", name):
+                hierarchy.append(name)
+            current = current.parent
+        return tuple(hierarchy)
+
+    @classmethod
+    def _pci_common_ancestor(cls, left_pci: str, right_pci: str) -> str | None:
+        left = cls._pci_hierarchy(left_pci)
+        right = cls._pci_hierarchy(right_pci)
+        if not left or not right:
+            return None
+        right_set = set(right)
+        return next((component for component in left if component in right_set), None)
+
+    @staticmethod
+    def _pci_numa_node(pci_bus_id: str) -> int | None:
+        normalized = pci_bus_id.strip().lower()
+        if not normalized:
+            return None
+        try:
+            value = int((Path("/sys/bus/pci/devices") / normalized / "numa_node").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        return value if value >= 0 else None
+
+    @classmethod
+    def _correlate_gpu_nic_locality(cls, gpus: Sequence[GpuResource], network: Mapping[str, object]) -> list[dict[str, object]]:
+        link_capabilities = network.get("link_capabilities")
+        if not isinstance(link_capabilities, Mapping):
+            return []
+        correlations: list[dict[str, object]] = []
+        for gpu in gpus:
+            if not gpu.pci_bus_id:
+                continue
+            gpu_numa = gpu.numa_node
+            for nic, raw in sorted(link_capabilities.items(), key=lambda item: str(item[0])):
+                if not isinstance(raw, Mapping):
+                    continue
+                nic_pci = str(raw.get("bus_info") or "").strip()
+                if not nic_pci:
+                    continue
+                common_ancestor = cls._pci_common_ancestor(gpu.pci_bus_id, nic_pci)
+                nic_numa = cls._pci_numa_node(nic_pci)
+                if common_ancestor is None and gpu_numa is None and nic_numa is None:
+                    continue
+                correlations.append({
+                    "gpu_uuid": gpu.gpu_uuid,
+                    "gpu_pci_bus_id": gpu.pci_bus_id,
+                    "nic": str(nic),
+                    "nic_pci_bus_id": nic_pci,
+                    "gpu_numa_node": gpu_numa,
+                    "nic_numa_node": nic_numa,
+                    "same_numa_node": gpu_numa is not None and nic_numa is not None and gpu_numa == nic_numa,
+                    "shared_pci_ancestor": common_ancestor,
+                    "source": "sysfs",
+                })
+        return correlations
+
     def _discover_rdma(self) -> dict[str, object]:
         evidence: dict[str, object] = {
             "source": "rdma-core",
@@ -519,6 +591,7 @@ class NvidiaProvider(ComputeProvider):
         network_evidence = self._discover_network()
         if isinstance(network_evidence, dict):
             network_evidence["rdma"] = self._discover_rdma()
+            network_evidence["gpu_nic_locality"] = self._correlate_gpu_nic_locality(gpus, network_evidence)
 
         toolkit_version = None
         nvcc = shutil.which(os.environ.get("THORIO_NVCC", "nvcc"))
