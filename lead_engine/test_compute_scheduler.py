@@ -170,6 +170,30 @@ def test_topology_domain_is_enforced(tmp_path):
     assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-1")
 
 
+def test_multi_node_prefers_connected_capacity_and_minimizes_distribution(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([
+        _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua")]),
+        _node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="ub")]),
+        _node("node-z", [
+            _ready_gpu("node-z", "gpu-0", gpu_uuid="uz0", topology_domain="connected-z"),
+            _ready_gpu("node-z", "gpu-1", gpu_uuid="uz1", topology_domain="connected-z"),
+        ]),
+    ]))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(
+            WorkloadClass.MULTI_NODE_GPU,
+            GpuRequirements(gpu_count=3, require_nccl=True),
+            same_node=False,
+        ),
+        "allocation-distribution",
+    )
+    assert set(allocation.node_ids) == {"node-z", "node-a"}
+    assert {resource for resource in allocation.resource_ids if "/gpu-" in resource} == {
+        "node-z/gpu-0", "node-z/gpu-1", "node-a/gpu-0",
+    }
+
+
 def test_multi_node_request_spans_nodes(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([
