@@ -299,7 +299,13 @@ class NvidiaProvider(ComputeProvider):
         if topology:
             try:
                 structured_topology = self._parse_topology_matrix(topology, gpus)
-                gpus = self._apply_topology_domains(gpus, structured_topology)
+                gpus = [GpuResource(
+                node_id=g.node_id, gpu_id=g.gpu_id, gpu_uuid=g.gpu_uuid, model=g.model, vram_bytes=g.vram_bytes,
+                compute_capability=g.compute_capability, driver_version=g.driver_version, cuda_version=g.cuda_version,
+                pci_bus_id=g.pci_bus_id, numa_node=g.numa_node, nvlink_domain=g.nvlink_domain,
+                topology_domain=g.topology_domain, topology_source="nvidia-smi topo -m",
+                health_state=g.health_state, availability_state=g.availability_state,
+            ) for g in self._apply_topology_domains(gpus, structured_topology)]
             except NvidiaDiscoveryError as exc:
                 topology_parse_error = str(exc)
 
@@ -319,7 +325,8 @@ class NvidiaProvider(ComputeProvider):
                 node_id=g.node_id, gpu_id=g.gpu_id, gpu_uuid=g.gpu_uuid, model=g.model, vram_bytes=g.vram_bytes,
                 compute_capability=g.compute_capability, driver_version=g.driver_version, cuda_version=toolkit_version,
                 pci_bus_id=g.pci_bus_id, numa_node=g.numa_node, nvlink_domain=g.nvlink_domain,
-                topology_domain=g.topology_domain, health_state=g.health_state, availability_state=g.availability_state,
+                topology_domain=g.topology_domain, topology_source=g.topology_source, health_state=g.health_state,
+                availability_state=g.availability_state,
             ) for g in gpus]
 
         evidence: Mapping[str, object] = {
