@@ -503,6 +503,8 @@ def run_fabric_verification(
                 "network_evidence_lines": list(probe.get("network_evidence_lines") or ()),
                 "rdma_devices": list(path_evidence.get("rdma_devices") or ()),
                 "verified_rdma_devices": list(path_evidence.get("verified_rdma_devices") or ()),
+                "hca_selections": list(path_evidence.get("hca_selections") or ()),
+                "verified_hca_selections": list(path_evidence.get("verified_hca_selections") or ()),
                 "gpu_nic_locality": path_evidence.get("gpu_nic_locality"),
                 "stdout": stdout[-4000:],
             })
