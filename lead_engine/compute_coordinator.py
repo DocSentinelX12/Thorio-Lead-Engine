@@ -1735,10 +1735,11 @@ class ComputeCoordinator:
                 for attempt_row in rows:
                     attempt = dict(attempt_row)
                     participants = connection.execute(
-                        """SELECT worker_id,status,heartbeat_at
-                           FROM compute_execution_participants
-                           WHERE attempt_id=? AND generation=?
-                           ORDER BY rank""",
+                        """SELECT p.worker_id,p.status,p.heartbeat_at,w.last_heartbeat
+                           FROM compute_execution_participants p
+                           LEFT JOIN compute_workers w ON w.worker_id=p.worker_id
+                           WHERE p.attempt_id=? AND p.generation=?
+                           ORDER BY p.rank""",
                         (attempt["attempt_id"], attempt["generation"]),
                     ).fetchall()
                     if not participants:
@@ -1746,6 +1747,8 @@ class ComputeCoordinator:
                     missing = any(
                         str(p["status"]) not in {"bound", "active", "launching", "running"}
                         or float(p["heartbeat_at"]) + timeout <= now
+                        or p["last_heartbeat"] is None
+                        or float(p["last_heartbeat"]) + timeout <= now
 
                         for p in participants
                     )
