@@ -132,9 +132,9 @@ def test_multi_gpu_prefers_verified_topology_domain_concentration(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
         _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="weak"),
-        _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="weak"),
-        _ready_gpu("node-a", "gpu-2", gpu_uuid="strong"),
-        _ready_gpu("node-a", "gpu-3", gpu_uuid="strong"),
+        _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="strong"),
+        _ready_gpu("node-a", "gpu-2", gpu_uuid="u2", topology_domain="strong"),
+        _ready_gpu("node-a", "gpu-3", gpu_uuid="u3"),
     ])]))
     allocation = ComputeScheduler(inventory).allocate(
         ComputeRequirements(WorkloadClass.MULTI_GPU, GpuRequirements(gpu_count=2, require_nccl=True)),
