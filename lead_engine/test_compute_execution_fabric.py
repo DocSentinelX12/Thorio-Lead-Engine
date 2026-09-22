@@ -502,8 +502,10 @@ def test_nvidia_runtime_extracts_actual_network_transport_from_nccl_logs():
 
 def test_nvidia_runtime_accepts_only_verified_gpu_all_reduce_evidence():
     def runner(args, timeout):
-        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4,"expected_sum":10}\n'
-            'node-a:1:1 [0] NCCL INFO Using network IB\n', ""
+        return 0, (
+            'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4,"expected_sum":10}\n'
+            'node-a:1:1 [0] NCCL INFO Using network IB\n'
+        ), ""
 
     runtime = NvidiaRuntime(runner=runner, which=lambda name: "torchrun" if name == "torchrun" else None)
     evidence = runtime.verify_distributed_nccl(
