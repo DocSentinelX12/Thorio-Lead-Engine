@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import threading
 import urllib.error
 import urllib.request
@@ -215,6 +216,75 @@ def test_expired_attempt_is_recoverable_without_completion(tmp_path):
     assert attempt["finished_at"] is not None
     assert "lease expired" in attempt["error"]
     assert coordinator.task(task_id)["status"] == "queued"
+
+
+def test_reconcile_fabric_rolls_back_requeue_if_attempt_was_retired_concurrently(tmp_path, monkeypatch):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
+        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing",)
+    ))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("worker-1")
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    now = 1.0
+    with coordinator._connect() as connection:
+        connection.execute(
+            "INSERT INTO compute_execution_participants("
+            "attempt_id,task_id,generation,allocation_id,worker_id,node_id,rank,world_size,"
+            "rendezvous_ref,status,resource_ids,bound_at,heartbeat_at"
+            ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (attempt_id, task_id, generation, "allocation-1", "worker-1", "worker-1", 0, 1,
+             "rendezvous-1", "running", "[]", now, now),
+        )
+        connection.commit()
+
+    real_connect = coordinator._connect
+
+    class RacingConnection:
+        def __init__(self, connection):
+            self._connection = connection
+            self._retired = False
+
+        def execute(self, sql, params=()):
+            if not self._retired and "UPDATE compute_execution_attempts" in sql and "SET status='failed'" in sql:
+                self._retired = True
+                with sqlite3.connect(coordinator.db_path) as race:
+                    race.execute(
+                        "UPDATE compute_execution_attempts SET status='failed' WHERE attempt_id=? AND generation=? AND status='leased'",
+                        (attempt_id, generation),
+                    )
+                    race.commit()
+            return self._connection.execute(sql, params)
+
+        def commit(self):
+            return self._connection.commit()
+
+        def rollback(self):
+            return self._connection.rollback()
+
+        def __enter__(self):
+            self._connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._connection.__exit__(*args)
+
+    monkeypatch.setattr(coordinator, "_connect", lambda: RacingConnection(real_connect()))
+
+    result = coordinator.reconcile_fabric(participant_timeout_seconds=1)
+    assert result == {"reconciled": 0, "requeued": 0}
+
+    with real_connect() as connection:
+        task = connection.execute(
+            "SELECT status,attempt_id FROM compute_tasks WHERE task_id=?", (task_id,)
+        ).fetchone()
+        attempt = connection.execute(
+            "SELECT status FROM compute_execution_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+    assert task["status"] == "leased"
+    assert task["attempt_id"] == attempt_id
+    assert attempt["status"] == "failed"
 
 
 def test_physical_allocation_binding_is_idempotent_and_generation_specific(tmp_path):
