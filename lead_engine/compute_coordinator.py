@@ -1097,16 +1097,18 @@ class ComputeCoordinator:
         self, *, attempt_id: str, generation: int, worker_id: str,
         lease_token: str, verification: Dict[str, Any],
     ) -> bool:
+        """Accept only evidence that matches the durable per-GPU launch contract."""
         if not isinstance(verification, dict) or not verification:
             raise ValueError("verification must be a non-empty object")
+
         lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
-        serialized = json.dumps(verification, ensure_ascii=False, sort_keys=True)
         now = time.time()
         with self._lock:
             with self._connect() as connection:
                 row = connection.execute(
                     """SELECT a.status,a.task_id,a.generation,a.lease_token_digest,
-                              p.status AS participant_status
+                              a.rendezvous_endpoint,p.status AS participant_status,
+                              p.resource_ids,p.allocation_id
                        FROM compute_execution_attempts a
                        JOIN compute_execution_participants p
                          ON p.attempt_id=a.attempt_id AND p.generation=a.generation
@@ -1124,6 +1126,79 @@ class ComputeCoordinator:
                     or row["lease_token_digest"] != lease_digest
                 ):
                     return False
+
+            endpoint = str(row["rendezvous_endpoint"] or "").strip()
+            if not endpoint:
+                return False
+            try:
+                launch = self.fabric_launch_plan(attempt_id, endpoint)
+            except (KeyError, TypeError, ValueError):
+                return False
+
+            participant = next(
+                (item for item in launch["workers"] if item["worker_id"] == worker_id),
+                None,
+            )
+            if participant is None:
+                return False
+
+            if (
+                verification.get("verified") is not True
+                or verification.get("backend") != "nccl"
+                or verification.get("collective") != "all_reduce"
+                or verification.get("worker_id") != worker_id
+                or int(verification.get("world_size", -1)) != int(launch["world_size"])
+                or not isinstance(verification.get("gpu_identity"), dict)
+                or verification["gpu_identity"].get("verified") is not True
+            ):
+                return False
+
+            expected_bindings = {
+                (int(binding["rank"]), str(binding["gpu_uuid"])): binding
+                for binding in participant["gpu_bindings"]
+            }
+            reported_bindings = verification.get("gpu_bindings")
+            if not isinstance(reported_bindings, list):
+                return False
+            reported_keys = {
+                (int(binding.get("rank", -1)), str(binding.get("gpu_uuid") or "").strip())
+                for binding in reported_bindings
+                if isinstance(binding, dict)
+            }
+            if reported_keys != set(expected_bindings):
+                return False
+
+            process_evidence = verification.get("process_evidence")
+            if not isinstance(process_evidence, list) or len(process_evidence) != len(expected_bindings):
+                return False
+            evidence_keys = set()
+            for item in process_evidence:
+                if not isinstance(item, dict):
+                    return False
+                rank = int(item.get("rank", -1))
+                gpu_binding = item.get("gpu_binding")
+                probe = item.get("probe")
+                if not isinstance(gpu_binding, dict) or not isinstance(probe, dict):
+                    return False
+                gpu_uuid = str(gpu_binding.get("gpu_uuid") or "").strip()
+                key = (rank, gpu_uuid)
+                if key in evidence_keys or key not in expected_bindings:
+                    return False
+                if (
+                    int(probe.get("rank", -1)) != rank
+                    or int(probe.get("world_size", -1)) != int(launch["world_size"])
+                    or probe.get("backend") != "nccl"
+                    or probe.get("collective") != "all_reduce"
+                    or probe.get("verified_on_gpu") is not True
+                    or str(probe.get("gpu_uuid") or "").strip() != gpu_uuid
+                ):
+                    return False
+                evidence_keys.add(key)
+            if evidence_keys != set(expected_bindings):
+                return False
+
+            serialized = json.dumps(verification, ensure_ascii=False, sort_keys=True)
+            with self._connect() as connection:
                 connection.execute(
                     """UPDATE compute_execution_participants
                        SET verification=?,status='running',heartbeat_at=?,last_error=''
@@ -1138,6 +1213,7 @@ class ComputeCoordinator:
                 )
                 connection.commit()
         return True
+
 
     def converge_fabric_execution(
         self, *, attempt_id: str, generation: int, worker_id: str, lease_token: str,
