@@ -224,6 +224,7 @@ def test_launch_plan_rejects_a_path_quarantined_after_allocation(tmp_path):
         inventory=inventory,
     )
     network_a = _network_evidence()
+    network_a["network_domains"] = {"node-a": "fabric-a"}
     inventory.observe(_snapshot(network=network_a))
 
     path_b = {
