@@ -1200,7 +1200,7 @@ class ComputeCoordinator:
                 probe = item.get("probe")
                 if not isinstance(gpu_binding, dict) or not isinstance(probe, dict):
                     return False
-                if int(launch["nnodes"]) > 1:
+                if int(launch["nnodes"]) > 1 and str(item.get("network_transport") or probe.get("network_transport") or "").strip().upper() == "IB":
                     rdma_devices = item.get("rdma_devices")
                     verified_rdma_devices = item.get("verified_rdma_devices")
                     if (
