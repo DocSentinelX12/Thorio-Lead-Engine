@@ -409,9 +409,10 @@ class LeadDB:
         if not updates:
             return False
         assignments = ", ".join(f"{field} = ?" for field in updates)
-        values = list(updates.values()) + [task_id, worker_id, lease_token]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        values = list(updates.values()) + [task_id, worker_id, lease_token, now_iso]
         cursor = self.conn.execute(
-            f"UPDATE agent_queue SET {assignments} WHERE task_id = ? AND status = 'running' AND worker_id = ? AND lease_token = ?",
+            f"UPDATE agent_queue SET {assignments} WHERE task_id = ? AND status = 'running' AND worker_id = ? AND lease_token = ? AND lease_until IS NOT NULL AND lease_until > ?",
             values,
         )
         self.conn.commit()
