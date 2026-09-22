@@ -92,6 +92,8 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
                     "rank": binding["rank"],
                     "gpu_uuid": binding["gpu_uuid"],
                     "network_transport": "IB",
+                "rdma_devices": ["mlx5_0"],
+                "verified_rdma_devices": ["mlx5_0"],
                 },
             }
             for binding in participant["gpu_bindings"]
@@ -138,7 +140,9 @@ def test_recorded_verification_persists_verified_rdma_path_evidence(tmp_path: Pa
         verification=verification,
     ) is True
     participant = coordinator.execution_participants(attempt_id)[0]
-    assert participant["verification"]["process_evidence"][0]["verified_rdma_devices"] == ["mlx5_0"]
+    import json
+    stored_verification = json.loads(participant["verification"])
+    assert stored_verification["process_evidence"][0]["verified_rdma_devices"] == ["mlx5_0"]
 
 
 def test_worker_receives_durable_participant_and_launch_contract(tmp_path: Path):
