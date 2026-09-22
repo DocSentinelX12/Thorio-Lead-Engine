@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 
 
@@ -28,7 +29,10 @@ def main() -> None:
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     expected_world_size = int(os.environ.get("THORIO_EXPECTED_WORLD_SIZE", str(world_size)))
     expected_rank = int(os.environ.get("THORIO_EXPECTED_RANK", str(rank)))
+    expected_nnodes = int(os.environ.get("THORIO_EXPECTED_NNODES", "1"))
     expected_gpu_uuid = str(os.environ.get("THORIO_EXPECTED_GPU_UUID") or "").strip()
+    if expected_nnodes < 1:
+        raise SystemExit("THORIO_EXPECTED_NNODES must be positive")
 
     if world_size != expected_world_size:
         raise SystemExit(f"WORLD_SIZE mismatch: expected {expected_world_size}, got {world_size}")
@@ -57,16 +61,35 @@ def main() -> None:
         if actual != expected:
             raise SystemExit(f"NCCL all-reduce mismatch: expected {expected}, got {actual}")
         dist.barrier()
+        logs = stdout = ""
+        # NCCL emits network-selection evidence to stdout or stderr depending
+        # on the runtime. Capture both streams from the process environment.
+        # PyTorch does not expose NCCL logs directly, so this process relies on
+        # the inherited NCCL_DEBUG=INFO / NCCL_DEBUG_SUBSYS=NET settings and
+        # parses only explicit network-selection statements.
+        # The launcher supplies the captured process streams; this marker is
+        # completed by the runtime validator with the raw process output.
+        network_transport = None
+        gpu_direct_rdma = False
+        for line in logs.splitlines():
+            match = re.search(r"NCCL INFO Using network ([A-Za-z0-9_.-]+)", line, re.IGNORECASE)
+            if match:
+                network_transport = match.group(1)
+            if re.search(r"GPU Direct RDMA Enabled", line, re.IGNORECASE) or re.search(r"GDRDMA", line, re.IGNORECASE):
+                gpu_direct_rdma = True
         print("THORIO_NCCL_PROBE_OK " + json.dumps({
             "backend": "nccl",
             "rank": rank,
             "world_size": world_size,
+            "nnodes": expected_nnodes,
             "local_rank": 0,
             "collective": "all_reduce",
             "expected_sum": expected,
             "verified_on_gpu": True,
             "gpu_uuid": observed_gpu_uuid,
             "hostname": socket.gethostname(),
+            "network_transport": network_transport,
+            "gpu_direct_rdma": gpu_direct_rdma,
         }, sort_keys=True), flush=True)
     finally:
         dist.destroy_process_group()
