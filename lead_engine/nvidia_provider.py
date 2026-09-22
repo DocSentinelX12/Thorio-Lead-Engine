@@ -218,10 +218,12 @@ class NvidiaProvider(ComputeProvider):
                 continue
             normalized_links.append({
                 "rdma_device": device,
+                "port": item.get("port"),
                 "netdev": item.get("netdev"),
                 "pci_bus_id": pci_by_device.get(device),
                 "state": item.get("state"),
                 "physical_state": item.get("physical_state"),
+                "link_layer": item.get("link_layer"),
             })
         normalized_links.sort(key=lambda item: (str(item.get("rdma_device")), str(item.get("netdev") or "")))
         evidence["devices"] = normalized_devices
