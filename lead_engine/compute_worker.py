@@ -15,7 +15,7 @@ from typing import Any, Dict, Mapping, Optional
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_finding, social_research
 from .compute_pool import local_worker_identity
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
-from .nvidia_provider import NvidiaProvider
+from .nvidia_provider import CommandResult, NvidiaProvider
 from .lead_pipeline import process_leads
 from .lead_sort import sort_by_score
 
@@ -374,7 +374,15 @@ def run_fabric_verification(
     thread = threading.Thread(target=beat, daemon=True)
     try:
         local = runtime.verify_local()
-        network_snapshot = NvidiaProvider(node_id=client.worker_id).discover()
+        provider_runner = (
+            None
+            if runtime.runner is None
+            else lambda args, timeout: CommandResult(*runtime.runner(args, timeout))
+        )
+        network_snapshot = NvidiaProvider(
+            node_id=client.worker_id,
+            runner=provider_runner,
+        ).discover()
         network_evidence = network_snapshot.evidence if isinstance(network_snapshot.evidence, Mapping) else {}
         rdma_evidence = network_evidence.get("network", {}).get("rdma", {}) if isinstance(network_evidence.get("network"), Mapping) else {}
         if int(plan["nnodes"]) > 1 and not isinstance(rdma_evidence, Mapping):
