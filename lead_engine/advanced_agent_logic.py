@@ -222,6 +222,9 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         "company_verification_evidence": company_verification_evidence,
         "fabricated_fields": [],
     }
+    checkpoint = prior.get("public_web_research_checkpoint")
+    if isinstance(checkpoint, Mapping):
+        facts["public_web_research_checkpoint"] = dict(checkpoint)
     if social_findings:
         facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in social_findings if isinstance(item, Mapping) and item.get("source")})
         facts["social_evidence_count"] = len(social_findings)
