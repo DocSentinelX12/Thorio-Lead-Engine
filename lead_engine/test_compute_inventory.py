@@ -183,6 +183,6 @@ def test_fabric_path_quarantine_is_durable_and_revalidation_is_explicit(tmp_path
     with pytest.raises(ValueError):
         inventory.revalidate_fabric_path(path, verification={"verified": False})
     assert inventory.is_fabric_path_quarantined(path) is True
-    assert inventory.revalidate_fabric_path(path, verification={"verified": True}) is True
+    assert inventory.revalidate_fabric_path(path, verification={"verified": True, **path}) is True
     assert inventory.is_fabric_path_quarantined(path) is False
     assert inventory.quarantined_fabric_paths() == []
