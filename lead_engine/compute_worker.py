@@ -259,6 +259,30 @@ def run_fabric_verification(
     if participant is None:
         raise ComputeWorkerError("worker is not present in the durable launch plan")
     runtime = runtime or NvidiaRuntime()
+    gpu_bindings = participant.get("gpu_bindings")
+    if not isinstance(gpu_bindings, list) or not gpu_bindings:
+        raise ComputeWorkerError("launch plan is missing exact GPU bindings")
+    allocated_gpu_ids = [str(item.get("gpu_id") or "").strip() for item in gpu_bindings if isinstance(item, dict)]
+    allocated_gpu_uuids = [str(item.get("gpu_uuid") or "").strip() for item in gpu_bindings if isinstance(item, dict)]
+    if (
+        len(allocated_gpu_ids) != int(participant["process_count"])
+        or any(not gpu_id.isdigit() for gpu_id in allocated_gpu_ids)
+        or any(not gpu_uuid for gpu_uuid in allocated_gpu_uuids)
+        or len(set(allocated_gpu_uuids)) != len(allocated_gpu_uuids)
+    ):
+        raise ComputeWorkerError("launch plan contains invalid or ambiguous GPU bindings")
+    local_identity = local_worker_identity(client.worker_id)
+    local_gpus = {gpu.gpu_id: gpu for gpu in local_identity.gpu_resources}
+    for binding in gpu_bindings:
+        gpu_id = str(binding["gpu_id"])
+        gpu_uuid = str(binding["gpu_uuid"])
+        local_gpu = local_gpus.get(gpu_id)
+        if local_gpu is None or local_gpu.gpu_uuid != gpu_uuid:
+            raise ComputeWorkerError(
+                f"allocated GPU identity mismatch on worker {client.worker_id}: {gpu_id}/{gpu_uuid}"
+            )
+    if len(local_identity.gpu_resources) < len(gpu_bindings):
+        raise ComputeWorkerError("worker reported fewer physical GPUs than its launch allocation")
     client.fabric_state(attempt_id, generation, lease_token, "launching")
     stop_heartbeat = threading.Event()
     heartbeat_failed = threading.Event()
@@ -339,8 +363,10 @@ def run_fabric_verification(
         )
         client.fabric_state(attempt_id, generation, lease_token, "active")
 
+        execution_env = os.environ.copy()
+        execution_env["CUDA_VISIBLE_DEVICES"] = ",".join(allocated_gpu_ids)
         if runner is None:
-            popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
+            popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True, "env": execution_env}
             if os.name == "posix":
                 popen_kwargs["start_new_session"] = True
             elif os.name == "nt":
@@ -374,7 +400,8 @@ def run_fabric_verification(
         if heartbeat_failed.is_set():
             raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
         evidence = {
-            "verified": True, "local_runtime": local, "probe": probe, "attempt_id": attempt_id,
+            "verified": True, "local_runtime": local, "gpu_bindings": gpu_bindings,
+            "cuda_visible_devices": allocated_gpu_ids, "attempt_id": attempt_id,
             "generation": generation, "worker_id": client.worker_id,
             "node_rank": int(participant["node_rank"]), "world_size": int(plan["world_size"]),
             "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
