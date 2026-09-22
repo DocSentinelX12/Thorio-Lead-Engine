@@ -89,6 +89,22 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
         current_section = lead.get(section_name)
         if isinstance(current_section, Mapping):
             canonical[section_name] = merge_canonical_section(canonical[section_name], current_section)
+
+    # Checkpoint each independently useful research section before the final
+    # readiness transaction. If the worker dies after any checkpoint, the next
+    # attempt starts from the durable sections already written instead of
+    # discarding verified/observed evidence gathered before the failure.
+    for section_name in VERIFIABLE_RESEARCH_SECTIONS:
+        section = canonical.get(section_name)
+        if not isinstance(section, Mapping):
+            continue
+        stored_section = ctx.db.update_payload(fingerprint, {section_name: dict(section)})
+        if stored_section is None:
+            raise AgentContractError(f"Lead disappeared while checkpointing research section: {fingerprint}:{section_name}")
+
+    refreshed = ctx.db.get(fingerprint)
+    if isinstance(refreshed, Mapping):
+        lead = dict(refreshed)
     merged = dict(lead); merged["company_research"] = merged_research; merged.update(canonical)
     merged, readiness = finalize_research_readiness(merged)
     stored = _persist_lead(ctx.db, merged)
