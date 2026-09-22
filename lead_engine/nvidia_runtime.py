@@ -230,7 +230,7 @@ class NvidiaRuntime:
         if network["network_transport"] == "IB":
             used = []
             for line in network["network_evidence_lines"]:
-                used.extend(re.findall(r"\\b(mlx[45]_[A-Za-z0-9_.-]+):\\d+", line))
+                used.extend(re.findall(r"\b(mlx[45]_[A-Za-z0-9_.-]+):\d+", line))
             used_devices = tuple(sorted(set(used)))
             if not used_devices:
                 raise NvidiaRuntimeError("NCCL selected IB but did not expose an RDMA device in its network evidence")
