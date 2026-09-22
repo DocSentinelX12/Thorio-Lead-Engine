@@ -67,6 +67,7 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
                 (GpuResource(
                     node_id=node_id,
                     gpu_id="gpu-0",
+                    gpu_uuid=f"GPU-{node_id}-0",
                     availability_state=ResourceState.AVAILABLE,
                 ),),
                 "550.1",
@@ -183,6 +184,7 @@ def test_multi_node_allocation_never_assigns_a_participant_without_a_gpu():
                         GpuResource(
                             node_id=node_id,
                             gpu_id=gpu_id,
+                            gpu_uuid=f"GPU-{node_id}-{gpu_id}",
                             availability_state=ResourceState.AVAILABLE,
                         )
                         for gpu_id in gpu_ids
