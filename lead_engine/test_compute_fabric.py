@@ -137,3 +137,18 @@ def test_allocate_and_release_remain_scheduler_authority():
 
         assert allocation.resource_ids == ("node-1/0",)
         assert fabric.release(allocation.resource_keys) == 1
+
+
+def test_coordinator_exposes_fabric_control_plane_without_replacing_scheduler():
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    with tempfile.TemporaryDirectory() as directory:
+        coordinator = ComputeCoordinator(str(Path(directory) / "coordinator.sqlite3"), "token")
+        provider = Provider(snapshot())
+        coordinator.register_compute_provider(provider, domain_id="domain-a")
+
+        report = coordinator.refresh_compute_fabric()
+
+        assert report["eligible_resources"] == 2
+        assert coordinator.compute_fabric.scheduler is coordinator.compute_scheduler
+        coordinator.compute_fabric.close()
