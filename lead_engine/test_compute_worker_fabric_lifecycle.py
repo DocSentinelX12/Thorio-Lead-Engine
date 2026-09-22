@@ -20,7 +20,7 @@ def _fabric_worker(node_id: str) -> WorkerIdentity:
         8,
         16384,
         ("lead-processing",),
-        (GpuResource(node_id=node_id, gpu_id="gpu-0", availability_state=ResourceState.AVAILABLE),),
+        (GpuResource(node_id=node_id, gpu_id="gpu-0", gpu_uuid=f"GPU-{node_id}-0", availability_state=ResourceState.AVAILABLE),),
         "550.1",
         "12.4",
         "2.20",
@@ -43,7 +43,7 @@ def _register_inventory(coordinator: ComputeCoordinator, inventory: ComputeInven
                 architecture="x86_64",
                 cpu=CpuResource(node_id, 8, 16384),
                 gpus=(GpuResource(
-                    node_id=node_id, gpu_id="gpu-0",
+                    node_id=node_id, gpu_id="gpu-0", gpu_uuid=f"GPU-{node_id}-0",
                     availability_state=ResourceState.AVAILABLE,
                 ),),
                 driver_version="550.1",
@@ -766,7 +766,7 @@ def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fa
                 "workers": [{
                     "worker_id": "worker-1",
                     "node_rank": 0,
-                    "process_count": 1,
+                    "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}],
                 }],
                 "world_size": 2,
                 "nnodes": 1,
@@ -821,7 +821,7 @@ def test_fabric_verification_cleans_up_when_local_runtime_validation_fails():
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -863,7 +863,7 @@ def test_fabric_heartbeat_failure_terminates_live_process_and_reports_failure(mo
             self.heartbeats = 0
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -943,7 +943,7 @@ def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
             self.verified = False
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -1000,7 +1000,7 @@ def test_fabric_process_timeout_terminates_process_and_reports_failure(monkeypat
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -1071,7 +1071,7 @@ def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
