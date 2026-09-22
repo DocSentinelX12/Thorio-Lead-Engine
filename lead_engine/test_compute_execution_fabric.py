@@ -136,6 +136,83 @@ def test_global_physical_claim_allocates_across_registered_nodes_without_worker_
         assert launch["rendezvous_endpoint"] == "10.0.0.5:29400"
 
 
+
+def test_multi_node_allocation_never_assigns_a_participant_without_a_gpu():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        inventory = ComputeInventory(str(root / "inventory.sqlite3"))
+        coordinator = ComputeCoordinator(
+            str(root / "coordinator.sqlite3"),
+            auth_token="token",
+            lease_seconds=30,
+            inventory=inventory,
+        )
+        for node_id, gpu_ids in (("worker-1", ("gpu-0", "gpu-1")), ("worker-2", ("gpu-0",))):
+            coordinator.pool.register(WorkerIdentity(
+                node_id,
+                f"{node_id}.host",
+                "x86_64",
+                4,
+                8192,
+                ("lead-processing",),
+                tuple(
+                    GpuResource(
+                        node_id=node_id,
+                        gpu_id=gpu_id,
+                        availability_state=ResourceState.AVAILABLE,
+                    )
+                    for gpu_id in gpu_ids
+                ),
+                "550.1",
+                "12.4",
+                "2.20",
+            ))
+            inventory.observe(ProviderResourceSnapshot(
+                provider_id="fabric-provider",
+                domain_id="fabric-domain",
+                observed_at=1.0,
+                expires_at=9999999999.0,
+                ephemeral=True,
+                authentication_state="authenticated",
+                evidence={"source": "test"},
+                nodes=(NodeResource(
+                    node_id=node_id,
+                    architecture="x86_64",
+                    cpu=CpuResource(node_id, 4, 8192),
+                    gpus=tuple(
+                        GpuResource(
+                            node_id=node_id,
+                            gpu_id=gpu_id,
+                            availability_state=ResourceState.AVAILABLE,
+                        )
+                        for gpu_id in gpu_ids
+                    ),
+                    driver_version="550.1",
+                    cuda_version="12.4",
+                    nccl_version="2.20",
+                    state=ResourceState.AVAILABLE,
+                ),),
+            ))
+        task_id = coordinator.enqueue({
+            "compute_requirements": {
+                "workload_class": "multi_node_gpu",
+                "gpu": {"gpu_count": 2, "require_nccl": True},
+                "min_cpu_count": 1,
+                "min_memory_bytes": 1,
+                "same_node": False,
+            },
+        })
+
+        claimed = coordinator.claim_physical()
+
+        assert claimed is not None, coordinator.task(task_id)["error"]
+        participants = coordinator.execution_participants(claimed["attempt_id"])
+        assert len(participants) == 2
+        assert all(
+            any("/gpu-" in resource_id or "/gpu/" in resource_id for resource_id in participant["resource_ids"])
+            for participant in participants
+        )
+
 def test_claim_creates_and_binds_physical_allocation_to_worker_node():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
