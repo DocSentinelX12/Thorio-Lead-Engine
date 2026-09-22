@@ -384,3 +384,66 @@ def test_physical_allocation_binding_is_idempotent_and_generation_specific(tmp_p
     assert row["provider_id"] == "provider-a"
     assert row["domain_id"] == "domain-a"
     assert row["resource_ids"] == '["node-a/cpu", "node-a/gpu-0"]'
+
+def test_recover_expired_tasks_does_not_release_concurrently_renewed_task(tmp_path):
+    from lead_engine.compute_pool import WorkerIdentity
+
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+    )
+    coordinator.register_worker(
+        WorkerIdentity("worker-1", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare"))
+    )
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("worker-1")
+    assert claimed["task_id"] == task_id
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_tasks SET lease_until=? WHERE task_id=?",
+            (0, task_id),
+        )
+        connection.commit()
+
+    original_connect = coordinator._connect
+    renewed = {"done": False}
+
+    class ConnectionProxy:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.connection.__exit__(*args)
+
+        def execute(self, sql, parameters=()):
+            result = self.connection.execute(sql, parameters)
+            if (
+                not renewed["done"]
+                and sql.startswith("SELECT task_id,worker_id,attempt_id FROM compute_tasks")
+            ):
+                with original_connect() as renewal_connection:
+                    renewal_connection.execute(
+                        "UPDATE compute_tasks SET lease_until=? WHERE task_id=?",
+                        (__import__("time").time() + 300, task_id),
+                    )
+                    renewal_connection.commit()
+                renewed["done"] = True
+            return result
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+    def hooked_connect():
+        return ConnectionProxy(original_connect())
+
+    coordinator._connect = hooked_connect
+    assert coordinator.recover_expired_tasks() == 0
+    task = coordinator.task(task_id)
+    assert task["status"] == "leased"
+    assert float(task["lease_until"]) > __import__("time").time()
+    assert coordinator.pool.worker("worker-1")["current_load"] == 1
