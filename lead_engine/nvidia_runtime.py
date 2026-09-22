@@ -186,6 +186,7 @@ class NvidiaRuntime:
         if not isinstance(log_output, str):
             raise NvidiaRuntimeError("NCCL process log output must be text")
         transports: list[str] = []
+        hca_selections: list[dict[str, object]] = []
         evidence_lines: list[str] = []
         gpu_direct_rdma = False
         for raw_line in log_output.splitlines():
@@ -198,7 +199,11 @@ class NvidiaRuntime:
                 evidence_lines.append(line[-1000:])
             match = re.search(r"NCCL INFO NET/([A-Za-z0-9_.-]+)\s*:\s*Using\b", line, re.IGNORECASE)
             if match:
-                transports.append(match.group(1))
+                transport = match.group(1)
+                transports.append(transport)
+                hca_match = re.search(r"\b(mlx[45]_[A-Za-z0-9_.-]+):(\d+)\/(?:IB|RoCE)\b", line, re.IGNORECASE)
+                if hca_match:
+                    hca_selections.append({"device": hca_match.group(1), "port": int(hca_match.group(2)), "transport": transport})
                 evidence_lines.append(line[-1000:])
             if re.search(r"GPU Direct RDMA Enabled", line, re.IGNORECASE) or re.search(r"GDRDMA", line, re.IGNORECASE):
                 gpu_direct_rdma = True
@@ -210,6 +215,7 @@ class NvidiaRuntime:
             )
         return {
             "network_transport": unique_transports[0] if unique_transports else None,
+            "hca_selections": tuple(dict(items) for items in sorted({tuple(sorted(item.items())) for item in hca_selections})),
             "network_evidence_lines": tuple(evidence_lines[-8:]),
             "gpu_direct_rdma": gpu_direct_rdma,
         }
@@ -233,18 +239,33 @@ class NvidiaRuntime:
             if isinstance(item, Mapping) and str(item.get("device") or "").strip()
         }))
         if network["network_transport"] == "IB":
-            used = []
-            for line in network["network_evidence_lines"]:
-                used.extend(re.findall(r"\b(mlx[45]_[A-Za-z0-9_.-]+):\d+", line))
-            used_devices = tuple(sorted(set(used)))
-            if not used_devices:
-                raise NvidiaRuntimeError("NCCL selected IB but did not expose an RDMA device in its network evidence")
-            verified = tuple(device for device in used_devices if device in rdma_devices)
-            if verified != used_devices:
-                missing = ", ".join(device for device in used_devices if device not in rdma_devices)
+            selections = tuple(network.get("hca_selections") or ())
+            if not selections:
+                raise NvidiaRuntimeError("NCCL selected IB but did not expose an RDMA device and port in its network evidence")
+            used_devices = tuple(sorted({str(item.get("device") or "").strip() for item in selections if isinstance(item, Mapping)}))
+            missing_devices = tuple(device for device in used_devices if device not in rdma_devices)
+            if not used_devices or missing_devices:
+                missing = ", ".join(missing_devices)
                 raise NvidiaRuntimeError(
                     "NCCL selected RDMA devices absent from verified host RDMA inventory: " + missing
                 )
+            verified_selections = []
+            links = rdma_evidence.get("links", ()) if isinstance(rdma_evidence, Mapping) else ()
+            for selection in selections:
+                device = str(selection.get("device") or "").strip()
+                port = int(selection.get("port"))
+                matching_links = [
+                    link for link in links
+                    if isinstance(link, Mapping)
+                    and str(link.get("rdma_device") or "").strip() == device
+                    and int(link.get("port") or -1) == port
+                ]
+                if not matching_links:
+                    raise NvidiaRuntimeError(
+                        f"RDMA port {device}:{port} selected by NCCL is not present in verified RDMA link evidence"
+                    )
+                verified_selections.append(dict(selection))
+            verified = tuple(sorted(used_devices))
         else:
             used_devices = ()
             verified = ()
@@ -267,7 +288,9 @@ class NvidiaRuntime:
                         matched.append({
                             **dict(row),
                             "rdma_device": str(link.get("rdma_device")),
+                            "rdma_port": link.get("port"),
                             "rdma_pci_bus_id": link.get("pci_bus_id"),
+                            "link_layer": link.get("link_layer"),
                         })
             if not matched:
                 raise NvidiaRuntimeError(
@@ -278,6 +301,7 @@ class NvidiaRuntime:
             **network,
             "rdma_devices": rdma_devices,
             "verified_rdma_devices": verified,
+            "verified_hca_selections": tuple(verified_selections) if network["network_transport"] == "IB" else (),
             "gpu_nic_locality": locality_evidence,
         }
 
