@@ -155,9 +155,20 @@ class ComputeScheduler:
         return {"domain": domain, "source": str(network["source"]).strip()}
 
     @classmethod
-    def _verified_network_fabric_domain(cls, candidate: dict[str, Any]) -> str | None:
-        evidence = cls._verified_network_fabric_evidence(candidate["cpu"])
-        return evidence["domain"] if evidence else None
+    def _verified_network_domains(cls, candidate: dict[str, Any]) -> tuple[str, ...]:
+        evidence = json.loads(candidate["cpu"]["evidence_json"])
+        network = evidence.get("network")
+        if not isinstance(network, dict) or not network.get("source"):
+            return ()
+        domains = network.get("network_domains")
+        if isinstance(domains, dict):
+            domains = domains.get(str(candidate["node_id"]))
+        if isinstance(domains, str):
+            domains = [domains]
+        if not isinstance(domains, list):
+            fabric = cls._verified_network_fabric_evidence(candidate["cpu"])
+            return (fabric["domain"],) if fabric else ()
+        return tuple(sorted({str(domain).strip() for domain in domains if str(domain).strip()}))
 
     def _candidates(self, requirements: ComputeRequirements) -> list[dict[str, Any]]:
         rows = self.inventory.eligible()
@@ -227,13 +238,14 @@ class ComputeScheduler:
                 reverse=True,
             )
             for (_provider_id, _domain_id), group in ranked_groups:
-                network_groups: dict[str | None, list[dict[str, Any]]] = {}
+                network_groups: dict[str, list[dict[str, Any]]] = {}
                 for candidate in group:
-                    network_groups.setdefault(self._verified_network_fabric_domain(candidate), []).append(candidate)
+                    for network_domain in self._verified_network_domains(candidate):
+                        network_groups.setdefault(network_domain, []).append(candidate)
                 network_group_options = [
                     (fabric, members)
                     for fabric, members in network_groups.items()
-                    if fabric is not None and len(members) >= 2
+                    if len(members) >= 2
                 ]
                 if network_group_options:
                     network_group_options.sort(
