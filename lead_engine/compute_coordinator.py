@@ -1013,6 +1013,8 @@ class ComputeCoordinator:
         for expected_node_rank, participant in enumerate(participants):
             if int(participant["rank"]) != expected_node_rank:
                 raise ValueError("participant node ranks are not contiguous and deterministic")
+            if float(participant["heartbeat_at"]) + self.lease_seconds <= now:
+                raise ValueError(f"participant heartbeat is stale: {participant['worker_id']}")
             worker = self.pool.worker(str(participant["worker_id"]))
             if not worker or worker["status"] != "ready":
                 raise ValueError(f"participant worker is not ready: {participant['worker_id']}")
@@ -1609,6 +1611,7 @@ class ComputeCoordinator:
                         AND a.generation=p.generation
                        WHERE p.attempt_id=? AND p.generation=? AND p.worker_id=?
                          AND p.status IN ('bound','active','running')
+                         AND p.heartbeat_at > ?
                          AND a.status='leased'
                          AND a.lease_token_digest=?
                          AND EXISTS (
@@ -1617,7 +1620,7 @@ class ComputeCoordinator:
                                AND t.status='leased'
                                AND t.lease_until > ?
                          )""",
-                    (attempt_id, generation, worker_id, lease_digest, now),
+                    (attempt_id, generation, worker_id, now - self.lease_seconds, lease_digest, now),
                 ).fetchone()
                 if not authorized:
                     return False
