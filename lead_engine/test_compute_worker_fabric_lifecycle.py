@@ -1743,3 +1743,89 @@ def test_verification_cannot_revive_retired_execution_generation(tmp_path: Path,
     assert participant["verification"] is None
     assert coordinator.execution_attempt(attempt_id)["status"] == "failed"
     assert coordinator.task(task_id)["status"] == "queued"
+
+
+def test_fabric_launch_plan_constructs_verified_routes_between_participants(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=60,
+        inventory=inventory,
+    )
+    for node_id, gpu_uuid, rdma_device, nic in (
+        ("worker-1", "GPU-worker-1-0", "mlx5_0", "eth0"),
+        ("worker-2", "GPU-worker-2-0", "mlx5_1", "eth1"),
+    ):
+        coordinator.pool.register(_fabric_worker(node_id))
+        inventory.observe(ProviderResourceSnapshot(
+            provider_id="fabric-provider",
+            domain_id="fabric-domain",
+            observed_at=time.time(),
+            expires_at=time.time() + 300,
+            ephemeral=True,
+            authentication_state="authenticated",
+            evidence={
+                "source": "verified-fabric-test",
+                "network_domains": {"worker-1": "fabric-a", "worker-2": "fabric-a"},
+                "gpu_nic_locality": [{
+                    "gpu_uuid": gpu_uuid,
+                    "nic": nic,
+                    "rdma_device": rdma_device,
+                    "rdma_port": 1,
+                    "link_layer": "InfiniBand",
+                }],
+                "rdma": {
+                    "devices": [{"device": rdma_device}],
+                    "links": [{
+                        "rdma_device": rdma_device,
+                        "port": 1,
+                        "link_layer": "InfiniBand",
+                        "state": "ACTIVE",
+                        "physical_state": "LINK_UP",
+                        "bandwidth_gbps": 200,
+                        "latency_us": 4,
+                    }],
+                },
+            },
+            nodes=(NodeResource(
+                node_id=node_id,
+                architecture="x86_64",
+                cpu=CpuResource(node_id, 8, 16384),
+                gpus=(GpuResource(
+                    node_id=node_id, gpu_id="gpu-0", gpu_uuid=gpu_uuid,
+                    availability_state=ResourceState.AVAILABLE,
+                ),),
+                driver_version="550.1",
+                cuda_version="12.4",
+                nccl_version="2.20",
+                state=ResourceState.AVAILABLE,
+            ),),
+        ))
+
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2, "require_nccl": True},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    assert claimed["task_id"] == task_id
+    endpoint = "10.0.0.5:29400"
+    assert coordinator._bind_rendezvous_endpoint(
+        claimed["attempt_id"], claimed["generation"], claimed["lease_token"], endpoint
+    ) is True
+
+    launch = coordinator.fabric_launch_plan(claimed["attempt_id"], endpoint)
+    assert launch["world_size"] == 2
+    assert launch["nnodes"] == 2
+    assert len(launch["fabric_routes"]) == 1
+    route = launch["fabric_routes"][0]
+    assert {route["source_node_id"], route["target_node_id"]} == {"worker-1", "worker-2"}
+    assert route["route_type"] == "verified_gpu_nic_rdma_fabric"
+    assert all(route[key] for key in ("source_paths", "target_paths"))
+    assert route["source_paths"][0]["rdma_device"] in {"mlx5_0", "mlx5_1"}
+    assert route["target_paths"][0]["rdma_device"] in {"mlx5_0", "mlx5_1"}
