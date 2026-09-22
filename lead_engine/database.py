@@ -332,7 +332,7 @@ class LeadDB:
         for task_id, task in items.items():
             if not isinstance(task, dict) or not task_id:
                 continue
-            rows.append((str(task_id), str(task.get("agent", "")), str(task.get("queue", "")), str(task.get("status", "queued")), int(task.get("priority", 0)), json.dumps(task.get("payload", {}), ensure_ascii=False), task.get("dedupe_key"), str(task.get("created_at", "")), str(task.get("updated_at", "")), int(task.get("attempts", 0)), task.get("lease_until"), task.get("worker_id"), task.get("last_error"), json.dumps(task.get("result"), ensure_ascii=False) if task.get("result") is not None else None))
+            rows.append((str(task_id), str(task.get("agent", "")), str(task.get("queue", "")), str(task.get("status", "queued")), int(task.get("priority", 0)), json.dumps(task.get("payload", {}), ensure_ascii=False), task.get("dedupe_key"), str(task.get("created_at", "")), str(task.get("updated_at", "")), int(task.get("attempts", 0)), task.get("lease_until"), task.get("worker_id"), task.get("last_error"), json.dumps(task.get("result"), ensure_ascii=False) if task.get("result") is not None else None, task.get("lease_token")))
         if rows:
             self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             self.conn.commit()
@@ -348,7 +348,7 @@ class LeadDB:
         return {"task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3], "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6], "created_at": row[7], "updated_at": row[8], "attempts": row[9], "lease_until": row[10], "worker_id": row[11], "last_error": row[12], "result": json.loads(row[13]) if row[13] is not None else None, "lease_token": row[14]}
 
     def queue_insert_many(self, rows):
-        self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
         self.conn.commit()
 
     def queue_find_duplicate(self, agent, dedupe_key):
