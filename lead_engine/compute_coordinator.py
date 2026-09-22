@@ -993,6 +993,14 @@ class ComputeCoordinator:
             allocation = self.inventory.allocation(str(participant["allocation_id"]))
             if not allocation:
                 raise ValueError(f"physical allocation is missing: {participant['allocation_id']}")
+            if (
+                allocation.get("state") != "bound"
+                or str(allocation.get("attempt_id") or "").strip() != attempt_id
+                or int(allocation.get("generation") or 0) != int(participant["generation"])
+            ):
+                raise ValueError(
+                    f"physical allocation is not bound to execution attempt: {participant['allocation_id']}"
+                )
             inventory_gpus = {}
             for resource_key in allocation["resource_keys"]:
                 resource = self.inventory.get(str(resource_key))
@@ -1043,8 +1051,16 @@ class ComputeCoordinator:
                     None,
                 )
                 if bound_resource is not None:
+                    if bound_resource.get("state") != ResourceState.RESERVED.value:
+                        raise ValueError(
+                            f"allocated GPU is not currently reserved for execution: {resource_id}"
+                        )
                     planned_path = self._planned_physical_path(bound_resource, gpu_uuid)
                     if planned_path is not None:
+                        if self.inventory.is_fabric_path_quarantined(planned_path):
+                            raise ValueError(
+                                f"allocated GPU physical path is quarantined before launch: {resource_id}"
+                            )
                         binding["planned_physical_path"] = planned_path
                 gpu_bindings.append(binding)
 
