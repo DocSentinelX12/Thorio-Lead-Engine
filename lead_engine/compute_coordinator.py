@@ -906,11 +906,12 @@ class ComputeCoordinator:
         return existing or resolved
 
     def fabric_launch_plan(self, attempt_id: str, rendezvous_endpoint: str) -> Dict[str, Any]:
-        """Build an exact launch contract from the durable physical participants.
+        """Build the exact per-process launch contract from durable physical participants.
 
-        The coordinator does not execute commands or claim network reachability.
-        Workers must validate their local NVIDIA runtime before executing the
-        returned process specification.
+        Each allocated GPU becomes exactly one distributed process. Global ranks
+        are assigned deterministically from the durable participant order, so
+        nodes may contribute different GPU counts without violating the launch
+        contract. The coordinator never treats allocation as execution proof.
         """
         endpoint = self._validate_rendezvous_endpoint(rendezvous_endpoint)
         with self._connect() as connection:
@@ -925,21 +926,27 @@ class ComputeCoordinator:
             raise ValueError("execution attempt has no durable rendezvous endpoint")
         if endpoint != durable_endpoint:
             raise ValueError("rendezvous_endpoint does not match the durable execution endpoint")
+
         participants = self.execution_participants(attempt_id)
         if not participants:
             raise ValueError("execution attempt has no bound participants")
+
         workers = []
         total_processes = 0
-        for participant in participants:
+        for expected_node_rank, participant in enumerate(participants):
+            if int(participant["rank"]) != expected_node_rank:
+                raise ValueError("participant node ranks are not contiguous and deterministic")
             worker = self.pool.worker(str(participant["worker_id"]))
             if not worker or worker["status"] != "ready":
                 raise ValueError(f"participant worker is not ready: {participant['worker_id']}")
-            gpu_resource_ids = sorted(
+
+            gpu_resource_ids = [
                 resource_id for resource_id in participant["resource_ids"]
                 if "/gpu/" in resource_id or "/gpu-" in resource_id
-            )
+            ]
             if not gpu_resource_ids:
                 raise ValueError(f"participant has no allocated GPU resources: {participant['worker_id']}")
+
             allocation = self.inventory.allocation(str(participant["allocation_id"]))
             if not allocation:
                 raise ValueError(f"physical allocation is missing: {participant['allocation_id']}")
@@ -953,8 +960,14 @@ class ComputeCoordinator:
                 except (KeyError, TypeError, json.JSONDecodeError) as exc:
                     raise ValueError(f"allocated GPU inventory evidence is invalid: {resource_key}") from exc
                 inventory_gpus[f"{resource['node_id']}/{resource['gpu_id']}"] = payload
+
+            def gpu_sort_key(resource_id: str) -> tuple[int, str]:
+                gpu_id = resource_id.rsplit("/", 1)[-1].removeprefix("gpu-")
+                return (int(gpu_id) if gpu_id.isdigit() else 2**31 - 1, resource_id)
+
+            gpu_resource_ids = sorted(gpu_resource_ids, key=gpu_sort_key)
             gpu_bindings = []
-            for resource_id in gpu_resource_ids:
+            for local_rank, resource_id in enumerate(gpu_resource_ids):
                 gpu = inventory_gpus.get(resource_id)
                 if gpu is None:
                     raise ValueError(
@@ -971,12 +984,15 @@ class ComputeCoordinator:
                     "gpu_id": gpu_id,
                     "gpu_uuid": gpu_uuid,
                     "pci_bus_id": gpu.get("pci_bus_id"),
+                    "rank": total_processes + local_rank,
+                    "local_rank": local_rank,
                 })
-            process_count = len(gpu_resource_ids)
+
+            process_count = len(gpu_bindings)
             workers.append({
                 "worker_id": participant["worker_id"],
                 "node_id": participant["node_id"],
-                "node_rank": int(participant["rank"]),
+                "node_rank": expected_node_rank,
                 "process_count": process_count,
                 "gpu_resource_ids": gpu_resource_ids,
                 "gpu_bindings": gpu_bindings,
@@ -984,10 +1000,15 @@ class ComputeCoordinator:
                 "rendezvous_endpoint": endpoint,
             })
             total_processes += process_count
+
         if total_processes < 2:
             raise ValueError("distributed launch requires at least two allocated GPU processes")
-        if any(item["node_rank"] >= len(workers) for item in workers):
-            raise ValueError("participant node ranks are not contiguous")
+        if sorted(
+            binding["rank"]
+            for worker in workers
+            for binding in worker["gpu_bindings"]
+        ) != list(range(total_processes)):
+            raise ValueError("distributed process ranks are not contiguous")
         return {
             "attempt_id": attempt_id,
             "rendezvous_endpoint": durable_endpoint,
