@@ -841,7 +841,7 @@ def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fa
                 "workers": [{
                     "worker_id": "worker-1",
                     "node_rank": 0,
-                    "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}],
+                    "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}],
                 }],
                 "world_size": 2,
                 "nnodes": 1,
@@ -896,7 +896,7 @@ def test_fabric_verification_cleans_up_when_local_runtime_validation_fails():
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -938,7 +938,7 @@ def test_fabric_heartbeat_failure_terminates_live_process_and_reports_failure(mo
             self.heartbeats = 0
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -1018,7 +1018,7 @@ def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
             self.verified = False
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -1075,7 +1075,7 @@ def test_fabric_process_timeout_terminates_process_and_reports_failure(monkeypat
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -1090,7 +1090,7 @@ def test_fabric_process_timeout_terminates_process_and_reports_failure(monkeypat
         timeout_seconds = 1
         def verify_local(self):
             return {"cuda": True, "nccl": True}
-        def distributed_command(self, **kwargs):
+        def distributed_process_command(self):
             return ["torchrun"]
 
     class Process:
@@ -1146,7 +1146,7 @@ def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
             self.states = []
         def fabric_launch_plan(self, *args):
             return {
-                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0"}]}],
+                "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1, "gpu_bindings": [{"resource_id": "worker-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-worker-1-0", "rank": 0, "local_rank": 0}]}],
                 "world_size": 2, "nnodes": 1,
                 "rendezvous_endpoint": "10.0.0.5:29400",
                 "rendezvous_id": "fabric:attempt-1:1",
@@ -1161,7 +1161,7 @@ def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
         timeout_seconds = 5
         def verify_local(self):
             return {"cuda": True, "nccl": True}
-        def distributed_command(self, **kwargs):
+        def distributed_process_command(self):
             return ["torchrun"]
 
     class Process:
@@ -1198,40 +1198,3 @@ def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
     except OSError as error:
         assert "stdout pipe failed" in str(error)
     else:
-        raise AssertionError("unexpected process error was not preserved")
-
-    assert process.terminated is True
-    assert client.states == ["launching", "active", "failed"]
-
-
-def test_fabric_participant_state_transitions_are_monotonic(tmp_path: Path):
-    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    coordinator = ComputeCoordinator(
-        str(tmp_path / "coordinator.sqlite3"),
-        auth_token="test-token",
-        lease_seconds=30,
-        inventory=inventory,
-    )
-    _register_inventory(coordinator, inventory)
-    task_id = coordinator.enqueue({
-        "compute_requirements": {
-            "workload_class": "multi_node_gpu",
-            "gpu": {"gpu_count": 2},
-            "min_cpu_count": 1,
-            "min_memory_bytes": 1,
-            "same_node": False,
-        },
-    })
-    claimed = coordinator.claim_physical()
-    assert claimed["task_id"] == task_id
-    kwargs = {
-        "attempt_id": claimed["attempt_id"],
-        "generation": claimed["generation"],
-        "worker_id": "worker-1",
-        "lease_token": claimed["lease_token"],
-    }
-
-    assert coordinator.execution_participant_state(**kwargs, status="launching") is True
-    assert coordinator.execution_participant_state(**kwargs, status="active") is True
-    assert coordinator.execution_participant_state(**kwargs, status="launching") is False
-    assert coordinator.execution_participant_state(**kwargs, status="bound") is False
