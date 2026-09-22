@@ -131,8 +131,6 @@ class GpuRequirements:
             raise ValueError("min_fabric_bandwidth_gbps must be positive")
         if self.max_fabric_latency_us is not None and self.max_fabric_latency_us <= 0:
             raise ValueError("max_fabric_latency_us must be positive")
-        if self.require_redundant_fabric_path and self.gpu_count < 2:
-            raise ValueError("redundant fabric paths require multi-GPU work")
 
 
 @dataclass(frozen=True)
