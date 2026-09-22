@@ -353,6 +353,52 @@ def test_fabric_reconciliation_requeues_when_worker_liveness_is_lost(tmp_path: P
     assert coordinator.task(task_id)["status"] == "queued"
 
 
+def test_fabric_recovery_releases_allocation_for_fresh_generation(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    first = coordinator.claim_physical()
+    assert first["task_id"] == task_id
+    allocation_id = first["physical_allocation"]["allocation_id"]
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_workers SET last_heartbeat=? WHERE worker_id=?",
+            (time.time() - 3600, "worker-2"),
+        )
+        connection.commit()
+
+    assert coordinator.reconcile_fabric(participant_timeout_seconds=30) == {
+        "reconciled": 1,
+        "requeued": 1,
+    }
+    assert inventory.allocation(allocation_id)["state"] == "released"
+    assert all(
+        inventory.get(resource_key)["state"] == ResourceState.AVAILABLE.value
+        for resource_key in first["physical_allocation"]["resource_keys"]
+    )
+
+    second = coordinator.claim_physical()
+    assert second["task_id"] == task_id
+    assert second["generation"] == first["generation"] + 1
+    assert second["attempt_id"] != first["attempt_id"]
+    assert second["physical_allocation"]["allocation_id"] != allocation_id
+
+
 def test_fabric_reconciliation_requeues_entire_attempt_when_one_participant_is_lost(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
