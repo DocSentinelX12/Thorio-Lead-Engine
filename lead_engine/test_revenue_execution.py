@@ -4,7 +4,7 @@ from .active_processing import airtable_integrity
 from .agent_queue import pending
 from .agent_workers import run_worker_once
 from .database import LeadDB
-from .revenue_execution import RevenueAuthorizationError, execute_outbound, register_revenue_transport
+from .revenue_execution import RevenueActionInProgress, RevenueAuthorizationError, execute_outbound, register_revenue_transport
 
 class FakeTransport:
     def __init__(self): self.calls = []
@@ -50,3 +50,94 @@ def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
         airtable_integrity("airtable_integrity", {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}}, type("Ctx", (), {"db": db})()); result = run_worker_once(db, "outreach_closer", worker_id="closer-worker"); assert result["completed_count"] == 1 and result["failed_count"] == 0 and len(transport.calls) == 1
         stored = db.get(lead["fingerprint"]); assert stored["revenue_lifecycle_state"] == "outreach_sent" and stored["outreach_state"] == "awaiting_response" and stored["outreach_history"] and stored["last_outreach_action_id"]
     finally: register_revenue_transport(None)
+
+
+class ProcessDeathAfterAcceptanceTransport(FakeTransport):
+    def __init__(self):
+        super().__init__()
+        self.accepted = {}
+
+    def send(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        result = {"provider": "fake", "delivery_id": f"delivery-{len(self.calls)}", "status": "accepted"}
+        self.accepted[kwargs["idempotency_key"]] = result
+        raise SystemExit("simulated worker death after provider acceptance")
+
+    def reconcile(self, *, idempotency_key):
+        return self.accepted.get(idempotency_key)
+
+
+def test_worker_death_after_provider_acceptance_recovers_without_resend(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    transport = ProcessDeathAfterAcceptanceTransport()
+    key = "outreach:process-death:conversation-1:1"
+
+    with pytest.raises(SystemExit):
+        execute_outbound(
+            db,
+            worker_capability="high_ticket_sales_closer",
+            opportunity_id="process-death",
+            conversation_id="conversation-1",
+            channel="email",
+            recipient={"email": "taylor@example.com"},
+            subject="Hello",
+            body="Hello Taylor",
+            transport=transport,
+            idempotency_key=key,
+        )
+
+    assert db.get_state("revenue_execution")["actions"][key]["status"] == "sending"
+    transport_result = transport.reconcile(idempotency_key=key)
+    assert transport_result is not None
+
+    result = execute_outbound(
+        db,
+        worker_capability="high_ticket_sales_closer",
+        opportunity_id="process-death",
+        conversation_id="conversation-1",
+        channel="email",
+        recipient={"email": "taylor@example.com"},
+        subject="Hello",
+        body="Hello Taylor",
+        transport=transport,
+        idempotency_key=key,
+    )
+    assert result.status == "sent"
+    assert len(transport.calls) == 1
+    assert db.get_state("revenue_execution")["actions"][key]["status"] == "sent"
+
+
+def test_unresolved_inflight_action_cannot_be_sent_again(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    transport = FakeTransport()
+    key = "outreach:inflight:conversation-1:1"
+    db.set_state(
+        "revenue_execution",
+        {
+            "actions": {
+                key: {
+                    "action_id": "claimed-action",
+                    "opportunity_id": "inflight",
+                    "conversation_id": "conversation-1",
+                    "idempotency_key": key,
+                    "channel": "email",
+                    "status": "sending",
+                }
+            }
+        },
+    )
+
+    with pytest.raises(RevenueActionInProgress):
+        execute_outbound(
+            db,
+            worker_capability="high_ticket_sales_closer",
+            opportunity_id="inflight",
+            conversation_id="conversation-1",
+            channel="email",
+            recipient={"email": "taylor@example.com"},
+            subject="Hello",
+            body="Hello Taylor",
+            transport=transport,
+            idempotency_key=key,
+        )
+    assert transport.calls == []
