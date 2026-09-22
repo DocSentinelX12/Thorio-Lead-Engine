@@ -170,6 +170,43 @@ class ComputeScheduler:
             return (fabric["domain"],) if fabric else ()
         return tuple(sorted({str(domain).strip() for domain in domains if str(domain).strip()}))
 
+    @classmethod
+    def _shared_verified_network_domain(cls, candidates: list[dict[str, Any]]) -> dict[str, str] | None:
+        if len(candidates) < 2:
+            return None
+        domain_sets = [set(cls._verified_network_domains(candidate)) for candidate in candidates]
+        if any(not domains for domains in domain_sets):
+            return None
+        shared = set.intersection(*domain_sets)
+        if not shared:
+            return None
+        domain = sorted(shared)[0]
+        sources = set()
+        for candidate in candidates:
+            evidence = json.loads(candidate["cpu"]["evidence_json"]).get("network") or {}
+            source = str(evidence.get("source") or "").strip()
+            if source:
+                sources.add(source)
+        if len(sources) != 1:
+            return None
+        return {"domain": domain, "source": next(iter(sources))}
+
+    @staticmethod
+    def _gpu_nic_locality_evidence(row: dict[str, Any], gpu_uuid: str | None) -> tuple[dict[str, Any], ...]:
+        if not gpu_uuid:
+            return ()
+        evidence = json.loads(row["evidence_json"])
+        network = evidence.get("network")
+        if not isinstance(network, dict):
+            return ()
+        locality = network.get("gpu_nic_locality")
+        if not isinstance(locality, list):
+            return ()
+        return tuple(
+            item for item in locality
+            if isinstance(item, dict) and str(item.get("gpu_uuid") or "").strip() == str(gpu_uuid).strip()
+        )
+
     def _candidates(self, requirements: ComputeRequirements) -> list[dict[str, Any]]:
         rows = self.inventory.eligible()
         grouped = self._node_from_rows(rows)
@@ -298,6 +335,7 @@ class ComputeScheduler:
             if not selected:
                 raise ComputeSchedulingError("no compatible allocation")
 
+        selected_network = self._shared_verified_network_domain(selected)
         resources = [candidate["cpu"] for candidate in selected]
         gpu_rows: list[dict[str, Any]] = []
         remaining = needed
@@ -352,7 +390,13 @@ class ComputeScheduler:
             capability_evidence=tuple(
                 json.loads(row["payload_json"]) | {"resource_key": row["resource_key"]} | (
                     {"placement_decision": {
-                        "signal": "verified_topology_domain",
+                        "signal": (
+                            "verified_topology_domain"
+                            if json.loads(row["payload_json"]).get("topology_domain")
+                            else "verified_network_domain"
+                            if selected_network
+                            else "verified_gpu_nic_locality"
+                        ),
                         "topology_domain": json.loads(row["payload_json"]).get("topology_domain"),
                         "topology_source": json.loads(row["payload_json"]).get("topology_source") or (
                             json.loads(row["evidence_json"]).get("topology") or {}
@@ -365,10 +409,23 @@ class ComputeScheduler:
                             "network_fabric_domain": network_evidence["domain"],
                             "network_source": network_evidence["source"],
                         } if (network_evidence := self._verified_network_fabric_evidence(row)) else {}),
+                        **({
+                            "network_domain": selected_network["domain"],
+                            "network_source": selected_network["source"],
+                        } if selected_network else {}),
+                        **({
+                            "gpu_nic_locality": self._gpu_nic_locality_evidence(
+                                row, json.loads(row["payload_json"]).get("gpu_uuid")
+                            ),
+                        } if self._gpu_nic_locality_evidence(
+                            row, json.loads(row["payload_json"]).get("gpu_uuid")
+                        ) else {}),
                     }}
                     if row["resource_type"] == "gpu" and (
                         json.loads(row["payload_json"]).get("topology_domain")
                         or self._verified_network_fabric_evidence(row)
+                        or selected_network
+                        or self._gpu_nic_locality_evidence(row, json.loads(row["payload_json"]).get("gpu_uuid"))
                     )
                     else {}
                 )
