@@ -776,3 +776,108 @@ def test_explicitly_quarantined_only_physical_path_is_not_used_for_multinode_ncc
             ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=2, require_nccl=True), same_node=False),
             "allocation-no-quarantined-path",
         )
+
+
+def test_fabric_placement_prefers_measured_bandwidth_then_latency(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    network = {
+        "source": "verified-fabric-metrics",
+        "gpu_nic_locality": [
+            {"gpu_uuid": "fast", "nic": "eth0", "rdma_device": "mlx5_0", "rdma_port": 1, "link_layer": "InfiniBand"},
+            {"gpu_uuid": "slow", "nic": "eth1", "rdma_device": "mlx5_1", "rdma_port": 1, "link_layer": "InfiniBand"},
+        ],
+        "rdma": {
+            "devices": [{"device": "mlx5_0"}, {"device": "mlx5_1"}],
+            "links": [
+                {"rdma_device": "mlx5_0", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP", "bandwidth_gbps": 200, "latency_us": 4},
+                {"rdma_device": "mlx5_1", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP", "bandwidth_gbps": 100, "latency_us": 2},
+            ],
+        },
+    }
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(_node("node-a", [
+            _ready_gpu("node-a", "gpu-0", gpu_uuid="fast"),
+            _ready_gpu("node-a", "gpu-1", gpu_uuid="slow"),
+        ]),),
+        authentication_state="authenticated",
+        evidence={"network": network},
+    ))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(
+            WorkloadClass.MULTI_GPU,
+            GpuRequirements(gpu_count=1, require_nccl=False, min_fabric_bandwidth_gbps=150),
+        ),
+        "allocation-bandwidth",
+    )
+    assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-0")
+    evidence = next(item for item in allocation.capability_evidence if item.get("gpu_uuid") == "fast")
+    assert evidence["placement_decision"]["fabric_path_contract"]["bandwidth_gbps"] == 200
+    assert evidence["placement_decision"]["fabric_path_contract"]["latency_us"] == 4
+
+
+def test_redundant_fabric_requirement_needs_two_independent_verified_paths(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    network = {
+        "source": "verified-fabric-redundancy",
+        "gpu_nic_locality": [
+            {"gpu_uuid": "u0", "nic": "eth0", "rdma_device": "mlx5_0", "rdma_port": 1, "link_layer": "InfiniBand"},
+            {"gpu_uuid": "u0", "nic": "eth1", "rdma_device": "mlx5_1", "rdma_port": 1, "link_layer": "InfiniBand"},
+        ],
+        "rdma": {
+            "devices": [{"device": "mlx5_0"}, {"device": "mlx5_1"}],
+            "links": [
+                {"rdma_device": "mlx5_0", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP", "bandwidth_gbps": 200},
+                {"rdma_device": "mlx5_1", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP", "bandwidth_gbps": 100},
+            ],
+        },
+    }
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(_node("node-a", [
+            _ready_gpu("node-a", "gpu-0", gpu_uuid="u0"),
+        ]),),
+        authentication_state="authenticated",
+        evidence={"network": network},
+    ))
+    scheduler = ComputeScheduler(inventory)
+    allocation = scheduler.allocate(
+        ComputeRequirements(
+            WorkloadClass.GPU_REQUIRED,
+            GpuRequirements(gpu_count=1, require_redundant_fabric_path=True),
+        ),
+        "allocation-redundant",
+    )
+    evidence = next(item for item in allocation.capability_evidence if item.get("gpu_uuid") == "u0")
+    contract = evidence["placement_decision"]["fabric_path_contract"]
+    assert contract["path_count"] == 2
+    assert contract["primary_path"]["rdma_device"] == "mlx5_0"
+    assert contract["redundant_paths"][0]["rdma_device"] == "mlx5_1"
+
+
+def test_fabric_performance_requirements_reject_unmeasured_path(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    network = {
+        "source": "verified-fabric-without-performance",
+        "gpu_nic_locality": [
+            {"gpu_uuid": "u0", "nic": "eth0", "rdma_device": "mlx5_0", "rdma_port": 1, "link_layer": "InfiniBand"},
+        ],
+        "rdma": {
+            "devices": [{"device": "mlx5_0"}],
+            "links": [{"rdma_device": "mlx5_0", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP"}],
+        },
+    }
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(_node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="u0")]),),
+        authentication_state="authenticated",
+        evidence={"network": network},
+    ))
+    with pytest.raises(ComputeSchedulingError):
+        ComputeScheduler(inventory).allocate(
+            ComputeRequirements(
+                WorkloadClass.GPU_REQUIRED,
+                GpuRequirements(gpu_count=1, min_fabric_bandwidth_gbps=100),
+            ),
+            "allocation-unmeasured",
+        )
