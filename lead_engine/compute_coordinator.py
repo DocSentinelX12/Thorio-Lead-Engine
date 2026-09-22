@@ -1600,6 +1600,28 @@ class ComputeCoordinator:
         lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
         now = time.time()
         with self._lock:
+            with self._connect() as connection:
+                authorized = connection.execute(
+                    """SELECT 1
+                       FROM compute_execution_participants p
+                       JOIN compute_execution_attempts a
+                         ON a.attempt_id=p.attempt_id
+                        AND a.generation=p.generation
+                       WHERE p.attempt_id=? AND p.generation=? AND p.worker_id=?
+                         AND p.status IN ('bound','active','running')
+                         AND a.status='leased'
+                         AND a.lease_token_digest=?
+                         AND EXISTS (
+                             SELECT 1 FROM compute_tasks t
+                             WHERE t.task_id=p.task_id
+                               AND t.status='leased'
+                               AND t.lease_until > ?
+                         )""",
+                    (attempt_id, generation, worker_id, lease_digest, now),
+                ).fetchone()
+                if not authorized:
+                    return False
+
             worker = self.pool.worker(worker_id)
             if worker is None:
                 return False
