@@ -1045,7 +1045,7 @@ def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
 
     def runner(command, timeout, env):
         time.sleep(0.02)
-        return 0, "THORIO_NCCL_PROBE_OK {\\"backend\\":\\"nccl\\",\\"collective\\":\\"all_reduce\\",\\"verified_on_gpu\\":true,\\"world_size\\":2,\\"expected_sum\\":3,\\"rank\\":0,\\"gpu_uuid\\":\\"GPU-worker-1-0\\"}", ""
+        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":2,"expected_sum":3,"rank":0,"gpu_uuid":"GPU-worker-1-0"}', ""
 
     try:
         run_fabric_verification(
