@@ -624,6 +624,75 @@ def test_nvidia_runtime_preserves_exact_nccl_hca_port_and_reconciles_rdma_endpoi
     assert evidence["gpu_nic_locality"]["link_layer"] == "InfiniBand"
 
 
+
+
+def _verified_ib_process(rank, gpu_uuid, device, port):
+    selection = {"device": device, "port": port, "transport": "IB"}
+    return {
+        "rank": rank,
+        "gpu_binding": {"gpu_uuid": gpu_uuid},
+        "probe": {
+            "rank": rank,
+            "gpu_uuid": gpu_uuid,
+            "world_size": 2,
+            "backend": "nccl",
+            "collective": "all_reduce",
+            "verified_on_gpu": True,
+        },
+        "network_transport": "IB",
+        "hca_selections": [selection],
+        "verified_hca_selections": [selection],
+        "rdma_devices": [device],
+        "verified_rdma_devices": [device],
+        "gpu_nic_locality": {
+            "gpu_uuid": gpu_uuid,
+            "rdma_device": device,
+            "rdma_port": port,
+            "link_layer": "InfiniBand",
+        },
+    }
+
+
+def test_nvidia_runtime_reconciles_complete_cross_node_ib_paths():
+    evidence = NvidiaRuntime.reconcile_distributed_network_paths(
+        [
+            _verified_ib_process(0, "GPU-a", "mlx5_0", 1),
+            _verified_ib_process(1, "GPU-b", "mlx5_1", 2),
+        ],
+        world_size=2,
+        nnodes=2,
+    )
+    assert evidence["verified"] is True
+    assert evidence["network_transport"] == "IB"
+    assert [path["rank"] for path in evidence["rank_paths"]] == [0, 1]
+    assert evidence["rank_paths"][0]["rdma_port"] == 1
+    assert evidence["rank_paths"][1]["rdma_port"] == 2
+
+
+def test_nvidia_runtime_rejects_cross_node_transport_mismatch():
+    rank_zero = _verified_ib_process(0, "GPU-a", "mlx5_0", 1)
+    rank_one = _verified_ib_process(1, "GPU-b", "mlx5_1", 1)
+    rank_one["network_transport"] = "Socket"
+    rank_one["probe"]["network_transport"] = "Socket"
+    with pytest.raises(NvidiaRuntimeError, match="inconsistent NCCL network transports"):
+        NvidiaRuntime.reconcile_distributed_network_paths(
+            [rank_zero, rank_one],
+            world_size=2,
+            nnodes=2,
+        )
+
+
+def test_nvidia_runtime_rejects_duplicate_gpu_identity_across_distributed_ranks():
+    with pytest.raises(NvidiaRuntimeError, match="GPU UUID GPU-a"):
+        NvidiaRuntime.reconcile_distributed_network_paths(
+            [
+                _verified_ib_process(0, "GPU-a", "mlx5_0", 1),
+                _verified_ib_process(1, "GPU-a", "mlx5_1", 1),
+            ],
+            world_size=2,
+            nnodes=2,
+        )
+
 def test_nvidia_runtime_rejects_nccl_hca_port_not_verified_by_rdma_link():
     from lead_engine.nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 
