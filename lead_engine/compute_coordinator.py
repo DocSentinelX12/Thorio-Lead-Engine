@@ -1817,38 +1817,52 @@ class ComputeCoordinator:
                     ).fetchone()
                     attempts.append(dict(attempt) if attempt else None)
 
-                connection.execute(
-                    "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,"
-                    "lease_until=NULL,error='lease expired',updated_at=? "
-                    "WHERE status='leased' AND lease_until <= ?",
-                    (now, now),
-                )
-
-                for attempt in attempts:
-                    if not attempt:
+                recovered_tasks = []
+                for row in rows:
+                    task_id = str(row["task_id"])
+                    updated = connection.execute(
+                        "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,"
+                        "lease_until=NULL,error='lease expired',updated_at=? "
+                        "WHERE task_id=? AND status='leased' AND lease_until <= ?",
+                        (now, task_id, now),
+                    )
+                    if updated.rowcount != 1:
                         continue
-                    if attempt["status"] == "completed":
-                        connection.execute(
-                            "UPDATE compute_execution_participants SET status='completed',"
-                            "finished_at=COALESCE(finished_at,?) "
-                            "WHERE attempt_id=? AND generation=? AND status NOT IN ('failed','expired')",
-                            (now, attempt["attempt_id"], attempt["generation"]),
-                        )
-                    elif attempt["status"] == "leased":
-                        connection.execute(
-                            "UPDATE compute_execution_attempts SET status='expired',"
-                            "finished_at=?,error='lease expired',authoritative_acceptance='rejected' "
-                            "WHERE attempt_id=? AND generation=? AND status='leased'",
-                            (now, attempt["attempt_id"], attempt["generation"]),
-                        )
-                        connection.execute(
-                            "UPDATE compute_execution_participants SET status='expired',"
-                            "last_error='lease expired',heartbeat_at=? "
-                            "WHERE attempt_id=? AND generation=? "
-                            "AND status IN ('bound','active','launching','running')",
-                            (now, attempt["attempt_id"], attempt["generation"]),
-                        )
+
+                    attempt = None
+                    if row["attempt_id"]:
+                        attempt_row = connection.execute(
+                            "SELECT * FROM compute_execution_attempts WHERE attempt_id=? AND task_id=?",
+                            (row["attempt_id"], task_id),
+                        ).fetchone()
+                        attempt = dict(attempt_row) if attempt_row else None
+
+                    if attempt:
+                        if attempt["status"] == "completed":
+                            connection.execute(
+                                "UPDATE compute_execution_participants SET status='completed',"
+                                "finished_at=COALESCE(finished_at,?) "
+                                "WHERE attempt_id=? AND generation=? AND status NOT IN ('failed','expired')",
+                                (now, attempt["attempt_id"], attempt["generation"]),
+                            )
+                        elif attempt["status"] == "leased":
+                            connection.execute(
+                                "UPDATE compute_execution_attempts SET status='expired',"
+                                "finished_at=?,error='lease expired',authoritative_acceptance='rejected' "
+                                "WHERE attempt_id=? AND generation=? AND status='leased'",
+                                (now, attempt["attempt_id"], attempt["generation"]),
+                            )
+                            connection.execute(
+                                "UPDATE compute_execution_participants SET status='expired',"
+                                "last_error='lease expired',heartbeat_at=? "
+                                "WHERE attempt_id=? AND generation=? "
+                                "AND status IN ('bound','active','launching','running')",
+                                (now, attempt["attempt_id"], attempt["generation"]),
+                            )
+                    recovered_tasks.append(attempt)
+
                 connection.commit()
+
 
             for attempt in attempts:
                 if not attempt:
