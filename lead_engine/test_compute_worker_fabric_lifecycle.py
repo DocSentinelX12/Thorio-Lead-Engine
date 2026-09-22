@@ -1817,7 +1817,7 @@ def test_fabric_launch_plan_constructs_verified_routes_between_participants(tmp_
     endpoint = "10.0.0.5:29400"
     assert coordinator._bind_rendezvous_endpoint(
         claimed["attempt_id"], claimed["generation"], claimed["lease_token"], endpoint
-    ) is True
+    ) == endpoint
 
     launch = coordinator.fabric_launch_plan(claimed["attempt_id"], endpoint)
     assert launch["world_size"] == 2
