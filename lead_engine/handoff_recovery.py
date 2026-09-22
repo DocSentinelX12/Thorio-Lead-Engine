@@ -42,6 +42,25 @@ def recover_processing_handoffs(db: Any, *, limit: int = 500) -> Dict[str, Any]:
         research_status = str(lead.get("research_status") or "").strip().lower()
         sales_eligibility = str(lead.get("sales_eligibility") or "").strip().lower()
 
+        if sales_eligibility == "eligible":
+            if not _queued_or_running(db, "outreach_closer", fingerprint):
+                enqueue(
+                    db,
+                    "outreach_closer",
+                    {
+                        "lead": dict(lead),
+                        "routing_result": dict(lead.get("routing_result") or {}),
+                        "integrity_result": {
+                            "sales_eligibility": "eligible",
+                            "sales_eligibility_reason": lead.get("sales_eligibility_reason") or "eligible",
+                        },
+                    },
+                    priority=10,
+                    dedupe_key=f"sales:{fingerprint}",
+                )
+                recovered.append({"fingerprint": fingerprint, "agent": "outreach_closer"})
+            continue
+
         if stage == "primary":
             if not _queued_or_running(db, "qualification_b", fingerprint):
                 enqueue(
@@ -108,25 +127,6 @@ def recover_processing_handoffs(db: Any, *, limit: int = 500) -> Dict[str, Any]:
                     dedupe_key=f"qualification_a:{fingerprint}",
                 )
                 recovered.append({"fingerprint": fingerprint, "agent": "qualification_a"})
-            continue
-
-        if sales_eligibility == "eligible":
-            if not _queued_or_running(db, "outreach_closer", fingerprint):
-                enqueue(
-                    db,
-                    "outreach_closer",
-                    {
-                        "lead": dict(lead),
-                        "routing_result": dict(lead.get("routing_result") or {}),
-                        "integrity_result": {
-                            "sales_eligibility": "eligible",
-                            "sales_eligibility_reason": lead.get("sales_eligibility_reason") or "eligible",
-                        },
-                    },
-                    priority=10,
-                    dedupe_key=f"sales:{fingerprint}",
-                )
-                recovered.append({"fingerprint": fingerprint, "agent": "outreach_closer"})
             continue
 
         skipped += 1
