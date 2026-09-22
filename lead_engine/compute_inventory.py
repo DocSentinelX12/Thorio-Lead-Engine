@@ -192,6 +192,54 @@ class ComputeInventory:
             ).fetchone()
         return dict(row) if row else None
 
+    def quarantine_resource(
+        self,
+        resource_key: str,
+        *,
+        reason: str,
+        evidence: dict[str, Any] | None = None,
+    ) -> bool:
+        """Quarantine one physical resource and durably retain the failure evidence."""
+        key = str(resource_key).strip()
+        detail = str(reason).strip()
+        if not key or not detail:
+            raise ValueError("resource_key and reason are required")
+        now = time.time()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT evidence_json,state FROM compute_resource_inventory WHERE resource_key=?",
+                (key,),
+            ).fetchone()
+            if not row:
+                return False
+            current = json.loads(row["evidence_json"] or "{}")
+            if not isinstance(current, dict):
+                current = {}
+            quarantine = {
+                "reason": detail[:4000],
+                "recorded_at": now,
+            }
+            if evidence is not None:
+                if not isinstance(evidence, dict):
+                    raise ValueError("quarantine evidence must be an object")
+                quarantine["evidence"] = evidence
+            current["quarantine"] = quarantine
+            connection.execute(
+                "UPDATE compute_resource_inventory SET state=?,evidence_json=?,last_seen_at=? "
+                "WHERE resource_key=? AND state NOT IN (?,?)",
+                (
+                    ResourceState.QUARANTINED.value,
+                    json.dumps(current, ensure_ascii=False, sort_keys=True),
+                    now,
+                    key,
+                    ResourceState.RELEASED.value,
+                    ResourceState.QUARANTINED.value,
+                ),
+            )
+            changed = connection.total_changes > 0
+            connection.commit()
+        return changed
+
     def mark_state(self, resource_key: str, state: ResourceState) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
