@@ -189,7 +189,13 @@ def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300, lea
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
         if task.get("status") != RUNNING or task.get("worker_id") != worker_id or (lease_token is not None and task.get("lease_token") != lease_token): raise ValueError("Task is not leased to this worker")
-        now = _now(); db.queue_update(task_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now)); return _row_to_task(db.queue_get(task_id))
+        now = _now()
+        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now)):
+                raise ValueError("Task lease was lost")
+        else:
+            db.queue_update(task_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now))
+        return _row_to_task(db.queue_get(task_id))
     state = _load(db); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
     if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
@@ -204,8 +210,14 @@ def retry(db, task_id: str, *, worker_id: str, lease_token: str | None = None, e
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
-        if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
-        now = _iso(_now()); db.queue_update(task_id, status=QUEUED, last_error=error, worker_id=None, lease_until=None, updated_at=now); return _row_to_task(db.queue_get(task_id))
+        if task.get("status") != RUNNING or task.get("worker_id") != worker_id or (lease_token is not None and task.get("lease_token") != lease_token): raise ValueError("Task is not leased to this worker")
+        now = _iso(_now())
+        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, status=QUEUED, last_error=error, worker_id=None, lease_until=None, lease_token=None, updated_at=now):
+                raise ValueError("Task lease was lost")
+        else:
+            db.queue_update(task_id, status=QUEUED, last_error=error, worker_id=None, lease_until=None, updated_at=now)
+        return _row_to_task(db.queue_get(task_id))
     state = _load(db); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
     if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
@@ -216,8 +228,14 @@ def _finish(db, task_id: str, *, worker_id: str, lease_token: str | None, status
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
-        if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
-        db.queue_update(task_id, status=status, result=json.dumps(result, ensure_ascii=False) if result is not None else None, last_error=error, worker_id=None, lease_until=None, updated_at=_iso(_now())); return _row_to_task(db.queue_get(task_id))
+        if task.get("status") != RUNNING or task.get("worker_id") != worker_id or (lease_token is not None and task.get("lease_token") != lease_token): raise ValueError("Task is not leased to this worker")
+        now = _iso(_now())
+        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, status=status, result=json.dumps(result, ensure_ascii=False) if result is not None else None, last_error=error, worker_id=None, lease_until=None, lease_token=None, updated_at=now):
+                raise ValueError("Task lease was lost")
+        else:
+            db.queue_update(task_id, status=status, result=json.dumps(result, ensure_ascii=False) if result is not None else None, last_error=error, worker_id=None, lease_until=None, updated_at=now)
+        return _row_to_task(db.queue_get(task_id))
     state = _load(db); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
     if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
