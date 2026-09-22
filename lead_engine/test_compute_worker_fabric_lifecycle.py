@@ -72,6 +72,8 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
         "backend": "nccl",
         "collective": "all_reduce",
         "world_size": launch["world_size"],
+        "nnodes": launch["nnodes"],
+        "network_transport": "IB",
         "worker_id": worker_id,
         "gpu_identity": {"verified": True, "gpu_bindings": participant["gpu_bindings"]},
         "gpu_bindings": participant["gpu_bindings"],
@@ -85,9 +87,11 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
                     "collective": "all_reduce",
                     "verified_on_gpu": True,
                     "world_size": launch["world_size"],
+                    "nnodes": launch["nnodes"],
                     "expected_sum": expected_sum,
                     "rank": binding["rank"],
                     "gpu_uuid": binding["gpu_uuid"],
+                    "network_transport": "IB",
                 },
             }
             for binding in participant["gpu_bindings"]
