@@ -246,11 +246,12 @@ def run_fabric_verification(
     runtime: NvidiaRuntime | None = None,
     runner=None,
 ) -> Dict[str, Any]:
-    """Run the real NVIDIA distributed probe without completing business work."""
+    """Execute one real NCCL process for every allocated GPU and verify every rank."""
     if heartbeat_seconds <= 0:
         raise ValueError("heartbeat_seconds must be positive")
     if convergence_timeout_seconds <= 0:
         raise ValueError("convergence_timeout_seconds must be positive")
+
     attempt_id = str(assignment["attempt_id"])
     generation = int(assignment["generation"])
     lease_token = str(assignment["lease_token"])
@@ -258,78 +259,92 @@ def run_fabric_verification(
     participant = next((item for item in plan["workers"] if item["worker_id"] == client.worker_id), None)
     if participant is None:
         raise ComputeWorkerError("worker is not present in the durable launch plan")
+
     runtime = runtime or NvidiaRuntime()
     gpu_bindings = participant.get("gpu_bindings")
     if not isinstance(gpu_bindings, list) or not gpu_bindings:
         raise ComputeWorkerError("launch plan is missing exact GPU bindings")
-    allocated_gpu_ids = [str(item.get("gpu_id") or "").strip() for item in gpu_bindings if isinstance(item, dict)]
-    allocated_gpu_uuids = [str(item.get("gpu_uuid") or "").strip() for item in gpu_bindings if isinstance(item, dict)]
-    allocated_gpu_device_ids = []
-    for gpu_id in allocated_gpu_ids:
+
+    world_size = int(plan["world_size"])
+    process_count = int(participant["process_count"])
+    if world_size < 2 or process_count != len(gpu_bindings):
+        raise ComputeWorkerError("launch plan has an invalid distributed process contract")
+
+    normalized_bindings = []
+    seen_ranks: set[int] = set()
+    seen_devices: set[str] = set()
+    seen_uuids: set[str] = set()
+    for binding in gpu_bindings:
+        if not isinstance(binding, dict):
+            raise ComputeWorkerError("launch plan contains a non-object GPU binding")
+        gpu_id = str(binding.get("gpu_id") or "").strip()
+        gpu_uuid = str(binding.get("gpu_uuid") or "").strip()
         device_id = gpu_id if gpu_id.isdigit() else gpu_id.removeprefix("gpu-")
-        if not device_id.isdigit():
-            raise ComputeWorkerError(f"allocated GPU has no NVIDIA device index: {gpu_id}")
-        allocated_gpu_device_ids.append(device_id)
-    if (
-        len(allocated_gpu_ids) != int(participant["process_count"])
-        or any(not gpu_uuid for gpu_uuid in allocated_gpu_uuids)
-        or len(set(allocated_gpu_uuids)) != len(allocated_gpu_uuids)
-        or len(set(allocated_gpu_device_ids)) != len(allocated_gpu_device_ids)
-    ):
-        raise ComputeWorkerError("launch plan contains invalid or ambiguous GPU bindings")
+        rank = int(binding.get("rank", -1))
+        local_rank = int(binding.get("local_rank", -1))
+        if (
+            not device_id.isdigit()
+            or not gpu_uuid
+            or rank < 0
+            or rank >= world_size
+            or local_rank < 0
+            or local_rank >= process_count
+            or rank in seen_ranks
+            or device_id in seen_devices
+            or gpu_uuid in seen_uuids
+        ):
+            raise ComputeWorkerError("launch plan contains invalid or ambiguous per-GPU process bindings")
+        seen_ranks.add(rank)
+        seen_devices.add(device_id)
+        seen_uuids.add(gpu_uuid)
+        normalized_bindings.append({
+            **binding,
+            "gpu_id": gpu_id,
+            "gpu_uuid": gpu_uuid,
+            "device_id": device_id,
+            "rank": rank,
+            "local_rank": local_rank,
+        })
+
+    if sorted(seen_ranks) != list(range(world_size)):
+        raise ComputeWorkerError("launch plan does not cover every distributed rank exactly once")
+
     if isinstance(runtime, NvidiaRuntime):
-        try:
-            gpu_identity = runtime.verify_gpu_bindings(gpu_bindings)
-        except NvidiaRuntimeError:
-            raise
+        gpu_identity = runtime.verify_gpu_bindings(normalized_bindings)
     else:
         gpu_identity = {"verified": False, "verification_source": "injected_runtime"}
+
     client.fabric_state(attempt_id, generation, lease_token, "launching")
     stop_heartbeat = threading.Event()
     heartbeat_failed = threading.Event()
     heartbeat_error: list[str] = []
     process_lock = threading.Lock()
-    process_holder = {"process": None}
+    process_holder: list[Any] = []
 
-    def stop_process() -> None:
+    def stop_processes() -> None:
         with process_lock:
-            process = process_holder["process"]
-        if process is None:
-            return
-
-        if os.name == "posix":
-            process_group_id = getattr(process, "pid", None)
-            if process_group_id is not None:
-                group_exists = False
-                try:
-                    os.killpg(process_group_id, 0)
-                    group_exists = True
-                except ProcessLookupError:
-                    group_exists = False
-                except PermissionError:
-                    group_exists = True
-                if group_exists:
-                    try:
-                        os.killpg(process_group_id, signal.SIGTERM)
-                    except ProcessLookupError:
-                        group_exists = False
-                    if group_exists:
-                        try:
-                            process.wait(timeout=2)
-                        except Exception:
-                            try:
-                                os.killpg(process_group_id, signal.SIGKILL)
-                            except ProcessLookupError:
-                                pass
-                            try:
-                                process.wait(timeout=2)
-                            except Exception:
-                                pass
-                return
-
-        if process.poll() is None:
+            processes = list(process_holder)
+        for process in processes:
             try:
-                process.terminate()
+                if process.poll() is not None:
+                    continue
+            except Exception:
+                pass
+            try:
+                if os.name == "posix" and getattr(process, "pid", None) is not None:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                else:
+                    process.terminate()
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+        for process in processes:
+            try:
                 process.wait(timeout=2)
             except Exception:
                 try:
@@ -345,70 +360,143 @@ def run_fabric_verification(
                 if response.get("ok") is not True:
                     heartbeat_error.append("coordinator rejected fabric heartbeat")
                     heartbeat_failed.set()
-                    stop_process()
+                    stop_processes()
                     return
             except Exception as error:
                 heartbeat_error.append(str(error))
                 heartbeat_failed.set()
-                stop_process()
+                stop_processes()
                 return
 
     thread = threading.Thread(target=beat, daemon=True)
     try:
         local = runtime.verify_local()
         host, port_text = str(plan["rendezvous_endpoint"]).rsplit(":", 1)
-        command = runtime.distributed_command(
-            world_size=int(plan["world_size"]), node_rank=int(participant["node_rank"]),
-            nnodes=int(plan["nnodes"]), master_addr=host, master_port=int(port_text),
-            rendezvous_id=str(plan["rendezvous_id"]), process_count=int(participant["process_count"]),
-        )
+        port = int(port_text)
+        command = runtime.distributed_process_command()
         client.fabric_state(attempt_id, generation, lease_token, "active")
 
-        execution_env = os.environ.copy()
-        execution_env["CUDA_VISIBLE_DEVICES"] = ",".join(allocated_gpu_device_ids)
-        if runner is None:
-            popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True, "env": execution_env}
-            if os.name == "posix":
-                popen_kwargs["start_new_session"] = True
-            elif os.name == "nt":
-                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-            process = subprocess.Popen(command, **popen_kwargs)
-            with process_lock:
-                process_holder["process"] = process
+        process_specs = []
+        for binding in sorted(normalized_bindings, key=lambda item: item["rank"]):
+            execution_env = os.environ.copy()
+            execution_env.update({
+                "CUDA_VISIBLE_DEVICES": binding["device_id"],
+                "MASTER_ADDR": host,
+                "MASTER_PORT": str(port),
+                "RANK": str(binding["rank"]),
+                "WORLD_SIZE": str(world_size),
+                "LOCAL_RANK": "0",
+                "LOCAL_WORLD_SIZE": "1",
+                "THORIO_EXPECTED_WORLD_SIZE": str(world_size),
+                "THORIO_EXPECTED_RANK": str(binding["rank"]),
+                "THORIO_EXPECTED_GPU_UUID": binding["gpu_uuid"],
+                "THORIO_FABRIC_ATTEMPT_ID": attempt_id,
+                "THORIO_FABRIC_GENERATION": str(generation),
+            })
+            process_specs.append((binding, execution_env))
+
+        results = []
+        if runner is not None:
             thread.start()
-            if heartbeat_failed.is_set():
-                stop_process()
-                raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
-            try:
-                stdout, stderr = process.communicate(timeout=runtime.timeout_seconds)
-                rc = process.returncode
-            except subprocess.TimeoutExpired:
-                stop_process()
-                stdout, stderr = process.communicate()
-                raise ComputeWorkerError("distributed NVIDIA launch timed out")
+            for binding, execution_env in process_specs:
+                if heartbeat_failed.is_set():
+                    raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
+                rc, stdout, stderr = runner(command, runtime.timeout_seconds, execution_env)
+                results.append((binding, int(rc), str(stdout), str(stderr)))
         else:
+            for binding, execution_env in process_specs:
+                if heartbeat_failed.is_set():
+                    raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
+                popen_kwargs = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "text": True,
+                    "env": execution_env,
+                }
+                if os.name == "posix":
+                    popen_kwargs["start_new_session"] = True
+                elif os.name == "nt":
+                    popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                process = subprocess.Popen(command, **popen_kwargs)
+                with process_lock:
+                    process_holder.append(process)
             thread.start()
-            if heartbeat_failed.is_set():
-                raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
-            rc, stdout, stderr = runner(command, runtime.timeout_seconds)
+            for binding, _execution_env in process_specs:
+                process = next(
+                    process for process in process_holder
+                    if getattr(process, "_thorio_rank", None) == binding["rank"]
+                ) if False else None
+            # process_holder is ordered exactly like process_specs.
+            for binding, process in zip(
+                [item[0] for item in process_specs],
+                list(process_holder),
+            ):
+                try:
+                    stdout, stderr = process.communicate(timeout=runtime.timeout_seconds)
+                    rc = process.returncode
+                except subprocess.TimeoutExpired:
+                    stop_processes()
+                    raise ComputeWorkerError(
+                        f"distributed NVIDIA rank {binding['rank']} timed out"
+                    )
+                results.append((binding, int(rc), str(stdout), str(stderr)))
 
         if heartbeat_failed.is_set():
-            stop_process()
+            stop_processes()
             raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
-        if rc != 0:
-            raise NvidiaRuntimeError(f"distributed NCCL launch failed: {(stderr or stdout).strip()[:4000]}")
-        probe = runtime.validate_distributed_probe_output(str(stdout), int(plan["world_size"]))
-        if heartbeat_failed.is_set():
-            raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
+
+        process_evidence = []
+        failures = []
+        for binding, rc, stdout, stderr in results:
+            if rc != 0:
+                failures.append(
+                    f"rank {binding['rank']} ({binding['gpu_uuid']}): {(stderr or stdout).strip()[:2000]}"
+                )
+                continue
+            probe = runtime.validate_distributed_probe_output(
+                stdout,
+                world_size,
+                expected_rank=int(binding["rank"]),
+                expected_gpu_uuid=str(binding["gpu_uuid"]),
+            )
+            process_evidence.append({
+                "rank": int(binding["rank"]),
+                "local_rank": int(binding["local_rank"]),
+                "gpu_binding": dict(binding),
+                "probe": probe,
+                "stdout": stdout[-4000:],
+            })
+
+        if failures:
+            raise NvidiaRuntimeError("distributed NCCL launch failed: " + "; ".join(failures))
+
+        if len(process_evidence) != world_size:
+            raise NvidiaRuntimeError(
+                f"distributed NCCL execution produced {len(process_evidence)} verified ranks; expected {world_size}"
+            )
+
         evidence = {
-            "verified": True, "local_runtime": local, "gpu_identity": gpu_identity, "gpu_bindings": gpu_bindings,
-            "cuda_visible_devices": allocated_gpu_device_ids, "attempt_id": attempt_id,
-            "generation": generation, "worker_id": client.worker_id,
-            "node_rank": int(participant["node_rank"]), "world_size": int(plan["world_size"]),
-            "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
+            "verified": True,
+            "backend": "nccl",
+            "collective": "all_reduce",
+            "local_runtime": local,
+            "gpu_identity": gpu_identity,
+            "gpu_bindings": normalized_bindings,
+            "process_evidence": process_evidence,
+            "attempt_id": attempt_id,
+            "generation": generation,
+            "worker_id": client.worker_id,
+            "node_rank": int(participant["node_rank"]),
+            "world_size": world_size,
+            "nnodes": int(plan["nnodes"]),
+            "command": list(command),
+            "rendezvous_endpoint": plan["rendezvous_endpoint"],
         }
-        if not client.fabric_record_verification(attempt_id, generation, lease_token, evidence).get("ok", True):
+        if not client.fabric_record_verification(
+            attempt_id, generation, lease_token, evidence
+        ).get("ok", True):
             raise ComputeWorkerError("coordinator rejected execution verification")
+
         deadline = time.monotonic() + convergence_timeout_seconds
         convergence = client.fabric_converge(attempt_id, generation, lease_token)
         while convergence.get("converged") is not True and time.monotonic() < deadline:
@@ -430,7 +518,7 @@ def run_fabric_verification(
             pass
         raise
     finally:
-        stop_process()
+        stop_processes()
         stop_heartbeat.set()
         if thread.is_alive():
             thread.join(timeout=2)
