@@ -43,3 +43,55 @@ def test_opt_out_is_terminal_and_never_sends(tmp_path):
 
 def test_conversation_can_switch_to_preserved_route(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead("switch-test"); db.insert_if_new(lead); record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-4", text="We actually need a dedicated team", outcome="interested", suggested_route="Paxus"); stored = db.get(lead["fingerprint"]); assert stored["outreach_route"] == "Paxus" and stored["route_switch_history"][0]["from"] == "Shiftr" and stored["route_switch_history"][0]["to"] == "Paxus"
+
+
+def test_inbound_event_remains_idempotent_from_durable_lead_after_conversation_state_loss(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("durable-event-test")
+    db.insert_if_new(lead)
+    record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-durable",
+        text="Yes, I am interested",
+        outcome="interested",
+    )
+    db.set_state("revenue_conversations", {"conversations": {}})
+    result = record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-durable",
+        text="Yes, I am interested",
+        outcome="interested",
+    )
+    stored = db.get(lead["fingerprint"])
+    assert len(result["events"]) == 1
+    assert stored["response_count"] == 1
+    assert len(pending(db, "follow_up")) == 1
+
+
+def test_inbound_event_persists_before_follow_up_enqueue_failure(tmp_path, monkeypatch):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("handoff-crash-test")
+    db.insert_if_new(lead)
+
+    def fail_enqueue(*args, **kwargs):
+        raise RuntimeError("simulated queue failure after durable checkpoint")
+
+    monkeypatch.setattr("lead_engine.revenue_conversation.enqueue", fail_enqueue)
+    with pytest.raises(RuntimeError, match="simulated queue failure"):
+        record_inbound_event(
+            db,
+            opportunity_id=lead["fingerprint"],
+            conversation_id=lead["conversation_id"],
+            event_id="evt-handoff-crash",
+            text="Yes, I am interested",
+            outcome="interested",
+        )
+
+    stored = db.get(lead["fingerprint"])
+    assert stored["response_count"] == 1
+    assert stored["follow_up_due"] is True
+    assert stored["conversation_events"][0]["event_id"] == "evt-handoff-crash"
