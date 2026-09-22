@@ -492,7 +492,10 @@ def test_nvidia_runtime_launch_command_carries_rendezvous_identity():
 def test_nvidia_runtime_reconciles_nccl_hca_to_gpu_nic_locality():
     runtime = NvidiaRuntime()
     logs = "node-a:1:1 [0] NCCL INFO NET/IB : Using [0]mlx5_0:1/IB\n"
-    rdma = {"devices": [{"device": "mlx5_0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP"}]}
+    rdma = {
+        "devices": [{"device": "mlx5_0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP"}],
+        "links": [{"rdma_device": "mlx5_0", "netdev": "eth0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP"}],
+    }
     locality = [{"gpu_uuid": "GPU-a", "nic": "eth0", "nic_pci_bus_id": "0000:41:00.0", "shared_pci_ancestor": "0000:40", "source": "sysfs"}]
     evidence = runtime.validate_nccl_transport_against_rdma(logs, rdma, gpu_uuid="GPU-a", gpu_nic_locality=locality)
     assert evidence["verified_rdma_devices"] == ("mlx5_0",)
