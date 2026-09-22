@@ -128,6 +128,35 @@ def test_quarantined_gpu_is_excluded(tmp_path):
         )
 
 
+def test_multi_gpu_prefers_verified_topology_domain_concentration(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="weak"),
+        _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="weak"),
+        _ready_gpu("node-a", "gpu-2", gpu_uuid="strong"),
+        _ready_gpu("node-a", "gpu-3", gpu_uuid="strong"),
+    ])]))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_GPU, GpuRequirements(gpu_count=2, require_nccl=True)),
+        "allocation-topology",
+    )
+    assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-2", "node-a/gpu-3")
+
+
+def test_multi_gpu_does_not_claim_topology_locality_when_domains_are_disconnected(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([_node("node-a", [
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="domain-a"),
+        _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="domain-b"),
+    ])]))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.MULTI_GPU, GpuRequirements(gpu_count=2, require_nccl=True)),
+        "allocation-disconnected",
+    )
+    assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-0", "node-a/gpu-1")
+    assert {e["topology_domain"] for e in allocation.capability_evidence if e.get("resource_type") != "cpu"} == {"domain-a", "domain-b"}
+
+
 def test_topology_domain_is_enforced(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
