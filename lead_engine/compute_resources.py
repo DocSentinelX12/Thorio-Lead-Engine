@@ -48,6 +48,7 @@ class GpuResource:
     numa_node: Optional[int] = None
     nvlink_domain: Optional[str] = None
     topology_domain: Optional[str] = None
+    topology_source: Optional[str] = None
     health_state: ResourceState = ResourceState.DISCOVERED
     availability_state: ResourceState = ResourceState.DISCOVERED
 
