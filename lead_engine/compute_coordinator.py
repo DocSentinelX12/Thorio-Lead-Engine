@@ -24,6 +24,7 @@ from .compute_pool import ComputePool, WorkerIdentity
 from .compute_provider import ProviderResourceSnapshot
 from .compute_resources import ComputeRequirements, CpuResource, GpuResource, GpuRequirements, NodeResource, ResourceState, WorkloadClass
 from .compute_scheduler import ComputeScheduler, ComputeSchedulingError
+from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 
 
 class ComputeCoordinator:
@@ -1333,6 +1334,35 @@ class ComputeCoordinator:
                         "verified_participants": sum(1 for row in participants if row["verification"]),
                         "participant_count": len(participants),
                     }
+
+                try:
+                    launch = self.fabric_launch_plan(
+                        attempt_id,
+                        str(attempt["rendezvous_endpoint"] or "").strip(),
+                    )
+                    aggregated_process_evidence = []
+                    for row in participants:
+                        verification = json.loads(row["verification"])
+                        process_evidence = verification.get("process_evidence")
+                        if not isinstance(process_evidence, list):
+                            raise NvidiaRuntimeError(
+                                f"participant {row['worker_id']} has no process evidence for path reconciliation"
+                            )
+                        aggregated_process_evidence.extend(
+                            item for item in process_evidence if isinstance(item, dict)
+                        )
+                    path_reconciliation = NvidiaRuntime.reconcile_distributed_network_paths(
+                        aggregated_process_evidence,
+                        world_size=int(launch["world_size"]),
+                        nnodes=int(launch["nnodes"]),
+                    )
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError, NvidiaRuntimeError) as error:
+                    return {
+                        "converged": False,
+                        "reason": "network_path_reconciliation_failed",
+                        "detail": str(error)[:4000],
+                    }
+
                 updated = connection.execute(
                     """UPDATE compute_execution_attempts
                        SET status='completed',finished_at=?,authoritative_acceptance='accepted'
