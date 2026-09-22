@@ -275,6 +275,46 @@ def test_fabric_launch_requires_explicit_rendezvous_endpoint(tmp_path: Path):
         raise AssertionError("fabric launch accepted a missing rendezvous endpoint")
 
 
+def test_fabric_reconciliation_requeues_when_worker_liveness_is_lost(tmp_path: Path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    _register_inventory(coordinator, inventory)
+    task_id = coordinator.enqueue({
+        "compute_requirements": {
+            "workload_class": "multi_node_gpu",
+            "gpu": {"gpu_count": 2},
+            "min_cpu_count": 1,
+            "min_memory_bytes": 1,
+            "same_node": False,
+        },
+    })
+    claimed = coordinator.claim_physical()
+    assert claimed["task_id"] == task_id
+    plan = coordinator.fabric_launch_plan_for_worker(
+        attempt_id=claimed["attempt_id"],
+        generation=claimed["generation"],
+        worker_id="worker-1",
+        lease_token=claimed["lease_token"],
+    )
+    assert plan["attempt_id"] == claimed["attempt_id"]
+
+    with coordinator.pool._connect() as connection:
+        connection.execute(
+            "UPDATE compute_workers SET last_heartbeat=? WHERE worker_id=?",
+            (time.time() - 3600, "worker-2"),
+        )
+        connection.commit()
+
+    result = coordinator.reconcile_fabric(participant_timeout_seconds=30)
+    assert result == {"reconciled": 1, "requeued": 1}
+    assert coordinator.task(task_id)["status"] == "queued"
+
+
 def test_fabric_reconciliation_requeues_entire_attempt_when_one_participant_is_lost(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
