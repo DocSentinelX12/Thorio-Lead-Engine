@@ -224,6 +224,8 @@ def execute_outbound(
     idem = str(idempotency_key or "").strip() or f"revenue:{opportunity_id}:{conversation_id}:{channel}"
     state = _load(db)
     existing = state["actions"].get(idem)
+    if isinstance(existing, Mapping) and str(existing.get("status") or "").strip().lower() == "sent":
+        return RevenueAction(action_id=str(existing.get("action_id") or uuid4().hex), opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel, status="sent", provider_result=existing.get("provider_result"), error=None, idempotency_key=idem)
     if isinstance(existing, Mapping) and str(existing.get("status") or "").strip().lower() in {"sending", "retryable"}:
         reconcile = getattr(transport, "reconcile", None)
         if callable(reconcile):
