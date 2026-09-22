@@ -59,6 +59,9 @@ class ComputeProviderRegistry:
     def providers(self) -> tuple[ComputeProvider, ...]:
         return tuple(self._providers[key] for key in sorted(self._providers))
 
+    def entries(self) -> tuple[tuple[str, str, ComputeProvider], ...]:
+        return tuple((provider_id, domain_id, self._providers[(provider_id, domain_id)]) for provider_id, domain_id in sorted(self._providers))
+
     def provider(self, provider_id: str, domain_id: str) -> ComputeProvider | None:
         return self._providers.get((str(provider_id).strip(), str(domain_id).strip()))
 
@@ -119,12 +122,7 @@ class ComputeFabricOrchestrator:
     def refresh(self) -> FabricCycleReport:
         """Observe every registered provider and return evidence-backed capacity."""
         observations: list[ProviderObservation] = []
-        for provider in self.registry.providers():
-            domain = next(
-                domain_id
-                for (provider_id, domain_id), registered in self.registry._providers.items()
-                if registered is provider and provider_id == provider.provider_id
-            )
+        for provider_id, domain, provider in self.registry.entries():
             try:
                 observations.append(self.observe_provider(provider, domain_id=domain))
             except Exception as exc:
