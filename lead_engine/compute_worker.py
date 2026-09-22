@@ -264,11 +264,17 @@ def run_fabric_verification(
         raise ComputeWorkerError("launch plan is missing exact GPU bindings")
     allocated_gpu_ids = [str(item.get("gpu_id") or "").strip() for item in gpu_bindings if isinstance(item, dict)]
     allocated_gpu_uuids = [str(item.get("gpu_uuid") or "").strip() for item in gpu_bindings if isinstance(item, dict)]
+    allocated_gpu_device_ids = []
+    for gpu_id in allocated_gpu_ids:
+        device_id = gpu_id if gpu_id.isdigit() else gpu_id.removeprefix("gpu-")
+        if not device_id.isdigit():
+            raise ComputeWorkerError(f"allocated GPU has no NVIDIA device index: {gpu_id}")
+        allocated_gpu_device_ids.append(device_id)
     if (
         len(allocated_gpu_ids) != int(participant["process_count"])
-        or any(not gpu_id.isdigit() for gpu_id in allocated_gpu_ids)
         or any(not gpu_uuid for gpu_uuid in allocated_gpu_uuids)
         or len(set(allocated_gpu_uuids)) != len(allocated_gpu_uuids)
+        or len(set(allocated_gpu_device_ids)) != len(allocated_gpu_device_ids)
     ):
         raise ComputeWorkerError("launch plan contains invalid or ambiguous GPU bindings")
     local_identity = local_worker_identity(client.worker_id)
@@ -364,7 +370,7 @@ def run_fabric_verification(
         client.fabric_state(attempt_id, generation, lease_token, "active")
 
         execution_env = os.environ.copy()
-        execution_env["CUDA_VISIBLE_DEVICES"] = ",".join(allocated_gpu_ids)
+        execution_env["CUDA_VISIBLE_DEVICES"] = ",".join(allocated_gpu_device_ids)
         if runner is None:
             popen_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True, "env": execution_env}
             if os.name == "posix":
@@ -401,7 +407,7 @@ def run_fabric_verification(
             raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
         evidence = {
             "verified": True, "local_runtime": local, "gpu_bindings": gpu_bindings,
-            "cuda_visible_devices": allocated_gpu_ids, "attempt_id": attempt_id,
+            "cuda_visible_devices": allocated_gpu_device_ids, "attempt_id": attempt_id,
             "generation": generation, "worker_id": client.worker_id,
             "node_rank": int(participant["node_rank"]), "world_size": int(plan["world_size"]),
             "nnodes": int(plan["nnodes"]), "command": command, "stdout": str(stdout)[-4000:],
