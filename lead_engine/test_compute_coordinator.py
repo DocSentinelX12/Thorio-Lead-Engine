@@ -218,6 +218,54 @@ def test_expired_attempt_is_recoverable_without_completion(tmp_path):
     assert coordinator.task(task_id)["status"] == "queued"
 
 
+def test_participant_binding_rejects_resource_set_that_differs_from_allocation(tmp_path, monkeypatch):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
+        "node-a", "host", "x86_64", 2, 4096, ("lead-processing",)
+    ))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("node-a")
+    attempt_id = claimed["attempt_id"]
+    generation = claimed["generation"]
+    allocation = {
+        "state": "bound",
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "generation": generation,
+        "provider_id": "provider-a",
+        "domain_id": "domain-a",
+        "lease_token_digest": __import__("hashlib").sha256(claimed["lease_token"].encode()).hexdigest(),
+        "node_ids": ("node-a",),
+        "resource_keys": ("provider-a/domain-a/node-a/gpu/u0",),
+    }
+    monkeypatch.setattr(coordinator.inventory, "allocation", lambda allocation_id: allocation if allocation_id == "allocation-1" else None)
+    monkeypatch.setattr(
+        coordinator.inventory,
+        "get",
+        lambda key: {
+            "resource_type": "gpu",
+            "node_id": "node-a",
+            "gpu_id": "gpu-0",
+            "resource_key": key,
+        } if key == "provider-a/domain-a/node-a/gpu/u0" else None,
+    )
+
+    assert coordinator.bind_execution_participants(
+        task_id=task_id,
+        attempt_id=attempt_id,
+        generation=generation,
+        allocation_id="allocation-1",
+        provider_id="provider-a",
+        domain_id="domain-a",
+        node_ids=("node-a",),
+        resource_ids=("node-a/gpu-1",),
+        lease_token=claimed["lease_token"],
+        rendezvous_ref=f"fabric:{attempt_id}:{generation}",
+    ) == []
+
+    assert coordinator.execution_participants(attempt_id) == []
+
+
 def test_reconcile_fabric_rolls_back_requeue_if_attempt_was_retired_concurrently(tmp_path, monkeypatch):
     coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
     coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
