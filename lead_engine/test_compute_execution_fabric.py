@@ -190,3 +190,54 @@ def test_nvidia_runtime_rejects_inactive_rdma_link_as_verified_path():
                 "nic_pci_bus_id": "0000:41:00.0",
             }],
         )
+
+
+def test_coordinator_quarantines_only_the_failed_physical_path(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = {
+        "node_id": "node-1",
+        "gpu_uuid": "GPU-0",
+        "nic": "eth1",
+        "rdma_device": "mlx5_1",
+        "rdma_port": 1,
+        "link_layer": "InfiniBand",
+    }
+    snapshot = _inventory_snapshot_for_quarantine()
+    snapshot = ProviderResourceSnapshot(
+        provider_id=snapshot.provider_id,
+        domain_id=snapshot.domain_id,
+        observed_at=snapshot.observed_at,
+        nodes=snapshot.nodes,
+        authentication_state=snapshot.authentication_state,
+        evidence={
+            "network": {
+                "gpu_nic_locality": [path],
+                "rdma": {
+                    "devices": [{"device": "mlx5_1"}],
+                    "links": [{
+                        "rdma_device": "mlx5_1",
+                        "port": 1,
+                        "link_layer": "InfiniBand",
+                        "state": "ACTIVE",
+                        "physical_state": "LINK_UP",
+                    }],
+                },
+            },
+        },
+    )
+    inventory.observe(snapshot)
+    allocation_id = "allocation-path-isolation"
+    resource_key = "provider/domain/node-1/gpu/GPU-0"
+    inventory.reserve_allocation(allocation_id, "provider", "domain", [resource_key])
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "test-token", inventory=inventory)
+    coordinator._quarantine_allocation_gpu_for_path_failure(
+        allocation_id,
+        "GPU-0",
+        reason="NCCL selected a different HCA port",
+        evidence={
+            "failure_class": "planned_actual_physical_path_mismatch",
+            "planned_physical_path": path,
+        },
+    )
+    assert inventory.is_fabric_path_quarantined(path) is True
+    assert inventory.get(resource_key)["state"] == ResourceState.RESERVED.value
