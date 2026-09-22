@@ -10,6 +10,7 @@ from .agent_registry import ALL_AGENT_ROLES, agent_registry
 from .agent_specializations import get_specialization
 from .agent_workers import run_worker_once
 from .database import LeadDB
+from .worker_database import WorkerLeadDB
 
 
 class AgentOrchestrator:
@@ -134,12 +135,13 @@ class AgentOrchestrator:
         """Run one claimed specialist slot with an isolated SQLite connection.
 
         Production LeadDB connections are thread-affine. Each concurrent slot
-        therefore gets its own connection to the same WAL-backed database rather
-        than sharing a sqlite connection across threads. Lightweight test doubles
-        continue through the normal single-connection path in run_all_once.
+        therefore gets its own lightweight connection to the same WAL-backed
+        database without repeating startup integrity checks or schema migration.
+        Lightweight test doubles continue through the normal single-connection
+        path in run_all_once.
         """
         if isinstance(self.db, LeadDB):
-            worker_db = LeadDB(data_dir=self.db.data_dir)
+            worker_db = WorkerLeadDB(data_dir=self.db.data_dir)
             try:
                 worker = AgentOrchestrator(worker_db, worker_prefix=self.worker_prefix)
                 return worker.run_agent_once(
