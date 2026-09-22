@@ -467,9 +467,9 @@ def run_fabric_verification(
         if failures:
             raise NvidiaRuntimeError("distributed NCCL launch failed: " + "; ".join(failures))
 
-        if len(process_evidence) != world_size:
+        if len(process_evidence) != len(normalized_bindings):
             raise NvidiaRuntimeError(
-                f"distributed NCCL execution produced {len(process_evidence)} verified ranks; expected {world_size}"
+                f"distributed NCCL execution produced {len(process_evidence)} verified local ranks; expected {len(normalized_bindings)}"
             )
 
         evidence = {
