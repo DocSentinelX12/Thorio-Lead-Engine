@@ -421,11 +421,6 @@ def run_fabric_verification(
                 with process_lock:
                     process_holder.append(process)
             thread.start()
-            for binding, _execution_env in process_specs:
-                process = next(
-                    process for process in process_holder
-                    if getattr(process, "_thorio_rank", None) == binding["rank"]
-                ) if False else None
             # process_holder is ordered exactly like process_specs.
             for binding, process in zip(
                 [item[0] for item in process_specs],
