@@ -92,6 +92,52 @@ class ComputeScheduler:
             return f"topology:{topology_domain}"
         return f'isolated:{gpu["resource_key"]}'
 
+    @staticmethod
+    def _verified_gpu_nic_rdma_path(row: dict[str, Any], gpu_uuid: str | None) -> tuple[dict[str, Any], ...]:
+        if not gpu_uuid:
+            return ()
+        evidence = json.loads(row["evidence_json"])
+        network = evidence.get("network")
+        if not isinstance(network, dict):
+            return ()
+        locality = network.get("gpu_nic_locality")
+        rdma = network.get("rdma")
+        if not isinstance(locality, list) or not isinstance(rdma, dict):
+            return ()
+        links = rdma.get("links")
+        if not isinstance(links, list):
+            return ()
+        devices = {
+            str(item.get("device") or "").strip()
+            for item in (rdma.get("devices") or [])
+            if isinstance(item, dict) and str(item.get("device") or "").strip()
+        }
+        verified = []
+        for item in locality:
+            if not isinstance(item, dict) or str(item.get("gpu_uuid") or "").strip() != gpu_uuid:
+                continue
+            device = str(item.get("rdma_device") or "").strip()
+            port = item.get("rdma_port")
+            link_layer = str(item.get("link_layer") or "").strip()
+            if not device or not isinstance(port, int) or port < 1 or not link_layer or device not in devices:
+                continue
+            matches = [
+                link for link in links
+                if isinstance(link, dict)
+                and str(link.get("rdma_device") or "").strip() == device
+                and link.get("port") == port
+                and str(link.get("link_layer") or "").strip() == link_layer
+            ]
+            if matches:
+                verified.append({
+                    **item,
+                    "rdma_device": device,
+                    "rdma_port": port,
+                    "link_layer": link_layer,
+                    "verified_rdma_link": dict(matches[0]),
+                })
+        return tuple(verified)
+
     @classmethod
     def _rank_gpus_for_placement(cls, gpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
         topology_counts: dict[str, int] = {}
@@ -103,11 +149,13 @@ class ComputeScheduler:
             numa_key = (topology_key, payload.get("numa_node"))
             numa_counts[numa_key] = numa_counts.get(numa_key, 0) + 1
 
-        def rank(gpu: dict[str, Any]) -> tuple[int, int, str, str]:
+        def rank(gpu: dict[str, Any]) -> tuple[int, int, int, str, str]:
             payload = json.loads(gpu["payload_json"])
             topology_key = cls._topology_group_key(gpu)
             numa_key = (topology_key, payload.get("numa_node"))
+            physical_path = bool(cls._verified_gpu_nic_rdma_path(gpu, payload.get("gpu_uuid")))
             return (
+                0 if physical_path else 1,
                 -topology_counts[topology_key],
                 -numa_counts[numa_key],
                 str(payload.get("gpu_id") or gpu.get("resource_key") or ""),
@@ -391,7 +439,11 @@ class ComputeScheduler:
                 json.loads(row["payload_json"]) | {"resource_key": row["resource_key"]} | (
                     {"placement_decision": {
                         "signal": (
-                            "verified_topology_domain"
+                            "verified_gpu_nic_rdma_path"
+                            if self._verified_gpu_nic_rdma_path(
+                                row, json.loads(row["payload_json"]).get("gpu_uuid")
+                            )
+                            else "verified_topology_domain"
                             if json.loads(row["payload_json"]).get("topology_domain")
                             else "verified_network_domain"
                             if selected_network
@@ -420,6 +472,14 @@ class ComputeScheduler:
                         } if self._gpu_nic_locality_evidence(
                             row, json.loads(row["payload_json"]).get("gpu_uuid")
                         ) else {}),
+                        **({
+                            "verified_gpu_nic_rdma_path": list(self._verified_gpu_nic_rdma_path(
+                                row, json.loads(row["payload_json"]).get("gpu_uuid")
+                            )),
+                        } if self._verified_gpu_nic_rdma_path(
+                            row, json.loads(row["payload_json"]).get("gpu_uuid")
+                        ) else {}),
+
                     }}
                     if row["resource_type"] == "gpu" and (
                         json.loads(row["payload_json"]).get("topology_domain")
