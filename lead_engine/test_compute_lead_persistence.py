@@ -60,4 +60,5 @@ def test_lead_compute_retry_does_not_lose_the_original_lead(tmp_path):
     result = lead_compute_once(db, client, dispatch_limit=10, reconcile_limit=10)
     assert result["retried_count"] == 1
     assert db.get("lead-2")["company"] == "Example"
-    assert db.compute_lead_pending(10)[0]["status"] == "retry"
+    assert db.compute_lead_dispatched(10)[0]["fingerprint"] == "lead-2"
+    assert db.compute_lead_dispatched(10)[0]["attempts"] == 2
