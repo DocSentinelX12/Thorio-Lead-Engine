@@ -273,6 +273,7 @@ class ComputeInventory:
         return bool(row and row["state"] == ResourceState.QUARANTINED.value)
 
     def revalidate_fabric_path(self, path: dict[str, Any], *, verification: dict[str, Any]) -> bool:
+        """Clear a path quarantine only after a newer authenticated physical observation verifies it."""
         if verification.get("verified") is not True:
             raise ValueError("path quarantine can only be cleared by verified evidence")
         for field in ("node_id", "gpu_uuid", "nic", "rdma_device", "rdma_port", "link_layer"):
@@ -281,6 +282,54 @@ class ComputeInventory:
         path_key = self.fabric_path_key(path)
         now = time.time()
         with self._connect() as connection:
+            quarantine = connection.execute(
+                "SELECT last_updated_at FROM compute_fabric_path_health WHERE path_key=? AND state=?",
+                (path_key, ResourceState.QUARANTINED.value),
+            ).fetchone()
+            if quarantine is None:
+                return False
+            resource = connection.execute(
+                """SELECT * FROM compute_resource_inventory
+                   WHERE node_id=? AND identity_key=? AND resource_type='gpu'
+                   ORDER BY last_seen_at DESC LIMIT 1""",
+                (str(path["node_id"]), str(path["gpu_uuid"])),
+            ).fetchone()
+            if resource is None:
+                raise ValueError("path revalidation has no current inventory record for the GPU")
+            if resource["authentication_state"] != "authenticated":
+                raise ValueError("path revalidation requires authenticated inventory evidence")
+            if resource["expires_at"] is not None and float(resource["expires_at"]) <= now:
+                raise ValueError("path revalidation evidence has expired")
+            if float(resource["observed_at"]) <= float(quarantine["last_updated_at"]):
+                raise ValueError("path revalidation requires a newer physical observation than the quarantine")
+            evidence = json.loads(resource["evidence_json"] or "{}")
+            network = evidence.get("network")
+            locality = network.get("gpu_nic_locality") if isinstance(network, dict) else None
+            rdma = network.get("rdma") if isinstance(network, dict) else None
+            if not isinstance(locality, list) or not isinstance(rdma, dict) or not isinstance(rdma.get("links"), list):
+                raise ValueError("path revalidation lacks complete physical network evidence")
+            locality_matches = [
+                item for item in locality
+                if isinstance(item, dict)
+                and str(item.get("gpu_uuid") or "").strip() == str(path["gpu_uuid"]).strip()
+                and str(item.get("nic") or "").strip() == str(path["nic"]).strip()
+                and str(item.get("rdma_device") or "").strip() == str(path["rdma_device"]).strip()
+                and item.get("rdma_port") == path["rdma_port"]
+                and str(item.get("link_layer") or "").strip() == str(path["link_layer"]).strip()
+            ]
+            if not locality_matches:
+                raise ValueError("path revalidation physical GPU-to-NIC locality does not match the quarantined path")
+            active_links = [
+                link for link in rdma["links"]
+                if isinstance(link, dict)
+                and str(link.get("rdma_device") or "").strip() == str(path["rdma_device"]).strip()
+                and link.get("port") == path["rdma_port"]
+                and str(link.get("link_layer") or "").strip() == str(path["link_layer"]).strip()
+                and str(link.get("state") or "").strip().upper() == "ACTIVE"
+                and str(link.get("physical_state") or "").strip().upper() in {"LINK_UP", "LINK_ACTIVE"}
+            ]
+            if not active_links:
+                raise ValueError("path revalidation requires an active physical RDMA link")
             cursor = connection.execute(
                 "UPDATE compute_fabric_path_health SET state=?,last_updated_at=?,cleared_at=? WHERE path_key=? AND state=?",
                 (ResourceState.AVAILABLE.value, now, now, path_key, ResourceState.QUARANTINED.value),
