@@ -187,3 +187,65 @@ class ComputeFabricOrchestrator:
     def close(self) -> None:
         for provider in self.registry.providers():
             provider.close()
+
+
+class ComputeFabricController:
+    """Continuously drive the durable compute queue through the fabric.
+
+    This controller composes provider observation, recovery, reconciliation,
+    and physical scheduling. The per-cycle allocation count is a batch size,
+    not a global backlog cap.
+    """
+
+    def __init__(self, coordinator: Any, *, fabric: ComputeFabricOrchestrator | None = None, clock=time, sleeper=None) -> None:
+        self.coordinator = coordinator
+        self.fabric = fabric or coordinator.compute_fabric
+        self._clock = clock
+        self._sleep = sleeper or __import__("time").sleep
+
+    def cycle(self, *, max_allocations_per_cycle: int = 50) -> FabricControllerCycle:
+        if max_allocations_per_cycle < 1:
+            raise ValueError("max_allocations_per_cycle must be positive")
+        recovered = int(self.coordinator.recover_expired_tasks())
+        reconciliation = self.coordinator.reconcile_fabric()
+        refresh = self.fabric.refresh()
+        scheduled: list[dict[str, Any]] = []
+        for _ in range(max_allocations_per_cycle):
+            assignment = self.coordinator.claim_physical()
+            if assignment is None:
+                break
+            scheduled.append({
+                "task_id": str(assignment["task_id"]),
+                "attempt_id": str(assignment["attempt_id"]),
+                "generation": int(assignment["generation"]),
+                "execution_identity": str(assignment["execution_identity"]),
+                "physical_allocation": assignment["physical_allocation"],
+            })
+        reconciled = int(reconciliation.get("reconciled", 0))
+        requeued = int(reconciliation.get("requeued", 0))
+        cycle_report = FabricCycleReport(
+            observed=refresh.observed,
+            eligible_resources=len(self.fabric.inventory.eligible(now=self._clock())),
+            scheduled_allocations=len(scheduled),
+            reconciled_attempts=reconciled,
+            requeued_tasks=requeued,
+        )
+        return FabricControllerCycle(
+            refresh=cycle_report,
+            recovered_expired_tasks=recovered,
+            reconciled_attempts=reconciled,
+            requeued_tasks=requeued,
+            scheduled_allocations=tuple(scheduled),
+        )
+
+    def run_forever(self, *, interval_seconds: float = 5.0, max_allocations_per_cycle: int = 50, stop_event: Any | None = None) -> None:
+        if interval_seconds < 0:
+            raise ValueError("interval_seconds must not be negative")
+        if max_allocations_per_cycle < 1:
+            raise ValueError("max_allocations_per_cycle must be positive")
+        while stop_event is None or not stop_event.is_set():
+            self.cycle(max_allocations_per_cycle=max_allocations_per_cycle)
+            if stop_event is None:
+                self._sleep(interval_seconds)
+            else:
+                stop_event.wait(interval_seconds)
