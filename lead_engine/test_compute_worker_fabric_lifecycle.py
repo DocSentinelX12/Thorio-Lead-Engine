@@ -122,6 +122,9 @@ def test_recorded_verification_persists_verified_rdma_path_evidence(tmp_path: Pa
     attempt_id = claimed["attempt_id"]
     lease_token = claimed["lease_token"]
     verification = _valid_execution_verification(coordinator, attempt_id, "worker-1")
+    for item in verification["process_evidence"]:
+        item.pop("rdma_devices", None)
+        item.pop("verified_rdma_devices", None)
     assert coordinator.record_execution_verification(
         attempt_id=attempt_id,
         generation=claimed["generation"],
