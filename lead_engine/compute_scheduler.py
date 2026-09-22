@@ -185,18 +185,19 @@ class ComputeScheduler:
         gpu_rows: list[dict[str, Any]] = []
         remaining = needed
         if requirements.workload_class == WorkloadClass.MULTI_NODE_GPU:
-            # Every selected node must contribute at least one GPU. This keeps
-            # the durable participant set aligned with the physical GPU set.
+            # Every selected node contributes one GPU first. Remaining GPUs are
+            # then packed deterministically without ever removing a node.
+            if needed < len(selected):
+                raise ComputeSchedulingError("multi-node allocation needs at least one GPU per selected node")
+            for candidate in selected:
+                gpu_rows.append(candidate["gpus"][0])
+                remaining -= 1
             for candidate in selected:
                 if remaining <= 0:
                     break
-                take = min(
-                    len(candidate["gpus"]),
-                    remaining - max(0, len(selected) - len(gpu_rows)),
-                )
-                take = max(1, take)
-                gpu_rows.extend(candidate["gpus"][:take])
-                remaining -= take
+                extras = candidate["gpus"][1:1 + remaining]
+                gpu_rows.extend(extras)
+                remaining -= len(extras)
         else:
             for candidate in selected:
                 take = min(remaining, len(candidate["gpus"]))
