@@ -35,6 +35,17 @@ class FabricCycleReport:
     observed: tuple[ProviderObservation, ...]
     eligible_resources: int
     scheduled_allocations: int
+    reconciled_attempts: int = 0
+    requeued_tasks: int = 0
+
+
+@dataclass(frozen=True)
+class FabricControllerCycle:
+    refresh: FabricCycleReport
+    recovered_expired_tasks: int
+    reconciled_attempts: int
+    requeued_tasks: int
+    scheduled_allocations: tuple[dict[str, Any], ...]
 
 
 class ComputeProviderRegistry:
