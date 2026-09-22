@@ -169,7 +169,7 @@ def test_controller_cycles_durable_gpu_work_into_physical_execution_assignments(
             worker_id="worker-1", hostname="worker-1", architecture="x86_64",
             cpu_count=32, memory_mb=131072, capabilities=("lead_prepare",),
             gpu_resources=(gpu,), driver_version="550", cuda_version="12.4",
-            nccl_version="2.20", nic_names=("eth0",), gpu_discovery_state="verified",
+            nccl_version="2.20", nic_names=("eth0",), gpu_discovery_state="healthy",
             gpu_discovery_error="",
         ))
         task_id = coordinator.enqueue({
