@@ -1167,6 +1167,12 @@ class ComputeCoordinator:
             ):
                 return False
 
+            if int(launch["nnodes"]) > 1:
+                if not str(verification.get("network_transport") or "").strip():
+                    return False
+                if int(verification.get("nnodes", -1)) != int(launch["nnodes"]):
+                    return False
+
             expected_bindings = {
                 (int(binding["rank"]), str(binding["gpu_uuid"])): binding
                 for binding in participant["gpu_bindings"]
@@ -1205,6 +1211,13 @@ class ComputeCoordinator:
                     or probe.get("collective") != "all_reduce"
                     or probe.get("verified_on_gpu") is not True
                     or str(probe.get("gpu_uuid") or "").strip() != gpu_uuid
+                    or (
+                        int(launch["nnodes"]) > 1
+                        and (
+                            int(probe.get("nnodes", -1)) != int(launch["nnodes"])
+                            or not str(probe.get("network_transport") or "").strip()
+                        )
+                    )
                 ):
                     return False
                 evidence_keys.add(key)
