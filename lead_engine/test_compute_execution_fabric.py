@@ -489,9 +489,21 @@ def test_nvidia_runtime_launch_command_carries_rendezvous_identity():
     assert "10.0.0.5:29400" in command
 
 
+def test_nvidia_runtime_extracts_actual_network_transport_from_nccl_logs():
+    runtime = NvidiaRuntime()
+    evidence = runtime.parse_nccl_network_evidence(
+        "node-a:1:1 [0] NCCL INFO NET/IB : Using [0]mlx5_0:1/IB\n"
+        "node-a:1:1 [0] NCCL INFO GPU Direct RDMA Enabled for GPU 0 / HCA 0\n"
+    )
+    assert evidence["network_transport"] == "IB"
+    assert evidence["gpu_direct_rdma"] is True
+    assert evidence["network_evidence_lines"]
+
+
 def test_nvidia_runtime_accepts_only_verified_gpu_all_reduce_evidence():
     def runner(args, timeout):
-        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4,"expected_sum":10}\n', ""
+        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":4,"expected_sum":10}\n'
+            'node-a:1:1 [0] NCCL INFO Using network IB\n', ""
 
     runtime = NvidiaRuntime(runner=runner, which=lambda name: "torchrun" if name == "torchrun" else None)
     evidence = runtime.verify_distributed_nccl(
@@ -504,6 +516,21 @@ def test_nvidia_runtime_accepts_only_verified_gpu_all_reduce_evidence():
     assert evidence["verified"] is True
     assert evidence["backend"] == "nccl"
     assert evidence["world_size"] == 4
+
+
+def test_nvidia_runtime_rejects_multi_node_probe_without_network_transport_evidence():
+    def runner(args, timeout):
+        return 0, 'THORIO_NCCL_PROBE_OK {"backend":"nccl","collective":"all_reduce","verified_on_gpu":true,"world_size":2,"expected_sum":3,"nnodes":2}\n', ""
+
+    runtime = NvidiaRuntime(runner=runner, which=lambda name: "torchrun" if name == "torchrun" else None)
+    with pytest.raises(NvidiaRuntimeError, match="network transport"):
+        runtime.verify_distributed_nccl(
+            world_size=2,
+            node_rank=0,
+            nnodes=2,
+            master_addr="10.0.0.5",
+            master_port=29500,
+        )
 
 
 def test_nvidia_runtime_rejects_unverified_distributed_probe_output():
