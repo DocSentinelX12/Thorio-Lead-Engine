@@ -214,6 +214,41 @@ class NvidiaRuntime:
             "gpu_direct_rdma": gpu_direct_rdma,
         }
 
+    @classmethod
+    def validate_nccl_transport_against_rdma(
+        cls, log_output: str, rdma_evidence: Mapping[str, object]
+    ) -> dict[str, object]:
+        network = cls.parse_nccl_network_evidence(log_output)
+        devices = rdma_evidence.get("devices") if isinstance(rdma_evidence, Mapping) else None
+        if not isinstance(devices, list):
+            raise NvidiaRuntimeError("RDMA evidence does not contain a device inventory")
+        rdma_devices = tuple(sorted({
+            str(item.get("device") or "").strip()
+            for item in devices
+            if isinstance(item, Mapping) and str(item.get("device") or "").strip()
+        }))
+        if network["network_transport"] == "IB":
+            used = []
+            for line in network["network_evidence_lines"]:
+                used.extend(re.findall(r"\\b(mlx[45]_[A-Za-z0-9_.-]+):\\d+", line))
+            used_devices = tuple(sorted(set(used)))
+            if not used_devices:
+                raise NvidiaRuntimeError("NCCL selected IB but did not expose an RDMA device in its network evidence")
+            verified = tuple(device for device in used_devices if device in rdma_devices)
+            if verified != used_devices:
+                missing = ", ".join(device for device in used_devices if device not in rdma_devices)
+                raise NvidiaRuntimeError(
+                    "NCCL selected RDMA devices absent from verified host RDMA inventory: " + missing
+                )
+        else:
+            used_devices = ()
+            verified = ()
+        return {
+            **network,
+            "rdma_devices": rdma_devices,
+            "verified_rdma_devices": verified,
+        }
+
     @staticmethod
     def validate_distributed_probe_output(
         stdout: str,
