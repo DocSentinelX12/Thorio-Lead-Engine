@@ -161,7 +161,7 @@ def test_controller_cycles_durable_gpu_work_into_physical_execution_assignments(
     with tempfile.TemporaryDirectory() as directory:
         coordinator = ComputeCoordinator(str(Path(directory) / "coordinator.sqlite3"), "token")
         gpu = GpuResource(
-            node_id="worker-1", gpu_id="0", gpu_uuid="GPU-worker-1", model="NVIDIA H100",
+            node_id="worker-1", gpu_id="gpu-0", gpu_uuid="GPU-worker-1", model="NVIDIA H100",
             vram_bytes=80 * 1024**3, compute_capability="9.0",
             health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
         )
