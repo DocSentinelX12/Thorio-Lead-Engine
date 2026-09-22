@@ -114,6 +114,9 @@ class GpuRequirements:
     required_driver_version: Optional[str] = None
     required_nvlink_domain: Optional[str] = None
     require_nccl: bool = False
+    min_fabric_bandwidth_gbps: Optional[float] = None
+    max_fabric_latency_us: Optional[float] = None
+    require_redundant_fabric_path: bool = False
 
     def __post_init__(self) -> None:
         if self.gpu_count < 0:
@@ -124,6 +127,12 @@ class GpuRequirements:
                 raise ValueError(f"{name} must not be negative")
         if self.require_nccl and self.gpu_count < 2:
             raise ValueError("NCCL requirement is meaningful only for multi-GPU work")
+        if self.min_fabric_bandwidth_gbps is not None and self.min_fabric_bandwidth_gbps <= 0:
+            raise ValueError("min_fabric_bandwidth_gbps must be positive")
+        if self.max_fabric_latency_us is not None and self.max_fabric_latency_us <= 0:
+            raise ValueError("max_fabric_latency_us must be positive")
+        if self.require_redundant_fabric_path and self.gpu_count < 2:
+            raise ValueError("redundant fabric paths require multi-GPU work")
 
 
 @dataclass(frozen=True)
