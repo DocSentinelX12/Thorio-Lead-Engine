@@ -354,7 +354,10 @@ class ComputeScheduler:
                             "network_source": network_evidence["source"],
                         } if (network_evidence := self._verified_network_fabric_evidence(row)) else {}),
                     }}
-                    if row["resource_type"] == "gpu" and json.loads(row["payload_json"]).get("topology_domain")
+                    if row["resource_type"] == "gpu" and (
+                        json.loads(row["payload_json"]).get("topology_domain")
+                        or self._verified_network_fabric_evidence(row)
+                    )
                     else {}
                 )
                 for row in resources
