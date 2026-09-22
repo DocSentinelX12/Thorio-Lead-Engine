@@ -379,14 +379,7 @@ def run_fabric_verification(
             if runtime.runner is None
             else lambda args, timeout: CommandResult(*runtime.runner(args, timeout))
         )
-        network_snapshot = NvidiaProvider(
-            node_id=client.worker_id,
-            runner=provider_runner,
-        ).discover()
-        network_evidence = network_snapshot.evidence if isinstance(network_snapshot.evidence, Mapping) else {}
-        rdma_evidence = network_evidence.get("network", {}).get("rdma", {}) if isinstance(network_evidence.get("network"), Mapping) else {}
-        if int(plan["nnodes"]) > 1 and not isinstance(rdma_evidence, Mapping):
-            raise NvidiaRuntimeError("multi-node execution requires verified local RDMA discovery evidence")
+        rdma_evidence: Mapping[str, Any] | None = None
         host, port_text = str(plan["rendezvous_endpoint"]).rsplit(":", 1)
         port = int(port_text)
         command = runtime.distributed_process_command()
@@ -474,9 +467,19 @@ def run_fabric_verification(
                 expected_gpu_uuid=str(binding["gpu_uuid"]),
                 log_output=stdout + "\n" + stderr,
             )
+            if int(plan["nnodes"]) > 1 and str(probe.get("network_transport") or "").strip().upper() == "IB" and rdma_evidence is None:
+                network_snapshot = NvidiaProvider(
+                    node_id=client.worker_id,
+                    runner=provider_runner,
+                ).discover()
+                network_evidence = network_snapshot.evidence if isinstance(network_snapshot.evidence, Mapping) else {}
+                rdma_candidate = network_evidence.get("network", {}).get("rdma", {}) if isinstance(network_evidence.get("network"), Mapping) else {}
+                if not isinstance(rdma_candidate, Mapping):
+                    raise NvidiaRuntimeError("IB execution requires verified local RDMA discovery evidence")
+                rdma_evidence = rdma_candidate
             path_evidence = runtime.validate_nccl_transport_against_rdma(
                 stdout + "\n" + stderr,
-                rdma_evidence,
+                rdma_evidence or {},
             ) if int(plan["nnodes"]) > 1 else {
                 "rdma_devices": (),
                 "verified_rdma_devices": (),
