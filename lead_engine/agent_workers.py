@@ -19,6 +19,7 @@ class AgentContractError(ValueError): pass
 class AgentExecutionContext:
     db: Any
     worker_id: str
+    lease_token: str | None = None
     revenue_transport: Any = None
 @dataclass(frozen=True)
 class AgentExecutionResult:
@@ -239,14 +240,14 @@ def _validate_specialization(agent: str, handler: Callable[..., Dict[str, Any]])
 def execute_task(db, task: Mapping[str, Any], *, worker_id: str, heartbeat_before: bool = True) -> AgentExecutionResult:
     task_data = _require_mapping(task, "task"); agent = str(task_data.get("agent") or "").strip(); task_id = str(task_data.get("task_id") or "").strip()
     if not agent or not task_id: raise AgentContractError("task requires agent and task_id")
-    handler = handler_registry().get(agent); specialization = _validate_specialization(agent, handler); payload = _require_mapping(task_data.get("payload", {}), "payload"); ctx = AgentExecutionContext(db=db, worker_id=worker_id)
-    if heartbeat_before: heartbeat(db, task_id, worker_id=worker_id)
+    handler = handler_registry().get(agent); specialization = _validate_specialization(agent, handler); payload = _require_mapping(task_data.get("payload", {}), "payload"); ctx = AgentExecutionContext(db=db, worker_id=worker_id, lease_token=str(task_data.get("lease_token") or "") or None)
+    if heartbeat_before: heartbeat(db, task_id, worker_id=worker_id, lease_token=ctx.lease_token)
     try:
-        result = _require_mapping(handler(agent, payload, ctx), "handler result"); result.setdefault("agent", agent); result.setdefault("specialization", specialization.mission); result.setdefault("forbidden_actions", list(specialization.forbidden_actions)); completed = complete(db, task_id, worker_id=worker_id, result=result); return AgentExecutionResult(agent=agent, task_id=task_id, status=completed["status"], result=result)
+        result = _require_mapping(handler(agent, payload, ctx), "handler result"); result.setdefault("agent", agent); result.setdefault("specialization", specialization.mission); result.setdefault("forbidden_actions", list(specialization.forbidden_actions)); completed = complete(db, task_id, worker_id=worker_id, lease_token=ctx.lease_token, result=result); return AgentExecutionResult(agent=agent, task_id=task_id, status=completed["status"], result=result)
     except RevenueTransportUnavailable as exc:
-        queued = retry(db, task_id, worker_id=worker_id, error=str(exc)); return AgentExecutionResult(agent=agent, task_id=task_id, status=queued["status"], result={"error": str(exc), "retryable": True})
+        queued = retry(db, task_id, worker_id=worker_id, lease_token=ctx.lease_token, error=str(exc)); return AgentExecutionResult(agent=agent, task_id=task_id, status=queued["status"], result={"error": str(exc), "retryable": True})
     except Exception as exc:
-        failed = fail(db, task_id, worker_id=worker_id, error=str(exc)); return AgentExecutionResult(agent=agent, task_id=task_id, status=failed["status"], result={"error": str(exc)})
+        failed = fail(db, task_id, worker_id=worker_id, lease_token=ctx.lease_token, error=str(exc)); return AgentExecutionResult(agent=agent, task_id=task_id, status=failed["status"], result={"error": str(exc)})
 
 def run_worker_once(db, agent: str, *, worker_id: str, limit: int = 1) -> Dict[str, Any]:
     get_specialization(agent); tasks = claim(db, agent, worker_id=worker_id, limit=limit); results = [execute_task(db, task, worker_id=worker_id) for task in tasks]; return {"agent": agent, "worker_id": worker_id, "claimed_count": len(tasks), "completed_count": sum(result.status == "complete" for result in results), "failed_count": sum(result.status == "failed" for result in results), "retryable_count": sum(result.status == "queued" for result in results), "results": [result.result for result in results]}
