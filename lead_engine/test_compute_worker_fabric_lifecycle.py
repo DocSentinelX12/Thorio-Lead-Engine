@@ -57,7 +57,14 @@ def _register_inventory(coordinator: ComputeCoordinator, inventory: ComputeInven
 
 def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: str, worker_id: str) -> dict:
     attempt = coordinator.execution_attempt(attempt_id)
-    launch = coordinator.fabric_launch_plan(attempt_id, str(attempt["rendezvous_endpoint"]))
+    endpoint = str(attempt["rendezvous_endpoint"] or "10.0.0.5:29400")
+    launch = coordinator.fabric_launch_plan_for_worker(
+        attempt_id=attempt_id,
+        generation=int(attempt["generation"]),
+        worker_id=worker_id,
+        lease_token=str(coordinator.task(attempt["task_id"])["lease_token"]),
+        rendezvous_endpoint=endpoint,
+    )
     participant = next(item for item in launch["workers"] if item["worker_id"] == worker_id)
     expected_sum = launch["world_size"] * (launch["world_size"] + 1) // 2
     return {
