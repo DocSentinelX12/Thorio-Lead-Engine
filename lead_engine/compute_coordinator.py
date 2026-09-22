@@ -1704,13 +1704,14 @@ class ComputeCoordinator:
                     )
                     if updated.rowcount != 1:
                         continue
-                    connection.execute(
+                    attempt_updated = connection.execute(
                         """UPDATE compute_execution_attempts
                            SET status='failed',finished_at=?,error=?,authoritative_acceptance='rejected'
                            WHERE attempt_id=? AND generation=? AND status='leased'""",
                         (now, "fabric participant lost", attempt["attempt_id"], attempt["generation"]),
                     )
-                    if updated.rowcount != 1:
+                    if attempt_updated.rowcount != 1:
+                        connection.rollback()
                         continue
                     connection.execute(
                         """UPDATE compute_execution_participants
