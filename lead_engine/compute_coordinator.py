@@ -934,6 +934,7 @@ class ComputeCoordinator:
                 "rdma_physical_state": link.get("physical_state"),
             })
         return {
+            "node_id": str(resource.get("node_id") or "").strip(),
             "gpu_uuid": gpu_uuid,
             "nic": path.get("nic"),
             "nic_pci_bus_id": path.get("nic_pci_bus_id"),
@@ -1173,6 +1174,17 @@ class ComputeCoordinator:
                 continue
             if str(payload.get("gpu_uuid") or "").strip() != gpu_uuid:
                 continue
+            planned_path = evidence.get("planned_physical_path")
+            if isinstance(planned_path, dict):
+                try:
+                    self.inventory.quarantine_fabric_path(
+                        planned_path,
+                        reason=reason,
+                        evidence=evidence,
+                    )
+                    return
+                except ValueError:
+                    pass
             self.inventory.quarantine_resource(
                 str(resource_key),
                 reason=reason,
