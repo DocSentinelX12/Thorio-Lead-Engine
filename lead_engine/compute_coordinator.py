@@ -1587,6 +1587,11 @@ class ComputeCoordinator:
         lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
         now = time.time()
         with self._lock:
+            worker = self.pool.worker(worker_id)
+            if worker is None:
+                return False
+            if not self.pool.heartbeat(worker_id, int(worker["current_load"])):
+                return False
             with self._connect() as connection:
                 cursor = connection.execute(
                     """UPDATE compute_execution_participants
