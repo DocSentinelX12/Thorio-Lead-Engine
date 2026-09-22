@@ -175,6 +175,7 @@ def test_stale_worker_cannot_complete_after_lease_reclaimed(tmp_path):
             db,
             task["task_id"],
             worker_id="worker-old",
+            lease_token=first[0]["lease_token"],
             result={"stale": True},
         )
     except ValueError as exc:
