@@ -303,7 +303,9 @@ class ComputeScheduler:
                     {"placement_decision": {
                         "signal": "verified_topology_domain",
                         "topology_domain": json.loads(row["payload_json"]).get("topology_domain"),
-                        "topology_source": json.loads(row["payload_json"]).get("topology_source"),
+                        "topology_source": json.loads(row["payload_json"]).get("topology_source") or (
+                            json.loads(row["evidence_json"]).get("topology") or {}
+                        ).get("source"),
                     }}
                     if row["resource_type"] == "gpu" and json.loads(row["payload_json"]).get("topology_domain")
                     else {}
