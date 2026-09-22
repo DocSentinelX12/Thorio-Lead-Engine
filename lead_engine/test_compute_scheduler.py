@@ -154,7 +154,7 @@ def test_multi_gpu_does_not_claim_topology_locality_when_domains_are_disconnecte
         "allocation-disconnected",
     )
     assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-0", "node-a/gpu-1")
-    assert {e["topology_domain"] for e in allocation.capability_evidence if e.get("resource_type") != "cpu"} == {"domain-a", "domain-b"}
+    assert {e["topology_domain"] for e in allocation.capability_evidence if e.get("gpu_uuid")} == {"domain-a", "domain-b"}
 
 
 def test_topology_domain_is_enforced(tmp_path):
