@@ -7,7 +7,7 @@ import pytest
 from lead_engine.compute_fabric import ComputeFabricOrchestrator, ComputeProviderRegistry
 from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_provider import ComputeProvider, ProviderResourceSnapshot
-from lead_engine.compute_resources import CpuResource, GpuRequirements, GpuResource, NodeResource, ResourceState
+from lead_engine.compute_resources import CpuResource, ComputeRequirements, GpuRequirements, GpuResource, NodeResource, ResourceState, WorkloadClass
 
 
 class Provider(ComputeProvider):
