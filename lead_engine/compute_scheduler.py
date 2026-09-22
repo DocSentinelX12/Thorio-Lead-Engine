@@ -209,7 +209,16 @@ class ComputeScheduler:
             for (_provider_id, _domain_id), group in ranked_groups:
                 group_selected: list[dict[str, Any]] = []
                 total = 0
-                for candidate in group:
+                ranked_group = sorted(
+                    group,
+                    key=lambda candidate: (
+                        self._node_topology_score(candidate),
+                        -len(candidate["gpus"]),
+                        str(candidate["node_id"]),
+                    ),
+                    reverse=True,
+                )
+                for candidate in ranked_group:
                     if not candidate["gpus"]:
                         continue
                     group_selected.append(candidate)
