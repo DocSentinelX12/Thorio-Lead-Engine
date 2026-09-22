@@ -494,7 +494,7 @@ def test_nvidia_runtime_reconciles_nccl_hca_to_gpu_nic_locality():
     logs = "node-a:1:1 [0] NCCL INFO NET/IB : Using [0]mlx5_0:1/IB\n"
     rdma = {
         "devices": [{"device": "mlx5_0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP"}],
-        "links": [{"rdma_device": "mlx5_0", "netdev": "eth0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP"}],
+        "links": [{"rdma_device": "mlx5_0", "port": 1, "netdev": "eth0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP", "link_layer": "InfiniBand"}],
     }
     locality = [{"gpu_uuid": "GPU-a", "nic": "eth0", "nic_pci_bus_id": "0000:41:00.0", "shared_pci_ancestor": "0000:40", "source": "sysfs"}]
     evidence = runtime.validate_nccl_transport_against_rdma(logs, rdma, gpu_uuid="GPU-a", gpu_nic_locality=locality)
@@ -507,7 +507,7 @@ def test_nvidia_runtime_correlates_nccl_ib_transport_to_verified_rdma_device():
     runtime = NvidiaRuntime()
     evidence = runtime.validate_nccl_transport_against_rdma(
         "node-a:1:1 [0] NCCL INFO NET/IB : Using [0]mlx5_0:1/IB\n",
-        {"devices": [{"device": "mlx5_0", "state": "ACTIVE", "physical_state": "LINK_UP"}]},
+        {"devices": [{"device": "mlx5_0", "state": "ACTIVE", "physical_state": "LINK_UP"}], "links": [{"rdma_device": "mlx5_0", "port": 1, "state": "ACTIVE", "physical_state": "LINK_UP", "link_layer": "InfiniBand"}]},
     )
     assert evidence["network_transport"] == "IB"
     assert evidence["rdma_devices"] == ("mlx5_0",)
