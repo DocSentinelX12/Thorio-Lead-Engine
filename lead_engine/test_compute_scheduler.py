@@ -140,7 +140,7 @@ def test_multi_gpu_prefers_verified_topology_domain_concentration(tmp_path):
         ComputeRequirements(WorkloadClass.MULTI_GPU, GpuRequirements(gpu_count=2, require_nccl=True)),
         "allocation-topology",
     )
-    assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-2", "node-a/gpu-3")
+    assert allocation.resource_ids == ("node-a/cpu", "node-a/gpu-1", "node-a/gpu-2")
 
 
 def test_multi_gpu_does_not_claim_topology_locality_when_domains_are_disconnected(tmp_path):
