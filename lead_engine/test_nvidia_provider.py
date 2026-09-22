@@ -163,6 +163,7 @@ def test_nvidia_discovery_records_rdma_device_capability_separately_from_l3_netw
     assert network["rdma"]["devices"][0]["device"] == "mlx5_0"
     assert network["rdma"]["devices"][0]["state"] == "ACTIVE"
     assert network["rdma"]["devices"][0]["physical_state"] == "LINK_UP"
+    assert network["rdma"]["devices"][0]["pci_bus_id"] == "0000:41:00.0"
     assert network["rdma"]["links"][0]["netdev"] == "eth0"
     assert network["rdma"]["links"][0]["state"] == "ACTIVE"
     assert network["rdma"]["links"][0]["physical_state"] == "LINK_UP"
