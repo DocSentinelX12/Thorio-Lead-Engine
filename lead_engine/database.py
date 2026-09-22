@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import time
 from uuid import uuid4
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -17,7 +18,15 @@ class LeadDB:
         self.recovered_corrupt_database = False
         self._batch_write_depth = 0
         self.conn = self._connect_with_recovery()
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=30000")
+        for attempt in range(6):
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError as exc:
+                if "database is locked" not in str(exc).lower() or attempt == 5:
+                    raise
+                time.sleep(0.05 * (2 ** attempt))
         self.conn.execute("PRAGMA synchronous=FULL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS leads (
