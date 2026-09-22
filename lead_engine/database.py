@@ -53,6 +53,17 @@ class LeadDB:
         )""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_lead_work (
+            fingerprint TEXT PRIMARY KEY,
+            task_id TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
+            result TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_compute_lead_work_status ON compute_lead_work(status, updated_at)")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_bridge_publications (
             task_id TEXT PRIMARY KEY,
             worker_id TEXT NOT NULL,
@@ -111,6 +122,11 @@ class LeadDB:
         if not fingerprint:
             raise ValueError("Lead payload must contain a fingerprint.")
         cursor = self.conn.execute("INSERT OR IGNORE INTO leads (fingerprint, payload) VALUES (?, ?)", (str(fingerprint), json.dumps(payload, ensure_ascii=False)))
+        if cursor.rowcount == 1:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO compute_lead_work (fingerprint,status,attempts,last_error,result,created_at,updated_at) VALUES (?, 'queued', 0, '', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (str(fingerprint),),
+            )
         if self._batch_write_depth == 0:
             self.conn.commit()
         return cursor.rowcount == 1
@@ -193,6 +209,40 @@ class LeadDB:
         if limit <= 0:
             raise ValueError("Pending limit must be greater than zero.")
         return self.conn.execute("SELECT fingerprint, payload, attempts FROM leads WHERE synced = 0 ORDER BY rowid LIMIT ?", (limit,)).fetchall()
+
+    def compute_lead_pending(self, limit=50):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Compute lead limit must be a positive integer.")
+        rows = self.conn.execute(
+            """SELECT w.fingerprint,w.task_id,w.status,w.attempts,w.last_error,w.result,l.payload
+               FROM compute_lead_work w JOIN leads l ON l.fingerprint=w.fingerprint
+               WHERE w.status IN ('queued','retry') ORDER BY w.created_at,w.fingerprint LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [{"fingerprint": r[0], "task_id": r[1], "status": r[2], "attempts": int(r[3]), "last_error": r[4], "result": json.loads(r[5]) if r[5] else None, "lead": json.loads(r[6])} for r in rows]
+
+    def compute_lead_dispatched(self, limit=50):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Compute lead limit must be a positive integer.")
+        rows = self.conn.execute(
+            """SELECT w.fingerprint,w.task_id,w.status,w.attempts,w.last_error,w.result,l.payload
+               FROM compute_lead_work w JOIN leads l ON l.fingerprint=w.fingerprint
+               WHERE w.status='dispatched' AND w.task_id IS NOT NULL ORDER BY w.updated_at,w.fingerprint LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [{"fingerprint": r[0], "task_id": r[1], "status": r[2], "attempts": int(r[3]), "last_error": r[4], "result": json.loads(r[5]) if r[5] else None, "lead": json.loads(r[6])} for r in rows]
+
+    def compute_lead_mark_dispatched(self, fingerprint, task_id):
+        self.conn.execute("UPDATE compute_lead_work SET task_id=?,status='dispatched',attempts=attempts+1,last_error='',updated_at=CURRENT_TIMESTAMP WHERE fingerprint=? AND status IN ('queued','retry')", (str(task_id), str(fingerprint)))
+        self.conn.commit()
+
+    def compute_lead_mark_retry(self, fingerprint, error):
+        self.conn.execute("UPDATE compute_lead_work SET status='retry',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE fingerprint=?", (str(error)[:4000], str(fingerprint)))
+        self.conn.commit()
+
+    def compute_lead_mark_completed(self, fingerprint, result):
+        self.conn.execute("UPDATE compute_lead_work SET status='completed',result=?,last_error='',updated_at=CURRENT_TIMESTAMP WHERE fingerprint=?", (json.dumps(result, ensure_ascii=False), str(fingerprint)))
+        self.conn.commit()
 
     def pending_research(self, limit=50):
         if not isinstance(limit, int) or isinstance(limit, bool):
