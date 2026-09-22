@@ -212,11 +212,11 @@ class ComputeScheduler:
                 ranked_group = sorted(
                     group,
                     key=lambda candidate: (
-                        self._node_topology_score(candidate),
-                        -len(candidate["gpus"]),
+                        -self._node_topology_score(candidate)[0],
+                        -self._node_topology_score(candidate)[1],
+                        -self._node_topology_score(candidate)[2],
                         str(candidate["node_id"]),
                     ),
-                    reverse=True,
                 )
                 for candidate in ranked_group:
                     if not candidate["gpus"]:
@@ -234,11 +234,11 @@ class ComputeScheduler:
             ranked_candidates = sorted(
                 candidates,
                 key=lambda candidate: (
-                    self._node_topology_score(candidate),
-                    -len(candidate["gpus"]),
+                    -self._node_topology_score(candidate)[0],
+                    -self._node_topology_score(candidate)[1],
+                    -self._node_topology_score(candidate)[2],
                     str(candidate["node_id"]),
                 ),
-                reverse=True,
             )
             for candidate in ranked_candidates:
                 if len(candidate["gpus"]) >= needed:
