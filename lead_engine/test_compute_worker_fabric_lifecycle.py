@@ -919,7 +919,7 @@ def test_fabric_heartbeat_failure_terminates_live_process_and_reports_failure(mo
         timeout_seconds = 5
         def verify_local(self):
             return {"cuda": True, "nccl": True}
-        def distributed_command(self, **kwargs):
+        def distributed_process_command(self):
             return ["torchrun"]
         def validate_distributed_probe_output(self, stdout, world_size, **kwargs):
             raise AssertionError("verification must not run after heartbeat loss")
