@@ -54,6 +54,39 @@ def _register_inventory(coordinator: ComputeCoordinator, inventory: ComputeInven
         ))
 
 
+
+def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: str, worker_id: str) -> dict:
+    attempt = coordinator.execution_attempt(attempt_id)
+    launch = coordinator.fabric_launch_plan(attempt_id, str(attempt["rendezvous_endpoint"]))
+    participant = next(item for item in launch["workers"] if item["worker_id"] == worker_id)
+    expected_sum = launch["world_size"] * (launch["world_size"] + 1) // 2
+    return {
+        "verified": True,
+        "backend": "nccl",
+        "collective": "all_reduce",
+        "world_size": launch["world_size"],
+        "worker_id": worker_id,
+        "gpu_identity": {"verified": True, "gpu_bindings": participant["gpu_bindings"]},
+        "gpu_bindings": participant["gpu_bindings"],
+        "process_evidence": [
+            {
+                "rank": binding["rank"],
+                "local_rank": binding["local_rank"],
+                "gpu_binding": binding,
+                "probe": {
+                    "backend": "nccl",
+                    "collective": "all_reduce",
+                    "verified_on_gpu": True,
+                    "world_size": launch["world_size"],
+                    "expected_sum": expected_sum,
+                    "rank": binding["rank"],
+                    "gpu_uuid": binding["gpu_uuid"],
+                },
+            }
+            for binding in participant["gpu_bindings"]
+        ],
+    }
+
 def test_worker_receives_durable_participant_and_launch_contract(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
@@ -232,7 +265,7 @@ def test_fabric_convergence_requires_every_participant_and_is_idempotent(tmp_pat
     coordinator.record_execution_verification(
         attempt_id=attempt_id, generation=generation,
         worker_id="worker-1", lease_token=lease_token,
-        verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": "worker-1"},
+        verification=_valid_execution_verification(coordinator, attempt_id, "worker-1"),
     )
     waiting = coordinator.converge_fabric_execution(
         attempt_id=attempt_id, generation=generation,
@@ -245,7 +278,7 @@ def test_fabric_convergence_requires_every_participant_and_is_idempotent(tmp_pat
     coordinator.record_execution_verification(
         attempt_id=attempt_id, generation=generation,
         worker_id="worker-2", lease_token=lease_token,
-        verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": "worker-2"},
+        verification=_valid_execution_verification(coordinator, attempt_id, "worker-2"),
     )
     converged = coordinator.converge_fabric_execution(
         attempt_id=attempt_id, generation=generation,
@@ -342,7 +375,7 @@ def test_converged_attempt_is_not_downgraded_by_authoritative_completion(tmp_pat
             generation=generation,
             worker_id=worker_id,
             lease_token=lease_token,
-            verification={"verified": True, "backend": "nccl", "world_size": 2, "worker": worker_id},
+            verification=_valid_execution_verification(coordinator, attempt_id, worker_id),
         )
     coordinator.converge_fabric_execution(
         attempt_id=attempt_id,
@@ -729,7 +762,7 @@ def test_running_fabric_participant_heartbeat_renews_lease(tmp_path: Path):
         generation=generation,
         worker_id="worker-1",
         lease_token=lease_token,
-        verification={"verified": True, "backend": "nccl", "world_size": 2},
+        verification=_valid_execution_verification(coordinator, attempt_id, "worker-1"),
     ) is True
 
     before = coordinator.task(task_id)["lease_until"]
@@ -790,8 +823,8 @@ def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fa
         def verify_local(self):
             return {"cuda": True, "nccl": True}
 
-        def distributed_command(self, **kwargs):
-            return ["torchrun"]
+        def distributed_process_command(self):
+            return ["python", "-m", "lead_engine.nccl_all_reduce_probe"]
 
     client = Client()
     try:
@@ -801,7 +834,7 @@ def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fa
             rendezvous_endpoint="10.0.0.5:29400",
             heartbeat_seconds=0.01,
             runtime=Runtime(),
-            runner=lambda command, timeout: (1, "", "NCCL exploded"),
+            runner=lambda command, timeout, env: (1, "", "NCCL exploded"),
         )
     except NvidiaRuntimeError as error:
         assert "distributed NCCL launch failed" in str(error)
@@ -881,7 +914,7 @@ def test_fabric_heartbeat_failure_terminates_live_process_and_reports_failure(mo
             return {"cuda": True, "nccl": True}
         def distributed_command(self, **kwargs):
             return ["torchrun"]
-        def validate_distributed_probe_output(self, stdout, world_size):
+        def validate_distributed_probe_output(self, stdout, world_size, **kwargs):
             raise AssertionError("verification must not run after heartbeat loss")
 
     class Process:
@@ -963,14 +996,14 @@ def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
             return {"cuda": True, "nccl": True}
         def distributed_command(self, **kwargs):
             return ["torchrun"]
-        def validate_distributed_probe_output(self, stdout, world_size):
-            return {"backend": "nccl", "verified_on_gpu": True, "world_size": world_size, "collective": "all_reduce", "expected_sum": 3}
+        def validate_distributed_probe_output(self, stdout, world_size, **kwargs):
+            return {"backend": "nccl", "verified_on_gpu": True, "world_size": world_size, "collective": "all_reduce", "expected_sum": 3, "rank": kwargs["expected_rank"], "gpu_uuid": kwargs["expected_gpu_uuid"]}
 
     client = Client()
 
-    def runner(command, timeout):
+    def runner(command, timeout, env):
         time.sleep(0.02)
-        return 0, "THORIO_NCCL_PROBE_OK", ""
+        return 0, "THORIO_NCCL_PROBE_OK {\\"backend\\":\\"nccl\\",\\"collective\\":\\"all_reduce\\",\\"verified_on_gpu\\":true,\\"world_size\\":2,\\"expected_sum\\":3,\\"rank\\":0,\\"gpu_uuid\\":\\"GPU-worker-1-0\\"}", ""
 
     try:
         run_fabric_verification(
