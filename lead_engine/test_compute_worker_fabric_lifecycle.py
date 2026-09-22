@@ -497,8 +497,7 @@ def test_fabric_launch_plan_rejects_inactive_execution_attempt(tmp_path: Path):
             "gpu": {"gpu_count": 2},
             "min_cpu_count": 1,
             "min_memory_bytes": 1,
-            "same_node": False,
-        },
+            "same_node": False,        },
     })
     claimed = coordinator.claim_physical()
     attempt_id = claimed["attempt_id"]
@@ -997,8 +996,7 @@ def test_run_worker_survives_fabric_runtime_failure(monkeypatch):
         def heartbeat(self, current_load=0):
             return {"ok": True}
         def fabric_assignments(self):
-            return [{"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"}]
-        def claim(self):
+            return [{"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"}]        def claim(self):
             self.claimed = True
             return None
 
@@ -1497,8 +1495,7 @@ def test_fabric_unexpected_process_error_still_terminates_process(monkeypatch):
     import subprocess
     from lead_engine.compute_worker import run_fabric_verification
 
-    class Client:
-        worker_id = "worker-1"
+    class Client:        worker_id = "worker-1"
         def __init__(self):
             self.states = []
         def fabric_launch_plan(self, *args):
@@ -1768,24 +1765,26 @@ def test_fabric_launch_plan_constructs_verified_routes_between_participants(tmp_
             evidence={
                 "source": "verified-fabric-test",
                 "network_domains": {"worker-1": "fabric-a", "worker-2": "fabric-a"},
-                "gpu_nic_locality": [{
-                    "gpu_uuid": gpu_uuid,
-                    "nic": nic,
-                    "rdma_device": rdma_device,
-                    "rdma_port": 1,
-                    "link_layer": "InfiniBand",
-                }],
-                "rdma": {
-                    "devices": [{"device": rdma_device}],
-                    "links": [{
+                "network": {
+                    "gpu_nic_locality": [{
+                        "gpu_uuid": gpu_uuid,
+                        "nic": nic,
                         "rdma_device": rdma_device,
-                        "port": 1,
+                        "rdma_port": 1,
                         "link_layer": "InfiniBand",
-                        "state": "ACTIVE",
-                        "physical_state": "LINK_UP",
-                        "bandwidth_gbps": 200,
-                        "latency_us": 4,
                     }],
+                    "rdma": {
+                        "devices": [{"device": rdma_device}],
+                        "links": [{
+                            "rdma_device": rdma_device,
+                            "port": 1,
+                            "link_layer": "InfiniBand",
+                            "state": "ACTIVE",
+                            "physical_state": "LINK_UP",
+                            "bandwidth_gbps": 200,
+                            "latency_us": 4,
+                        }],
+                    },
                 },
             },
             nodes=(NodeResource(
