@@ -78,6 +78,45 @@ def test_reconcile_releases_completed_bound_allocation(tmp_path):
     assert inventory.allocation(allocation.allocation_id)["state"] == "released"
 
 
+def test_reconcile_repairs_stranded_terminal_fabric_allocation(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "leads.sqlite3"))
+    inventory.observe(_snapshot())
+    scheduler = ComputeScheduler(inventory)
+    allocation = scheduler.allocate(_requirements(), "allocation-1")
+
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="token",
+        lease_seconds=30,
+        inventory=inventory,
+    )
+    coordinator.register_worker(WorkerIdentity("worker-1", "host", "x86_64", 8, 32768, ("agent",)))
+    task_id = coordinator.enqueue({"kind": "agent_task", "agent": "agent", "payload": {}})
+    claimed = coordinator.claim("worker-1")
+    assert inventory.bind_allocation(
+        allocation.allocation_id,
+        task_id=task_id,
+        attempt_id=claimed["attempt_id"],
+        generation=claimed["generation"],
+        lease_token_digest=__import__("hashlib").sha256(
+            claimed["lease_token"].encode("utf-8")
+        ).hexdigest(),
+    )
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_execution_attempts SET status='failed',finished_at=?,"
+            "error='simulated crash after attempt retirement',authoritative_acceptance='rejected' "
+            "WHERE attempt_id=?",
+            (__import__("time").time(), claimed["attempt_id"]),
+        )
+        connection.commit()
+
+    result = reconcile_allocations(inventory, coordinator)
+    assert result["released_count"] == 1
+    assert inventory.allocation(allocation.allocation_id)["state"] == "released"
+    assert inventory.get(allocation.resource_keys[0])["state"] == ResourceState.AVAILABLE.value
+
+
 def test_reconcile_releases_expired_attempt_and_allows_new_generation(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "leads.sqlite3"))
     inventory.observe(_snapshot())
