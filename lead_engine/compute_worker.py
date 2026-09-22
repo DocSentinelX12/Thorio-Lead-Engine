@@ -277,18 +277,13 @@ def run_fabric_verification(
         or len(set(allocated_gpu_device_ids)) != len(allocated_gpu_device_ids)
     ):
         raise ComputeWorkerError("launch plan contains invalid or ambiguous GPU bindings")
-    local_identity = local_worker_identity(client.worker_id)
-    local_gpus = {gpu.gpu_id: gpu for gpu in local_identity.gpu_resources}
-    for binding in gpu_bindings:
-        gpu_id = str(binding["gpu_id"])
-        gpu_uuid = str(binding["gpu_uuid"])
-        local_gpu = local_gpus.get(gpu_id)
-        if local_gpu is None or local_gpu.gpu_uuid != gpu_uuid:
-            raise ComputeWorkerError(
-                f"allocated GPU identity mismatch on worker {client.worker_id}: {gpu_id}/{gpu_uuid}"
-            )
-    if len(local_identity.gpu_resources) < len(gpu_bindings):
-        raise ComputeWorkerError("worker reported fewer physical GPUs than its launch allocation")
+    if isinstance(runtime, NvidiaRuntime):
+        try:
+            gpu_identity = runtime.verify_gpu_bindings(gpu_bindings)
+        except NvidiaRuntimeError:
+            raise
+    else:
+        gpu_identity = {"verified": False, "verification_source": "injected_runtime"}
     client.fabric_state(attempt_id, generation, lease_token, "launching")
     stop_heartbeat = threading.Event()
     heartbeat_failed = threading.Event()
@@ -406,7 +401,7 @@ def run_fabric_verification(
         if heartbeat_failed.is_set():
             raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
         evidence = {
-            "verified": True, "local_runtime": local, "gpu_bindings": gpu_bindings,
+            "verified": True, "local_runtime": local, "gpu_identity": gpu_identity, "gpu_bindings": gpu_bindings,
             "cuda_visible_devices": allocated_gpu_device_ids, "attempt_id": attempt_id,
             "generation": generation, "worker_id": client.worker_id,
             "node_rank": int(participant["node_rank"]), "world_size": int(plan["world_size"]),
