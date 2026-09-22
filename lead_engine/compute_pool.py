@@ -122,6 +122,7 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
         driver_version = node.driver_version
         cuda_version = node.cuda_version
         gpu_state = "healthy" if gpu_resources else "no_gpu"
+        nic_names = node.nic_names
     except NvidiaDiscoveryError as exc:
         gpu_state = "degraded"
         gpu_error = str(exc)[:2000]
@@ -129,7 +130,7 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
     return WorkerIdentity(
         capacity.node_id, socket.gethostname(), capacity.architecture,
         capacity.cpu_count, capacity.memory_mb, ("lead-processing",),
-        gpu_resources, driver_version, cuda_version, nccl_version, (), gpu_state, gpu_error,
+        gpu_resources, driver_version, cuda_version, nccl_version, tuple(sorted(nic_names)), gpu_state, gpu_error,
     )
 
 
