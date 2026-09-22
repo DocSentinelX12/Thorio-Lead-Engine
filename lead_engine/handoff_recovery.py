@@ -12,7 +12,7 @@ def _lead_fingerprint(lead: Mapping[str, Any]) -> str:
 def _queued_or_running(db: Any, agent: str, fingerprint: str) -> bool:
     rows = db.conn.execute(
         "SELECT 1 FROM agent_queue "
-        "WHERE agent=? AND status IN ('queued','running') "
+        "WHERE agent=? "
         "AND json_extract(payload,'$.lead.fingerprint')=? LIMIT 1",
         (agent, fingerprint),
     ).fetchone()
