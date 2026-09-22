@@ -14,6 +14,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_finding, social_research
 from .compute_pool import local_worker_identity
+from .fabric_topology_runtime import FabricTopologyRuntimeError, verify_provider_snapshot
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .nvidia_provider import CommandResult, NvidiaProvider
 from .lead_pipeline import process_leads
@@ -175,7 +176,7 @@ def run_fabric_verification(client: ComputeWorkerClient, assignment: Mapping[str
             except Exception as error: heartbeat_error.append(str(error)); heartbeat_failed.set(); stop_processes(); return
     thread=threading.Thread(target=beat,daemon=True)
     try:
-        local=runtime.verify_local(); provider_runner=None if getattr(runtime,"runner",None) is None else lambda args,timeout: CommandResult(*runtime.runner(args,timeout)); rdma_evidence=None; gpu_nic_locality=()
+        local=runtime.verify_local(); provider_runner=None if getattr(runtime,"runner",None) is None else lambda args,timeout: CommandResult(*runtime.runner(args,timeout)); rdma_evidence=None; gpu_nic_locality=(); physical_topology=None
         host,port_text=str(plan["rendezvous_endpoint"]).rsplit(":",1); port=int(port_text); command=runtime.distributed_process_command(); client.fabric_state(attempt_id,generation,lease_token,"active")
         process_specs=[]
         for binding in sorted(normalized_bindings,key=lambda item:item["rank"]):
@@ -210,11 +211,15 @@ def run_fabric_verification(client: ComputeWorkerClient, assignment: Mapping[str
                 if not isinstance(rdma_candidate,Mapping): raise NvidiaRuntimeError("IB execution requires verified local RDMA discovery evidence")
                 rdma_evidence=rdma_candidate; network_payload=network_evidence.get("network"); locality_candidate=network_payload.get("gpu_nic_locality") if isinstance(network_payload,Mapping) else None
                 if isinstance(locality_candidate,list): gpu_nic_locality=tuple(row for row in locality_candidate if isinstance(row,Mapping))
+                try:
+                    physical_topology=verify_provider_snapshot(network_snapshot,runner=provider_runner)
+                except FabricTopologyRuntimeError as exc:
+                    raise NvidiaRuntimeError(f"physical GPU/NIC/RDMA topology verification failed: {exc}") from exc
             path_evidence=runtime.validate_nccl_transport_against_rdma(stdout+"\n"+stderr,rdma_evidence or {},gpu_uuid=str(binding["gpu_uuid"]),gpu_nic_locality=gpu_nic_locality) if int(plan["nnodes"])>1 else {"rdma_devices":(),"verified_rdma_devices":()}
-            process_evidence.append({"rank":int(binding["rank"]),"local_rank":int(binding["local_rank"]),"gpu_binding":dict(binding),"probe":probe,"network_transport":probe.get("network_transport"),"gpu_direct_rdma":probe.get("gpu_direct_rdma"),"network_evidence_lines":list(probe.get("network_evidence_lines") or ()),"peer_connections":list(probe.get("peer_connections") or ()),"rdma_devices":list(path_evidence.get("rdma_devices") or ()),"verified_rdma_devices":list(path_evidence.get("verified_rdma_devices") or ()),"hca_selections":list(path_evidence.get("hca_selections") or ()),"verified_hca_selections":list(path_evidence.get("verified_hca_selections") or ()),"verified_rdma_links":list(path_evidence.get("verified_rdma_links") or ()),"gpu_nic_locality":path_evidence.get("gpu_nic_locality"),"stdout":stdout[-4000:]})
+            process_evidence.append({"rank":int(binding["rank"]),"local_rank":int(binding["local_rank"]),"gpu_binding":dict(binding),"probe":probe,"network_transport":probe.get("network_transport"),"gpu_direct_rdma":probe.get("gpu_direct_rdma"),"network_evidence_lines":list(probe.get("network_evidence_lines") or ()),"peer_connections":list(probe.get("peer_connections") or ()),"rdma_devices":list(path_evidence.get("rdma_devices") or ()),"verified_rdma_devices":list(path_evidence.get("verified_rdma_devices") or ()),"hca_selections":list(path_evidence.get("hca_selections") or ()),"verified_hca_selections":list(path_evidence.get("verified_hca_selections") or ()),"verified_rdma_links":list(path_evidence.get("verified_rdma_links") or ()),"gpu_nic_locality":path_evidence.get("gpu_nic_locality"),"physical_fabric_topology":physical_topology,"stdout":stdout[-4000:]})
         if failures: raise NvidiaRuntimeError("distributed NCCL launch failed: "+"; ".join(failures))
         if len(process_evidence)!=len(normalized_bindings): raise NvidiaRuntimeError(f"distributed NCCL execution produced {len(process_evidence)} verified local ranks; expected {len(normalized_bindings)}")
-        evidence={"verified":True,"backend":"nccl","collective":"all_reduce","local_runtime":local,"gpu_identity":gpu_identity,"gpu_bindings":normalized_bindings,"process_evidence":process_evidence,"attempt_id":attempt_id,"generation":generation,"worker_id":client.worker_id,"node_rank":int(participant["node_rank"]),"world_size":world_size,"nnodes":int(plan["nnodes"]),"command":list(command),"rendezvous_endpoint":plan["rendezvous_endpoint"]}
+        evidence={"verified":True,"backend":"nccl","collective":"all_reduce","local_runtime":local,"gpu_identity":gpu_identity,"gpu_bindings":normalized_bindings,"process_evidence":process_evidence,"physical_fabric_topology":physical_topology,"attempt_id":attempt_id,"generation":generation,"worker_id":client.worker_id,"node_rank":int(participant["node_rank"]),"world_size":world_size,"nnodes":int(plan["nnodes"]),"command":list(command),"rendezvous_endpoint":plan["rendezvous_endpoint"]}
         if not client.fabric_record_verification(attempt_id,generation,lease_token,evidence).get("ok",True): raise ComputeWorkerError("coordinator rejected execution verification")
         deadline=time.monotonic()+convergence_timeout_seconds; convergence=client.fabric_converge(attempt_id,generation,lease_token)
         while convergence.get("converged") is not True and time.monotonic()<deadline:
