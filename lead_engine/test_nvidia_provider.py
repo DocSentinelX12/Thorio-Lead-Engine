@@ -230,6 +230,45 @@ def test_nvidia_discovery_records_rdma_device_capability_separately_from_l3_netw
     assert network["fabric_domains"]["node-01"] == "10.10.20.0/24"
 
 
+
+def test_nvidia_discovery_preserves_verified_rdma_port_gids_and_netdev_identity(monkeypatch):
+    rdma_devices = """[
+      {"ifname":"mlx5_0","node_type":"RNIC","state":"ACTIVE","physical_state":"LINK_UP","pci_bus_id":"0000:41:00.0"}
+    ]"""
+    rdma_links = """[
+      {"ifname":"mlx5_0","port":1,"state":"ACTIVE","physical_state":"LINK_UP","link_layer":"InfiniBand","netdev":"ib0"}
+    ]"""
+    network_addresses = """[
+      {"ifname":"ib0","operstate":"UP","mtu":4092,"address":"aa:bb:cc:dd:ee:ff",
+       "addr_info":[{"family":"inet","local":"10.10.20.15","prefixlen":24,"scope":"global"}]}
+    ]"""
+
+    def runner(args, timeout):
+        args=tuple(args)
+        if args[:4] == ("rdma","-j","dev","show"):
+            return CommandResult(0, rdma_devices, "")
+        if args[:4] == ("rdma","-j","link","show"):
+            return CommandResult(0, rdma_links, "")
+        if args[0] == "ip":
+            return CommandResult(0, network_addresses, "")
+        return fake_runner(args, timeout)
+
+    monkeypatch.setattr(
+        NvidiaProvider,
+        "_rdma_port_gids",
+        staticmethod(lambda device, port: ["fe80:0000:0000:0000:0011:2233:4455:6677", "0000:0000:0000:0000:0011:2233:4455:6688"]),
+    )
+    snapshot=NvidiaProvider(node_id="node-01",domain_id="cell-01",runner=runner,now=lambda:1234.5).discover()
+    link=snapshot.evidence["network"]["rdma"]["links"][0]
+    assert link["rdma_device"]=="mlx5_0"
+    assert link["port"]==1
+    assert link["link_layer"]=="InfiniBand"
+    assert link["netdev"]=="ib0"
+    assert link["gids"] == [
+        "fe80:0000:0000:0000:0011:2233:4455:6677",
+        "0000:0000:0000:0000:0011:2233:4455:6688",
+    ]
+
 def test_local_worker_identity_persists_discovered_nic_names(monkeypatch):
     node = SimpleNamespace(gpus=(), driver_version=None, cuda_version=None, nic_names=("eth0", "ib0"))
     snapshot = SimpleNamespace(nodes=(node,))
