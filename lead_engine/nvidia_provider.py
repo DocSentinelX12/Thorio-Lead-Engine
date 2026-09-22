@@ -256,7 +256,7 @@ class NvidiaProvider(ComputeProvider):
         observed_at = float(self._now())
         if observed_at <= 0:
             raise NvidiaDiscoveryError("discovery clock must return a positive timestamp")
-        query = self._run(" --query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id".strip(), "--format=csv,nounits")
+        query = self._run("--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id", "--format=csv,nounits")
         smi = self._run()
         rows = self._parse_csv(query.stdout)
         cuda_supported = self._parse_cuda_supported_version(smi.stdout)
@@ -344,7 +344,7 @@ class NvidiaProvider(ComputeProvider):
         try:
             match = re.search(r"^MemTotal:\s+(\d+)\s+kB", Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
             if match:
-                return max(1, int(match.group(1) * 1024))
+                return max(1, int(match.group(1)) * 1024)
         except OSError:
             pass
         return 1
