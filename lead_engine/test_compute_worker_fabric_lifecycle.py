@@ -95,6 +95,15 @@ def _valid_execution_verification(coordinator: ComputeCoordinator, attempt_id: s
                 },
                 "rdma_devices": ["mlx5_0"],
                 "verified_rdma_devices": ["mlx5_0"],
+                "gpu_nic_locality": {
+                    "gpu_uuid": binding["gpu_binding"]["gpu_uuid"],
+                    "nic": "eth0",
+                    "nic_pci_bus_id": "0000:41:00.0",
+                    "shared_pci_ancestor": "0000:40",
+                    "source": "sysfs",
+                    "rdma_device": "mlx5_0",
+                    "rdma_pci_bus_id": "0000:41:00.0",
+                },
             }
             for binding in participant["gpu_bindings"]
         ],
