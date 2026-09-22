@@ -34,4 +34,4 @@ jobs:
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_nvidia_provider.py
       - name: Run compute remote and execution fabric regressions
         run: |
-          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_compute_remote_contract.py lead_engine/test_compute_execution_fabric.py lead_engine/test_compute_worker_fabric_lifecycle.py lead_engine/test_compute_scheduler.py lead_engine/test_compute_checkpoints.py lead_engine/test_compute_lead_persistence.py lead_engine/test_research_section_checkpoints.py
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_compute_remote_contract.py lead_engine/test_compute_execution_fabric.py lead_engine/test_compute_worker_fabric_lifecycle.py lead_engine/test_compute_scheduler.py lead_engine/test_compute_checkpoints.py lead_engine/test_compute_lead_persistence.py lead_engine/test_research_section_checkpoints.py lead_engine/test_public_research_checkpoints.py
