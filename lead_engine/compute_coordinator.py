@@ -940,6 +940,30 @@ class ComputeCoordinator:
             )
             if not gpu_resource_ids:
                 raise ValueError(f"participant has no allocated GPU resources: {participant['worker_id']}")
+            registered_gpus = {
+                f"{worker['worker_id']}/{gpu['gpu_id']}": gpu
+                for gpu in json.loads(worker["gpu_resources_json"] or "[]")
+                if isinstance(gpu, dict) and str(gpu.get("gpu_id") or "").strip()
+            }
+            gpu_bindings = []
+            for resource_id in gpu_resource_ids:
+                gpu = registered_gpus.get(resource_id)
+                if gpu is None:
+                    raise ValueError(
+                        f"allocated GPU is not present in participant worker identity: {resource_id}"
+                    )
+                gpu_uuid = str(gpu.get("gpu_uuid") or "").strip()
+                gpu_id = str(gpu.get("gpu_id") or "").strip()
+                if not gpu_uuid or not gpu_id:
+                    raise ValueError(
+                        f"allocated GPU lacks immutable physical identity: {resource_id}"
+                    )
+                gpu_bindings.append({
+                    "resource_id": resource_id,
+                    "gpu_id": gpu_id,
+                    "gpu_uuid": gpu_uuid,
+                    "pci_bus_id": gpu.get("pci_bus_id"),
+                })
             process_count = len(gpu_resource_ids)
             workers.append({
                 "worker_id": participant["worker_id"],
@@ -947,6 +971,7 @@ class ComputeCoordinator:
                 "node_rank": int(participant["rank"]),
                 "process_count": process_count,
                 "gpu_resource_ids": gpu_resource_ids,
+                "gpu_bindings": gpu_bindings,
                 "rendezvous_ref": participant["rendezvous_ref"],
                 "rendezvous_endpoint": endpoint,
             })
