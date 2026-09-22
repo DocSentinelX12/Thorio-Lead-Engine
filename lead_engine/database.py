@@ -401,6 +401,22 @@ class LeadDB:
         self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
         self.conn.commit()
 
+    def queue_update_owned(self, task_id, worker_id, lease_token, **updates):
+        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result", "lease_token"}
+        unknown = set(updates) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
+        if not updates:
+            return False
+        assignments = ", ".join(f"{field} = ?" for field in updates)
+        values = list(updates.values()) + [task_id, worker_id, lease_token]
+        cursor = self.conn.execute(
+            f"UPDATE agent_queue SET {assignments} WHERE task_id = ? AND status = 'running' AND worker_id = ? AND lease_token = ?",
+            values,
+        )
+        self.conn.commit()
+        return cursor.rowcount == 1
+
     def compute_bridge_prepare(self, task_id, worker_id, payload, now_iso):
         self.conn.execute(
             """INSERT INTO compute_bridge_publications
