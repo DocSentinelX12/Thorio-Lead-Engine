@@ -215,6 +215,94 @@ def test_multi_node_allocation_never_assigns_a_participant_without_a_gpu():
             for participant in participants
         )
 
+
+def test_distributed_launch_supports_uneven_gpu_counts_with_contiguous_process_ranks():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        inventory = ComputeInventory(str(root / "inventory.sqlite3"))
+        coordinator = ComputeCoordinator(
+            str(root / "coordinator.sqlite3"),
+            auth_token="token",
+            lease_seconds=30,
+            inventory=inventory,
+        )
+        for node_id, gpu_ids in (("worker-1", ("gpu-0", "gpu-1")), ("worker-2", ("gpu-0",))):
+            coordinator.pool.register(WorkerIdentity(
+                node_id,
+                f"{node_id}.host",
+                "x86_64",
+                4,
+                8192,
+                ("lead-processing",),
+                tuple(
+                    GpuResource(
+                        node_id=node_id,
+                        gpu_id=gpu_id,
+                        gpu_uuid=f"GPU-{node_id}-{gpu_id}",
+                        availability_state=ResourceState.AVAILABLE,
+                    )
+                    for gpu_id in gpu_ids
+                ),
+                "550.1",
+                "12.4",
+                "2.20",
+            ))
+            inventory.observe(ProviderResourceSnapshot(
+                provider_id="fabric-provider",
+                domain_id="fabric-domain",
+                observed_at=1.0,
+                expires_at=9999999999.0,
+                ephemeral=True,
+                authentication_state="authenticated",
+                evidence={"source": "test"},
+                nodes=(NodeResource(
+                    node_id=node_id,
+                    architecture="x86_64",
+                    cpu=CpuResource(node_id, 4, 8192),
+                    gpus=tuple(
+                        GpuResource(
+                            node_id=node_id,
+                            gpu_id=gpu_id,
+                            gpu_uuid=f"GPU-{node_id}-{gpu_id}",
+                            availability_state=ResourceState.AVAILABLE,
+                        )
+                        for gpu_id in gpu_ids
+                    ),
+                    driver_version="550.1",
+                    cuda_version="12.4",
+                    nccl_version="2.20",
+                    state=ResourceState.AVAILABLE,
+                ),),
+            ))
+
+        task_id = coordinator.enqueue({
+            "compute_requirements": {
+                "workload_class": "multi_node_gpu",
+                "gpu": {"gpu_count": 3, "require_nccl": True},
+                "min_cpu_count": 1,
+                "min_memory_bytes": 1,
+                "same_node": False,
+            },
+        })
+        claimed = coordinator.claim_physical()
+        assert claimed is not None, coordinator.task(task_id)["error"]
+
+        launch = coordinator.fabric_launch_plan_for_worker(
+            attempt_id=claimed["attempt_id"],
+            generation=claimed["generation"],
+            worker_id="worker-1",
+            lease_token=claimed["lease_token"],
+            rendezvous_endpoint="10.0.0.5:29400",
+        )
+        assert launch["world_size"] == 3
+        assert launch["nnodes"] == 2
+        assert [item["process_count"] for item in launch["workers"]] == [2, 1]
+        bindings = [binding for worker in launch["workers"] for binding in worker["gpu_bindings"]]
+        assert [binding["rank"] for binding in bindings] == [0, 1, 2]
+        assert [binding["local_rank"] for binding in launch["workers"][0]["gpu_bindings"]] == [0, 1]
+        assert launch["workers"][1]["gpu_bindings"][0]["local_rank"] == 0
+
+
 def test_claim_creates_and_binds_physical_allocation_to_worker_node():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
