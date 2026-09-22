@@ -692,3 +692,87 @@ def test_scheduler_prefers_verified_physical_gpu_nic_rdma_path(tmp_path):
     assert path["rdma_device"] == "mlx5_1"
     assert path["rdma_port"] == 1
     assert path["link_layer"] == "InfiniBand"
+
+
+def test_quarantined_physical_path_does_not_poison_a_gpu_with_a_healthy_alternative(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path_bad = {
+        "node_id": "node-a",
+        "gpu_uuid": "u0",
+        "nic": "eth0",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "link_layer": "InfiniBand",
+    }
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a",
+        domain_id="domain-a",
+        observed_at=time.time(),
+        nodes=(_node("node-a", [
+            _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="fabric-a"),
+        ]),),
+        authentication_state="authenticated",
+        evidence={"network": {
+            "source": "verified-test-network",
+            "gpu_nic_locality": [
+                path_bad | {"gpu_pci_bus_id": "0000:17:00.0", "nic_pci_bus_id": "0000:41:00.0"},
+                {
+                    **path_bad,
+                    "nic": "eth1",
+                    "rdma_device": "mlx5_1",
+                    "gpu_pci_bus_id": "0000:17:00.0",
+                    "nic_pci_bus_id": "0000:51:00.0",
+                },
+            ],
+            "rdma": {
+                "devices": [{"device": "mlx5_0"}, {"device": "mlx5_1"}],
+                "links": [
+                    {"rdma_device": "mlx5_0", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP"},
+                    {"rdma_device": "mlx5_1", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP"},
+                ],
+            },
+        }},
+    ))
+    inventory.quarantine_fabric_path(path_bad, reason="verified RDMA link failure")
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(WorkloadClass.GPU_REQUIRED, GpuRequirements(gpu_count=1)),
+        "allocation-healthy-alternative",
+    )
+    evidence = [item for item in allocation.capability_evidence if item.get("gpu_uuid") == "u0"][0]
+    assert evidence["placement_decision"]["signal"] == "verified_gpu_nic_rdma_path"
+    assert evidence["placement_decision"]["gpu_nic_rdma_path"][0]["rdma_device"] == "mlx5_1"
+
+
+def test_explicitly_quarantined_only_physical_path_is_not_used_for_multinode_nccl(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = {
+        "node_id": "node-a",
+        "gpu_uuid": "ua",
+        "nic": "eth0",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "link_layer": "InfiniBand",
+    }
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(
+            _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua")]),
+            _node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="ub")]),
+        ),
+        authentication_state="authenticated",
+        evidence={"network": {
+            "source": "verified-test-network",
+            "gpu_nic_locality": [path],
+            "rdma": {
+                "devices": [{"device": "mlx5_0"}],
+                "links": [{"rdma_device": "mlx5_0", "port": 1, "link_layer": "InfiniBand", "state": "ACTIVE", "physical_state": "LINK_UP"}],
+            },
+            "network_domains": {"node-a": ["network-a"], "node-b": ["network-a"]},
+        }},
+    ))
+    inventory.quarantine_fabric_path(path, reason="verified HCA port failure")
+    with pytest.raises(ComputeSchedulingError):
+        ComputeScheduler(inventory).allocate(
+            ComputeRequirements(WorkloadClass.MULTI_NODE_GPU, GpuRequirements(gpu_count=2, require_nccl=True), same_node=False),
+            "allocation-no-quarantined-path",
+        )
