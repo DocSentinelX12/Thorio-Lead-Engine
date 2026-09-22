@@ -211,6 +211,12 @@ def test_reselection_never_clears_quarantine_without_matching_physical_evidence(
         )
     assert inventory.is_fabric_path_quarantined(path) is True
 
+    with pytest.raises(ValueError, match="newer physical observation"):
+        inventory.revalidate_fabric_path(path, verification={"verified": True, **path})
+
+    time.sleep(0.01)
+    inventory.observe(_snapshot(network=_network_evidence()))
+
     assert inventory.revalidate_fabric_path(path, verification={"verified": True, **path}) is True
     assert inventory.is_fabric_path_quarantined(path) is False
 
