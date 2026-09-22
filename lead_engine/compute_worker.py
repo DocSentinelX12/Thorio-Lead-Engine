@@ -196,11 +196,41 @@ def run_fabric_verification(client: ComputeWorkerClient, assignment: Mapping[str
                 process=subprocess.Popen(command,**popen_kwargs)
                 with process_lock: process_holder.append(process)
             thread.start()
-            for binding,process in zip([item[0] for item in process_specs],list(process_holder)):
-                try: stdout,stderr=process.communicate(timeout=runtime.timeout_seconds); rc=process.returncode
-                except subprocess.TimeoutExpired:
-                    stop_processes(); raise ComputeWorkerError(f"distributed NVIDIA rank {binding['rank']} timed out")
-                results.append((binding,int(rc),str(stdout),str(stderr)))
+            process_items=list(zip([item[0] for item in process_specs], list(process_holder)))
+            result_queue=__import__("queue").Queue()
+            def collect_process(binding, process):
+                try:
+                    stdout, stderr = process.communicate(timeout=runtime.timeout_seconds)
+                    result_queue.put((binding, process, int(process.returncode), str(stdout), str(stderr), None))
+                except Exception as error:
+                    result_queue.put((binding, process, None, "", "", error))
+            collectors=[]
+            for binding, process in process_items:
+                collector=threading.Thread(target=collect_process,args=(binding,process),daemon=True)
+                collector.start()
+                collectors.append(collector)
+            remaining=len(process_items)
+            while remaining:
+                binding, process, rc, stdout, stderr, error = result_queue.get()
+                remaining -= 1
+                if error is not None:
+                    stop_processes()
+                    if isinstance(error, subprocess.TimeoutExpired):
+                        raise ComputeWorkerError(f"distributed NVIDIA rank {binding['rank']} timed out")
+                    raise error
+                results.append((binding,rc,stdout,stderr))
+                if rc != 0:
+                    stop_processes()
+                    while remaining:
+                        binding2, process2, rc2, stdout2, stderr2, error2 = result_queue.get()
+                        remaining -= 1
+                        if error2 is None:
+                            results.append((binding2,rc2,stdout2,stderr2))
+                        elif isinstance(error2, subprocess.TimeoutExpired):
+                            results.append((binding2,143,"",f"terminated after rank {binding['rank']} failed"))
+                        else:
+                            results.append((binding2,143,"",str(error2)))
+                    break
         if heartbeat_failed.is_set(): stop_processes(); raise ComputeWorkerError(f"execution heartbeat failed: {heartbeat_error[-1]}")
         process_evidence=[]; failures=[]
         for binding,rc,stdout,stderr in results:
