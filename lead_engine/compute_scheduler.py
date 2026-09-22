@@ -130,9 +130,19 @@ class ComputeScheduler:
                 and str(link.get("state") or "").strip().upper() == "ACTIVE"
                 and str(link.get("physical_state") or "").strip().upper() in {"LINK_UP", "LINK_ACTIVE"}
             ]
-            if matches:
+            quarantined = row.get("quarantined_fabric_paths") or ()
+            blocked = any(
+                isinstance(path, dict)
+                and str(path.get("nic") or "").strip() == str(item.get("nic") or "").strip()
+                and str(path.get("rdma_device") or "").strip() == device
+                and path.get("rdma_port") == port
+                and str(path.get("link_layer") or "").strip() == link_layer
+                for path in quarantined
+            )
+            if matches and not blocked:
                 verified.append({
                     **item,
+                    "node_id": str(row.get("node_id") or "").strip(),
                     "rdma_device": device,
                     "rdma_port": port,
                     "link_layer": link_layer,
