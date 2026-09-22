@@ -11,6 +11,36 @@ import os
 import socket
 
 
+def build_probe_evidence(
+    *,
+    rank: int,
+    world_size: int,
+    nnodes: int,
+    expected_sum: int,
+    gpu_uuid: str,
+    hostname: str,
+) -> dict[str, object]:
+    """Build only evidence directly observed by the NCCL probe itself.
+
+    Network transport and GPU-direct-RDMA claims are intentionally excluded.
+    Those facts are derived by the parent runtime from the actual NCCL log and
+    independently verified RDMA/device evidence, so the probe must never emit
+    values it did not itself observe.
+    """
+    return {
+        "backend": "nccl",
+        "rank": rank,
+        "world_size": world_size,
+        "nnodes": nnodes,
+        "local_rank": 0,
+        "collective": "all_reduce",
+        "expected_sum": expected_sum,
+        "verified_on_gpu": True,
+        "gpu_uuid": gpu_uuid,
+        "hostname": hostname,
+    }
+
+
 def main() -> None:
     try:
         import torch
@@ -60,20 +90,17 @@ def main() -> None:
         if actual != expected:
             raise SystemExit(f"NCCL all-reduce mismatch: expected {expected}, got {actual}")
         dist.barrier()
-        print("THORIO_NCCL_PROBE_OK " + json.dumps({
-            "backend": "nccl",
-            "rank": rank,
-            "world_size": world_size,
-            "nnodes": expected_nnodes,
-            "local_rank": 0,
-            "collective": "all_reduce",
-            "expected_sum": expected,
-            "verified_on_gpu": True,
-            "gpu_uuid": observed_gpu_uuid,
-            "hostname": socket.gethostname(),
-            "network_transport": network_transport,
-            "gpu_direct_rdma": gpu_direct_rdma,
-        }, sort_keys=True), flush=True)
+        print("THORIO_NCCL_PROBE_OK " + json.dumps(
+            build_probe_evidence(
+                rank=rank,
+                world_size=world_size,
+                nnodes=expected_nnodes,
+                expected_sum=expected,
+                gpu_uuid=observed_gpu_uuid,
+                hostname=socket.gethostname(),
+            ),
+            sort_keys=True,
+        ), flush=True)
     finally:
         dist.destroy_process_group()
 
