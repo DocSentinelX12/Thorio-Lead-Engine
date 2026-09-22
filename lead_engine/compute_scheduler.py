@@ -140,15 +140,103 @@ class ComputeScheduler:
                 for path in quarantined
             )
             if matches and not blocked:
+                link = dict(matches[0])
                 verified.append({
                     **item,
                     "node_id": str(row.get("node_id") or "").strip(),
                     "rdma_device": device,
                     "rdma_port": port,
                     "link_layer": link_layer,
-                    "verified_rdma_link": dict(matches[0]),
+                    "verified_rdma_link": link,
+                    "bandwidth_gbps": cls._path_bandwidth_gbps(link),
+                    "latency_us": cls._path_latency_us(link),
                 })
         return tuple(verified)
+
+    @staticmethod
+    def _path_bandwidth_gbps(path: dict[str, Any]) -> float | None:
+        for key in ("bandwidth_gbps", "link_bandwidth_gbps", "throughput_gbps", "speed_gbps"):
+            value = path.get(key)
+            if value is None:
+                continue
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return None
+
+    @staticmethod
+    def _path_latency_us(path: dict[str, Any]) -> float | None:
+        for key in ("latency_us", "link_latency_us", "fabric_latency_us"):
+            value = path.get(key)
+            if value is None:
+                continue
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return None
+
+    @classmethod
+    def _rank_fabric_paths(cls, paths: Iterable[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+        def key(path: dict[str, Any]) -> tuple:
+            bandwidth = path.get("bandwidth_gbps")
+            latency = path.get("latency_us")
+            return (
+                0 if bandwidth is not None else 1,
+                -(float(bandwidth) if bandwidth is not None else 0.0),
+                0 if latency is not None else 1,
+                float(latency) if latency is not None else float("inf"),
+                str(path.get("rdma_device") or ""),
+                int(path.get("rdma_port") or 0),
+            )
+        return tuple(sorted((dict(path) for path in paths), key=key))
+
+    @classmethod
+    def _fabric_path_contract(
+        cls,
+        row: dict[str, Any],
+        gpu_uuid: str | None,
+        *,
+        min_bandwidth_gbps: float | None = None,
+        max_latency_us: float | None = None,
+        require_redundant: bool = False,
+    ) -> dict[str, Any] | None:
+        paths = cls._rank_fabric_paths(cls._verified_gpu_nic_rdma_path(row, gpu_uuid))
+        if min_bandwidth_gbps is not None:
+            paths = tuple(path for path in paths if path.get("bandwidth_gbps") is not None and float(path["bandwidth_gbps"]) >= min_bandwidth_gbps)
+        if max_latency_us is not None:
+            paths = tuple(path for path in paths if path.get("latency_us") is not None and float(path["latency_us"]) <= max_latency_us)
+        if not paths:
+            return None
+        independent = []
+        seen = set()
+        for path in paths:
+            identity = (
+                str(path.get("nic") or ""),
+                str(path.get("rdma_device") or ""),
+                int(path.get("rdma_port") or 0),
+                str(path.get("link_layer") or ""),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            independent.append(path)
+        if require_redundant and len(independent) < 2:
+            return None
+        primary = independent[0]
+        return {
+            "primary_path": primary,
+            "redundant_paths": tuple(independent[1:]),
+            "path_count": len(independent),
+            "selection_policy": "highest_verified_bandwidth_then_lowest_verified_latency",
+            "bandwidth_gbps": primary.get("bandwidth_gbps"),
+            "latency_us": primary.get("latency_us"),
+        }
 
     @staticmethod
     def _has_explicit_physical_path_evidence(row: dict[str, Any], gpu_uuid: str | None) -> bool:
@@ -186,8 +274,14 @@ class ComputeScheduler:
             topology_key = cls._topology_group_key(gpu)
             numa_key = (topology_key, payload.get("numa_node"))
             physical_path = bool(cls._verified_gpu_nic_rdma_path(gpu, payload.get("gpu_uuid")))
+            paths = cls._rank_fabric_paths(cls._verified_gpu_nic_rdma_path(gpu, payload.get("gpu_uuid")))
+            primary = paths[0] if paths else {}
+            bandwidth = primary.get("bandwidth_gbps")
+            latency = primary.get("latency_us")
             return (
                 0 if physical_path else 1,
+                -(float(bandwidth) if bandwidth is not None else 0.0),
+                float(latency) if latency is not None else float("inf"),
                 -topology_counts[topology_key],
                 -numa_counts[numa_key],
                 str(payload.get("gpu_id") or gpu.get("resource_key") or ""),
@@ -305,6 +399,17 @@ class ComputeScheduler:
             if int(cpu_resource.get("memory_bytes", 0)) < requirements.min_memory_bytes:
                 continue
             compatible = [gpu for gpu in gpus if self._gpu_matches(gpu, requirements.gpu)]
+            if requirements.gpu.min_fabric_bandwidth_gbps is not None or requirements.gpu.max_fabric_latency_us is not None or requirements.gpu.require_redundant_fabric_path:
+                compatible = [
+                    gpu for gpu in compatible
+                    if self._fabric_path_contract(
+                        gpu,
+                        json.loads(gpu["payload_json"]).get("gpu_uuid"),
+                        min_bandwidth_gbps=requirements.gpu.min_fabric_bandwidth_gbps,
+                        max_latency_us=requirements.gpu.max_fabric_latency_us,
+                        require_redundant=requirements.gpu.require_redundant_fabric_path,
+                    ) is not None
+                ]
             if requirements.topology_domain is not None:
                 compatible = [
                     gpu for gpu in compatible
