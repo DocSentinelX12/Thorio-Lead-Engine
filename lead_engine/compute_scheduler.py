@@ -150,6 +150,26 @@ class ComputeScheduler:
                 })
         return tuple(verified)
 
+    @staticmethod
+    def _has_explicit_physical_path_evidence(row: dict[str, Any], gpu_uuid: str | None) -> bool:
+        if not gpu_uuid:
+            return False
+        evidence = json.loads(row["evidence_json"])
+        network = evidence.get("network")
+        if not isinstance(network, dict):
+            return False
+        locality = network.get("gpu_nic_locality")
+        rdma = network.get("rdma")
+        return (
+            isinstance(locality, list)
+            and any(
+                isinstance(item, dict) and str(item.get("gpu_uuid") or "").strip() == str(gpu_uuid).strip()
+                for item in locality
+            )
+            and isinstance(rdma, dict)
+            and isinstance(rdma.get("links"), list)
+        )
+
     @classmethod
     def _rank_gpus_for_placement(cls, gpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
         topology_counts: dict[str, int] = {}
@@ -294,6 +314,16 @@ class ComputeScheduler:
                 nccl = node_payload.get("nccl_version")
                 if not nccl:
                     continue
+                if requirements.workload_class == WorkloadClass.MULTI_NODE_GPU:
+                    compatible = [
+                        gpu for gpu in compatible
+                        if not self._has_explicit_physical_path_evidence(
+                            gpu, json.loads(gpu["payload_json"]).get("gpu_uuid")
+                        )
+                        or bool(self._verified_gpu_nic_rdma_path(
+                            gpu, json.loads(gpu["payload_json"]).get("gpu_uuid")
+                        ))
+                    ]
             # A multi-node request can combine GPUs from multiple nodes, so
             # each candidate only needs to contribute at least one compatible GPU.
             # Single-node workloads still require the full GPU count on one node.
