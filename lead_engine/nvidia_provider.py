@@ -133,7 +133,7 @@ class NvidiaProvider(ComputeProvider):
             if ":" not in line:
                 continue
             key, value = line.split(":", 1)
-            key = key.strip().lower().replace("-", "_")
+            key = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
             value = value.strip()
             if key and value:
                 values[key] = value
