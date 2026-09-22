@@ -1032,6 +1032,13 @@ def test_stale_fabric_participant_cannot_be_revived(tmp_path: Path):
     )
     assert participant["heartbeat_at"] < time.time() - coordinator.lease_seconds
 
+    coordinator._bind_rendezvous_endpoint(
+        attempt_id,
+        generation,
+        lease_token,
+        "10.0.0.1:29500",
+    )
+
     try:
         coordinator.fabric_launch_plan(
             attempt_id,
