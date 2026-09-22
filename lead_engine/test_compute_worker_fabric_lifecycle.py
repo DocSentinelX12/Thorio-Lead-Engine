@@ -300,6 +300,7 @@ def test_fabric_reconciliation_requeues_when_worker_liveness_is_lost(tmp_path: P
         generation=claimed["generation"],
         worker_id="worker-1",
         lease_token=claimed["lease_token"],
+        rendezvous_endpoint="10.0.0.1:29500",
     )
     assert plan["attempt_id"] == claimed["attempt_id"]
 
