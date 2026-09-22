@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
+from .compute_fabric import ComputeFabricOrchestrator
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
 from .compute_provider import ProviderResourceSnapshot
@@ -40,8 +41,19 @@ class ComputeCoordinator:
         inventory_path = os.environ.get("THORIO_COMPUTE_INVENTORY_DB", f"{db_path}.inventory.sqlite3")
         self.inventory = inventory or ComputeInventory(inventory_path)
         self.compute_scheduler = ComputeScheduler(self.inventory)
+        self.compute_fabric = ComputeFabricOrchestrator(self.inventory, scheduler=self.compute_scheduler)
         self._lock = threading.RLock()
         self._initialize_tasks()
+
+    def register_compute_provider(self, provider: Any, *, domain_id: str) -> None:
+        """Register an authorized physical compute provider with the fabric control plane."""
+        with self._lock:
+            self.compute_fabric.registry.register(provider, domain_id=domain_id)
+
+    def refresh_compute_fabric(self) -> Dict[str, Any]:
+        """Refresh provider observations and return evidence-backed fabric capacity."""
+        with self._lock:
+            return self.compute_fabric.refresh().__dict__
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
