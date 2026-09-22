@@ -376,7 +376,7 @@ def run_fabric_verification(
         local = runtime.verify_local()
         provider_runner = (
             None
-            if runtime.runner is None
+            if getattr(runtime, "runner", None) is None
             else lambda args, timeout: CommandResult(*runtime.runner(args, timeout))
         )
         rdma_evidence: Mapping[str, Any] | None = None
