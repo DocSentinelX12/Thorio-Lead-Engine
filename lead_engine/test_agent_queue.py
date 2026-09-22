@@ -166,9 +166,9 @@ def test_stale_worker_cannot_complete_after_lease_reclaimed(tmp_path):
     )
     db.conn.commit()
 
-    recovered = claim(db, "paxus_research", worker_id="worker-new", limit=1)
+    recovered = claim(db, "paxus_research", worker_id="worker-old", limit=1)
     assert recovered[0]["task_id"] == task["task_id"]
-    assert recovered[0]["worker_id"] == "worker-new"
+    assert recovered[0]["worker_id"] == "worker-old"
 
     try:
         complete(
