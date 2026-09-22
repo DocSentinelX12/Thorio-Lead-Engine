@@ -160,8 +160,8 @@ def test_multi_gpu_does_not_claim_topology_locality_when_domains_are_disconnecte
 def test_topology_placement_records_verified_decision_evidence(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
-        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="domain-a", numa_node=0),
-        _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="domain-a", numa_node=0),
+        _ready_gpu("node-a", "gpu-0", gpu_uuid="u0", topology_domain="domain-a", topology_source="nvidia-smi topo -m", numa_node=0),
+        _ready_gpu("node-a", "gpu-1", gpu_uuid="u1", topology_domain="domain-a", topology_source="nvidia-smi topo -m", numa_node=0),
         _ready_gpu("node-a", "gpu-2", gpu_uuid="u2", topology_domain="domain-b", numa_node=1),
     ])]))
     allocation = ComputeScheduler(inventory).allocate(
