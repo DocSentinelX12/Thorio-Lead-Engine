@@ -885,6 +885,20 @@ class ComputeCoordinator:
                 if existing and existing != resolved:
                     raise ValueError("rendezvous_endpoint does not match the durable execution endpoint")
                 if not existing:
+                    conflict = connection.execute(
+                        """SELECT 1
+                           FROM compute_execution_attempts a
+                           JOIN compute_tasks t ON t.attempt_id=a.attempt_id
+                           WHERE a.status='leased'
+                             AND t.status='leased'
+                             AND t.lease_until > ?
+                             AND a.rendezvous_endpoint=?
+                             AND a.attempt_id<>?
+                           LIMIT 1""",
+                        (time.time(), resolved, attempt_id),
+                    ).fetchone()
+                    if conflict:
+                        raise ValueError("rendezvous_endpoint is already bound to another active execution attempt")
                     updated = connection.execute(
                         """UPDATE compute_execution_attempts
                            SET rendezvous_endpoint=?
