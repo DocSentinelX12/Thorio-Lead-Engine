@@ -1864,7 +1864,7 @@ class ComputeCoordinator:
                 connection.commit()
 
 
-            for attempt in attempts:
+            for attempt in recovered_tasks:
                 if not attempt:
                     continue
                 self._release_physical_allocation(attempt, "execution lease expired")
