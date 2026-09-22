@@ -119,3 +119,34 @@ def test_unknown_agent_is_rejected(tmp_path):
         assert "Unknown agent role" in str(exc)
     else:
         raise AssertionError("unknown agent role was accepted")
+
+
+def test_concurrent_deduped_enqueue_creates_one_task(tmp_path):
+    barrier = Barrier(8)
+    dedupe_key = "scheduled_followup:concurrent-lead:2026-09-22T01:00:00+00:00"
+
+    def enqueue_once(index):
+        db = _db(tmp_path)
+        try:
+            barrier.wait(timeout=10)
+            return enqueue(
+                db,
+                "follow_up",
+                {
+                    "lead": {"fingerprint": "concurrent-lead"},
+                    "authorized": True,
+                    "authorized_by_role": "high_ticket_sales_closer",
+                    "execute": True,
+                },
+                priority=10,
+                dedupe_key=dedupe_key,
+            )
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(enqueue_once, range(8)))
+
+    task_ids = {item["task_id"] for item in results}
+    assert len(task_ids) == 1
+    assert len(pending(_db(tmp_path), "follow_up")) == 1
