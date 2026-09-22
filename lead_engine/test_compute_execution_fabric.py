@@ -35,6 +35,21 @@ def test_nccl_probe_evidence_builder_contains_only_observed_core_fields():
     }
 
 
+def test_nccl_network_evidence_records_only_explicit_remote_rank_edges():
+    evidence = NvidiaRuntime.parse_nccl_network_evidence(
+        """
+NCCL INFO Using network IB
+NCCL INFO Channel 00/0 : 0[0] -> 1[1] [send] via NET/IB/0
+NCCL INFO Channel 01/0 : 0[0] -> 3[3] [recv] via NET/IB/1
+"""
+    )
+    assert evidence["network_transport"] == "IB"
+    assert evidence["peer_connections"] == (
+        {"channel": "00/0", "local_rank": 0, "peer_rank": 1, "direction": "send", "transport": "IB/0"},
+        {"channel": "01/0", "local_rank": 0, "peer_rank": 3, "direction": "recv", "transport": "IB/1"},
+    )
+
+
 def _worker():
     return WorkerIdentity(
         "worker-1",
