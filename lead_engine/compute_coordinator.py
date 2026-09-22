@@ -1203,6 +1203,13 @@ class ComputeCoordinator:
                 if int(launch["nnodes"]) > 1 and str(item.get("network_transport") or probe.get("network_transport") or "").strip().upper() == "IB":
                     rdma_devices = item.get("rdma_devices")
                     verified_rdma_devices = item.get("verified_rdma_devices")
+                    gpu_nic_locality = item.get("gpu_nic_locality")
+                    if not isinstance(gpu_nic_locality, dict):
+                        return False
+                    if str(gpu_nic_locality.get("rdma_device") or "").strip() not in {
+                        str(device).strip() for device in rdma_devices
+                    }:
+                        return False
                     if (
                         not isinstance(rdma_devices, list)
                         or not rdma_devices
