@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import socket
 
 
@@ -61,22 +60,6 @@ def main() -> None:
         if actual != expected:
             raise SystemExit(f"NCCL all-reduce mismatch: expected {expected}, got {actual}")
         dist.barrier()
-        logs = stdout = ""
-        # NCCL emits network-selection evidence to stdout or stderr depending
-        # on the runtime. Capture both streams from the process environment.
-        # PyTorch does not expose NCCL logs directly, so this process relies on
-        # the inherited NCCL_DEBUG=INFO / NCCL_DEBUG_SUBSYS=NET settings and
-        # parses only explicit network-selection statements.
-        # The launcher supplies the captured process streams; this marker is
-        # completed by the runtime validator with the raw process output.
-        network_transport = None
-        gpu_direct_rdma = False
-        for line in logs.splitlines():
-            match = re.search(r"NCCL INFO Using network ([A-Za-z0-9_.-]+)", line, re.IGNORECASE)
-            if match:
-                network_transport = match.group(1)
-            if re.search(r"GPU Direct RDMA Enabled", line, re.IGNORECASE) or re.search(r"GDRDMA", line, re.IGNORECASE):
-                gpu_direct_rdma = True
         print("THORIO_NCCL_PROBE_OK " + json.dumps({
             "backend": "nccl",
             "rank": rank,
