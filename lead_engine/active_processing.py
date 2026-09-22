@@ -87,6 +87,7 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
     if result.get("verified") is True and research_complete and research_readiness_result["ready"] and company_verified and dm_verified:
         if research_status == "research_complete":
             normalized = dict(verified_lead); normalized["research_status"] = "complete"; verified_lead = ctx.db.update_payload(fingerprint, normalized) or normalized
+        verified_lead = ctx.db.update_payload(fingerprint, {"verification_state": "verified"}) or verified_lead
         enqueue(ctx.db, "routing", {"lead": verified_lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}"); result["handoff"] = "routing"
     elif result.get("decision_maker_verification") == "verified": result["handoff"] = "qualification_a"
     else: result["handoff"] = "review_required"
@@ -95,7 +96,10 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
 
 def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     result = _routing(agent, payload, ctx); lead = _lead(payload)
-    if result.get("destinations"): enqueue(ctx.db, "airtable_integrity", {"lead": lead, "routing_result": result}, priority=6, dedupe_key=f"airtable_integrity:{lead['fingerprint']}")
+    if result.get("destinations"):
+        stored = ctx.db.update_payload(lead["fingerprint"], {"routing_state": "routed", "routing_result": dict(result), "revenue_lifecycle_state": "dedup_checked"}) or lead
+        lead = stored
+        enqueue(ctx.db, "airtable_integrity", {"lead": lead, "routing_result": result}, priority=6, dedupe_key=f"airtable_integrity:{lead['fingerprint']}")
     result["handoff"] = "airtable_integrity" if result.get("destinations") else "review_required"; return result
 
 
