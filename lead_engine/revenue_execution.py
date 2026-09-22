@@ -233,7 +233,7 @@ def execute_outbound(
                 state = _load(db)
                 state["actions"][idem] = {**dict(existing), "action_id": action_id, "status": "sent", "provider_result": dict(provider_result), "updated_at": _now()}
                 _save(db, state)
-                return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel, status="sent", provider_result=dict(provider_result), error=None)
+                return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel, status="sent", provider_result=dict(provider_result), error=None, idempotency_key=idem)
         if str(existing.get("status") or "").strip().lower() == "sending":
             raise RevenueActionInProgress(f"revenue action remains unresolved: {idem}")
 
@@ -250,4 +250,4 @@ def execute_outbound(
     state = _load(db)
     state["actions"][idem] = {**state["actions"].get(idem, {}), "status": "sent", "provider_result": provider_result, "updated_at": _now()}
     _save(db, state)
-    return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel, status="sent", provider_result=provider_result)
+    return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel, status="sent", provider_result=provider_result, idempotency_key=idem)
