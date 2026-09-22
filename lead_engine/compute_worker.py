@@ -390,8 +390,11 @@ def run_fabric_verification(
                 "LOCAL_RANK": "0",
                 "LOCAL_WORLD_SIZE": "1",
                 "THORIO_EXPECTED_WORLD_SIZE": str(world_size),
+                "THORIO_EXPECTED_NNODES": str(int(plan["nnodes"])),
                 "THORIO_EXPECTED_RANK": str(binding["rank"]),
                 "THORIO_EXPECTED_GPU_UUID": binding["gpu_uuid"],
+                "NCCL_DEBUG": "INFO",
+                "NCCL_DEBUG_SUBSYS": "NET",
                 "THORIO_FABRIC_ATTEMPT_ID": attempt_id,
                 "THORIO_FABRIC_GENERATION": str(generation),
             })
@@ -455,12 +458,16 @@ def run_fabric_verification(
                 world_size,
                 expected_rank=int(binding["rank"]),
                 expected_gpu_uuid=str(binding["gpu_uuid"]),
+                log_output=stdout + "\n" + stderr,
             )
             process_evidence.append({
                 "rank": int(binding["rank"]),
                 "local_rank": int(binding["local_rank"]),
                 "gpu_binding": dict(binding),
                 "probe": probe,
+                "network_transport": probe.get("network_transport"),
+                "gpu_direct_rdma": probe.get("gpu_direct_rdma"),
+                "network_evidence_lines": list(probe.get("network_evidence_lines") or ()),
                 "stdout": stdout[-4000:],
             })
 
