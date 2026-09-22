@@ -49,6 +49,41 @@ def test_nvidia_discovery_records_stable_gpu_truth_and_topology():
     assert snapshot.evidence["cuda_toolkit_version"] is None
 
 
+def test_nvidia_discovery_records_verified_network_topology_evidence():
+    network_addresses = """[
+      {
+        "ifname": "eth0",
+        "operstate": "UP",
+        "mtu": 9000,
+        "address": "aa:bb:cc:dd:ee:ff",
+        "addr_info": [
+          {"family": "inet", "local": "10.10.20.15", "prefixlen": 24, "scope": "global"}
+        ]
+      },
+      {
+        "ifname": "lo",
+        "operstate": "UNKNOWN",
+        "mtu": 65536,
+        "address": "00:00:00:00:00:00",
+        "addr_info": [
+          {"family": "inet", "local": "127.0.0.1", "prefixlen": 8, "scope": "host"}
+        ]
+      }
+    ]"""
+    def runner(args, timeout):
+        if args[0] == "ip":
+            return CommandResult(0, network_addresses, "")
+        return fake_runner(args, timeout)
+
+    snapshot = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=runner, now=lambda: 1234.5).discover()
+    network = snapshot.evidence["network"]
+    assert network["source"] == "iproute2"
+    assert network["interfaces"]["eth0"]["operstate"] == "UP"
+    assert network["interfaces"]["eth0"]["mtu"] == 9000
+    assert network["interfaces"]["eth0"]["addresses"] == ["10.10.20.15/24"]
+    assert network["network_domains"] == ["10.10.20.0/24"]
+    assert network["fabric_domains"]["node-01"] == "10.10.20.0/24"
+
 def test_nvidia_discovery_refuses_missing_uuid():
     def runner(args, timeout):
         if "--query-gpu=index,uuid,name,memory.total,compute_cap,driver_version,pci.bus_id" in args:
