@@ -202,6 +202,41 @@ def test_topology_placement_records_verified_numa_locality(tmp_path):
     assert all(item["placement_decision"]["numa_source"] == "nvidia-smi topo -m" for item in evidence)
 
 
+def test_multi_node_prefers_verified_common_network_fabric(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(
+            _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua", topology_domain="fabric-a")]),
+            _node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="ub", topology_domain="fabric-a")]),
+            _node("node-c", [
+                _ready_gpu("node-c", "gpu-0", gpu_uuid="uc0", topology_domain="fabric-c"),
+                _ready_gpu("node-c", "gpu-1", gpu_uuid="uc1", topology_domain="fabric-c"),
+            ]),
+        ),
+        authentication_state="authenticated",
+        evidence={
+            "network": {
+                "source": "verified-test-network-discovery",
+                "fabric_domains": {
+                    "node-a": "network-a",
+                    "node-b": "network-a",
+                    "node-c": "network-c",
+                },
+            },
+        },
+    ))
+    allocation = ComputeScheduler(inventory).allocate(
+        ComputeRequirements(
+            WorkloadClass.MULTI_NODE_GPU,
+            GpuRequirements(gpu_count=2, require_nccl=True),
+            same_node=False,
+        ),
+        "allocation-network-fabric",
+    )
+    assert set(allocation.node_ids) == {"node-a", "node-b"}
+
+
 def test_topology_domain_is_enforced(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(_snapshot([_node("node-a", [
