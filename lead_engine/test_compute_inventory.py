@@ -156,3 +156,33 @@ def test_inventory_quarantines_one_failed_physical_path_with_durable_reason(tmp_
     assert evidence["quarantine"]["reason"].startswith("NCCL selected an HCA")
     assert evidence["quarantine"]["failure_class"] == "planned_actual_physical_path_mismatch"
     assert key not in {row["resource_key"] for row in inventory.eligible()}
+
+
+def test_fabric_path_quarantine_is_durable_and_revalidation_is_explicit(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = {
+        "node_id": "node-a",
+        "gpu_uuid": "u0",
+        "nic": "eth1",
+        "rdma_device": "mlx5_1",
+        "rdma_port": 1,
+        "link_layer": "InfiniBand",
+    }
+    key = inventory.quarantine_fabric_path(
+        path,
+        reason="RDMA link went down",
+        evidence={"failure_class": "rdma_link_down"},
+    )
+    assert key == inventory.fabric_path_key(path)
+    assert inventory.is_fabric_path_quarantined(path) is True
+    rows = inventory.quarantined_fabric_paths()
+    assert len(rows) == 1
+    assert rows[0]["gpu_uuid"] == "u0"
+    assert rows[0]["rdma_device"] == "mlx5_1"
+    assert rows[0]["rdma_port"] == 1
+    with pytest.raises(ValueError):
+        inventory.revalidate_fabric_path(path, verification={"verified": False})
+    assert inventory.is_fabric_path_quarantined(path) is True
+    assert inventory.revalidate_fabric_path(path, verification={"verified": True}) is True
+    assert inventory.is_fabric_path_quarantined(path) is False
+    assert inventory.quarantined_fabric_paths() == []
