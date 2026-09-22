@@ -92,8 +92,8 @@ class ComputeScheduler:
             return f"topology:{topology_domain}"
         return f'isolated:{gpu["resource_key"]}'
 
-    @staticmethod
-    def _verified_gpu_nic_rdma_path(row: dict[str, Any], gpu_uuid: str | None) -> tuple[dict[str, Any], ...]:
+    @classmethod
+    def _verified_gpu_nic_rdma_path(cls, row: dict[str, Any], gpu_uuid: str | None) -> tuple[dict[str, Any], ...]:
         if not gpu_uuid:
             return ()
         evidence = json.loads(row["evidence_json"])
