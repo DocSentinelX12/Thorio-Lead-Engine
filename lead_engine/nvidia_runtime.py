@@ -181,6 +181,40 @@ class NvidiaRuntime:
         return tuple(command)
 
     @staticmethod
+    def parse_nccl_network_evidence(log_output: str) -> dict[str, object]:
+        """Extract only explicit NCCL network-selection evidence from process logs."""
+        if not isinstance(log_output, str):
+            raise NvidiaRuntimeError("NCCL process log output must be text")
+        transports: list[str] = []
+        evidence_lines: list[str] = []
+        gpu_direct_rdma = False
+        for raw_line in log_output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = re.search(r"NCCL INFO Using network ([A-Za-z0-9_.-]+)", line, re.IGNORECASE)
+            if match:
+                transports.append(match.group(1))
+                evidence_lines.append(line[-1000:])
+            match = re.search(r"NCCL INFO NET/([A-Za-z0-9_.-]+)\\s*:\\s*Using\\b", line, re.IGNORECASE)
+            if match:
+                transports.append(match.group(1))
+                evidence_lines.append(line[-1000:])
+            if re.search(r"GPU Direct RDMA Enabled", line, re.IGNORECASE) or re.search(r"GDRDMA", line, re.IGNORECASE):
+                gpu_direct_rdma = True
+                evidence_lines.append(line[-1000:])
+        unique_transports = tuple(sorted({transport.strip() for transport in transports if transport.strip()}))
+        if len(unique_transports) > 1:
+            raise NvidiaRuntimeError(
+                "NCCL reported multiple network transports for one rank: " + ", ".join(unique_transports)
+            )
+        return {
+            "network_transport": unique_transports[0] if unique_transports else None,
+            "network_evidence_lines": tuple(evidence_lines[-8:]),
+            "gpu_direct_rdma": gpu_direct_rdma,
+        }
+
+    @staticmethod
     def validate_distributed_probe_output(
         stdout: str,
         world_size: int,
@@ -199,6 +233,9 @@ class NvidiaRuntime:
         except json.JSONDecodeError as exc:
             raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
         expected_sum = world_size * (world_size + 1) // 2
+        expected_nnodes = int(probe.get("nnodes", 1))
+        if expected_nnodes < 1:
+            raise NvidiaRuntimeError("distributed NCCL probe reported an invalid node count")
         if (
             probe.get("backend") != "nccl"
             or probe.get("collective") != "all_reduce"
@@ -214,6 +251,10 @@ class NvidiaRuntime:
         if expected_gpu_uuid is not None and str(probe.get("gpu_uuid") or "").strip() != expected_gpu_uuid:
             raise NvidiaRuntimeError(
                 "distributed NCCL probe GPU UUID does not match the allocated physical GPU"
+            )
+        if expected_nnodes > 1 and not str(probe.get("network_transport") or "").strip():
+            raise NvidiaRuntimeError(
+                "multi-node NCCL execution completed without explicit network transport evidence"
             )
         return probe
 
@@ -239,13 +280,30 @@ class NvidiaRuntime:
         if rc != 0:
             detail = (stderr or stdout).strip()
             raise NvidiaRuntimeError(f"distributed NCCL all-reduce probe failed: {detail[:4000]}")
-        probe = self.validate_distributed_probe_output(stdout, world_size)
+        network = self.parse_nccl_network_evidence(stdout + "\n" + stderr)
+        marker = "THORIO_NCCL_PROBE_OK "
+        lines = [line.strip() for line in stdout.splitlines() if line.strip().startswith(marker)]
+        if not lines:
+            raise NvidiaRuntimeError("distributed NCCL probe completed without verified success evidence")
+        try:
+            probe = json.loads(lines[-1][len(marker):])
+        except json.JSONDecodeError as exc:
+            raise NvidiaRuntimeError("distributed NCCL probe emitted invalid success evidence") from exc
+        probe.update(network)
+        probe["nnodes"] = nnodes
+        probe = self.validate_distributed_probe_output(
+            "THORIO_NCCL_PROBE_OK " + json.dumps(probe, sort_keys=True),
+            world_size,
+        )
         return {
             "verified": True,
             "backend": "nccl",
             "world_size": world_size,
             "nnodes": nnodes,
             "node_rank": node_rank,
+            "network_transport": probe["network_transport"],
+            "gpu_direct_rdma": probe["gpu_direct_rdma"],
+            "network_evidence_lines": probe["network_evidence_lines"],
             "probe_output": probe,
             "command": command,
         }
