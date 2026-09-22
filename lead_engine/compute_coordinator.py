@@ -1824,3 +1824,203 @@ class ComputeCoordinator:
         now = time.time()
         with self._lock:
             with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT task_id,worker_id,attempt_id FROM compute_tasks "
+                    "WHERE status='leased' AND lease_until <= ?",
+                    (now,),
+                ).fetchall()
+                if not rows:
+                    return 0
+
+                attempts = []
+                for row in rows:
+                    if not row["attempt_id"]:
+                        attempts.append(None)
+                        continue
+                    attempt = connection.execute(
+                        "SELECT * FROM compute_execution_attempts WHERE attempt_id=?",
+                        (row["attempt_id"],),
+                    ).fetchone()
+                    attempts.append(dict(attempt) if attempt else None)
+
+                recovered_tasks = []
+                for row in rows:
+                    task_id = str(row["task_id"])
+                    updated = connection.execute(
+                        "UPDATE compute_tasks SET status='queued',worker_id=NULL,lease_token=NULL,"
+                        "lease_until=NULL,error='lease expired',updated_at=? "
+                        "WHERE task_id=? AND status='leased' AND lease_until <= ?",
+                        (now, task_id, now),
+                    )
+                    if updated.rowcount != 1:
+                        continue
+
+                    attempt = None
+                    if row["attempt_id"]:
+                        attempt_row = connection.execute(
+                            "SELECT * FROM compute_execution_attempts WHERE attempt_id=? AND task_id=?",
+                            (row["attempt_id"], task_id),
+                        ).fetchone()
+                        attempt = dict(attempt_row) if attempt_row else None
+
+                    if attempt:
+                        if attempt["status"] == "completed":
+                            connection.execute(
+                                "UPDATE compute_execution_participants SET status='completed',"
+                                "finished_at=COALESCE(finished_at,?) "
+                                "WHERE attempt_id=? AND generation=? AND status NOT IN ('failed','expired')",
+                                (now, attempt["attempt_id"], attempt["generation"]),
+                            )
+                        elif attempt["status"] == "leased":
+                            connection.execute(
+                                "UPDATE compute_execution_attempts SET status='expired',"
+                                "finished_at=?,error='lease expired',authoritative_acceptance='rejected' "
+                                "WHERE attempt_id=? AND generation=? AND status='leased'",
+                                (now, attempt["attempt_id"], attempt["generation"]),
+                            )
+                            connection.execute(
+                                "UPDATE compute_execution_participants SET status='expired',"
+                                "last_error='lease expired',heartbeat_at=? "
+                                "WHERE attempt_id=? AND generation=? "
+                                "AND status IN ('bound','active','launching','running')",
+                                (now, attempt["attempt_id"], attempt["generation"]),
+                            )
+                    recovered_tasks.append(attempt)
+
+                connection.commit()
+
+
+            for attempt in recovered_tasks:
+                if not attempt:
+                    continue
+                self._release_physical_allocation(attempt, "execution lease expired")
+                if attempt.get("worker_id") and not str(attempt["worker_id"]).startswith("fabric:"):
+                    self.pool.release_task_slot(str(attempt["worker_id"]))
+            return len(recovered_tasks)
+
+    def health(self) -> Dict[str, Any]:
+        with self._lock:
+            self.pool.reap_stale_workers(); self.recover_expired_tasks(); self.reconcile_fabric()
+            with self._connect() as connection:
+                queued = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='queued'").fetchone()[0]
+                leased = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]
+                completed = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='completed'").fetchone()[0]
+            capacity = self.pool.capacity_snapshot()
+            return {"ok": True, "free_only": True, "queued": queued, "leased": leased, "completed": completed, "capacity": capacity}
+
+
+class _Handler(BaseHTTPRequestHandler):
+    server: "ComputeCoordinatorServer"
+
+    def _authorized(self) -> bool:
+        supplied = self.headers.get("Authorization", "")
+        expected = f"Bearer {self.server.coordinator.auth_token}"
+        return hmac.compare_digest(supplied, expected)
+
+    def _send(self, status: int, payload: Dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
+        if self.path == "/health": self._send(200, self.server.coordinator.health()); return
+        if self.path.startswith("/work/status/"):
+            task_id = self.path.rsplit("/", 1)[-1]; task = self.server.coordinator.task(task_id); self._send(200 if task else 404, task or {"error": "task not found"}); return
+        if self.path.startswith("/work/checkpoints/"):
+            task_id = self.path.rsplit("/", 1)[-1]; self._send(200, self.server.coordinator.checkpoint_results(task_id)); return
+        self._send(404, {"error": "not found"})
+
+    def do_POST(self) -> None:
+        if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 1_000_000: self._send(413, {"error": "request too large"}); return
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            if not isinstance(body, dict): raise ValueError("request body must be an object")
+            if self.path == "/workers/register":
+                worker_id = str(body["worker_id"])
+                identity = WorkerIdentity(
+                    worker_id, str(body["hostname"]), str(body["architecture"]), int(body["cpu_count"]), int(body["memory_mb"]),
+                    tuple(str(x) for x in body.get("capabilities", ["lead-processing"])),
+                    ComputeCoordinator._gpu_resources_from_payload(body.get("gpu_resources"), worker_id),
+                    body.get("driver_version"), body.get("cuda_version"), body.get("nccl_version"),
+                    tuple(str(x) for x in body.get("nic_names", ())), str(body.get("gpu_discovery_state", "not_probed")),
+                    str(body.get("gpu_discovery_error", "")),
+                )
+                self._send(200, self.server.coordinator.register_worker(identity))
+            elif self.path == "/workers/heartbeat":
+                self._send(200, {"ok": self.server.coordinator.heartbeat(str(body["worker_id"]), int(body.get("current_load", 0)))})
+            elif self.path == "/fabric/assignments":
+                self._send(200, {"assignments": self.server.coordinator.fabric_assignments(str(body["worker_id"]))})
+            elif self.path == "/fabric/heartbeat":
+                ok = self.server.coordinator.heartbeat_execution_participant(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"])
+                )
+                self._send(200 if ok else 409, {"ok": ok})
+            elif self.path == "/fabric/state":
+                ok = self.server.coordinator.execution_participant_state(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    status=str(body["status"]), error=str(body.get("error", ""))
+                )
+                self._send(200 if ok else 409, {"ok": ok})
+            elif self.path == "/fabric/launch-plan":
+                plan = self.server.coordinator.fabric_launch_plan_for_worker(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    rendezvous_endpoint=str(body["rendezvous_endpoint"])
+                )
+                self._send(200, plan)
+            elif self.path == "/fabric/converge":
+                result = self.server.coordinator.converge_fabric_execution(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"])
+                )
+                self._send(200 if result.get("converged") else 409, result)
+            elif self.path == "/fabric/verification":
+                ok = self.server.coordinator.record_execution_verification(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    verification=body["verification"]
+                )
+                self._send(200 if ok else 409, {"ok": ok})
+            elif self.path == "/work/enqueue":
+                payload = body.get("payload")
+                if not isinstance(payload, dict): raise ValueError("payload must be an object")
+                task_id = body.get("task_id")
+                if task_id is not None and not isinstance(task_id, str): raise ValueError("task_id must be a string")
+                self._send(201, {"task_id": self.server.coordinator.enqueue(payload, task_id=task_id)})
+            elif self.path == "/work/claim":
+                item = self.server.coordinator.claim(str(body["worker_id"])); self._send(200, item or {"task": None})
+            elif self.path == "/work/checkpoint":
+                result = self.server.coordinator.checkpoint_lead_prepare(
+                    str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), body["items"]
+                ); self._send(200, result)
+            elif self.path == "/work/complete":
+                ok = self.server.coordinator.complete(str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), body["result"]); self._send(200 if ok else 409, {"completed": ok})
+            elif self.path == "/work/release":
+                ok = self.server.coordinator.release(str(body["worker_id"]), str(body["task_id"]), str(body["lease_token"]), str(body.get("error", ""))); self._send(200 if ok else 409, {"released": ok})
+            else: self._send(404, {"error": "not found"})
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            self._send(400, {"error": str(error)})
+        except sqlite3.IntegrityError as error:
+            self._send(409, {"error": str(error)})
+        except Exception as error:
+            self._send(500, {"error": str(error)})
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+class ComputeCoordinatorServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+    def __init__(self, coordinator: ComputeCoordinator, host: str = "127.0.0.1", port: int = 8787):
+        self.coordinator = coordinator
+        super().__init__((host, port), _Handler)
+
+
+def coordinator_from_environment() -> ComputeCoordinator:
+    token = os.environ.get("THORIO_COMPUTE_AUTH_TOKEN", "")
+    if not token: raise RuntimeError("THORIO_COMPUTE_AUTH_TOKEN is required")
