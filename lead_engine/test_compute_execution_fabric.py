@@ -644,6 +644,16 @@ def _verified_ib_process(rank, gpu_uuid, device, port):
         "verified_hca_selections": [selection],
         "rdma_devices": [device],
         "verified_rdma_devices": [device],
+        "verified_rdma_links": [{
+            "rdma_device": device,
+            "port": port,
+            "netdev": "ib0",
+            "pci_bus_id": "0000:41:00.0",
+            "state": "ACTIVE",
+            "physical_state": "LINK_UP",
+            "link_layer": "InfiniBand",
+            "gids": ["fe80::1122:3344:5566:7788"],
+        }],
         "gpu_nic_locality": {
             "gpu_uuid": gpu_uuid,
             "rdma_device": device,
@@ -668,6 +678,17 @@ def test_nvidia_runtime_reconciles_complete_cross_node_ib_paths():
     assert evidence["rank_paths"][0]["rdma_port"] == 1
     assert evidence["rank_paths"][1]["rdma_port"] == 2
 
+
+
+def test_nvidia_runtime_rejects_distributed_path_without_verified_rdma_link_identity():
+    evidence=_verified_ib_process(0,"GPU-a","mlx5_0",1)
+    evidence["verified_rdma_links"]=[]
+    with pytest.raises(NvidiaRuntimeError, match="lacks verified physical RDMA link identity"):
+        NvidiaRuntime.reconcile_distributed_network_paths(
+            [evidence, _verified_ib_process(1,"GPU-b","mlx5_1",1)],
+            world_size=2,
+            nnodes=2,
+        )
 
 def test_nvidia_runtime_rejects_cross_node_transport_mismatch():
     rank_zero = _verified_ib_process(0, "GPU-a", "mlx5_0", 1)
