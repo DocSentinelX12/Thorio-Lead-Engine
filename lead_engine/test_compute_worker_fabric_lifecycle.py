@@ -120,6 +120,13 @@ def test_recorded_verification_persists_verified_rdma_path_evidence(tmp_path: Pa
     attempt_id = claimed["attempt_id"]
     lease_token = claimed["lease_token"]
     verification = _valid_execution_verification(coordinator, attempt_id, "worker-1")
+    assert coordinator.record_execution_verification(
+        attempt_id=attempt_id,
+        generation=claimed["generation"],
+        worker_id="worker-1",
+        lease_token=lease_token,
+        verification=verification,
+    ) is False
     for item in verification["process_evidence"]:
         item["rdma_devices"] = ["mlx5_0"]
         item["verified_rdma_devices"] = ["mlx5_0"]
