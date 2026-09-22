@@ -150,3 +150,38 @@ def test_concurrent_deduped_enqueue_creates_one_task(tmp_path):
     task_ids = {item["task_id"] for item in results}
     assert len(task_ids) == 1
     assert len(pending(_db(tmp_path), "follow_up")) == 1
+
+
+def test_stale_worker_cannot_complete_after_lease_reclaimed(tmp_path):
+    import sqlite3
+
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"fingerprint": "fence-me"})
+    first = claim(db, "paxus_research", worker_id="worker-old", limit=1)
+    assert first[0]["task_id"] == task["task_id"]
+
+    db.conn.execute(
+        "UPDATE agent_queue SET lease_until = ? WHERE task_id = ?",
+        ("2000-01-01T00:00:00+00:00", task["task_id"]),
+    )
+    db.conn.commit()
+
+    recovered = claim(db, "paxus_research", worker_id="worker-new", limit=1)
+    assert recovered[0]["task_id"] == task["task_id"]
+    assert recovered[0]["worker_id"] == "worker-new"
+
+    try:
+        complete(
+            db,
+            task["task_id"],
+            worker_id="worker-old",
+            result={"stale": True},
+        )
+    except ValueError as exc:
+        assert "leased to this worker" in str(exc)
+    else:
+        raise AssertionError("stale worker was allowed to complete a reclaimed task")
+
+    current = db.queue_get(task["task_id"])
+    assert current[3] == RUNNING
+    assert current[11] == "worker-new"
