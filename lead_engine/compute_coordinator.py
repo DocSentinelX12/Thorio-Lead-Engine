@@ -798,7 +798,21 @@ class ComputeCoordinator:
             or allocation["lease_token_digest"] != lease_digest
         ):
             return []
-        if set(allocation["resource_keys"]) and not resources:
+        allocation_node_ids = tuple(dict.fromkeys(str(item) for item in allocation["node_ids"] if str(item).strip()))
+        if tuple(nodes) != allocation_node_ids:
+            return []
+        allocation_gpu_resource_ids = tuple(
+            sorted(
+                f'{resource["node_id"]}/{resource["gpu_id"]}'
+                for resource_key in allocation["resource_keys"]
+                for resource in [self.inventory.get(str(resource_key))]
+                if resource and resource.get("resource_type") == "gpu"
+            )
+        )
+        requested_gpu_resource_ids = tuple(
+            sorted(resource_id for resource_id in resources if "/gpu/" in resource_id or "/gpu-" in resource_id)
+        )
+        if requested_gpu_resource_ids != allocation_gpu_resource_ids:
             return []
 
         with self._lock:
