@@ -15,6 +15,7 @@ import ssl
 import threading
 import time
 import uuid
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
@@ -53,7 +54,7 @@ class ComputeCoordinator:
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
         with self._lock:
-            return self.compute_fabric.refresh().__dict__
+            return asdict(self.compute_fabric.refresh())
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
