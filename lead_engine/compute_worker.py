@@ -15,6 +15,7 @@ from typing import Any, Dict, Mapping, Optional
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS, discovery_finding, social_research
 from .compute_pool import local_worker_identity
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
+from .nvidia_provider import NvidiaProvider
 from .lead_pipeline import process_leads
 from .lead_sort import sort_by_score
 
@@ -373,6 +374,11 @@ def run_fabric_verification(
     thread = threading.Thread(target=beat, daemon=True)
     try:
         local = runtime.verify_local()
+        network_snapshot = NvidiaProvider(node_id=client.worker_id).discover()
+        network_evidence = network_snapshot.evidence if isinstance(network_snapshot.evidence, Mapping) else {}
+        rdma_evidence = network_evidence.get("network", {}).get("rdma", {}) if isinstance(network_evidence.get("network"), Mapping) else {}
+        if int(plan["nnodes"]) > 1 and not isinstance(rdma_evidence, Mapping):
+            raise NvidiaRuntimeError("multi-node execution requires verified local RDMA discovery evidence")
         host, port_text = str(plan["rendezvous_endpoint"]).rsplit(":", 1)
         port = int(port_text)
         command = runtime.distributed_process_command()
@@ -460,6 +466,13 @@ def run_fabric_verification(
                 expected_gpu_uuid=str(binding["gpu_uuid"]),
                 log_output=stdout + "\n" + stderr,
             )
+            path_evidence = runtime.validate_nccl_transport_against_rdma(
+                stdout + "\n" + stderr,
+                rdma_evidence,
+            ) if int(plan["nnodes"]) > 1 else {
+                "rdma_devices": (),
+                "verified_rdma_devices": (),
+            }
             process_evidence.append({
                 "rank": int(binding["rank"]),
                 "local_rank": int(binding["local_rank"]),
@@ -468,6 +481,8 @@ def run_fabric_verification(
                 "network_transport": probe.get("network_transport"),
                 "gpu_direct_rdma": probe.get("gpu_direct_rdma"),
                 "network_evidence_lines": list(probe.get("network_evidence_lines") or ()),
+                "rdma_devices": list(path_evidence.get("rdma_devices") or ()),
+                "verified_rdma_devices": list(path_evidence.get("verified_rdma_devices") or ()),
                 "stdout": stdout[-4000:],
             })
 
