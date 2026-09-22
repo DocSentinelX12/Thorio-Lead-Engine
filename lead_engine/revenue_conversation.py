@@ -49,7 +49,12 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
     if lead is None: raise ValueError(f"lead not found: {opportunity_id}")
     state = _load(db); key = _conversation_key(opportunity_id, conversation_id)
     conversation = state["conversations"].setdefault(key, {"opportunity_id": opportunity_id, "conversation_id": conversation_id, "events": [], "processed_event_ids": [], "created_at": _now()})
-    if event_id in conversation["processed_event_ids"]: return dict(conversation)
+    durable_events = lead.get("conversation_events") if isinstance(lead.get("conversation_events"), list) else []
+    if event_id in conversation["processed_event_ids"] or any(isinstance(item, Mapping) and str(item.get("event_id") or "").strip() == event_id for item in durable_events):
+        if event_id not in conversation["processed_event_ids"]:
+            conversation["processed_event_ids"].append(event_id)
+            conversation["events"] = list(durable_events)
+        return dict(conversation)
     classified = str(outcome or _classify(text)).strip().lower()
     event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified}
     if objection: event["objection"] = str(objection)
@@ -60,12 +65,14 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         history = list(updated.get("route_switch_history") or []) if isinstance(updated.get("route_switch_history"), list) else []
         history.append({"at": event["at"], "from": updated.get("outreach_route"), "to": switched_route, "evidence": switch_evidence}); updated["route_switch_history"] = history; updated["outreach_route"] = switched_route; updated["active_route"] = switched_route
     if switch_evidence and not switched_route: conversation.setdefault("warnings", []).append(switch_evidence)
+    should_follow_up = classified in {"interested", "replied", "objection"}
     if classified in STOP_STATES or classified == "opted_out":
         updated["revenue_lifecycle_state"] = "closed_lost" if classified != "converted" else "converted"; updated["outreach_stop_reason"] = classified; updated["next_follow_up_at"] = None; updated["follow_up_due"] = False
-    elif classified in {"interested", "replied", "objection"}:
+    elif should_follow_up:
         updated["next_follow_up_at"] = _now(); updated["follow_up_due"] = True; updated["outreach_state"] = "awaiting_response"
-        enqueue(db, "follow_up", {"lead": updated, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True, "authorized": True, "authorized_by_role": CLOSER_ROLE}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
     stored = db.update_payload(opportunity_id, updated) or updated
+    if should_follow_up:
+        enqueue(db, "follow_up", {"lead": stored, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True, "authorized": True, "authorized_by_role": CLOSER_ROLE}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
     conversation["outreach_route"] = stored.get("outreach_route"); conversation["next_action"] = "stop" if classified in STOP_STATES or classified == "opted_out" else "closer_follow_up"; conversation["updated_at"] = _now(); _save(db, state)
     return dict(conversation)
 
