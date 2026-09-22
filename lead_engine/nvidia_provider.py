@@ -111,14 +111,83 @@ class NvidiaProvider(ComputeProvider):
                 "addresses": sorted(addresses),
             }
         ordered_domains = sorted(domains)
+        link_capabilities = {
+            name: self._discover_ethtool_link(name, self._runner, self.timeout_seconds)
+            for name in sorted(normalized)
+        }
         evidence: dict[str, object] = {
             "source": "iproute2",
             "command": "ip -j address show",
             "interfaces": normalized,
             "network_domains": ordered_domains,
+            "link_capabilities": link_capabilities,
         }
         if len(ordered_domains) == 1:
             evidence["fabric_domains"] = {self.node_id: ordered_domains[0]}
+        return evidence
+
+    @staticmethod
+    def _parse_ethtool_key_values(text: str) -> dict[str, str]:
+        values: dict[str, str] = {}
+        for line in text.splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip().lower().replace("-", "_")
+            value = value.strip()
+            if key and value:
+                values[key] = value
+        return values
+
+    @classmethod
+    def _discover_ethtool_link(cls, interface: str, runner: Runner, timeout_seconds: float) -> dict[str, object]:
+        evidence: dict[str, object] = {"interface": interface}
+        try:
+            driver_result = runner(("ethtool", "-i", interface), timeout_seconds)
+            if driver_result.returncode != 0:
+                detail = (driver_result.stderr or driver_result.stdout).strip().replace("\n", " ")
+                evidence["driver_error"] = f"ethtool driver probe failed ({driver_result.returncode}): {detail[:1000]}"
+            else:
+                driver = cls._parse_ethtool_key_values(driver_result.stdout)
+                if driver.get("driver"):
+                    evidence["driver"] = driver["driver"]
+                if driver.get("firmware_version"):
+                    evidence["firmware_version"] = driver["firmware_version"]
+                if driver.get("bus_info"):
+                    evidence["bus_info"] = driver["bus_info"]
+        except NvidiaDiscoveryError as exc:
+            evidence["driver_error"] = str(exc)
+
+        try:
+            link_result = runner(("ethtool", interface), timeout_seconds)
+            if link_result.returncode != 0:
+                detail = (link_result.stderr or link_result.stdout).strip().replace("\n", " ")
+                evidence["link_error"] = f"ethtool link probe failed ({link_result.returncode}): {detail[:1000]}"
+            else:
+                link = cls._parse_ethtool_key_values(link_result.stdout)
+                speed = link.get("speed", "")
+                speed_match = re.fullmatch(r"([0-9]+)\s*Mb/s", speed, re.IGNORECASE)
+                if speed_match:
+                    evidence["speed_mbps"] = int(speed_match.group(1))
+                duplex = link.get("duplex")
+                if duplex:
+                    evidence["duplex"] = duplex.lower()
+                autoneg = link.get("auto_negotiation")
+                if autoneg:
+                    normalized_autoneg = autoneg.lower()
+                    if normalized_autoneg in {"on", "yes"}:
+                        evidence["autonegotiation"] = True
+                    elif normalized_autoneg in {"off", "no"}:
+                        evidence["autonegotiation"] = False
+                detected = link.get("link_detected")
+                if detected:
+                    normalized_detected = detected.lower()
+                    if normalized_detected in {"yes", "on", "true"}:
+                        evidence["link_detected"] = True
+                    elif normalized_detected in {"no", "off", "false"}:
+                        evidence["link_detected"] = False
+        except NvidiaDiscoveryError as exc:
+            evidence["link_error"] = str(exc)
         return evidence
 
     @staticmethod
@@ -397,6 +466,7 @@ class NvidiaProvider(ComputeProvider):
             node_id=self.node_id, architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
             cpu=CpuResource(self.node_id, os.cpu_count() or 1, self._host_memory_bytes()),
             gpus=tuple(gpus), driver_version=driver_version, cuda_version=toolkit_version,
+            nic_names=tuple(sorted(network_evidence.get("interfaces", {}).keys())) if isinstance(network_evidence.get("interfaces"), dict) else (),
             state=ResourceState.AVAILABLE,
         )
         return ProviderResourceSnapshot(provider_id=self.provider_id, domain_id=self.domain_id, observed_at=observed_at, nodes=(node,), authentication_state="authenticated", evidence=evidence)
