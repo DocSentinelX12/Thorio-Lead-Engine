@@ -196,7 +196,7 @@ class NvidiaRuntime:
             if match:
                 transports.append(match.group(1))
                 evidence_lines.append(line[-1000:])
-            match = re.search(r"NCCL INFO NET/([A-Za-z0-9_.-]+)\\s*:\\s*Using\\b", line, re.IGNORECASE)
+            match = re.search(r"NCCL INFO NET/([A-Za-z0-9_.-]+)\s*:\s*Using\b", line, re.IGNORECASE)
             if match:
                 transports.append(match.group(1))
                 evidence_lines.append(line[-1000:])
