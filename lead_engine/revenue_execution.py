@@ -32,6 +32,10 @@ class RevenueTransportUnavailable(RevenueExecutionError):
     """Raised when no authorized outbound transport is configured."""
 
 
+class RevenueActionInProgress(RevenueExecutionError):
+    """Raised when another worker owns an in-flight action with this idempotency key."""
+
+
 class RevenueTransport(Protocol):
     def send(self, *, channel: str, recipient: Mapping[str, Any], subject: str, body: str, idempotency_key: str) -> Mapping[str, Any]:
         """Send one authorized message and return a provider result."""
@@ -148,6 +152,47 @@ def _authorized(worker_capability: str) -> None:
         raise RevenueAuthorizationError("outbound sales transport requires the privileged high-ticket closer capability")
 
 
+def _claim_action(db: Any, *, idem: str, opportunity_id: str, conversation_id: str, channel: str) -> tuple[dict[str, Any], bool]:
+    """Atomically claim an idempotency key before any provider call."""
+    now = _now()
+    db.conn.execute("BEGIN IMMEDIATE")
+    try:
+        state = _load(db)
+        existing = state["actions"].get(idem)
+        if isinstance(existing, Mapping):
+            status = str(existing.get("status") or "").strip().lower()
+            if status == "sent":
+                db.conn.commit()
+                return dict(existing), False
+            if status == "sending":
+                db.conn.commit()
+                raise RevenueActionInProgress(f"revenue action already in progress: {idem}")
+        action_id = str(existing.get("action_id")) if isinstance(existing, Mapping) and existing.get("action_id") else uuid4().hex
+        state["actions"][idem] = {
+            **(dict(existing) if isinstance(existing, Mapping) else {}),
+            "action_id": action_id,
+            "opportunity_id": opportunity_id,
+            "conversation_id": conversation_id,
+            "idempotency_key": idem,
+            "channel": channel,
+            "status": "sending",
+            "created_at": str(existing.get("created_at")) if isinstance(existing, Mapping) and existing.get("created_at") else now,
+            "updated_at": now,
+        }
+        db.conn.execute(
+            "INSERT INTO state (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
+            (STATE_KEY, __import__("json").dumps(state, ensure_ascii=False)),
+        )
+        db.conn.commit()
+        return dict(state["actions"][idem]), True
+    except Exception:
+        try:
+            db.conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
 def execute_outbound(
     db: Any,
     *,
@@ -161,7 +206,7 @@ def execute_outbound(
     transport: RevenueTransport | None,
     idempotency_key: str | None = None,
 ) -> RevenueAction:
-    """Execute one outbound action with durable idempotency and reconciliation."""
+    """Execute one outbound action with atomic claiming, durable idempotency and reconciliation."""
     _authorized(worker_capability)
     opportunity_id = str(opportunity_id or "").strip()
     conversation_id = str(conversation_id or "").strip()
@@ -177,25 +222,22 @@ def execute_outbound(
 
     idem = str(idempotency_key or "").strip() or f"revenue:{opportunity_id}:{conversation_id}:{channel}"
     state = _load(db)
-    actions = state["actions"]
-    existing = actions.get(idem)
-    if isinstance(existing, Mapping) and str(existing.get("status") or "") == "sent":
-        return RevenueAction(action_id=str(existing["action_id"]), opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=existing.get("provider_result"), error=None)
-
-    if isinstance(existing, Mapping) and str(existing.get("status") or "") in {"sending", "retryable"}:
+    existing = state["actions"].get(idem)
+    if isinstance(existing, Mapping) and str(existing.get("status") or "").strip().lower() in {"sending", "retryable"}:
         reconcile = getattr(transport, "reconcile", None)
         if callable(reconcile):
             provider_result = reconcile(idempotency_key=idem)
             if provider_result is not None:
                 action_id = str(existing.get("action_id") or uuid4().hex)
+                state = _load(db)
                 state["actions"][idem] = {**dict(existing), "action_id": action_id, "status": "sent", "provider_result": dict(provider_result), "updated_at": _now()}
                 _save(db, state)
-                return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=dict(provider_result), error=None)
+                return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel, status="sent", provider_result=dict(provider_result), error=None)
+        if str(existing.get("status") or "").strip().lower() == "sending":
+            raise RevenueActionInProgress(f"revenue action remains unresolved: {idem}")
 
-    action_id = str(existing.get("action_id")) if isinstance(existing, Mapping) and existing.get("action_id") else uuid4().hex
-    actions[idem] = {"action_id": action_id, "opportunity_id": opportunity_id, "conversation_id": conversation_id, "idempotency_key": idem, "channel": channel, "status": "sending", "created_at": str(existing.get("created_at")) if isinstance(existing, Mapping) else _now(), "updated_at": _now()}
-    _save(db, state)
-
+    claimed, _ = _claim_action(db, idem=idem, opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel)
+    action_id = str(claimed["action_id"])
     try:
         provider_result = dict(transport.send(channel=channel, recipient=dict(recipient), subject=str(subject or ""), body=str(body), idempotency_key=idem))
     except Exception as exc:
@@ -207,4 +249,4 @@ def execute_outbound(
     state = _load(db)
     state["actions"][idem] = {**state["actions"].get(idem, {}), "status": "sent", "provider_result": provider_result, "updated_at": _now()}
     _save(db, state)
-    return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, idempotency_key=idem, channel=channel, status="sent", provider_result=provider_result)
+    return RevenueAction(action_id=action_id, opportunity_id=opportunity_id, conversation_id=conversation_id, channel=channel, status="sent", provider_result=provider_result)
