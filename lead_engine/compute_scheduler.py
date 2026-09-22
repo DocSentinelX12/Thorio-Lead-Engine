@@ -184,10 +184,26 @@ class ComputeScheduler:
         resources = [candidate["cpu"] for candidate in selected]
         gpu_rows: list[dict[str, Any]] = []
         remaining = needed
-        for candidate in selected:
-            take = min(remaining, len(candidate["gpus"]))
-            gpu_rows.extend(candidate["gpus"][:take])
-            remaining -= take
+        if requirements.workload_class == WorkloadClass.MULTI_NODE_GPU:
+            # Every selected node must contribute at least one GPU. This keeps
+            # the durable participant set aligned with the physical GPU set.
+            for candidate in selected:
+                if remaining <= 0:
+                    break
+                take = min(
+                    len(candidate["gpus"]),
+                    remaining - max(0, len(selected) - len(gpu_rows)),
+                )
+                take = max(1, take)
+                gpu_rows.extend(candidate["gpus"][:take])
+                remaining -= take
+        else:
+            for candidate in selected:
+                take = min(remaining, len(candidate["gpus"]))
+                gpu_rows.extend(candidate["gpus"][:take])
+                remaining -= take
+        if remaining != 0:
+            raise ComputeSchedulingError("selected allocation cannot satisfy the exact GPU count")
         resources.extend(gpu_rows)
 
         keys = [row["resource_key"] for row in resources]
