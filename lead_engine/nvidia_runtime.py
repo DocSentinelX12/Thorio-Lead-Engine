@@ -202,6 +202,53 @@ class NvidiaRuntime:
         return {**network, "rdma_devices": rdma_devices, "verified_rdma_devices": verified, "verified_hca_selections": tuple(verified_selections) if network["network_transport"] == "IB" else (), "verified_rdma_links": tuple(verified_links) if network["network_transport"] == "IB" else (), "gpu_nic_locality": locality_evidence}
 
     @staticmethod
+    def reconcile_planned_physical_path(
+        planned_path: Mapping[str, object],
+        actual_evidence: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Require the scheduler's physical GPU/NIC/RDMA path to match execution."""
+        if not isinstance(planned_path, Mapping) or not isinstance(actual_evidence, Mapping):
+            raise NvidiaRuntimeError("planned physical path evidence must be objects")
+        planned_gpu = str(planned_path.get("gpu_uuid") or "").strip()
+        locality = actual_evidence.get("gpu_nic_locality")
+        selections = actual_evidence.get("verified_hca_selections")
+        if not planned_gpu or not isinstance(locality, Mapping) or not isinstance(selections, list):
+            raise NvidiaRuntimeError("planned physical path cannot be reconciled with execution evidence")
+        actual_gpu = str(locality.get("gpu_uuid") or "").strip()
+        fields = (
+            "gpu_uuid", "nic", "nic_pci_bus_id", "rdma_device",
+            "rdma_port", "rdma_pci_bus_id", "link_layer",
+        )
+        for field in fields:
+            expected = planned_gpu if field == "gpu_uuid" else planned_path.get(field)
+            observed = actual_gpu if field == "gpu_uuid" else locality.get(field)
+            if expected is not None and str(expected).strip() != str(observed).strip():
+                raise NvidiaRuntimeError(
+                    f"planned physical path mismatch for {field}: "
+                    f"planned={expected!r} observed={observed!r}"
+                )
+        device = str(planned_path.get("rdma_device") or "").strip()
+        port = planned_path.get("rdma_port")
+        if not any(
+            isinstance(selection, Mapping)
+            and str(selection.get("device") or "").strip() == device
+            and selection.get("port") == port
+            and str(selection.get("transport") or "").strip().upper() == "IB"
+            for selection in selections
+        ):
+            raise NvidiaRuntimeError(
+                f"planned physical path does not match NCCL-selected HCA port: {device}:{port}"
+            )
+        return {
+            "verified": True,
+            "gpu_uuid": planned_gpu,
+            "nic": str(planned_path.get("nic") or "").strip(),
+            "rdma_device": device,
+            "rdma_port": port,
+            "link_layer": str(planned_path.get("link_layer") or "").strip(),
+        }
+
+    @staticmethod
     def reconcile_distributed_network_paths(process_evidence: Sequence[Mapping[str, object]], *, world_size: int, nnodes: int) -> dict[str, object]:
         if world_size < 2: raise ValueError("world_size must be at least 2")
         if nnodes < 1: raise ValueError("nnodes must be at least 1")
