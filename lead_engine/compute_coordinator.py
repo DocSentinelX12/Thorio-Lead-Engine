@@ -940,17 +940,25 @@ class ComputeCoordinator:
             )
             if not gpu_resource_ids:
                 raise ValueError(f"participant has no allocated GPU resources: {participant['worker_id']}")
-            registered_gpus = {
-                f"{worker['worker_id']}/{gpu['gpu_id']}": gpu
-                for gpu in json.loads(worker["gpu_resources_json"] or "[]")
-                if isinstance(gpu, dict) and str(gpu.get("gpu_id") or "").strip()
-            }
+            allocation = self.inventory.allocation(str(participant["allocation_id"]))
+            if not allocation:
+                raise ValueError(f"physical allocation is missing: {participant['allocation_id']}")
+            inventory_gpus = {}
+            for resource_key in allocation["resource_keys"]:
+                resource = self.inventory.get(str(resource_key))
+                if not resource or resource.get("resource_type") != "gpu":
+                    continue
+                try:
+                    payload = json.loads(resource["payload_json"])
+                except (KeyError, TypeError, json.JSONDecodeError) as exc:
+                    raise ValueError(f"allocated GPU inventory evidence is invalid: {resource_key}") from exc
+                inventory_gpus[f"{resource['node_id']}/{resource['gpu_id']}"] = payload
             gpu_bindings = []
             for resource_id in gpu_resource_ids:
-                gpu = registered_gpus.get(resource_id)
+                gpu = inventory_gpus.get(resource_id)
                 if gpu is None:
                     raise ValueError(
-                        f"allocated GPU is not present in participant worker identity: {resource_id}"
+                        f"allocated GPU is not present in durable physical inventory: {resource_id}"
                     )
                 gpu_uuid = str(gpu.get("gpu_uuid") or "").strip()
                 gpu_id = str(gpu.get("gpu_id") or "").strip()
