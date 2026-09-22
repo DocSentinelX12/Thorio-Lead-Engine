@@ -85,6 +85,54 @@ class ComputeScheduler:
         return True
 
     @staticmethod
+    def _topology_group_key(gpu: dict[str, Any]) -> str:
+        payload = json.loads(gpu["payload_json"])
+        topology_domain = payload.get("topology_domain")
+        if topology_domain:
+            return f"topology:{topology_domain}"
+        return f"isolated:{gpu["resource_key"]}"
+
+    @classmethod
+    def _rank_gpus_for_placement(cls, gpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        topology_counts: dict[str, int] = {}
+        numa_counts: dict[tuple[str, Any], int] = {}
+        for gpu in gpus:
+            payload = json.loads(gpu["payload_json"])
+            topology_key = cls._topology_group_key(gpu)
+            topology_counts[topology_key] = topology_counts.get(topology_key, 0) + 1
+            numa_key = (topology_key, payload.get("numa_node"))
+            numa_counts[numa_key] = numa_counts.get(numa_key, 0) + 1
+
+        def rank(gpu: dict[str, Any]) -> tuple[int, int, str, str]:
+            payload = json.loads(gpu["payload_json"])
+            topology_key = cls._topology_group_key(gpu)
+            numa_key = (topology_key, payload.get("numa_node"))
+            return (
+                -topology_counts[topology_key],
+                -numa_counts[numa_key],
+                str(payload.get("gpu_id") or gpu.get("resource_key") or ""),
+                str(payload.get("gpu_uuid") or ""),
+            )
+
+        return sorted(gpus, key=rank)
+
+    @classmethod
+    def _node_topology_score(cls, candidate: dict[str, Any]) -> tuple[int, int, int]:
+        ranked = cls._rank_gpus_for_placement(candidate["gpus"])
+        if not ranked:
+            return (0, 0, 0)
+        first = ranked[0]
+        first_payload = json.loads(first["payload_json"])
+        topology_key = cls._topology_group_key(first)
+        same_topology = [gpu for gpu in candidate["gpus"] if cls._topology_group_key(gpu) == topology_key]
+        numa_node = first_payload.get("numa_node")
+        same_numa = [
+            gpu for gpu in same_topology
+            if json.loads(gpu["payload_json"]).get("numa_node") == numa_node
+        ]
+        return (len(same_topology), len(same_numa), len(candidate["gpus"]))
+
+    @staticmethod
     def _node_from_rows(rows: Iterable[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         nodes: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
@@ -129,7 +177,7 @@ class ComputeScheduler:
             candidates.append({
                 "node_id": node_id,
                 "cpu": cpu,
-                "gpus": compatible,
+                "gpus": self._rank_gpus_for_placement(compatible),
                 "payload": node_payload,
             })
         return candidates
@@ -153,8 +201,8 @@ class ComputeScheduler:
             ranked_groups = sorted(
                 groups.items(),
                 key=lambda item: (
-                    sum(len(candidate["gpus"]) for candidate in item[1]),
-                    len(item[1]),
+                    tuple(sum(self._node_topology_score(candidate)[index] for candidate in item[1]) for index in range(3)),
+                    tuple(sorted((candidate["node_id"] for candidate in item[1]), reverse=True)),
                 ),
                 reverse=True,
             )
@@ -174,7 +222,16 @@ class ComputeScheduler:
             if len(selected) < 2 or sum(len(c["gpus"]) for c in selected) < needed:
                 raise ComputeSchedulingError("no compatible multi-node allocation within one provider and domain")
         else:
-            for candidate in candidates:
+            ranked_candidates = sorted(
+                candidates,
+                key=lambda candidate: (
+                    self._node_topology_score(candidate),
+                    -len(candidate["gpus"]),
+                    str(candidate["node_id"]),
+                ),
+                reverse=True,
+            )
+            for candidate in ranked_candidates:
                 if len(candidate["gpus"]) >= needed:
                     selected = [candidate]
                     break
@@ -190,12 +247,14 @@ class ComputeScheduler:
             if needed < len(selected):
                 raise ComputeSchedulingError("multi-node allocation needs at least one GPU per selected node")
             for candidate in selected:
-                gpu_rows.append(candidate["gpus"][0])
+                ranked = self._rank_gpus_for_placement(candidate["gpus"])
+                gpu_rows.append(ranked[0])
                 remaining -= 1
             for candidate in selected:
                 if remaining <= 0:
                     break
-                extras = candidate["gpus"][1:1 + remaining]
+                ranked = self._rank_gpus_for_placement(candidate["gpus"])
+                extras = ranked[1:1 + remaining]
                 gpu_rows.extend(extras)
                 remaining -= len(extras)
         else:
