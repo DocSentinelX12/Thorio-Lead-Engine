@@ -97,10 +97,10 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
                     if not (agent == "verification" and not _same_verification_stage(duplicate_task, {"agent": agent, "payload": payload})):
                         created.append(duplicate_task); continue
                 task = {"task_id": uuid4().hex, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
-                rows.append((task["task_id"], task["agent"], task["queue"], task["status"], task["priority"], json.dumps(task["payload"], ensure_ascii=False), task["dedupe_key"], task["created_at"], task["updated_at"], task["attempts"], task["lease_until"], task["worker_id"], task["last_error"], None))
+                rows.append((task["task_id"], task["agent"], task["queue"], task["status"], task["priority"], json.dumps(task["payload"], ensure_ascii=False), task["dedupe_key"], task["created_at"], task["updated_at"], task["attempts"], task["lease_until"], task["worker_id"], task["last_error"], None, None))
                 created.append(task)
             if rows:
-                db.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                db.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             db.conn.commit()
             return created
         except Exception:
@@ -146,7 +146,7 @@ def claim_task(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) ->
         if task is None: raise ValueError(f"Task not found: {task_id}")
         if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
         _validate_task_authorization(task["agent"], task.get("payload") or {})
-        now = _now(); db.queue_update(task_id, status=RUNNING, worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), attempts=task["attempts"] + 1, updated_at=_iso(now)); return _row_to_task(db.queue_get(task_id))
+        now = _now(); db.queue_update(task_id, status=RUNNING, worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), lease_token=uuid4().hex, attempts=task["attempts"] + 1, updated_at=_iso(now)); return _row_to_task(db.queue_get(task_id))
     state = _load(db); _recover_stale(state); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
     if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
