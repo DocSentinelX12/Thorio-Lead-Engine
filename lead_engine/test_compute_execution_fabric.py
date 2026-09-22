@@ -579,3 +579,74 @@ def test_nvidia_runtime_distributed_probe_refuses_missing_torchrun():
     runtime = NvidiaRuntime(which=lambda _name: None)
     with pytest.raises(NvidiaRuntimeError, match="torchrun"):
         runtime.distributed_command(world_size=2, node_rank=0, nnodes=2, master_addr="10.0.0.5", master_port=29500)
+
+
+def test_nvidia_runtime_preserves_exact_nccl_hca_port_and_reconciles_rdma_endpoint():
+    from lead_engine.nvidia_runtime import NvidiaRuntime
+
+    runtime = NvidiaRuntime()
+    logs = "node-a:1:1 [0] NCCL INFO NET/IB : Using [0]mlx5_0:2/IB\n"
+    rdma = {
+        "devices": [{"device": "mlx5_0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE"}],
+        "links": [{
+            "rdma_device": "mlx5_0",
+            "port": 2,
+            "netdev": "eth0",
+            "pci_bus_id": "0000:41:00.0",
+            "state": "ACTIVE",
+            "physical_state": "LINK_UP",
+            "link_layer": "InfiniBand",
+        }],
+    }
+    locality = [{
+        "gpu_uuid": "GPU-a",
+        "nic": "eth0",
+        "nic_pci_bus_id": "0000:41:00.0",
+        "shared_pci_ancestor": "0000:40",
+        "source": "sysfs",
+    }]
+
+    evidence = runtime.validate_nccl_transport_against_rdma(
+        logs,
+        rdma,
+        gpu_uuid="GPU-a",
+        gpu_nic_locality=locality,
+    )
+
+    assert evidence["network_transport"] == "IB"
+    assert evidence["hca_selections"] == (
+        {"device": "mlx5_0", "port": 2, "transport": "IB"},
+    )
+    assert evidence["verified_hca_selections"] == (
+        {"device": "mlx5_0", "port": 2, "transport": "IB"},
+    )
+    assert evidence["gpu_nic_locality"]["rdma_port"] == 2
+    assert evidence["gpu_nic_locality"]["link_layer"] == "InfiniBand"
+
+
+def test_nvidia_runtime_rejects_nccl_hca_port_not_verified_by_rdma_link():
+    from lead_engine.nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
+
+    runtime = NvidiaRuntime()
+    with pytest.raises(NvidiaRuntimeError, match="RDMA port"):
+        runtime.validate_nccl_transport_against_rdma(
+            "node-a:1:1 [0] NCCL INFO NET/IB : Using [0]mlx5_0:2/IB\n",
+            {
+                "devices": [{"device": "mlx5_0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE"}],
+                "links": [{
+                    "rdma_device": "mlx5_0",
+                    "port": 1,
+                    "netdev": "eth0",
+                    "pci_bus_id": "0000:41:00.0",
+                    "state": "ACTIVE",
+                    "physical_state": "LINK_UP",
+                }],
+            },
+            gpu_uuid="GPU-a",
+            gpu_nic_locality=[{
+                "gpu_uuid": "GPU-a",
+                "nic": "eth0",
+                "nic_pci_bus_id": "0000:41:00.0",
+                "source": "sysfs",
+            }],
+        )
