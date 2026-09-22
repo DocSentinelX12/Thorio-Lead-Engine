@@ -197,7 +197,8 @@ def test_worker_receives_durable_participant_and_launch_contract(tmp_path: Path)
     thread.start()
     try:
         client = ComputeWorkerClient(
-            f"http://127.0.0.1:{server.server_port}",            "test-token",
+            f"http://127.0.0.1:{server.server_port}",
+            "test-token",
             "worker-1",
             timeout_seconds=2,
         )
@@ -397,6 +398,7 @@ def test_fabric_recovery_releases_allocation_for_fresh_generation(tmp_path: Path
     assert second["attempt_id"] != first["attempt_id"]
     assert second["physical_allocation"]["allocation_id"] != allocation_id
 
+
 def test_fabric_reconciliation_requeues_entire_attempt_when_one_participant_is_lost(tmp_path: Path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     coordinator = ComputeCoordinator(
@@ -595,7 +597,8 @@ def test_fabric_rendezvous_endpoint_is_bound_once_and_cannot_change(tmp_path: Pa
     coordinator = ComputeCoordinator(
         str(tmp_path / "coordinator.sqlite3"),
         auth_token="test-token",
-        lease_seconds=30,        inventory=inventory,
+        lease_seconds=30,
+        inventory=inventory,
     )
     _register_inventory(coordinator, inventory)
     task_id = coordinator.enqueue({
@@ -795,6 +798,7 @@ def test_stale_participant_cannot_report_after_convergence_or_retry(tmp_path: Pa
         status="failed",
         error="late failure",
     ) is False
+
     with coordinator._connect() as connection:
         connection.execute(
             "UPDATE compute_tasks SET lease_until=? WHERE task_id=?",
@@ -993,7 +997,8 @@ def test_run_worker_survives_fabric_runtime_failure(monkeypatch):
         def heartbeat(self, current_load=0):
             return {"ok": True}
         def fabric_assignments(self):
-            return [{"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"}]        def claim(self):
+            return [{"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"}]
+        def claim(self):
             self.claimed = True
             return None
 
@@ -1193,6 +1198,7 @@ def test_fabric_verification_preserves_runtime_failure_when_failure_reporting_fa
 
     assert client.states == ["launching", "active", "failed"]
 
+
 def test_fabric_verification_cleans_up_when_local_runtime_validation_fails():
     from lead_engine.compute_worker import run_fabric_verification
     from lead_engine.nvidia_runtime import NvidiaRuntimeError
@@ -1391,7 +1397,8 @@ def test_fabric_heartbeat_failure_wins_race_with_successful_process_exit():
         run_fabric_verification(
             client,
             {"attempt_id": "attempt-1", "generation": 1, "lease_token": "lease-1"},
-            rendezvous_endpoint="10.0.0.5:29400",            heartbeat_seconds=0.001,
+            rendezvous_endpoint="10.0.0.5:29400",
+            heartbeat_seconds=0.001,
             runtime=Runtime(),
             runner=runner,
         )
@@ -1591,6 +1598,7 @@ def test_fabric_participant_state_transitions_are_monotonic(tmp_path: Path):
         "worker_id": "worker-1",
         "lease_token": claimed["lease_token"],
     }
+
     assert coordinator.execution_participant_state(**kwargs, status="launching") is True
     assert coordinator.execution_participant_state(**kwargs, status="active") is True
     assert coordinator.execution_participant_state(**kwargs, status="launching") is False
@@ -1789,7 +1797,8 @@ def test_fabric_launch_plan_constructs_verified_routes_between_participants(tmp_
                     availability_state=ResourceState.AVAILABLE,
                 ),),
                 driver_version="550.1",
-                cuda_version="12.4",                nccl_version="2.20",
+                cuda_version="12.4",
+                nccl_version="2.20",
                 state=ResourceState.AVAILABLE,
             ),),
         ))
