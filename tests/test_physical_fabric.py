@@ -284,3 +284,32 @@ def test_failure_and_reverification_require_fresh_exact_path_evidence() -> None:
     assert reverified.state is FabricPathState.REVERIFIED
     assert reverified.path_id == path.path_id
     assert reverified.history[-1]["state"] == "FAILED"
+
+
+def test_reverification_rejects_partial_fresh_path_evidence() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )[0]
+    failed = PhysicalFabricVerification.fail(
+        PhysicalFabricVerification.measure(
+            PhysicalFabricVerification.verify(
+                path,
+                evidence=[
+                    {"segment": segment, "operation": "probe", "result": "pass"}
+                    for segment in path.segments
+                ],
+            ),
+            measurement={"bandwidth_gbps": 100},
+        ),
+        reason="temporary path failure",
+        failure_domain="rdma_port",
+    )
+    partial = PhysicalFabricVerification.reverify(
+        failed,
+        evidence=[{"segment": path.segments[0], "operation": "probe", "result": "pass"}],
+    )
+    assert partial.state is FabricPathState.FAILED
+    assert partial.reason == "fresh path-segment evidence is incomplete"
