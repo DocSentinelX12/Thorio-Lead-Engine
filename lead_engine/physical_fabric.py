@@ -297,7 +297,6 @@ class PhysicalFabricVerification:
             required_segments=verification.required_segments,
         )
 
-
     @staticmethod
     def fail(
         verification: FabricVerificationResult,
@@ -351,3 +350,113 @@ class PhysicalFabricVerification:
             measurement=dict(verification.measurement),
             required_segments=verification.required_segments,
         )
+
+
+class AdaptiveFabricRouteSelector:
+    """Select and reselect physical routes from current, path-specific evidence."""
+
+    _ELIGIBLE_STATES = frozenset({
+        FabricPathState.VERIFIED.value,
+        FabricPathState.MEASURED.value,
+        FabricPathState.REVERIFIED.value,
+    })
+
+    @classmethod
+    def _candidates(
+        cls,
+        paths: Sequence[Mapping[str, object]],
+        route_health: Mapping[str, Mapping[str, object]],
+    ) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        for raw in paths:
+            path_id = str(raw.get("path_id") or "").strip()
+            state = str(raw.get("state") or "").strip()
+            if not path_id or state not in cls._ELIGIBLE_STATES:
+                continue
+            health = route_health.get(path_id)
+            if not isinstance(health, Mapping):
+                continue
+            if state != FabricPathState.MEASURED.value:
+                continue
+            measurement = raw.get("measurement")
+            if not isinstance(measurement, Mapping):
+                continue
+            candidates.append({
+                "path_id": path_id,
+                "health": dict(health),
+                "measurement": dict(measurement),
+                "state": state,
+            })
+        return candidates
+
+    @classmethod
+    def _key(cls, candidate: Mapping[str, object]) -> tuple[float, float, float, float, str]:
+        health = candidate["health"]
+        assert isinstance(health, Mapping)
+        return (
+            float(health.get("failure_rate", float("inf"))),
+            float(health.get("latency_delta_from_mean_ms", float("inf"))),
+            float(health.get("latest_latency_ms", float("inf"))),
+            -float(health.get("sample_count", 0) or 0),
+            str(candidate["path_id"]),
+        )
+
+    @classmethod
+    def select(
+        cls,
+        paths: Sequence[Mapping[str, object]],
+        route_health: Mapping[str, Mapping[str, object]],
+    ) -> dict[str, object]:
+        candidates = sorted(cls._candidates(paths, route_health), key=cls._key)
+        if not candidates:
+            return {
+                "path_id": None,
+                "selection_reason": "no_current_measured_route",
+                "alternatives": (),
+                "evidence": (),
+            }
+        selected = candidates[0]
+        return {
+            "path_id": selected["path_id"],
+            "selection_reason": "observed_route_health",
+            "alternatives": tuple(str(item["path_id"]) for item in candidates[1:]),
+            "evidence": tuple(
+                {
+                    "path_id": str(item["path_id"]),
+                    "health": dict(item["health"]),
+                    "measurement": dict(item["measurement"]),
+                }
+                for item in candidates
+            ),
+        }
+
+    @classmethod
+    def migration(
+        cls,
+        paths: Sequence[Mapping[str, object]],
+        route_health: Mapping[str, Mapping[str, object]],
+        *,
+        current_path_id: str,
+    ) -> dict[str, object]:
+        selection = cls.select(paths, route_health)
+        selected = selection["path_id"]
+        if selected is None:
+            return {
+                "migrate": False,
+                "from_path_id": current_path_id,
+                "to_path_id": None,
+                "reason": "no_verified_alternative",
+            }
+        if str(selected) == str(current_path_id):
+            return {
+                "migrate": False,
+                "from_path_id": current_path_id,
+                "to_path_id": current_path_id,
+                "reason": "current_route_remains_selected",
+            }
+        return {
+            "migrate": True,
+            "from_path_id": current_path_id,
+            "to_path_id": str(selected),
+            "reason": str(selection["selection_reason"]),
+        }
