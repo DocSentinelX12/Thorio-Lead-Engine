@@ -14,6 +14,7 @@ from dataclasses import asdict
 from typing import Any
 
 from .compute_provider import ProviderResourceSnapshot
+from .compute_fabric_telemetry import summarize_route_health
 from .compute_resources import GpuResource, NodeResource, ResourceState
 
 
@@ -86,6 +87,18 @@ class ComputeInventory:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_fabric_path_health_identity "
                 "ON compute_fabric_path_health(node_id,gpu_uuid,rdma_device,rdma_port)"
+            )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_route_observations (
+                observation_id TEXT PRIMARY KEY,
+                path_key TEXT NOT NULL,
+                observed_at REAL NOT NULL,
+                latency_ms REAL,
+                success INTEGER NOT NULL,
+                evidence_json TEXT NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_fabric_route_observations_path "
+                "ON compute_fabric_route_observations(path_key,observed_at)"
             )
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_allocations (
                 allocation_id TEXT PRIMARY KEY,
@@ -336,6 +349,63 @@ class ComputeInventory:
             )
             connection.commit()
             return cursor.rowcount == 1
+
+
+    def record_fabric_route_observation(
+        self,
+        path: dict[str, Any],
+        *,
+        latency_ms: float | None,
+        success: bool,
+        observed_at: float | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> str:
+        """Persist one authoritative route observation idempotently."""
+        path_key = self.fabric_path_key(path)
+        if latency_ms is not None:
+            latency_ms = float(latency_ms)
+            if latency_ms <= 0:
+                raise ValueError("latency_ms must be positive when provided")
+        when = time.time() if observed_at is None else float(observed_at)
+        payload = {
+            "path_key": path_key,
+            "observed_at": when,
+            "latency_ms": latency_ms,
+            "success": bool(success),
+            "evidence": dict(evidence or {}),
+        }
+        observation_id = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO compute_fabric_route_observations
+                   (observation_id,path_key,observed_at,latency_ms,success,evidence_json)
+                   VALUES(?,?,?,?,?,?)""",
+                (
+                    observation_id, path_key, when, latency_ms, int(bool(success)),
+                    json.dumps(dict(evidence or {}), ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            connection.commit()
+        return observation_id
+
+    def fabric_route_health_index(self) -> dict[str, dict[str, Any]]:
+        """Return observed route health/congestion evidence keyed by physical path."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT path_key,observed_at,latency_ms,success
+                   FROM compute_fabric_route_observations
+                   ORDER BY path_key,observed_at,observation_id"""
+            ).fetchall()
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["path_key"]), []).append({
+                "observed_at": float(row["observed_at"]),
+                "latency_ms": row["latency_ms"],
+                "success": bool(row["success"]),
+            })
+        return {path_key: summarize_route_health(samples) for path_key, samples in grouped.items()}
 
     def get(self, resource_key: str) -> dict[str, Any] | None:
         with self._connect() as connection:
