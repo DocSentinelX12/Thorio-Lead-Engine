@@ -439,6 +439,43 @@ class ComputeInventory:
             )
             connection.commit()
 
+    def verified_physical_paths(
+        self,
+        *,
+        source_gpu: str | None = None,
+        destination_gpu: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return only concrete paths whose current state is VERIFIED or stronger."""
+        clauses = ["state IN (?,?,?)"]
+        params: list[Any] = ["VERIFIED", "MEASURED", "REVERIFIED"]
+        if source_gpu is not None:
+            clauses.append("source_gpu=?")
+            params.append(str(source_gpu))
+        if destination_gpu is not None:
+            clauses.append("destination_gpu=?")
+            params.append(str(destination_gpu))
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,state,"
+                "created_at,updated_at FROM compute_physical_fabric_paths WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY path_id",
+                tuple(params),
+            ).fetchall()
+        return [
+            {
+                "path_id": row["path_id"],
+                "source_gpu": row["source_gpu"],
+                "destination_gpu": row["destination_gpu"],
+                "segments": json.loads(row["segments_json"]),
+                "fabric_domains": json.loads(row["fabric_domains_json"]),
+                "state": row["state"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
     def physical_paths(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
