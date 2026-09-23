@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .compute_inventory import ComputeInventory
+from .compute_fabric_telemetry import physical_path_key, workload_performance_key
 from .compute_resources import ComputeRequirements, ResourceState, WorkloadClass
 
 
@@ -60,14 +61,17 @@ class ComputeScheduler:
         self.inventory = inventory
         self.performance_history_provider = performance_history_provider
 
-    def _performance_history(self) -> dict[str, dict[str, Any]]:
+    def _performance_history(self, requirements=None) -> dict[str, dict[str, Any]]:
         if self.performance_history_provider is None:
             return {}
-        value = self.performance_history_provider()
+        try:
+            value = self.performance_history_provider(requirements)
+        except TypeError:
+            value = self.performance_history_provider()
         return value if isinstance(value, dict) else {}
 
     @staticmethod
-    def _gpu_performance_key(gpu: dict[str, Any], history: dict[str, dict[str, Any]]) -> tuple[int, float, int]:
+    def _gpu_performance_key(gpu: dict[str, Any], history: dict[str, dict[str, Any]], requirements=None) -> tuple[int, float, int]:
         payload = json.loads(gpu["payload_json"])
         gpu_uuid = str(payload.get("gpu_uuid") or "").strip()
         paths = ComputeScheduler._verified_gpu_nic_rdma_path(gpu, gpu_uuid)
@@ -84,10 +88,18 @@ class ComputeScheduler:
             }
             if not identity:
                 continue
-            serialized = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            key = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+            legacy_key = physical_path_key(identity)
+            workload = {}
+            if requirements is not None:
+                workload = {
+                    "workload_class": getattr(getattr(requirements, "workload_class", None), "value", getattr(requirements, "workload_class", None)),
+                    **dict(getattr(requirements, "performance_signature", ()) or ()),
+                }
+            key = workload_performance_key(identity, workload) if workload else legacy_key
             if key in history:
                 observations.append(history[key])
+            elif legacy_key in history:
+                observations.append(history[legacy_key])
         if not observations:
             return (1, float("inf"), 0)
         best = min(
@@ -426,7 +438,7 @@ class ComputeScheduler:
         rows = self.inventory.eligible()
         grouped = self._node_from_rows(rows)
         candidates = []
-        performance_history = self._performance_history()
+        performance_history = self._performance_history(requirements)
         for node_id, node_rows in grouped.items():
             if requirements.allowed_node_ids and node_id not in set(requirements.allowed_node_ids):
                 continue
@@ -484,7 +496,7 @@ class ComputeScheduler:
                 "cpu": cpu,
                 "gpus": sorted(
                     self._rank_gpus_for_placement(compatible),
-                    key=lambda gpu: self._gpu_performance_key(gpu, performance_history),
+                    key=lambda gpu: self._gpu_performance_key(gpu, performance_history, requirements),
                 ),
                 "payload": node_payload,
             })
@@ -544,7 +556,7 @@ class ComputeScheduler:
                         -self._node_topology_score(candidate)[0],
                         -self._node_topology_score(candidate)[1],
                         -self._node_topology_score(candidate)[2],
-                        self._gpu_performance_key(candidate["gpus"][0], performance_history) if candidate["gpus"] else (1, float("inf"), 0),
+                        self._gpu_performance_key(candidate["gpus"][0], performance_history, requirements) if candidate["gpus"] else (1, float("inf"), 0),
                         str(candidate["node_id"]),
                     ),
                 )
