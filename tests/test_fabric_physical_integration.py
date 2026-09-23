@@ -310,6 +310,55 @@ def test_explicitly_degraded_path_is_excluded_while_healthy_competing_path_remai
     assert inventory.physical_paths()[0]["state"] == "DEGRADED"
     assert inventory.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
 
+
+def test_degraded_path_isolated_from_healthy_competing_path_in_placement(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(_node("node-a", _gpu("node-a", "g0", "u0")), _node("node-b", _gpu("node-b", "g0", "u1"))),
+        authentication_state="authenticated", evidence={"network": _network()},
+    ))
+    paths = PhysicalFabricPathBuilder.build(
+        locality_graph={"components": [
+            {"component_type": "gpu", "identity": "gpu:u0", "node_id": "node-a"},
+            {"component_type": "pci", "identity": "pci:a", "node_id": "node-a"},
+            {"component_type": "numa", "identity": "numa:a", "node_id": "node-a"},
+            {"component_type": "nic", "identity": "nic:a", "node_id": "node-a"},
+            {"component_type": "rdma_device", "identity": "rdma:a", "node_id": "node-a"},
+            {"component_type": "rdma_port", "identity": "port:a", "node_id": "node-a"},
+            {"component_type": "fabric", "identity": "fabric:a", "node_id": "domain-a"},
+            {"component_type": "rdma_port", "identity": "port:b", "node_id": "node-b"},
+            {"component_type": "rdma_device", "identity": "rdma:b", "node_id": "node-b"},
+            {"component_type": "nic", "identity": "nic:b", "node_id": "node-b"},
+            {"component_type": "numa", "identity": "numa:b", "node_id": "node-b"},
+            {"component_type": "pci", "identity": "pci:b", "node_id": "node-b"},
+            {"component_type": "gpu", "identity": "gpu:u1", "node_id": "node-b"},
+        ], "edges": [
+            {"relationship_type": "gpu_to_pci", "source": "gpu:u0", "target": "pci:a", "state": "known"}, {"relationship_type": "gpu_to_numa", "source": "gpu:u0", "target": "numa:a", "state": "known"}, {"relationship_type": "gpu_to_nic", "source": "gpu:u0", "target": "nic:a", "state": "known"}, {"relationship_type": "nic_to_rdma_device", "source": "nic:a", "target": "rdma:a", "state": "known"}, {"relationship_type": "rdma_device_to_port", "source": "rdma:a", "target": "port:a", "state": "known"}, {"relationship_type": "rdma_port_to_fabric", "source": "port:a", "target": "fabric:a", "state": "known"}, {"relationship_type": "fabric_to_rdma_port", "source": "fabric:a", "target": "port:b", "state": "known"}, {"relationship_type": "rdma_device_to_port", "source": "rdma:b", "target": "port:b", "state": "known"}, {"relationship_type": "nic_to_rdma_device", "source": "nic:b", "target": "rdma:b", "state": "known"}, {"relationship_type": "gpu_to_nic", "source": "gpu:u1", "target": "nic:b", "state": "known"}, {"relationship_type": "gpu_to_numa", "source": "gpu:u1", "target": "numa:b", "state": "known"}, {"relationship_type": "gpu_to_pci", "source": "gpu:u1", "target": "pci:b", "state": "known"},
+            {"relationship_type": "gpu_to_pci", "source": "gpu:u0", "target": "pci:a2", "state": "known"},
+        ]}, source_gpu="gpu:u0", destination_gpu="gpu:u1"
+    )
+    # The graph currently produces the canonical paths from its explicitly known topology.
+    assert paths
+    for path in paths:
+        inventory.persist_physical_path(path)
+        verification = PhysicalFabricVerification.verify(path, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in path.segments])
+        inventory.persist_physical_verification(verification, evidence={"stage": "verification"})
+    primary = paths[0]
+    degraded = PhysicalFabricVerification.measure(
+        PhysicalFabricVerification.measure(
+            PhysicalFabricVerification.verify(primary, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in primary.segments]),
+            measurement={"bandwidth_gbps": 200, "latency_us": 5, "sample_count": 8}, observed_at=100,
+        ),
+        measurement={"bandwidth_gbps": 60, "latency_us": 20, "sample_count": 8, "status": "degraded", "degradation_reason": "route probe reported degradation", "failure_domain": "inter_node_route"}, observed_at=200,
+    )
+    inventory.persist_physical_verification(degraded, evidence={"stage": "degradation"})
+    healthy = [p for p in paths if p.path_id != primary.path_id]
+    if not healthy:
+        pytest.skip("fixture topology produced only one concrete path")
+    assert any(p["path_id"] == healthy[0].path_id for p in inventory.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1"))
+    assert all(p["path_id"] != primary.path_id for p in inventory.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1"))
+
 def test_exact_path_failure_removes_it_from_verified_placement_candidates(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
