@@ -13,14 +13,7 @@ from typing import Any, Mapping
 
 def physical_path_key(path: Mapping[str, Any]) -> str:
     """Return a stable identity for one observed physical GPU-to-NIC/RDMA path."""
-    normalized = {
-        str(key): path[key]
-        for key in (
-            "node_id", "gpu_uuid", "nic", "nic_pci_bus_id",
-            "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer",
-        )
-        if path.get(key) is not None and str(path.get(key)).strip() != ""
-    }
+    normalized = {str(key): path[key] for key in ("node_id", "gpu_uuid", "nic", "nic_pci_bus_id", "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer") if path.get(key) is not None and str(path.get(key)).strip() != ""}
     if not normalized:
         return ""
     serialized = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -40,10 +33,7 @@ def extract_workload_signature(verification: Mapping[str, Any]) -> dict[str, Any
         probe = item.get("probe")
         if isinstance(probe, Mapping):
             candidates.append(probe)
-    allowed = (
-        "workload_class", "collective", "world_size", "message_size_bytes",
-        "dtype", "reduce_op", "algorithm", "protocol",
-    )
+    allowed = ("workload_class", "collective", "world_size", "message_size_bytes", "dtype", "reduce_op", "algorithm", "protocol")
     result = {}
     for candidate in candidates:
         for key in allowed:
@@ -59,7 +49,6 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
     if not isinstance(process_evidence, list):
         return ()
     workload_signature = extract_workload_signature(verification)
-
     metrics: list[dict[str, Any]] = []
     for item in process_evidence:
         if not isinstance(item, Mapping):
@@ -67,25 +56,19 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
         probe = item.get("probe")
         if not isinstance(probe, Mapping):
             continue
-        elapsed = probe.get("all_reduce_elapsed_ms")
         try:
-            elapsed_ms = float(elapsed)
+            elapsed_ms = float(probe.get("all_reduce_elapsed_ms"))
         except (TypeError, ValueError):
             continue
         if elapsed_ms <= 0:
             continue
         gpu_binding = item.get("gpu_binding")
-        physical_path = (
-            gpu_binding.get("planned_physical_path")
-            if isinstance(gpu_binding, Mapping)
-            else None
-        )
+        physical_path = gpu_binding.get("planned_physical_path") if isinstance(gpu_binding, Mapping) else None
         path = physical_path if isinstance(physical_path, Mapping) else {}
         metrics.append({
             "rank": int(item.get("rank", probe.get("rank", -1))),
             "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(),
-            "node_id": str(gpu_binding.get("node_id") or "").strip()
-                if isinstance(gpu_binding, Mapping) else "",
+            "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "",
             "transport": str(probe.get("network_transport") or "").strip() or None,
             "all_reduce_elapsed_ms": elapsed_ms,
             "physical_path": dict(path),
@@ -104,13 +87,7 @@ def aggregate_execution_metrics(metrics: tuple[dict[str, Any], ...]) -> dict[str
         return {"sample_count": 0}
     values = [float(item["all_reduce_elapsed_ms"]) for item in metrics]
     transports = sorted({str(item["transport"]) for item in metrics if item.get("transport")})
-    return {
-        "sample_count": len(values),
-        "min_all_reduce_elapsed_ms": min(values),
-        "max_all_reduce_elapsed_ms": max(values),
-        "avg_all_reduce_elapsed_ms": sum(values) / len(values),
-        "transport": transports[0] if len(transports) == 1 else transports,
-    }
+    return {"sample_count": len(values), "min_all_reduce_elapsed_ms": min(values), "max_all_reduce_elapsed_ms": max(values), "avg_all_reduce_elapsed_ms": sum(values) / len(values), "transport": transports[0] if len(transports) == 1 else transports}
 
 
 def workload_performance_key(path: Mapping[str, Any], workload: Mapping[str, Any]) -> str:
@@ -130,19 +107,14 @@ def workload_performance_key(path: Mapping[str, Any], workload: Mapping[str, Any
             normalized_workload[str(key)] = value
     if not normalized_workload:
         return path_key
-    serialized = json.dumps(
-        {"path_key": path_key, "workload": normalized_workload},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    serialized = json.dumps({"path_key": path_key, "workload": normalized_workload}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def summarize_route_health(samples: Any) -> dict[str, Any]:
     """Summarize observed route outcomes without applying a health threshold."""
     if not isinstance(samples, (list, tuple)):
-        return {"sample_count": 0, "success_count": 0, "failure_count": 0}
+        return {"sample_count": 0, "success_count": 0, "failure_count": 0, "failure_rate": 0.0}
     valid = []
     for sample in samples:
         if not isinstance(sample, Mapping):
@@ -159,30 +131,34 @@ def summarize_route_health(samples: Any) -> dict[str, Any]:
                 parsed_latency = None
             if parsed_latency is not None and parsed_latency <= 0:
                 parsed_latency = None
-        observed_at = sample.get("observed_at")
         try:
-            timestamp = float(observed_at)
+            timestamp = float(sample.get("observed_at"))
         except (TypeError, ValueError):
             timestamp = float("-inf")
         valid.append((timestamp, parsed_latency, success))
     if not valid:
-        return {"sample_count": 0, "success_count": 0, "failure_count": 0}
+        return {"sample_count": 0, "success_count": 0, "failure_count": 0, "failure_rate": 0.0}
     valid.sort(key=lambda item: item[0])
     latencies = [item[1] for item in valid if item[1] is not None]
     latest_latency = next((item[1] for item in reversed(valid) if item[1] is not None), None)
-    result = {
-        "sample_count": len(valid),
-        "success_count": sum(1 for item in valid if item[2]),
-        "failure_count": sum(1 for item in valid if not item[2]),
-    }
+    latest_observed_at = valid[-1][0] if valid[-1][0] != float("-inf") else None
+    latest_success = valid[-1][2]
+    failure_count = sum(1 for item in valid if not item[2])
+    result = {"sample_count": len(valid), "success_count": len(valid) - failure_count, "failure_count": failure_count, "failure_rate": failure_count / len(valid), "latest_observed_at": latest_observed_at, "latest_success": latest_success}
     if latencies:
         mean = sum(latencies) / len(latencies)
-        result.update({
-            "latest_latency_ms": latest_latency,
-            "historical_mean_latency_ms": mean,
-            "latency_delta_from_mean_ms": (
-                latest_latency - mean if latest_latency is not None else None
-            ),
-        })
-    result["failure_rate"] = result["failure_count"] / result["sample_count"]
+        previous_latency = latencies[-2] if len(latencies) >= 2 else None
+        result.update({"latest_latency_ms": latest_latency, "historical_mean_latency_ms": mean, "latency_delta_from_mean_ms": latest_latency - mean if latest_latency is not None else None, "latency_change_from_previous_ms": latest_latency - previous_latency if latest_latency is not None and previous_latency is not None else None, "latency_change_ratio": ((latest_latency / previous_latency) - 1.0) if latest_latency is not None and previous_latency not in (None, 0) else None})
+    consecutive_failures = 0
+    for _, _, success in reversed(valid):
+        if success:
+            break
+        consecutive_failures += 1
+    consecutive_successes = 0
+    for _, _, success in reversed(valid):
+        if not success:
+            break
+        consecutive_successes += 1
+    result["consecutive_failures"] = consecutive_failures
+    result["consecutive_successes"] = consecutive_successes
     return result
