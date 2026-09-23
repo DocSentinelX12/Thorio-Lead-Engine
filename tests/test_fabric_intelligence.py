@@ -131,3 +131,31 @@ def test_scheduler_uses_workload_specific_history_before_legacy_path_history(tmp
         "workload-specific",
     )
     assert allocation.resource_ids[-1] == "n/g0"
+
+
+def test_route_health_observations_are_durable_and_idempotent(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = {
+        "node_id": "node-a",
+        "gpu_uuid": "gpu-0",
+        "nic": "eth0",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "link_layer": "InfiniBand",
+    }
+    first = inventory.record_fabric_route_observation(
+        path, latency_ms=4.0, success=True, observed_at=10.0,
+    )
+    second = inventory.record_fabric_route_observation(
+        path, latency_ms=4.0, success=True, observed_at=10.0,
+    )
+    inventory.record_fabric_route_observation(
+        path, latency_ms=9.0, success=False, observed_at=20.0,
+    )
+    assert first == second
+    health = inventory.fabric_route_health_index()[inventory.fabric_path_key(path)]
+    assert health["sample_count"] == 2
+    assert health["failure_count"] == 1
+    assert health["latest_latency_ms"] == 9.0
