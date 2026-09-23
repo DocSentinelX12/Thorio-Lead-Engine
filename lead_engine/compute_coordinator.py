@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
-from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator
+from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
 from .compute_provider import ProviderResourceSnapshot
@@ -43,9 +43,33 @@ class ComputeCoordinator:
         self.inventory = inventory or ComputeInventory(inventory_path)
         self.compute_scheduler = ComputeScheduler(self.inventory)
         self.compute_fabric = ComputeFabricOrchestrator(self.inventory, scheduler=self.compute_scheduler)
-        self.compute_fabric_controller = ComputeFabricController(self)
+        self.compute_fabric_recovery = ComputeFabricRecoverySupervisor(self, fabric=self.compute_fabric)
+        self.compute_fabric_controller = ComputeFabricController(self, fabric=self.compute_fabric)
         self._lock = threading.RLock()
         self._initialize_tasks()
+
+    def recover_compute_attempt(
+        self,
+        *,
+        attempt_id: str,
+        generation: int,
+        failure_class: str,
+        reason: str,
+        evidence: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        """Recover one exact fabric execution generation and preserve its task."""
+        with self._lock:
+            action = self.compute_fabric_recovery.recover_attempt(
+                attempt_id=attempt_id,
+                generation=generation,
+                failure_class=failure_class,
+                reason=reason,
+                evidence=evidence,
+            )
+            return asdict(action)
+
+    def fabric_recovery_history(self, attempt_id: str) -> list[Dict[str, Any]]:
+        return self.compute_fabric_recovery.coordinator.fabric_recovery_history(attempt_id)
 
     def register_compute_provider(self, provider: Any, *, domain_id: str) -> None:
         """Register an authorized physical compute provider with the fabric control plane."""
@@ -154,6 +178,19 @@ class ComputeCoordinator:
                 connection.execute("ALTER TABLE compute_execution_participants ADD COLUMN finished_at REAL")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_participants_status ON compute_execution_participants(status, heartbeat_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_tasks_status ON compute_tasks(status, created_at)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_recovery_events (
+                recovery_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                failure_class TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                evidence TEXT NOT NULL DEFAULT '{}',
+                created_at REAL NOT NULL,
+                UNIQUE(attempt_id, generation, failure_class, phase)
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_fabric_recovery_attempt ON compute_fabric_recovery_events(attempt_id, generation, created_at)")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_task_checkpoints (
                 task_id TEXT NOT NULL,
                 item_key TEXT NOT NULL,
@@ -711,6 +748,202 @@ class ComputeCoordinator:
                     return None
             return {"task_id": task_id, "attempt_id": attempt_id, "generation": generation, "payload": payload, "lease_token": lease_token,
                     "physical_allocation": None if allocation is None else {"allocation_id": allocation.allocation_id, "provider_id": allocation.provider_id, "domain_id": allocation.domain_id, "node_ids": list(allocation.node_ids), "resource_ids": list(allocation.resource_ids), "resource_keys": list(allocation.resource_keys), "capability_evidence": list(allocation.capability_evidence)}}
+
+    def _record_fabric_recovery_event(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        task_id: str,
+        attempt_id: str,
+        generation: int,
+        failure_class: str,
+        phase: str,
+        reason: str,
+        evidence: Dict[str, Any],
+        created_at: float,
+    ) -> bool:
+        recovery_id = str(uuid.uuid4())
+        cursor = connection.execute(
+            """INSERT OR IGNORE INTO compute_fabric_recovery_events(
+                   recovery_id,task_id,attempt_id,generation,failure_class,phase,
+                   reason,evidence,created_at
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                recovery_id,
+                task_id,
+                attempt_id,
+                generation,
+                str(failure_class),
+                str(phase),
+                str(reason)[:4000],
+                json.dumps(dict(evidence), ensure_ascii=False, sort_keys=True)[:20000],
+                created_at,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def fabric_recovery_history(self, attempt_id: str) -> list[Dict[str, Any]]:
+        with self._lock:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT recovery_id,task_id,attempt_id,generation,failure_class,
+                              phase,reason,evidence,created_at
+                       FROM compute_fabric_recovery_events
+                       WHERE attempt_id=?
+                       ORDER BY created_at,recovery_id""",
+                    (attempt_id,),
+                ).fetchall()
+        result=[]
+        for row in rows:
+            item=dict(row)
+            try:
+                item["evidence"]=json.loads(item["evidence"] or "{}")
+            except (TypeError,json.JSONDecodeError):
+                item["evidence"]={}
+            result.append(item)
+        return result
+
+    def recover_fabric_attempt(
+        self,
+        *,
+        attempt_id: str,
+        generation: int,
+        failure_class: str,
+        reason: str,
+        evidence: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        """Fence one exact fabric generation and return its task to the durable queue.
+
+        Recovery is idempotent: once the task has moved away from the exact
+        attempt/generation, later reports from that generation cannot mutate the
+        newer execution.
+        """
+        if not str(attempt_id).strip():
+            raise ValueError("attempt_id is required")
+        if int(generation) < 1:
+            raise ValueError("generation must be positive")
+        failure_class = str(failure_class).strip()
+        if not failure_class:
+            raise ValueError("failure_class is required")
+        reason = str(reason)
+        evidence = dict(evidence or {})
+        now = time.time()
+        attempt_to_release = None
+        worker_to_release = None
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """SELECT a.*,t.status AS task_status,t.attempt_id AS task_attempt_id,
+                              t.generation AS task_generation,t.lease_until
+                       FROM compute_execution_attempts a
+                       JOIN compute_tasks t ON t.task_id=a.task_id
+                       WHERE a.attempt_id=?""",
+                    (attempt_id,),
+                ).fetchone()
+                if not row:
+                    raise ValueError("execution attempt does not exist")
+                task_id = str(row["task_id"])
+                actual_generation = int(row["generation"])
+                if actual_generation != int(generation) or (
+                    str(row["task_attempt_id"] or "") != attempt_id
+                    or int(row["task_generation"]) != int(generation)
+                ):
+                    self._record_fabric_recovery_event(
+                        connection,
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        generation=actual_generation,
+                        failure_class=failure_class,
+                        phase="stale_generation",
+                        reason=reason,
+                        evidence=evidence,
+                        created_at=now,
+                    )
+                    connection.commit()
+                    return {
+                        "status": "stale_generation",
+                        "task_id": task_id,
+                        "attempt_id": attempt_id,
+                        "generation": actual_generation,
+                        "requeued": False,
+                        "evidence_recorded": True,
+                    }
+
+                if row["task_status"] != "leased" or row["status"] != "leased" or (
+                    row["lease_until"] is not None and float(row["lease_until"]) <= now
+                ):
+                    self._record_fabric_recovery_event(
+                        connection,
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        generation=int(generation),
+                        failure_class=failure_class,
+                        phase="already_fenced",
+                        reason=reason,
+                        evidence=evidence,
+                        created_at=now,
+                    )
+                    connection.commit()
+                    return {
+                        "status": "already_fenced",
+                        "task_id": task_id,
+                        "attempt_id": attempt_id,
+                        "generation": int(generation),
+                        "requeued": False,
+                        "evidence_recorded": True,
+                    }
+
+                updated = connection.execute(
+                    """UPDATE compute_tasks
+                       SET status='queued',worker_id=NULL,lease_token=NULL,lease_until=NULL,
+                           error=?,updated_at=?
+                       WHERE task_id=? AND status='leased' AND attempt_id=? AND generation=?""",
+                    (reason[:4000], now, task_id, attempt_id, generation),
+                )
+                if updated.rowcount != 1:
+                    connection.rollback()
+                    raise RuntimeError("fabric recovery lost the exact task-generation fence")
+                attempt_updated = connection.execute(
+                    """UPDATE compute_execution_attempts
+                       SET status='failed',finished_at=?,error=?,authoritative_acceptance='rejected'
+                       WHERE attempt_id=? AND generation=? AND status='leased'""",
+                    (now, reason[:4000], attempt_id, generation),
+                )
+                if attempt_updated.rowcount != 1:
+                    connection.rollback()
+                    raise RuntimeError("fabric recovery lost the exact execution-generation fence")
+                connection.execute(
+                    """UPDATE compute_execution_participants
+                       SET status='failed',last_error=?,heartbeat_at=?
+                       WHERE attempt_id=? AND generation=?
+                         AND status IN ('bound','active','launching','running')""",
+                    (reason[:4000], now, attempt_id, generation),
+                )
+                recorded = self._record_fabric_recovery_event(
+                    connection,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    failure_class=failure_class,
+                    phase="fenced",
+                    reason=reason,
+                    evidence=evidence,
+                    created_at=now,
+                )
+                connection.commit()
+                attempt_to_release = dict(row)
+                worker_to_release = str(row["worker_id"] or "")
+            self._release_physical_allocation(attempt_to_release, f"fabric recovery: {failure_class}")
+            if worker_to_release and not worker_to_release.startswith("fabric:"):
+                self.pool.release_task_slot(worker_to_release)
+        return {
+            "status": "requeued",
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "generation": int(generation),
+            "requeued": True,
+            "evidence_recorded": recorded,
+        }
 
     def execution_attempt_for_allocation(self, allocation_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as connection:
