@@ -129,3 +129,38 @@ def test_route_health_index_isolated_by_physical_path_and_survives_reload(tmp_pa
     assert index[reloaded.fabric_path_key(path_a)]["latest_latency_ms"] == 4.0
     assert index[reloaded.fabric_path_key(path_b)]["sample_count"] == 1
     assert index[reloaded.fabric_path_key(path_b)]["latest_latency_ms"] == 9.0
+
+
+def test_execution_path_feedback_persists_by_exact_concrete_path_and_feeds_route_health(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    now = time.time()
+    with inventory._connect() as connection:
+        connection.execute(
+            """INSERT INTO compute_physical_fabric_paths
+               (path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,state,
+                measurement_json,measurement_observed_at,reason,failure_domain,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("fabric-path-exec", "gpu:src", "gpu:dst", "[]", "[]", "MEASURED",
+             "{}", None, None, None, now, now),
+        )
+        connection.commit()
+
+    observations = (
+        {
+            "fabric_path_id": "fabric-path-exec",
+            "latency_us": 4200.0,
+            "success": True,
+            "observed_at": 100.0,
+            "evidence": {
+                "source": "observed_all_reduce",
+                "placement_id": "placement-exec",
+            },
+        },
+    )
+    ids = inventory.record_execution_path_observations(observations)
+
+    assert len(ids) == 1
+    health = inventory.fabric_route_health_index()
+    assert health["fabric-path-exec"]["sample_count"] == 1
+    assert health["fabric-path-exec"]["latest_latency_ms"] == 4.2
+    assert health["fabric-path-exec"]["latest_success"] is True
