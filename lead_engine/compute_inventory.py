@@ -427,6 +427,12 @@ class ComputeInventory:
         ).hexdigest()
         with self._connect() as connection:
             connection.execute(
+                """UPDATE compute_physical_fabric_paths
+                   SET state=?, updated_at=?
+                   WHERE path_id=?""",
+                (verification.state.value, timestamp, verification.path_id),
+            )
+            connection.execute(
                 """INSERT OR IGNORE INTO compute_physical_fabric_verifications
                    (verification_id,path_id,state,reason,failure_domain,evidence_json,observed_at)
                    VALUES (?,?,?,?,?,?,?)""",
