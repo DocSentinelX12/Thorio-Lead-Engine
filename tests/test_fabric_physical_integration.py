@@ -110,7 +110,7 @@ def test_execution_metric_is_bound_to_concrete_path_id_and_placement_id(tmp_path
     inventory.persist_physical_verification(verification, evidence={"stage": "path_verification"})
     record = inventory.physical_paths()[0]
     assert record["path_id"] == path.path_id
-    assert record["state"] == "CONSTRUCTED"
+    assert record["state"] == "VERIFIED"
     assert inventory.physical_verification_history()[0]["path_id"] == path.path_id
 
 
