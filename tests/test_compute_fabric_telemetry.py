@@ -46,3 +46,67 @@ def test_summarize_route_health_empty_or_invalid_samples_are_evidence_empty():
         "failure_count": 0,
         "failure_rate": 0.0,
     }
+
+
+
+def test_extract_execution_path_observations_requires_explicit_concrete_path_identity():
+    from lead_engine.compute_fabric_telemetry import extract_execution_path_observations
+
+    verification = {
+        "placement_id": "placement-1",
+        "process_evidence": [
+            {
+                "rank": 0,
+                "gpu_binding": {
+                    "planned_physical_path": {
+                        "fabric_path_id": "fabric-path-1",
+                        "path_id": "fabric-path-1",
+                    }
+                },
+                "probe": {
+                    "rank": 0,
+                    "gpu_uuid": "GPU-0",
+                    "all_reduce_elapsed_ms": 2.5,
+                    "network_transport": "IB",
+                },
+            }
+        ],
+    }
+
+    observations = extract_execution_path_observations(verification, observed_at=300.0)
+
+    assert observations == (
+        {
+            "fabric_path_id": "fabric-path-1",
+            "latency_us": 2500.0,
+            "success": True,
+            "observed_at": 300.0,
+            "evidence": {
+                "source": "observed_all_reduce",
+                "placement_id": "placement-1",
+                "rank": 0,
+                "gpu_uuid": "GPU-0",
+                "network_transport": "IB",
+            },
+        },
+    )
+
+
+def test_extract_execution_path_observation_ignores_execution_without_concrete_path_identity():
+    from lead_engine.compute_fabric_telemetry import extract_execution_path_observations
+
+    verification = {
+        "process_evidence": [
+            {
+                "rank": 0,
+                "gpu_binding": {"planned_physical_path": {"node_id": "node-0"}},
+                "probe": {
+                    "rank": 0,
+                    "gpu_uuid": "GPU-0",
+                    "all_reduce_elapsed_ms": 2.5,
+                },
+            }
+        ],
+    }
+
+    assert extract_execution_path_observations(verification, observed_at=300.0) == ()
