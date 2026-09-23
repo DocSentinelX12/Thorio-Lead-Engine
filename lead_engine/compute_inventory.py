@@ -140,6 +140,30 @@ class ComputeInventory:
                 "CREATE INDEX IF NOT EXISTS idx_compute_placements_created "
                 "ON compute_placements(created_at,placement_id)"
             )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_physical_components (
+                component_key TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                domain_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                component_type TEXT NOT NULL,
+                identity TEXT NOT NULL,
+                parent_identity TEXT,
+                pci_parent_identity TEXT,
+                numa_identity TEXT,
+                attributes_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                observed_at REAL NOT NULL,
+                first_seen_at REAL NOT NULL,
+                last_seen_at REAL NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_components_location "
+                "ON compute_physical_components(provider_id,domain_id,node_id,component_type)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_components_identity "
+                "ON compute_physical_components(identity)"
+            )
             connection.commit()
 
     @staticmethod
@@ -201,9 +225,105 @@ class ComputeInventory:
                     payload_json=excluded.payload_json,
                     evidence_json=excluded.evidence_json,last_seen_at=excluded.last_seen_at""", row)
             connection.commit()
+        physical_count = self._observe_physical_components(snapshot)
         return {"provider_id": snapshot.provider_id, "domain_id": snapshot.domain_id,
                 "observed_nodes": len(snapshot.nodes),
-                "observed_gpus": sum(node.gpu_count for node in snapshot.nodes)}
+                "observed_gpus": sum(node.gpu_count for node in snapshot.nodes),
+                "observed_physical_components": physical_count}
+
+    @staticmethod
+    def _physical_component_records(snapshot: ProviderResourceSnapshot) -> tuple[dict[str, Any], ...]:
+        evidence = snapshot.evidence if isinstance(snapshot.evidence, dict) else {}
+        fabric = evidence.get("physical_fabric")
+        if not isinstance(fabric, dict):
+            return ()
+        components = fabric.get("components")
+        if not isinstance(components, list):
+            return ()
+
+        records: list[dict[str, Any]] = []
+        for component in components:
+            if not isinstance(component, dict):
+                continue
+            component_type = str(component.get("component_type") or "").strip()
+            identity = str(component.get("identity") or "").strip()
+            node_id = str(component.get("node_id") or "").strip()
+            if not component_type or not identity or not node_id:
+                continue
+            attributes = component.get("attributes")
+            if not isinstance(attributes, dict):
+                attributes = {}
+            records.append({
+                "component_type": component_type,
+                "identity": identity,
+                "node_id": node_id,
+                "parent_identity": component.get("parent_identity"),
+                "pci_parent_identity": component.get("pci_parent_identity"),
+                "numa_identity": component.get("numa_identity"),
+                "attributes": dict(attributes),
+                "evidence": dict(component.get("evidence") or {}) if isinstance(component.get("evidence"), dict) else {},
+            })
+        return tuple(records)
+
+    def _observe_physical_components(self, snapshot: ProviderResourceSnapshot) -> int:
+        records = self._physical_component_records(snapshot)
+        if not records:
+            return 0
+        now = time.time()
+        with self._connect() as connection:
+            for record in records:
+                key_material = {
+                    "provider_id": snapshot.provider_id,
+                    "domain_id": snapshot.domain_id,
+                    "node_id": record["node_id"],
+                    "component_type": record["component_type"],
+                    "identity": record["identity"],
+                }
+                component_key = hashlib.sha256(
+                    json.dumps(key_material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+                connection.execute(
+                    """INSERT INTO compute_physical_components
+                       (component_key,provider_id,domain_id,node_id,component_type,identity,
+                        parent_identity,pci_parent_identity,numa_identity,attributes_json,evidence_json,
+                        observed_at,first_seen_at,last_seen_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(component_key) DO UPDATE SET
+                         parent_identity=excluded.parent_identity,
+                         pci_parent_identity=excluded.pci_parent_identity,
+                         numa_identity=excluded.numa_identity,
+                         attributes_json=excluded.attributes_json,
+                         evidence_json=excluded.evidence_json,
+                         observed_at=excluded.observed_at,
+                         last_seen_at=excluded.last_seen_at""",
+                    (
+                        component_key, snapshot.provider_id, snapshot.domain_id, record["node_id"],
+                        record["component_type"], record["identity"], record["parent_identity"],
+                        record["pci_parent_identity"], record["numa_identity"],
+                        json.dumps(record["attributes"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(record["evidence"], ensure_ascii=False, sort_keys=True),
+                        snapshot.observed_at, now, now,
+                    ),
+                )
+            connection.commit()
+        return len(records)
+
+    def physical_component_observations(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT component_key,provider_id,domain_id,node_id,component_type,identity,
+                          parent_identity,pci_parent_identity,numa_identity,attributes_json,
+                          evidence_json,observed_at,first_seen_at,last_seen_at
+                   FROM compute_physical_components
+                   ORDER BY provider_id,domain_id,node_id,component_type,identity"""
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["attributes"] = json.loads(item.pop("attributes_json") or "{}")
+            item["evidence"] = json.loads(item.pop("evidence_json") or "{}")
+            result.append(item)
+        return result
 
     def mark_provider_missing(self, provider_id: str, domain_id: str, *, observed_at: float | None = None) -> int:
         """Withdraw a disappeared provider from eligibility without deleting history.
