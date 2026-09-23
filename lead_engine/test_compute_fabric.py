@@ -292,3 +292,41 @@ def test_recovery_supervisor_returns_stale_action_without_reallocating(tmp_path)
     assert action.status == "stale_generation"
     assert action.fresh_allocation_required is False
     assert coordinator.task(task_id)["generation"] == 2
+
+
+def test_exact_recovery_can_fence_an_expired_current_generation(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+    import hashlib
+
+    coordinator = ComputeCoordinator(str(Path(tmp_path) / "coordinator.sqlite3"), auth_token="token")
+    task_id = coordinator.enqueue({"compute_requirements": {"workload_class": "gpu_required"}})
+    attempt_id = "attempt-recovery-expired"
+    lease_token = "expired-lease"
+    now = time.time()
+    digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+    with coordinator._connect() as connection:
+        connection.execute(
+            """UPDATE compute_tasks
+               SET status='leased',worker_id='fabric:attempt-recovery-expired',
+                   lease_token=?,lease_until=?,attempt_id=?,generation=1,attempts=1
+               WHERE task_id=?""",
+            (lease_token, now - 1, attempt_id, task_id),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (attempt_id, task_id, 1, "fabric:attempt-recovery-expired", "leased", digest, now - 2),
+        )
+        connection.commit()
+
+    result = coordinator.recover_compute_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        failure_class="heartbeat_lost",
+        reason="worker heartbeat expired",
+        evidence={"lease_expired": True},
+    )
+    assert result["status"] == "requeued"
+    assert coordinator.task(task_id)["status"] == "queued"
+    assert coordinator.execution_attempt(attempt_id)["status"] == "failed"
