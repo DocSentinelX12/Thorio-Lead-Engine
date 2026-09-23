@@ -198,3 +198,35 @@ def test_failure_domain_independence_does_not_invent_redundancy_when_domain_data
     second.pop("fabric_domains", None)
 
     assert AdaptiveFabricRouteSelector.failure_domain_independent(first, second) is False
+
+
+
+def test_adaptive_replacement_plan_uses_only_failure_domain_independent_alternatives() -> None:
+    current = _path("current")
+    current["segments"] = ("gpu:src", "nic:src", "rdma:src", "rdma:src:1", "fabric:ib0", "rdma:dst:1", "rdma:dst", "nic:dst", "gpu:dst")
+    current["fabric_domains"] = ("fabric:ib0",)
+
+    shared = dict(current)
+    shared["path_id"] = "shared"
+    shared["segments"] = ("gpu:src", "nic:src", "rdma:src", "rdma:src:2", "fabric:ib0", "rdma:dst:2", "rdma:dst", "nic:dst", "gpu:dst")
+
+    independent = dict(current)
+    independent["path_id"] = "independent"
+    independent["segments"] = ("gpu:src", "nic:src-2", "rdma:src-2", "rdma:src-2:1", "fabric:ib1", "rdma:dst-2:1", "rdma:dst-2", "nic:dst-2", "gpu:dst")
+    independent["fabric_domains"] = ("fabric:ib1",)
+
+    health = {
+        "current": {"sample_count": 8, "failure_rate": 0.8, "latency_delta_from_mean_ms": 9.0, "latest_latency_ms": 15.0},
+        "shared": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": -2.0, "latest_latency_ms": 2.0},
+        "independent": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": 1.0, "latest_latency_ms": 4.0},
+    }
+
+    plan = AdaptiveFabricRouteSelector.adaptive_replacement_plan(
+        [current, shared, independent],
+        health,
+        ({"source_gpu": "gpu:src", "destination_gpu": "gpu:dst", "current_path_id": "current"},),
+    )
+
+    assert plan[0]["migrate"] is True
+    assert plan[0]["to_path_id"] == "independent"
+    assert plan[0]["reason"] == "observed_route_health"
