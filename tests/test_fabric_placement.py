@@ -219,6 +219,7 @@ def test_multi_node_placement_requires_verified_shared_fabric_domain(tmp_path):
     requirements = ComputeRequirements(
         WorkloadClass.MULTI_NODE_GPU,
         GpuRequirements(gpu_count=2, require_nccl=True),
+        same_node=False,
     )
 
     with pytest.raises(ComputeSchedulingError, match="complete physical placement"):
