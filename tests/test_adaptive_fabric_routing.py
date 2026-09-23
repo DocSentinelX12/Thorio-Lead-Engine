@@ -95,3 +95,45 @@ def test_selector_selects_best_measured_route_independently_for_each_gpu_pair() 
         {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "u0-u1-fast"},
         {"source_gpu": "gpu:u1", "destination_gpu": "gpu:u2", "path_id": "u1-u2-fast"},
     )
+
+
+def test_adaptive_replacement_plan_reselects_each_gpu_pair_from_current_route_health() -> None:
+    paths = [
+        _path("u0-u1-current"),
+        _path("u0-u1-replacement"),
+        _path("u1-u2-current"),
+    ]
+    paths[0]["source_gpu"], paths[0]["destination_gpu"] = "gpu:u0", "gpu:u1"
+    paths[1]["source_gpu"], paths[1]["destination_gpu"] = "gpu:u0", "gpu:u1"
+    paths[2]["source_gpu"], paths[2]["destination_gpu"] = "gpu:u1", "gpu:u2"
+    health = {
+        "u0-u1-current": {"sample_count": 8, "failure_rate": 0.8, "latency_delta_from_mean_ms": 9.0, "latest_latency_ms": 15.0},
+        "u0-u1-replacement": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": -1.0, "latest_latency_ms": 3.0},
+        "u1-u2-current": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": 0.0, "latest_latency_ms": 4.0},
+    }
+    plan = AdaptiveFabricRouteSelector.adaptive_replacement_plan(
+        paths,
+        health,
+        (
+            {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "current_path_id": "u0-u1-current"},
+            {"source_gpu": "gpu:u1", "destination_gpu": "gpu:u2", "current_path_id": "u1-u2-current"},
+        ),
+    )
+    assert plan == (
+        {
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "from_path_id": "u0-u1-current",
+            "to_path_id": "u0-u1-replacement",
+            "migrate": True,
+            "reason": "observed_route_health",
+        },
+        {
+            "source_gpu": "gpu:u1",
+            "destination_gpu": "gpu:u2",
+            "from_path_id": "u1-u2-current",
+            "to_path_id": "u1-u2-current",
+            "migrate": False,
+            "reason": "current_route_remains_selected",
+        },
+    )
