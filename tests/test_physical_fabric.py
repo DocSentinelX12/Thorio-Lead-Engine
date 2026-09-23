@@ -286,6 +286,34 @@ def test_failure_and_reverification_require_fresh_exact_path_evidence() -> None:
     assert reverified.history[-1]["state"] == "FAILED"
 
 
+def test_reverified_path_accepts_fresh_measurement_after_recovery():
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph, source_gpu="gpu:src", destination_gpu="gpu:dst"
+    )[0]
+    verified = PhysicalFabricVerification.verify(
+        path,
+        evidence=[{"segment": segment, "operation": "probe", "result": "pass"} for segment in path.segments],
+    )
+    measured = PhysicalFabricVerification.measure(
+        verified, measurement={"bandwidth_gbps": 100, "latency_us": 8.0, "sample_count": 4}
+    )
+    failed = PhysicalFabricVerification.fail(
+        measured, reason="temporary fabric degradation", failure_domain="rdma_port"
+    )
+    reverified = PhysicalFabricVerification.reverify(
+        failed,
+        evidence=[{"segment": segment, "operation": "probe", "result": "pass"} for segment in path.segments],
+    )
+    refreshed = PhysicalFabricVerification.measure(
+        reverified, measurement={"bandwidth_gbps": 180, "latency_us": 4.0, "sample_count": 8}
+    )
+    assert refreshed.state is FabricPathState.MEASURED
+    assert refreshed.measurement["bandwidth_gbps"] == 180
+    assert refreshed.measurement["latency_us"] == 4.0
+    assert refreshed.measurement["sample_count"] == 8
+
+
 def test_reverification_rejects_partial_fresh_path_evidence() -> None:
     graph = {"components": _components(), "edges": _relationships()}
     path = PhysicalFabricPathBuilder.build(
