@@ -65,7 +65,7 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
         gpu_binding = item.get("gpu_binding")
         physical_path = gpu_binding.get("planned_physical_path") if isinstance(gpu_binding, Mapping) else None
         path = physical_path if isinstance(physical_path, Mapping) else {}
-        metrics.append({"rank": int(item.get("rank", probe.get("rank", -1))), "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(), "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "", "transport": str(probe.get("network_transport") or "").strip() or None, "all_reduce_elapsed_ms": elapsed_ms, "physical_path": dict(path), "path_key": physical_path_key(path), "fabric_path_id": str(path.get("fabric_path_id") or path.get("path_id") or "").strip(), "placement_id": str(verification.get("placement_id") or "").strip(), "execution_attempt_id": str(verification.get("execution_attempt_id") or verification.get("attempt_id") or "").strip(), "generation": verification.get("generation"), "workload_signature": dict(workload_signature), "workload_key": workload_performance_key(path, workload_signature)})
+        metrics.append({"rank": int(item.get("rank", probe.get("rank", -1))), "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(), "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "", "transport": str(probe.get("network_transport") or "").strip() or None, "all_reduce_elapsed_ms": elapsed_ms, "physical_path": dict(path), "path_key": physical_path_key(path), "fabric_path_id": str(gpu_binding.get("observed_fabric_path_id") or "").strip(), "placement_id": str(verification.get("placement_id") or "").strip(), "execution_attempt_id": str(verification.get("execution_attempt_id") or verification.get("attempt_id") or "").strip(), "generation": verification.get("generation"), "workload_signature": dict(workload_signature), "workload_key": workload_performance_key(path, workload_signature)})
     return tuple(sorted(metrics, key=lambda item: (int(item["rank"]), str(item["gpu_uuid"]))))
 
 
@@ -161,11 +161,20 @@ def extract_execution_path_observations(
     metrics = extract_execution_metrics(verification)
     observations: list[dict[str, Any]] = []
     for metric in metrics:
-        fabric_path_id = str(metric.get("fabric_path_id") or "").strip()
-        if not fabric_path_id:
-            continue
         elapsed_ms = float(metric["all_reduce_elapsed_ms"])
-        evidence = {
+        observed_paths = metric.get("observed_fabric_paths") or ()
+        if not isinstance(observed_paths, (list, tuple)):
+            observed_paths = ()
+        if not observed_paths:
+            single = str(metric.get("fabric_path_id") or "").strip()
+            observed_paths = ({"fabric_path_id": single},) if single else ()
+        for observed_path in observed_paths:
+            if not isinstance(observed_path, Mapping):
+                continue
+            fabric_path_id = str(observed_path.get("fabric_path_id") or "").strip()
+            if not fabric_path_id:
+                continue
+            evidence = {
             "source": "observed_all_reduce",
             "placement_id": str(metric.get("placement_id") or ""),
             "execution_attempt_id": str(metric.get("execution_attempt_id") or ""),
@@ -174,11 +183,13 @@ def extract_execution_path_observations(
             "gpu_uuid": str(metric.get("gpu_uuid") or ""),
             "network_transport": metric.get("transport"),
         }
-        observations.append({
-            "fabric_path_id": fabric_path_id,
-            "latency_us": elapsed_ms * 1000.0,
-            "success": True,
-            "observed_at": float(observed_at),
-            "evidence": evidence,
-        })
+            evidence["destination_rank"] = observed_path.get("destination_rank")
+            evidence["destination_gpu"] = observed_path.get("destination_gpu")
+            observations.append({
+                "fabric_path_id": fabric_path_id,
+                "latency_us": elapsed_ms * 1000.0,
+                "success": True,
+                "observed_at": float(observed_at),
+                "evidence": evidence,
+            })
     return tuple(observations)
