@@ -38,3 +38,10 @@ from .company_research_handler_override import install as _install_company_resea
 
 _install_company_research_override()
 del _install_company_research_override
+
+# Install the exact-path execution recovery seam after the canonical physical
+# fabric selector is available. This preserves the selector as the authority
+# while making exact failure recovery reachable from the established API.
+from . import fabric_recovery as _fabric_recovery
+
+del _fabric_recovery
