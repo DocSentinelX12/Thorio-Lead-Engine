@@ -65,19 +65,7 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
         gpu_binding = item.get("gpu_binding")
         physical_path = gpu_binding.get("planned_physical_path") if isinstance(gpu_binding, Mapping) else None
         path = physical_path if isinstance(physical_path, Mapping) else {}
-        metrics.append({
-            "rank": int(item.get("rank", probe.get("rank", -1))),
-            "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(),
-            "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "",
-            "transport": str(probe.get("network_transport") or "").strip() or None,
-            "all_reduce_elapsed_ms": elapsed_ms,
-            "physical_path": dict(path),
-            "path_key": physical_path_key(path),
-            "fabric_path_id": str(path.get("fabric_path_id") or path.get("path_id") or "").strip(),
-            "placement_id": str(verification.get("placement_id") or "").strip(),
-            "workload_signature": dict(workload_signature),
-            "workload_key": workload_performance_key(path, workload_signature),
-        })
+        metrics.append({"rank": int(item.get("rank", probe.get("rank", -1))), "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(), "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "", "transport": str(probe.get("network_transport") or "").strip() or None, "all_reduce_elapsed_ms": elapsed_ms, "physical_path": dict(path), "path_key": physical_path_key(path), "fabric_path_id": str(path.get("fabric_path_id") or path.get("path_id") or "").strip(), "placement_id": str(verification.get("placement_id") or "").strip(), "workload_signature": dict(workload_signature), "workload_key": workload_performance_key(path, workload_signature)})
     return tuple(sorted(metrics, key=lambda item: (int(item["rank"]), str(item["gpu_uuid"]))))
 
 
@@ -114,7 +102,7 @@ def workload_performance_key(path: Mapping[str, Any], workload: Mapping[str, Any
 def summarize_route_health(samples: Any) -> dict[str, Any]:
     """Summarize observed route outcomes without applying a health threshold."""
     if not isinstance(samples, (list, tuple)):
-        return {"sample_count": 0, "success_count": 0, "failure_count": 0, "failure_rate": 0.0}
+        return {"sample_count": 0, "success_count": 0, "failure_count": 0}
     valid = []
     for sample in samples:
         if not isinstance(sample, Mapping):
@@ -137,7 +125,7 @@ def summarize_route_health(samples: Any) -> dict[str, Any]:
             timestamp = float("-inf")
         valid.append((timestamp, parsed_latency, success))
     if not valid:
-        return {"sample_count": 0, "success_count": 0, "failure_count": 0, "failure_rate": 0.0}
+        return {"sample_count": 0, "success_count": 0, "failure_count": 0}
     valid.sort(key=lambda item: item[0])
     latencies = [item[1] for item in valid if item[1] is not None]
     latest_latency = next((item[1] for item in reversed(valid) if item[1] is not None), None)
