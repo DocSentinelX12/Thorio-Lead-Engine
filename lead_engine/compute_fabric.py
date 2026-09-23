@@ -225,20 +225,6 @@ class ComputeFabricRecoverySupervisor:
         reason: str,
         evidence: Mapping[str, Any] | None = None,
     ) -> FabricRecoveryAction:
-        attempt = self.coordinator.execution_attempt(attempt_id)
-        if not attempt:
-            raise ValueError(f"execution attempt does not exist: {attempt_id}")
-        if int(attempt["generation"]) != int(generation):
-            return FabricRecoveryAction(
-                task_id=str(attempt["task_id"]),
-                attempt_id=attempt_id,
-                generation=int(attempt["generation"]),
-                failure_class=str(failure_class),
-                status="stale_generation",
-                requeued=False,
-                fresh_allocation_required=False,
-                evidence_recorded=False,
-            )
         result = self.coordinator.recover_fabric_attempt(
             attempt_id=attempt_id,
             generation=generation,
