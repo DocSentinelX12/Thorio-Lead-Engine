@@ -111,8 +111,19 @@ class PlacementEvaluator:
             "node_id": gpu["node_id"],
             "paths": list(paths),
         }
-        if self.requirements.gpu.require_nccl and not paths:
-            return False, "missing_verified_gpu_nic_rdma_path", evidence
+        fabric_requested = (
+            self.requirements.gpu.min_fabric_bandwidth_gbps is not None
+            or self.requirements.gpu.max_fabric_latency_us is not None
+            or self.requirements.gpu.require_redundant_fabric_path
+        )
+        if fabric_requested and self.scheduler._fabric_path_contract(
+            gpu,
+            payload.get("gpu_uuid"),
+            min_bandwidth_gbps=self.requirements.gpu.min_fabric_bandwidth_gbps,
+            max_latency_us=self.requirements.gpu.max_fabric_latency_us,
+            require_redundant=self.requirements.gpu.require_redundant_fabric_path,
+        ) is None:
+            return False, "missing_required_verified_fabric_path", evidence
         return True, "verified", evidence
 
     def _valid_candidate(self, candidate: tuple[dict[str, Any], ...]) -> tuple[bool, dict[str, Any]]:
@@ -277,13 +288,37 @@ class PlacementEvaluator:
         if len(valid_nodes) < 2:
             return
 
+        provider_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for node in valid_nodes:
+            key = (str(node["cpu"]["provider_id"]), str(node["cpu"]["domain_id"]))
+            provider_groups.setdefault(key, []).append(node)
+
+        viable_groups = [
+            group for group in provider_groups.values()
+            if len(group) >= 2 and sum(len(node["gpus"]) for node in group) >= needed
+        ]
+        if not viable_groups:
+            self._trace(
+                "resource_eligibility",
+                "rejected",
+                reason="no_provider_and_domain_can_satisfy_complete_placement",
+            )
+            return
+
         # Build complete distributed candidates hierarchically rather than
         # enumerating the combinatorial GPU-set space. Each node contributes
         # verified GPUs, and nodes are ordered by their strongest verified
         # participant. The candidate is filled until the exact world size is
         # satisfied, with at least two nodes required.
+        ranked_group = max(
+            viable_groups,
+            key=lambda group: (
+                sum(len(node["gpus"]) for node in group),
+                tuple(sorted(str(node["node_id"]) for node in group)),
+            ),
+        )
         ranked_nodes = sorted(
-            valid_nodes,
+            ranked_group,
             key=lambda node: (
                 self.scheduler._node_topology_score(node),
                 self.scheduler._gpu_performance_key(node["gpus"][0], self.performance_history, self.requirements),
