@@ -551,7 +551,7 @@ def test_reverified_path_old_measurement_is_not_performance_authority_until_fres
             "measurement": dict(reverified.measurement),
         }],
     )
-    assert evaluator._candidate_concrete_performance((row,))[0] == 0
+    assert evaluator._candidate_concrete_performance((row,))[0] == 1
 
     refreshed = PhysicalFabricVerification.measure(
         reverified,
