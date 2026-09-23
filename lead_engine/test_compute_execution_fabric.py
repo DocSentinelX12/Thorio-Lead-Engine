@@ -389,3 +389,54 @@ def test_coordinator_quarantines_only_the_failed_physical_path(tmp_path):
     )
     assert inventory.is_fabric_path_quarantined(path) is True
     assert inventory.get(resource_key)["state"] == ResourceState.RESERVED.value
+
+
+def test_execution_recovery_records_failure_on_exact_physical_path(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "test-token", inventory=inventory)
+    now = 1000.0
+    task_id = "task-execution-failure"
+    attempt_id = "attempt-execution-failure"
+    generation = 2
+    lease_digest = "digest"
+    with coordinator._connect() as connection:
+        connection.execute(
+            """INSERT INTO compute_tasks(
+                   task_id,payload,status,attempt_id,generation,created_at,updated_at,lease_until
+               ) VALUES(?,?,?, ?,?,?,?,?)""",
+            (task_id, "{}", "leased", attempt_id, generation, now, now, now + 300),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (attempt_id, task_id, generation, "worker-1", "leased", lease_digest, now),
+        )
+        connection.commit()
+    with inventory._connect() as connection:
+        connection.execute(
+            """INSERT INTO compute_physical_fabric_paths(
+                   path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,
+                   state,measurement_json,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            ("fabric-path-failure", "gpu-0", "gpu-1", "[]", "[]", "VERIFIED", "{}", now, now),
+        )
+        connection.commit()
+
+    result = coordinator.recover_fabric_attempt(
+        attempt_id=attempt_id,
+        generation=generation,
+        failure_class="execution_path_failure",
+        reason="observed collective execution failure",
+        evidence={
+            "fabric_path_id": "fabric-path-failure",
+            "failure_domain": "inter_node_route",
+        },
+    )
+
+    assert result["requeued"] is True
+    health = inventory.fabric_route_health_index()["fabric-path-failure"]
+    assert health["sample_count"] == 1
+    assert health["failure_count"] == 1
+    assert health["latest_success"] is False
+    assert inventory.physical_paths()[0]["state"] == "FAILED"
