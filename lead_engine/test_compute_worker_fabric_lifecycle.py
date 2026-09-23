@@ -165,6 +165,9 @@ def test_recorded_verification_persists_verified_rdma_path_evidence(tmp_path: Pa
         lease_token=lease_token,
         verification=verification,
     ) is True
+    metrics = coordinator.fabric_execution_metrics(attempt_id, claimed["generation"])
+    assert metrics["samples"]
+    assert metrics["samples"][0]["placement_id"]
     participant = coordinator.execution_participants(attempt_id)[0]
     import json
     stored_verification = json.loads(participant["verification"])
