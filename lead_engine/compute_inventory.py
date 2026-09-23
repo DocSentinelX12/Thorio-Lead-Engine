@@ -219,7 +219,18 @@ class ComputeInventory:
                 failure_domain TEXT,
                 evidence_json TEXT NOT NULL,
                 observed_at REAL NOT NULL
+            )""") 
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_physical_fabric_measurement_history (
+                measurement_id TEXT PRIMARY KEY,
+                path_id TEXT NOT NULL,
+                measurement_json TEXT NOT NULL,
+                observed_at REAL NOT NULL,
+                recorded_at REAL NOT NULL
             )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_measurement_history_path "
+                "ON compute_physical_fabric_measurement_history(path_id,observed_at)"
+            )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_verifications_path "
                 "ON compute_physical_fabric_verifications(path_id,observed_at)"
@@ -471,6 +482,33 @@ class ComputeInventory:
                        WHERE path_id=?""",
                     (verification.state.value, verification.reason, verification.failure_domain, timestamp, verification.path_id),
                 )
+            measurement = dict(getattr(verification, "measurement", {}) or {})
+            if measurement:
+                measurement_material = {
+                    "path_id": verification.path_id,
+                    "measurement": measurement,
+                    "observed_at": getattr(verification, "measurement_observed_at", None) or timestamp,
+                }
+                measurement_id = hashlib.sha256(
+                    json.dumps(
+                        measurement_material,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                connection.execute(
+                    """INSERT OR IGNORE INTO compute_physical_fabric_measurement_history
+                       (measurement_id,path_id,measurement_json,observed_at,recorded_at)
+                       VALUES (?,?,?,?,?)""",
+                    (
+                        measurement_id,
+                        verification.path_id,
+                        json.dumps(measurement, ensure_ascii=False, sort_keys=True),
+                        getattr(verification, "measurement_observed_at", None) or timestamp,
+                        time.time(),
+                    ),
+                )
             connection.execute(
                 """INSERT OR IGNORE INTO compute_physical_fabric_verifications
                    (verification_id,path_id,state,reason,failure_domain,evidence_json,observed_at)
@@ -621,6 +659,30 @@ class ComputeInventory:
                 "failure_domain": row["failure_domain"],
                 "evidence": json.loads(row["evidence_json"]),
                 "observed_at": row["observed_at"],
+            }
+            for row in rows
+        ]
+
+    def physical_fabric_measurement_history(self, *, path_id: str | None = None) -> list[dict[str, Any]]:
+        """Return immutable concrete-path measurement observations in observation order."""
+        query = (
+            "SELECT measurement_id,path_id,measurement_json,observed_at,recorded_at "
+            "FROM compute_physical_fabric_measurement_history"
+        )
+        params: tuple[Any, ...] = ()
+        if path_id is not None:
+            query += " WHERE path_id=?"
+            params = (str(path_id),)
+        query += " ORDER BY observed_at,measurement_id"
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [
+            {
+                "measurement_id": row["measurement_id"],
+                "path_id": row["path_id"],
+                "measurement": json.loads(row["measurement_json"] or "{}"),
+                "observed_at": row["observed_at"],
+                "recorded_at": row["recorded_at"],
             }
             for row in rows
         ]
