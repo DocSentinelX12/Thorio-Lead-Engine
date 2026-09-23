@@ -123,6 +123,23 @@ class ComputeInventory:
                 "CREATE INDEX IF NOT EXISTS idx_compute_allocations_state "
                 "ON compute_allocations(state,updated_at)"
             )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_placements (
+                placement_id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                domain_id TEXT NOT NULL,
+                workload_signature_json TEXT NOT NULL,
+                selected_gpu_ids_json TEXT NOT NULL,
+                selected_node_ids_json TEXT NOT NULL,
+                selected_resource_keys_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                decision_trace_json TEXT NOT NULL,
+                placement_schema_version INTEGER NOT NULL,
+                created_at REAL NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_placements_created "
+                "ON compute_placements(created_at,placement_id)"
+            )
             connection.commit()
 
     @staticmethod
@@ -406,6 +423,95 @@ class ComputeInventory:
                 "success": bool(row["success"]),
             })
         return {path_key: summarize_route_health(samples) for path_key, samples in grouped.items()}
+
+    @staticmethod
+    def _placement_record(placement: Any) -> dict[str, Any]:
+        required = (
+            "placement_id",
+            "provider_id",
+            "domain_id",
+            "workload_signature",
+            "selected_gpu_ids",
+            "selected_node_ids",
+            "selected_resource_keys",
+            "evidence",
+            "decision_trace",
+        )
+        if any(not hasattr(placement, field) for field in required):
+            raise ValueError("placement is missing required durable fields")
+        placement_id = str(placement.placement_id).strip()
+        if not placement_id:
+            raise ValueError("placement_id is required")
+        return {
+            "placement_id": placement_id,
+            "provider_id": str(placement.provider_id),
+            "domain_id": str(placement.domain_id),
+            "workload_signature": list(placement.workload_signature),
+            "selected_gpu_ids": list(placement.selected_gpu_ids),
+            "selected_node_ids": list(placement.selected_node_ids),
+            "selected_resource_keys": list(placement.selected_resource_keys),
+            "evidence": dict(placement.evidence),
+            "decision_trace": [dict(item) for item in placement.decision_trace],
+        }
+
+    def persist_placement(self, placement: Any) -> dict[str, Any]:
+        record = self._placement_record(placement)
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO compute_placements
+                   (placement_id,provider_id,domain_id,workload_signature_json,
+                    selected_gpu_ids_json,selected_node_ids_json,selected_resource_keys_json,
+                    evidence_json,decision_trace_json,placement_schema_version,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    record["placement_id"],
+                    record["provider_id"],
+                    record["domain_id"],
+                    json.dumps(record["workload_signature"], ensure_ascii=False, sort_keys=True),
+                    json.dumps(record["selected_gpu_ids"], ensure_ascii=False, sort_keys=True),
+                    json.dumps(record["selected_node_ids"], ensure_ascii=False, sort_keys=True),
+                    json.dumps(record["selected_resource_keys"], ensure_ascii=False, sort_keys=True),
+                    json.dumps(record["evidence"], ensure_ascii=False, sort_keys=True),
+                    json.dumps(record["decision_trace"], ensure_ascii=False, sort_keys=True),
+                    1,
+                    now,
+                ),
+            )
+            connection.commit()
+        return self.placement(record["placement_id"])
+
+    def placement(self, placement_id: str) -> dict[str, Any] | None:
+        key = str(placement_id).strip()
+        if not key:
+            raise ValueError("placement_id is required")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM compute_placements WHERE placement_id=?",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "placement_id": str(row["placement_id"]),
+            "provider_id": str(row["provider_id"]),
+            "domain_id": str(row["domain_id"]),
+            "workload_signature": json.loads(row["workload_signature_json"]),
+            "selected_gpu_ids": json.loads(row["selected_gpu_ids_json"]),
+            "selected_node_ids": json.loads(row["selected_node_ids_json"]),
+            "selected_resource_keys": json.loads(row["selected_resource_keys_json"]),
+            "evidence": json.loads(row["evidence_json"]),
+            "decision_trace": json.loads(row["decision_trace_json"]),
+            "placement_schema_version": int(row["placement_schema_version"]),
+            "created_at": float(row["created_at"]),
+        }
+
+    def placements(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT placement_id FROM compute_placements ORDER BY created_at,placement_id"
+            ).fetchall()
+        return [self.placement(str(row["placement_id"])) for row in rows]
 
     def get(self, resource_key: str) -> dict[str, Any] | None:
         with self._connect() as connection:
