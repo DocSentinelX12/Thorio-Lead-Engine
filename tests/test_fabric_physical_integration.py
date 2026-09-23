@@ -123,6 +123,7 @@ def test_multi_node_placement_requires_verified_concrete_path(tmp_path):
             authentication_state="authenticated", evidence={"network": _network()},
         )
     )
+    inventory.persist_physical_path(_concrete_path())
     scheduler = ComputeScheduler(inventory)
     with pytest.raises(ComputeSchedulingError, match="complete physical placement"):
         scheduler.placement(_requirements())
