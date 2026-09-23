@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+import pytest
+
+from lead_engine.physical_fabric import (
+    FabricPathState,
+    PhysicalFabricPathBuilder,
+    PhysicalFabricVerification,
+)
+
+
+def _components() -> list[dict[str, object]]:
+    return [
+        {"component_type": "gpu", "identity": "gpu:src", "node_id": "node-a"},
+        {"component_type": "pci", "identity": "pci:src", "node_id": "node-a"},
+        {"component_type": "numa", "identity": "numa:src", "node_id": "node-a"},
+        {"component_type": "nic", "identity": "nic:src", "node_id": "node-a"},
+        {"component_type": "rdma_device", "identity": "rdma:src", "node_id": "node-a"},
+        {"component_type": "rdma_port", "identity": "rdma:src:1", "node_id": "node-a"},
+        {"component_type": "fabric", "identity": "fabric:ib0", "node_id": "domain-1"},
+        {"component_type": "rdma_port", "identity": "rdma:dst:1", "node_id": "node-b"},
+        {"component_type": "rdma_device", "identity": "rdma:dst", "node_id": "node-b"},
+        {"component_type": "nic", "identity": "nic:dst", "node_id": "node-b"},
+        {"component_type": "numa", "identity": "numa:dst", "node_id": "node-b"},
+        {"component_type": "pci", "identity": "pci:dst", "node_id": "node-b"},
+        {"component_type": "gpu", "identity": "gpu:dst", "node_id": "node-b"},
+    ]
+
+
+def _relationships() -> list[dict[str, object]]:
+    def rel(kind: str, source: str, target: str) -> dict[str, object]:
+        return {
+            "relationship_type": kind,
+            "source": source,
+            "target": target,
+            "state": "known",
+            "evidence": {"source": "probe"},
+        }
+
+    return [
+        rel("gpu_to_pci", "gpu:src", "pci:src"),
+        rel("gpu_to_numa", "gpu:src", "numa:src"),
+        rel("gpu_to_nic", "gpu:src", "nic:src"),
+        rel("nic_to_pci", "nic:src", "pci:src"),
+        rel("nic_to_rdma_device", "nic:src", "rdma:src"),
+        rel("rdma_device_to_port", "rdma:src", "rdma:src:1"),
+        rel("rdma_port_to_fabric", "rdma:src:1", "fabric:ib0"),
+        rel("fabric_to_rdma_port", "fabric:ib0", "rdma:dst:1"),
+        rel("rdma_device_to_port", "rdma:dst", "rdma:dst:1"),
+        rel("nic_to_rdma_device", "nic:dst", "rdma:dst"),
+        rel("nic_to_pci", "nic:dst", "pci:dst"),
+        rel("gpu_to_nic", "gpu:dst", "nic:dst"),
+        rel("gpu_to_numa", "gpu:dst", "numa:dst"),
+        rel("gpu_to_pci", "gpu:dst", "pci:dst"),
+    ]
+
+
+def test_complete_gpu_path_contains_both_locality_chains_and_fabric_domain() -> None:
+    graph = {
+        "components": _components(),
+        "edges": _relationships(),
+    }
+    paths = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )
+
+    assert len(paths) == 1
+    path = paths[0]
+    assert path.state is FabricPathState.CONSTRUCTED
+    assert path.source_gpu == "gpu:src"
+    assert path.destination_gpu == "gpu:dst"
+    assert path.fabric_domains == ("fabric:ib0",)
+    assert path.segments == (
+        "gpu:src", "pci:src", "numa:src", "nic:src", "rdma:src",
+        "rdma:src:1", "fabric:ib0", "rdma:dst:1", "rdma:dst",
+        "nic:dst", "numa:dst", "pci:dst", "gpu:dst",
+    )
+
+
+def test_incomplete_locality_cannot_construct_a_path() -> None:
+    graph = {"components": _components(), "edges": [e for e in _relationships() if e["target"] != "fabric:ib0"]}
+    paths = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )
+    assert paths == ()
+
+
+def test_multiple_valid_paths_are_preserved_without_a_count_limit() -> None:
+    relationships = _relationships()
+    relationships.extend(
+        [
+            {"relationship_type": "gpu_to_nic", "source": "gpu:src", "target": "nic:src-2", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "nic_to_rdma_device", "source": "nic:src-2", "target": "rdma:src-2", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "rdma_device_to_port", "source": "rdma:src-2", "target": "rdma:src-2:1", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "rdma_port_to_fabric", "source": "rdma:src-2:1", "target": "fabric:ib0", "state": "known", "evidence": {"source": "probe"}},
+        ]
+    )
+    components = _components() + [
+        {"component_type": "nic", "identity": "nic:src-2", "node_id": "node-a"},
+        {"component_type": "rdma_device", "identity": "rdma:src-2", "node_id": "node-a"},
+        {"component_type": "rdma_port", "identity": "rdma:src-2:1", "node_id": "node-a"},
+    ]
+    paths = PhysicalFabricPathBuilder.build(
+        locality_graph={"components": components, "edges": relationships},
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )
+    assert len(paths) == 2
+
+
+def test_verification_requires_exact_path_and_required_segments() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )[0]
+    verification = PhysicalFabricVerification.verify(
+        path,
+        evidence=[
+            {"segment": segment, "operation": "probe", "result": "pass"}
+            for segment in path.segments
+        ],
+    )
+    assert verification.state is FabricPathState.VERIFIED
+    assert verification.path_id == path.path_id
+
+
+def test_generic_endpoint_existence_cannot_verify_gpu_communication() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )[0]
+    verification = PhysicalFabricVerification.verify(
+        path,
+        evidence=[{"operation": "endpoint_exists", "result": "pass"}],
+    )
+    assert verification.state is FabricPathState.CONSTRUCTED
+    assert verification.reason == "required path-segment evidence is incomplete"
+
+
+def test_state_progression_is_monotonic_and_recovery_retains_history() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )[0]
+    verification = PhysicalFabricVerification.verify(
+        path,
+        evidence=[
+            {"segment": segment, "operation": "probe", "result": "pass"}
+            for segment in path.segments
+        ],
+    )
+    measured = PhysicalFabricVerification.measure(
+        verification,
+        measurement={"bandwidth_gbps": 100, "latency_us": 4.2},
+    )
+    assert measured.state is FabricPathState.MEASURED
+    degraded = PhysicalFabricVerification.degrade(
+        measured,
+        reason="rdma port error",
+        failure_domain="rdma_port",
+    )
+    assert degraded.state is FabricPathState.DEGRADED
+    recovered = PhysicalFabricVerification.recover(degraded)
+    assert recovered.state is FabricPathState.RECOVERED
+    assert recovered.path_id == path.path_id
+    assert recovered.history
+    assert recovered.history[-1]["state"] == "DEGRADED"
+
+
+def test_conflicting_or_unknown_segments_are_rejected_without_guessing() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    graph["edges"] = [
+        dict(edge, state="conflict")
+        if edge["relationship_type"] == "gpu_to_nic" and edge["source"] == "gpu:src"
+        else edge
+        for edge in graph["edges"]
+    ]
+    assert PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    ) == ()
+
+
+def test_path_construction_has_no_fixed_hardware_or_path_ceiling() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    for index in range(20):
+        graph["components"].extend([
+            {"component_type": "nic", "identity": f"nic:extra-{index}", "node_id": "node-a"},
+            {"component_type": "rdma_device", "identity": f"rdma:extra-{index}", "node_id": "node-a"},
+            {"component_type": "rdma_port", "identity": f"rdma:extra-{index}:1", "node_id": "node-a"},
+        ])
+        graph["edges"].extend([
+            {"relationship_type": "gpu_to_nic", "source": "gpu:src", "target": f"nic:extra-{index}", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "nic_to_rdma_device", "source": f"nic:extra-{index}", "target": f"rdma:extra-{index}", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "rdma_device_to_port", "source": f"rdma:extra-{index}", "target": f"rdma:extra-{index}:1", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "rdma_port_to_fabric", "source": f"rdma:extra-{index}:1", "target": "fabric:ib0", "state": "known", "evidence": {"source": "probe"}},
+        ])
+    paths = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )
+    assert len(paths) == 21
