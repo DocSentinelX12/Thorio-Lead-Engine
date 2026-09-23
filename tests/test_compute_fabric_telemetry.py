@@ -71,3 +71,16 @@ def test_execution_without_exact_path_identity_cannot_update_physical_path():
     verification = {"process_evidence": [{"rank": 0, "gpu_binding": {"planned_physical_path": {"node_id": "node-0"}},
         "probe": {"rank": 0, "gpu_uuid": "GPU-0", "all_reduce_elapsed_ms": 2.5}}]}
     assert extract_execution_path_observations(verification, observed_at=300.0) == ()
+
+
+def test_fabric_launch_contract_binds_durable_adaptive_path_ids_per_gpu_pair():
+    # Contract-level assertion: adaptive route IDs selected by placement must be
+    # carried into the per-rank launch binding instead of being reconstructed.
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    assert hasattr(ComputeCoordinator, "_adaptive_launch_routes")
+    routes = ComputeCoordinator._adaptive_launch_routes(
+        {"evidence": {"adaptive_routes": ({"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "path-fast"},)}},
+        ("gpu:u0", "gpu:u1"),
+    )
+    assert routes == ("path-fast",)
