@@ -128,6 +128,26 @@ def test_multi_node_placement_requires_verified_concrete_path(tmp_path):
         scheduler.placement(_requirements())
 
 
+def test_verified_concrete_path_is_consumed_by_distributed_placement(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(
+        ProviderResourceSnapshot(
+            provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+            nodes=(_node("node-a", _gpu("node-a", "g0", "u0")), _node("node-b", _gpu("node-b", "g0", "u1"))),
+            authentication_state="authenticated", evidence={"network": _network()},
+        )
+    )
+    path = _concrete_path()
+    inventory.persist_physical_path(path)
+    verification = PhysicalFabricVerification.verify(
+        path, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in path.segments]
+    )
+    inventory.persist_physical_verification(verification, evidence={"stage": "inter_node_collective"})
+    placement = ComputeScheduler(inventory).placement(_requirements())
+    assert placement.selected_node_ids == ("node-a", "node-b")
+    assert placement.evidence["concrete_physical_paths"][0]["path_id"] == path.path_id
+
+
 def test_multiple_verified_concrete_paths_remain_available_to_placement(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path_ab = _concrete_path()
