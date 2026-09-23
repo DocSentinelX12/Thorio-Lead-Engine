@@ -240,7 +240,7 @@ def test_inventory_persists_path_identity_and_verification_history(tmp_path) -> 
     records = inventory.physical_paths()
     history = inventory.physical_verification_history()
     assert records[0]["path_id"] == path.path_id
-    assert records[0]["state"] == "CONSTRUCTED"
+    assert records[0]["state"] == "VERIFIED"
     assert history[0]["path_id"] == path.path_id
     assert history[0]["state"] == "VERIFIED"
     assert history[0]["evidence"]["stage"] == "inter_node_collective"
