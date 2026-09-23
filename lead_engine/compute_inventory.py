@@ -540,7 +540,7 @@ class ComputeInventory:
                 "segments": json.loads(row["segments_json"]),
                 "fabric_domains": json.loads(row["fabric_domains_json"]),
                 "state": row["state"],
-                "measurement": json.loads(row["measurement_json"] or "{}"),
+                "measurement": json.loads(row["measurement_json"] or "{}") if "measurement_json" in row.keys() else {},
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             }
