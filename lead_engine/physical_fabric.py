@@ -513,29 +513,19 @@ class AdaptiveFabricRouteSelector:
         domains = path.get("fabric_domains")
         if not isinstance(segments, (list, tuple)) or not isinstance(domains, (list, tuple)):
             return frozenset()
-        normalized_segments = tuple(str(segment).strip() for segment in segments)
+        normalized_segments = frozenset(str(segment).strip() for segment in segments if str(segment).strip())
         normalized_domains = frozenset(str(domain).strip() for domain in domains if str(domain).strip())
         if not normalized_domains:
             return frozenset()
-        components: set[str] = set()
-        for domain in normalized_domains:
-            start = 0
-            while True:
-                try:
-                    index = normalized_segments.index(domain, start)
-                except ValueError:
-                    break
-                if index >= 3 and index + 3 < len(normalized_segments):
-                    source_nic = normalized_segments[index - 3]
-                    source_rdma = normalized_segments[index - 2]
-                    destination_rdma = normalized_segments[index + 2]
-                    destination_nic = normalized_segments[index + 3]
-                    components.update(
-                        component
-                        for component in (source_nic, source_rdma, destination_rdma, destination_nic)
-                        if component
-                    )
-                start = index + 1
+        # Canonical path identities encode component classes in their identity
+        # prefix. Endpoint GPUs, PCI and NUMA topology are not independent-path
+        # failure domains, while NICs and RDMA devices are physical dependencies.
+        components = {
+            segment
+            for segment in normalized_segments
+            if segment.startswith("nic:") or (segment.startswith("rdma:") and segment.count(":") == 1)
+        }
+        components.update(normalized_domains)
         return frozenset(components)
 
     @classmethod
