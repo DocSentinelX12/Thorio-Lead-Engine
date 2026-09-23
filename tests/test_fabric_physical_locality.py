@@ -22,7 +22,7 @@ def test_locality_graph_requires_explicit_identity_correlation() -> None:
     assert graph["edges"][0]["source"] == "gpu:GPU-0"
     assert graph["edges"][0]["target"] == "nic:mlx5_0"
     assert graph["edges"][0]["state"] == "known"
-    assert graph["edges"][0]["evidence"]["distance"] == "PIX"
+    assert graph["edges"][0]["evidence"][0]["distance"] == "PIX"
 
 
 def test_missing_pcie_and_numa_relationships_remain_unknown() -> None:
@@ -64,6 +64,7 @@ def test_multiple_nics_and_rdma_ports_are_all_preserved() -> None:
             {"component_type": "nic", "identity": "nic:mlx5_0", "node_id": "node-a"},
             {"component_type": "nic", "identity": "nic:mlx5_1", "node_id": "node-a"},
             {"component_type": "rdma_device", "identity": "rdma:mlx5_0", "node_id": "node-a"},
+            {"component_type": "rdma_device", "identity": "rdma:mlx5_1", "node_id": "node-a"},
             {"component_type": "rdma_port", "identity": "rdma:mlx5_0:1", "node_id": "node-a"},
             {"component_type": "rdma_port", "identity": "rdma:mlx5_1:1", "node_id": "node-a"},
         ],
