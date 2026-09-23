@@ -295,14 +295,18 @@ def test_failed_path_requires_fresh_verification_before_replacement_placement(tm
         ]}, source_gpu="gpu:u1", destination_gpu="gpu:u0"
     )[0]
     inventory.persist_physical_path(replacement)
-    fresh = PhysicalFabricVerification.reverify(
-        primary_verification,
-        evidence=[{"segment": s, "operation": "fresh_probe", "result": "pass"} for s in primary.segments],
+    with pytest.raises(ComputeSchedulingError, match="complete physical placement"):
+        ComputeScheduler(inventory).placement(_requirements())
+
+    replacement_verification = PhysicalFabricVerification.verify(
+        replacement,
+        evidence=[{"segment": s, "operation": "fresh_probe", "result": "pass"} for s in replacement.segments],
     )
-    inventory.persist_physical_verification(fresh, evidence={"stage": "fresh_reverification"})
-    assert inventory.physical_paths()[0]["state"] == "REVERIFIED"
+    inventory.persist_physical_verification(
+        replacement_verification, evidence={"stage": "fresh_replacement_verification"}
+    )
     placement = ComputeScheduler(inventory).placement(_requirements())
-    assert placement.evidence["concrete_physical_paths"]
+    assert placement.evidence["concrete_physical_paths"][0]["path_id"] == replacement.path_id
 
 def test_recovery_evidence_requires_fresh_verified_path(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
