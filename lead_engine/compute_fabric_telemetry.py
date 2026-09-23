@@ -80,3 +80,78 @@ def aggregate_execution_metrics(metrics: tuple[dict[str, Any], ...]) -> dict[str
         "avg_all_reduce_elapsed_ms": sum(values) / len(values),
         "transport": transports[0] if len(transports) == 1 else transports,
     }
+
+
+def workload_performance_key(path: Mapping[str, Any], workload: Mapping[str, Any]) -> str:
+    """Return a deterministic identity for observed performance of one path and workload."""
+    path_key = physical_path_key(path)
+    if not path_key:
+        return ""
+    normalized_workload = {}
+    for key, value in workload.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+        if isinstance(value, (str, int, float, bool)):
+            normalized_workload[str(key)] = value
+    if not normalized_workload:
+        return path_key
+    serialized = json.dumps(
+        {"path_key": path_key, "workload": normalized_workload},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def summarize_route_health(samples: Any) -> dict[str, Any]:
+    """Summarize observed route outcomes without applying a health threshold."""
+    if not isinstance(samples, (list, tuple)):
+        return {"sample_count": 0, "success_count": 0, "failure_count": 0}
+    valid = []
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            continue
+        success = sample.get("success")
+        if not isinstance(success, bool):
+            continue
+        latency = sample.get("latency_ms")
+        parsed_latency = None
+        if latency is not None:
+            try:
+                parsed_latency = float(latency)
+            except (TypeError, ValueError):
+                parsed_latency = None
+            if parsed_latency is not None and parsed_latency <= 0:
+                parsed_latency = None
+        observed_at = sample.get("observed_at")
+        try:
+            timestamp = float(observed_at)
+        except (TypeError, ValueError):
+            timestamp = float("-inf")
+        valid.append((timestamp, parsed_latency, success))
+    if not valid:
+        return {"sample_count": 0, "success_count": 0, "failure_count": 0}
+    valid.sort(key=lambda item: item[0])
+    latencies = [item[1] for item in valid if item[1] is not None]
+    latest_latency = next((item[1] for item in reversed(valid) if item[1] is not None), None)
+    result = {
+        "sample_count": len(valid),
+        "success_count": sum(1 for item in valid if item[2]),
+        "failure_count": sum(1 for item in valid if not item[2]),
+    }
+    if latencies:
+        mean = sum(latencies) / len(latencies)
+        result.update({
+            "latest_latency_ms": latest_latency,
+            "historical_mean_latency_ms": mean,
+            "latency_delta_from_mean_ms": (
+                latest_latency - mean if latest_latency is not None else None
+            ),
+        })
+    result["failure_rate"] = result["failure_count"] / result["sample_count"]
+    return result
