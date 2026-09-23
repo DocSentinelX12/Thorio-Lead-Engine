@@ -196,8 +196,17 @@ def test_allocate_uses_complete_physical_placement_gate(tmp_path):
     inventory = _snapshot(tmp_path, nodes=nodes, network=network)
     scheduler = ComputeScheduler(inventory)
 
+    requirements = ComputeRequirements(
+        WorkloadClass.MULTI_GPU,
+        GpuRequirements(
+            gpu_count=2,
+            require_nccl=True,
+            min_fabric_bandwidth_gbps=1.0,
+        ),
+        performance_signature=_requirements().performance_signature,
+    )
     with pytest.raises(ComputeSchedulingError, match="complete physical placement"):
-        scheduler.allocate(_requirements(), "invalid-placement")
+        scheduler.allocate(requirements, "invalid-placement")
 
 
 def test_multi_node_placement_requires_verified_shared_fabric_domain(tmp_path):
