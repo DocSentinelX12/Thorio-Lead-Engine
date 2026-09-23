@@ -258,6 +258,24 @@ class PlacementEvaluator:
         return (0, sum(elapsed) / len(elapsed), -sum(int(item.get("sample_count", 0)) for item in observations))
 
     def _candidate_route_health(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        adaptive_routes = self._adaptive_route_selection(candidate)
+        if adaptive_routes:
+            observations = [
+                self.route_health.get(str(route["path_id"]))
+                for route in adaptive_routes
+            ]
+            observations = [item for item in observations if isinstance(item, dict)]
+            if observations:
+                return min(
+                    (
+                        0,
+                        float(item.get("latency_delta_from_mean_ms", float("inf"))),
+                        float(item.get("failure_rate", float("inf"))),
+                        float(item.get("latest_latency_ms", float("inf"))),
+                        -int(item.get("sample_count", 0)),
+                    )
+                    for item in observations
+                )
         observations = []
         for gpu in candidate:
             for path in self._verified_paths(gpu):
