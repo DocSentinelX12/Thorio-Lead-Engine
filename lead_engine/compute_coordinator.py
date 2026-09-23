@@ -1544,14 +1544,16 @@ class ComputeCoordinator:
                             other_uuid = str(other_payload.get("gpu_uuid") or "").strip()
                             if other_uuid and other_uuid != gpu_uuid:
                                 peer_gpu_uuids.append(other_uuid)
+                    binding["standby_fabric_path_ids"] = []
                     for peer_uuid in sorted(set(peer_gpu_uuids)):
+                        pair = (f"gpu:{gpu_uuid}", f"gpu:{peer_uuid}")
+                        route_set = self._adaptive_launch_route_set(placement, pair)
                         binding["planned_fabric_path_ids"].extend(
-                            self._adaptive_launch_routes(
-                                placement,
-                                (f"gpu:{gpu_uuid}", f"gpu:{peer_uuid}"),
-                            )
+                            self._adaptive_launch_routes(placement, pair)
                         )
+                        binding["standby_fabric_path_ids"].extend(route_set["standby_path_ids"])
                     binding["planned_fabric_path_ids"] = sorted(set(binding["planned_fabric_path_ids"]))
+                    binding["standby_fabric_path_ids"] = sorted(set(binding["standby_fabric_path_ids"]))
                 if bound_resource is not None:
                     if bound_resource.get("state") != ResourceState.RESERVED.value:
                         raise ValueError(
