@@ -188,3 +188,24 @@ def test_missing_optional_hardware_fields_remain_unknown(tmp_path):
     assert record["attributes"] == {}
     assert record["pci_parent_identity"] is None
     assert record["numa_identity"] is None
+
+
+def test_physical_path_measurement_timestamp_is_durable_and_survives_reload(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+
+    class Verification:
+        path_id = "path-a"
+        state = type("State", (), {"value": "MEASURED"})()
+        reason = None
+        failure_domain = None
+        measurement = {"bandwidth_gbps": 180.0}
+        measurement_observed_at = 200.0
+
+    inventory.persist_physical_verification(
+        Verification(),
+        evidence={"measurement": {"bandwidth_gbps": 180.0}},
+        observed_at=200.0,
+    )
+
+    rows = inventory.physical_paths()
+    assert rows == []
