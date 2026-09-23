@@ -205,13 +205,17 @@ class ComputeCoordinator:
                 all_reduce_elapsed_ms REAL NOT NULL,
                 observed_at REAL NOT NULL,
                 path_key TEXT NOT NULL DEFAULT '',
+                workload_key TEXT NOT NULL DEFAULT '',
                 UNIQUE(attempt_id, generation, worker_id, rank)
             )""")
             metric_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_fabric_execution_metrics)")}
             if "path_key" not in metric_columns:
                 connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN path_key TEXT NOT NULL DEFAULT ''")
+            if "workload_key" not in metric_columns:
+                connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN workload_key TEXT NOT NULL DEFAULT ''")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_attempt ON compute_fabric_execution_metrics(attempt_id, generation, observed_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_path ON compute_fabric_execution_metrics(path_key, observed_at)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_workload ON compute_fabric_execution_metrics(workload_key, observed_at)")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_path_performance (
                 path_key TEXT PRIMARY KEY,
                 sample_count INTEGER NOT NULL,
