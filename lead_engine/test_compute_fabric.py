@@ -330,3 +330,54 @@ def test_exact_recovery_can_fence_an_expired_current_generation(tmp_path):
     assert result["status"] == "requeued"
     assert coordinator.task(task_id)["status"] == "queued"
     assert coordinator.execution_attempt(attempt_id)["status"] == "failed"
+
+
+def test_participant_failure_routes_through_exact_fabric_recovery(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+    import hashlib
+
+    coordinator = ComputeCoordinator(str(Path(tmp_path) / "coordinator.sqlite3"), auth_token="token")
+    task_id = coordinator.enqueue({"compute_requirements": {"workload_class": "gpu_required"}})
+    attempt_id = "attempt-participant-failure"
+    lease_token = "participant-lease"
+    now = time.time()
+    digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+    with coordinator._connect() as connection:
+        connection.execute(
+            """UPDATE compute_tasks
+               SET status='leased',worker_id='worker-1',lease_token=?,lease_until=?,
+                   attempt_id=?,generation=1,attempts=1
+               WHERE task_id=?""",
+            (lease_token, now + 300, attempt_id, task_id),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (attempt_id, task_id, 1, "worker-1", "leased", digest, now),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_participants(
+                   attempt_id,task_id,generation,allocation_id,worker_id,node_id,rank,
+                   world_size,rendezvous_ref,status,resource_ids,bound_at,heartbeat_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                attempt_id, task_id, 1, "allocation-1", "worker-1", "node-1", 0,
+                2, "fabric:attempt-participant-failure:1", "active", "[]", now, now,
+            ),
+        )
+        connection.commit()
+
+    changed = coordinator.execution_participant_state(
+        attempt_id=attempt_id,
+        generation=1,
+        worker_id="worker-1",
+        lease_token=lease_token,
+        status="failed",
+        error="rank process exited",
+    )
+    assert changed is True
+    assert coordinator.task(task_id)["status"] == "queued"
+    assert coordinator.execution_attempt(attempt_id)["status"] == "failed"
+    history = coordinator.fabric_recovery_history(attempt_id)
+    assert any(item["failure_class"] == "participant_failed" and item["phase"] == "fenced" for item in history)
