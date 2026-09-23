@@ -97,6 +97,13 @@ class ComputeInventory:
                 success INTEGER NOT NULL,
                 evidence_json TEXT NOT NULL
             )""")
+            route_columns = {str(row["name"]) for row in connection.execute(
+                "PRAGMA table_info(compute_fabric_route_observations)"
+            ).fetchall()}
+            if "fabric_path_id" not in route_columns:
+                connection.execute(
+                    "ALTER TABLE compute_fabric_route_observations ADD COLUMN fabric_path_id TEXT"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_fabric_route_observations_path "
                 "ON compute_fabric_route_observations(path_key,observed_at)"
