@@ -286,6 +286,30 @@ def test_failure_and_reverification_require_fresh_exact_path_evidence() -> None:
     assert reverified.history[-1]["state"] == "FAILED"
 
 
+def test_newer_measurement_supersedes_older_observation_and_stale_one_is_ignored():
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph, source_gpu="gpu:src", destination_gpu="gpu:dst"
+    )[0]
+    verified = PhysicalFabricVerification.verify(
+        path,
+        evidence=[{"segment": segment, "operation": "probe", "result": "pass"} for segment in path.segments],
+    )
+    first = PhysicalFabricVerification.measure(
+        verified, measurement={"bandwidth_gbps": 100}, observed_at=100.0
+    )
+    newer = PhysicalFabricVerification.measure(
+        first, measurement={"bandwidth_gbps": 180}, observed_at=200.0
+    )
+    stale = PhysicalFabricVerification.measure(
+        newer, measurement={"bandwidth_gbps": 40}, observed_at=150.0
+    )
+    assert newer.measurement["bandwidth_gbps"] == 180
+    assert newer.measurement_observed_at == 200.0
+    assert stale.measurement["bandwidth_gbps"] == 180
+    assert stale.measurement_observed_at == 200.0
+
+
 def test_reverified_path_accepts_fresh_measurement_after_recovery():
     graph = {"components": _components(), "edges": _relationships()}
     path = PhysicalFabricPathBuilder.build(
