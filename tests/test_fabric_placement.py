@@ -111,8 +111,13 @@ def test_complete_placement_rejects_individually_eligible_gpus_with_incomplete_f
     inventory = _snapshot(tmp_path, nodes=nodes, network=network)
     scheduler = ComputeScheduler(inventory)
 
+    requirements = ComputeRequirements(
+        WorkloadClass.MULTI_GPU,
+        GpuRequirements(gpu_count=2, require_nccl=True, min_fabric_bandwidth_gbps=1.0),
+        performance_signature=_requirements().performance_signature,
+    )
     with pytest.raises(ComputeSchedulingError, match="complete physical placement"):
-        scheduler.placement(_requirements())
+        scheduler.placement(requirements)
 
 
 def test_complete_placement_records_verified_physical_evidence(tmp_path):
@@ -245,8 +250,13 @@ def test_placement_evidence_retains_rejection_reason(tmp_path):
     inventory = _snapshot(tmp_path, nodes=nodes, network=network)
     scheduler = ComputeScheduler(inventory)
 
+    requirements = ComputeRequirements(
+        WorkloadClass.MULTI_GPU,
+        GpuRequirements(gpu_count=2, require_nccl=True, min_fabric_bandwidth_gbps=1.0),
+        performance_signature=_requirements().performance_signature,
+    )
     with pytest.raises(ComputeSchedulingError):
-        scheduler.placement(_requirements())
+        scheduler.placement(requirements)
 
     assert any(
         item["status"] == "rejected"
