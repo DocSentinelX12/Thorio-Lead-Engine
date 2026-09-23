@@ -310,6 +310,62 @@ def test_newer_measurement_supersedes_older_observation_and_stale_one_is_ignored
     assert stale.measurement_observed_at == 200.0
 
 
+
+def test_explicit_degraded_measurement_transitions_exact_path_without_guessing() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph, source_gpu="gpu:src", destination_gpu="gpu:dst"
+    )[0]
+    verified = PhysicalFabricVerification.verify(
+        path,
+        evidence=[{"segment": segment, "operation": "probe", "result": "pass"} for segment in path.segments],
+    )
+    measured = PhysicalFabricVerification.measure(
+        verified,
+        measurement={"bandwidth_gbps": 180, "latency_us": 4.0, "sample_count": 8},
+        observed_at=100.0,
+    )
+    degraded = PhysicalFabricVerification.measure(
+        measured,
+        measurement={
+            "bandwidth_gbps": 70,
+            "latency_us": 12.0,
+            "sample_count": 8,
+            "status": "degraded",
+            "degradation_reason": "measured bandwidth fell below the probe's reported capability",
+            "failure_domain": "inter_node_route",
+        },
+        observed_at=200.0,
+    )
+    assert degraded.state is FabricPathState.DEGRADED
+    assert degraded.path_id == path.path_id
+    assert degraded.failure_domain == "inter_node_route"
+    assert degraded.measurement["bandwidth_gbps"] == 70
+    assert degraded.measurement_observed_at == 200.0
+    assert degraded.history[-1]["state"] == "MEASURED"
+
+
+def test_degraded_measurement_without_explicit_failure_metadata_does_not_guess() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph, source_gpu="gpu:src", destination_gpu="gpu:dst"
+    )[0]
+    verified = PhysicalFabricVerification.verify(
+        path,
+        evidence=[{"segment": segment, "operation": "probe", "result": "pass"} for segment in path.segments],
+    )
+    measured = PhysicalFabricVerification.measure(
+        verified, measurement={"bandwidth_gbps": 180}, observed_at=100.0
+    )
+    observed = PhysicalFabricVerification.measure(
+        measured,
+        measurement={"bandwidth_gbps": 70, "status": "degraded"},
+        observed_at=200.0,
+    )
+    assert observed.state is FabricPathState.MEASURED
+    assert observed.measurement["bandwidth_gbps"] == 70
+    assert observed.measurement_observed_at == 200.0
+
 def test_reverified_path_accepts_fresh_measurement_after_recovery():
     graph = {"components": _components(), "edges": _relationships()}
     path = PhysicalFabricPathBuilder.build(
