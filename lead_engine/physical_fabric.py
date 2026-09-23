@@ -507,6 +507,38 @@ class AdaptiveFabricRouteSelector:
             })
         return tuple(selected)
 
+    @staticmethod
+    def _failure_domain_components(path: Mapping[str, object]) -> frozenset[str]:
+        segments = path.get("segments")
+        if not isinstance(segments, (list, tuple)):
+            return frozenset()
+        source_gpu = str(path.get("source_gpu") or "").strip()
+        destination_gpu = str(path.get("destination_gpu") or "").strip()
+        return frozenset(
+            str(segment).strip()
+            for segment in segments
+            if str(segment).strip() and str(segment).strip() not in {source_gpu, destination_gpu}
+        )
+
+    @classmethod
+    def failure_domain_independent(
+        cls,
+        first: Mapping[str, object],
+        second: Mapping[str, object],
+    ) -> bool:
+        """Return true only when canonical evidence proves physical independence."""
+        first_domains = first.get("fabric_domains")
+        second_domains = second.get("fabric_domains")
+        if not isinstance(first_domains, (list, tuple)) or not isinstance(second_domains, (list, tuple)):
+            return False
+        first_domain_set = frozenset(str(item).strip() for item in first_domains if str(item).strip())
+        second_domain_set = frozenset(str(item).strip() for item in second_domains if str(item).strip())
+        first_components = cls._failure_domain_components(first)
+        second_components = cls._failure_domain_components(second)
+        if not first_domain_set or not second_domain_set or not first_components or not second_components:
+            return False
+        return not first_domain_set.intersection(second_domain_set) and not first_components.intersection(second_components)
+
     @classmethod
     def adaptive_replacement_plan(
         cls,
