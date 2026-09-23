@@ -193,6 +193,8 @@ class ComputeInventory:
                 state TEXT NOT NULL,
                 measurement_json TEXT NOT NULL DEFAULT '{}',
                 measurement_observed_at REAL,
+                reason TEXT,
+                failure_domain TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )""")
@@ -201,6 +203,10 @@ class ComputeInventory:
                 connection.execute("ALTER TABLE compute_physical_fabric_paths ADD COLUMN measurement_json TEXT NOT NULL DEFAULT '{}'")
             if "measurement_observed_at" not in path_columns:
                 connection.execute("ALTER TABLE compute_physical_fabric_paths ADD COLUMN measurement_observed_at REAL")
+            if "reason" not in path_columns:
+                connection.execute("ALTER TABLE compute_physical_fabric_paths ADD COLUMN reason TEXT")
+            if "failure_domain" not in path_columns:
+                connection.execute("ALTER TABLE compute_physical_fabric_paths ADD COLUMN failure_domain TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_paths_endpoints "
                 "ON compute_physical_fabric_paths(source_gpu,destination_gpu,state)"
@@ -446,10 +452,12 @@ class ComputeInventory:
             if measurement_is_newer:
                 connection.execute(
                     """UPDATE compute_physical_fabric_paths
-                       SET state=?, measurement_json=?, measurement_observed_at=?, updated_at=?
+                       SET state=?, reason=?, failure_domain=?, measurement_json=?, measurement_observed_at=?, updated_at=?
                        WHERE path_id=?""",
                     (
                         verification.state.value,
+                        verification.reason,
+                        verification.failure_domain,
                         json.dumps(dict(getattr(verification, "measurement", {}) or {}), ensure_ascii=False, sort_keys=True),
                         getattr(verification, "measurement_observed_at", None) or timestamp,
                         timestamp,
@@ -459,9 +467,9 @@ class ComputeInventory:
             else:
                 connection.execute(
                     """UPDATE compute_physical_fabric_paths
-                       SET state=?, updated_at=?
+                       SET state=?, reason=?, failure_domain=?, updated_at=?
                        WHERE path_id=?""",
-                    (verification.state.value, timestamp, verification.path_id),
+                    (verification.state.value, verification.reason, verification.failure_domain, timestamp, verification.path_id),
                 )
             connection.execute(
                 """INSERT OR IGNORE INTO compute_physical_fabric_verifications
@@ -561,6 +569,8 @@ class ComputeInventory:
                 "segments": json.loads(row["segments_json"]),
                 "fabric_domains": json.loads(row["fabric_domains_json"]),
                 "state": row["state"],
+                "reason": row["reason"],
+                "failure_domain": row["failure_domain"],
                 "measurement": json.loads(row["measurement_json"] or "{}") if "measurement_json" in row.keys() else {},
                 "measurement_observed_at": row["measurement_observed_at"],
                 "created_at": row["created_at"],
@@ -573,7 +583,7 @@ class ComputeInventory:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,
-                          state,measurement_json,measurement_observed_at,created_at,updated_at
+                          state,reason,failure_domain,measurement_json,measurement_observed_at,created_at,updated_at
                    FROM compute_physical_fabric_paths
                    ORDER BY created_at,path_id"""
             ).fetchall()
