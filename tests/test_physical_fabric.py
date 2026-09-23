@@ -588,3 +588,39 @@ def test_resolve_observed_fabric_path_id_rejects_ambiguous_routes():
         {"path_id": "path-b", "source_gpu": "gpu:src", "destination_gpu": "gpu:dst", "segments": ("gpu:src", "rdma:src:1", "fabric:ib1", "rdma:dst:1", "gpu:dst")},
     ]
     assert resolve_observed_fabric_path_id(paths, source_gpu="gpu:src", destination_gpu="gpu:dst", source_rdma_device="src", source_rdma_port=1, destination_rdma_device="dst", destination_rdma_port=1) is None
+
+
+def test_runtime_exact_route_reconciliation_requires_peer_and_bound_path_identity():
+    from lead_engine.nvidia_runtime import NvidiaRuntime
+
+    path = {
+        "path_id": "path-fast",
+        "source_gpu": "gpu:src",
+        "destination_gpu": "gpu:dst",
+        "segments": ("gpu:src", "rdma:src:1", "fabric:ib0", "rdma:dst:1", "gpu:dst"),
+    }
+    evidence = [{
+        "rank": 0,
+        "gpu_binding": {
+            "rank": 0,
+            "gpu_uuid": "src",
+            "planned_fabric_path_ids": ["path-fast"],
+        },
+        "peer_connections": [{"peer_rank": 1, "transport": "IB"}],
+        "gpu_nic_locality": {"gpu_uuid": "src", "rdma_device": "src", "rdma_port": 1},
+    }, {
+        "rank": 1,
+        "gpu_binding": {
+            "rank": 1,
+            "gpu_uuid": "dst",
+            "planned_fabric_path_ids": [],
+        },
+        "peer_connections": [{"peer_rank": 0, "transport": "IB"}],
+        "gpu_nic_locality": {"gpu_uuid": "dst", "rdma_device": "dst", "rdma_port": 1},
+    }]
+    reconciled = NvidiaRuntime.reconcile_exact_planned_fabric_paths(evidence, [path])
+    assert reconciled[0]["observed_fabric_path_id"] == "path-fast"
+
+    evidence[0]["peer_connections"] = []
+    with pytest.raises(Exception, match="peer connection"):
+        NvidiaRuntime.reconcile_exact_planned_fabric_paths(evidence, [path])
