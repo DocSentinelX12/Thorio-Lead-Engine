@@ -1500,7 +1500,18 @@ class ComputeCoordinator:
                 changed = cursor.rowcount == 1
                 connection.commit()
             if changed and status == "failed":
-                self.reconcile_fabric(participant_timeout_seconds=0.000001)
+                self.recover_compute_attempt(
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    failure_class="participant_failed",
+                    reason=str(error) or "fabric participant reported failure",
+                    evidence={
+                        "worker_id": worker_id,
+                        "attempt_id": attempt_id,
+                        "generation": generation,
+                        "participant_status": status,
+                    },
+                )
             return changed
 
     def _quarantine_allocation_gpu_for_path_failure(
