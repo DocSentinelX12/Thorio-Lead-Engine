@@ -65,3 +65,33 @@ def test_migration_does_not_reselect_without_a_verified_alternative() -> None:
     health = {"current": {"sample_count": 8, "failure_rate": 1.0, "latency_delta_from_mean_ms": 5.0, "latest_latency_ms": 10.0}}
     decision = AdaptiveFabricRouteSelector.migration(paths, health, current_path_id="current")
     assert decision == {"migrate": False, "from_path_id": "current", "to_path_id": None, "reason": "no_verified_alternative"}
+
+
+def test_selector_selects_best_measured_route_independently_for_each_gpu_pair() -> None:
+    paths = [
+        _path("u0-u1-slow"),
+        _path("u0-u1-fast"),
+        _path("u1-u2-fast"),
+    ]
+    paths[0]["source_gpu"] = "gpu:u0"
+    paths[0]["destination_gpu"] = "gpu:u1"
+    paths[1]["source_gpu"] = "gpu:u0"
+    paths[1]["destination_gpu"] = "gpu:u1"
+    paths[2]["source_gpu"] = "gpu:u1"
+    paths[2]["destination_gpu"] = "gpu:u2"
+    health = {
+        "u0-u1-slow": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": 4.0, "latest_latency_ms": 8.0},
+        "u0-u1-fast": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": -1.0, "latest_latency_ms": 3.0},
+        "u1-u2-fast": {"sample_count": 6, "failure_rate": 0.0, "latency_delta_from_mean_ms": -2.0, "latest_latency_ms": 2.0},
+    }
+
+    selected = AdaptiveFabricRouteSelector.select_for_gpu_pairs(
+        paths,
+        health,
+        (("gpu:u0", "gpu:u1"), ("gpu:u1", "gpu:u2")),
+    )
+
+    assert selected == (
+        {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "u0-u1-fast"},
+        {"source_gpu": "gpu:u1", "destination_gpu": "gpu:u2", "path_id": "u1-u2-fast"},
+    )
