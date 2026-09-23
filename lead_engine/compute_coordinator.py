@@ -210,6 +210,7 @@ class ComputeCoordinator:
                 path_key TEXT NOT NULL DEFAULT '',
                 workload_key TEXT NOT NULL DEFAULT '',
                 placement_id TEXT NOT NULL DEFAULT '',
+                fabric_path_id TEXT NOT NULL DEFAULT '',
                 UNIQUE(attempt_id, generation, worker_id, rank)
             )""")
             metric_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_fabric_execution_metrics)")}
@@ -219,9 +220,12 @@ class ComputeCoordinator:
                 connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN workload_key TEXT NOT NULL DEFAULT ''")
             if "placement_id" not in metric_columns:
                 connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN placement_id TEXT NOT NULL DEFAULT ''")
+            if "fabric_path_id" not in metric_columns:
+                connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN fabric_path_id TEXT NOT NULL DEFAULT ''")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_attempt ON compute_fabric_execution_metrics(attempt_id, generation, observed_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_path ON compute_fabric_execution_metrics(path_key, observed_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_workload ON compute_fabric_execution_metrics(workload_key, observed_at)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_concrete_path ON compute_fabric_execution_metrics(fabric_path_id, observed_at)")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_path_performance (
                 path_key TEXT PRIMARY KEY,
                 sample_count INTEGER NOT NULL,
@@ -1884,15 +1888,16 @@ class ComputeCoordinator:
                             )
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
-                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key,placement_id)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key,placement_id,fabric_path_id)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
                             current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
                             str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
                             float(metric["all_reduce_elapsed_ms"]), now, path_key,
                             str(metric.get("workload_key") or ""),
-                            str(row["placement_id"] or ""),
+                            str(metric.get("placement_id") or row["placement_id"] or ""),
+                            str(metric.get("fabric_path_id") or ""),
                         ),
                     )
                 affected_workloads = {
