@@ -221,6 +221,42 @@ def test_multiple_verified_concrete_paths_remain_available_to_placement(tmp_path
     assert {item["path_id"] for item in inventory.physical_paths()} == {path_ab.path_id, path_ba.path_id}
 
 
+def test_measured_physical_path_capability_is_durable_and_reaches_placement(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(
+        ProviderResourceSnapshot(
+            provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+            nodes=(_node("node-a", _gpu("node-a", "g0", "u0")), _node("node-b", _gpu("node-b", "g0", "u1"))),
+            authentication_state="authenticated", evidence={"network": _network()},
+        )
+    )
+    path = _concrete_path()
+    inventory.persist_physical_path(path)
+    verification = PhysicalFabricVerification.verify(
+        path, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in path.segments]
+    )
+    measured = PhysicalFabricVerification.measure(
+        verification,
+        measurement={
+            "bandwidth_gbps": 392.5,
+            "latency_us": 4.7,
+            "transport": "RDMA",
+            "sample_count": 8,
+        },
+    )
+    inventory.persist_physical_verification(
+        measured,
+        evidence={"stage": "measured_capability", "measurement": dict(measured.measurement)},
+    )
+    record = inventory.physical_paths()[0]
+    assert record["state"] == "MEASURED"
+    assert record["measurement"]["bandwidth_gbps"] == 392.5
+    assert record["measurement"]["latency_us"] == 4.7
+    placement = ComputeScheduler(inventory).placement(_requirements())
+    assert placement.evidence["concrete_physical_paths"][0]["path_id"] == path.path_id
+    assert placement.evidence["concrete_physical_paths"][0]["measurement"]["bandwidth_gbps"] == 392.5
+
+
 def test_exact_path_failure_removes_it_from_verified_placement_candidates(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
