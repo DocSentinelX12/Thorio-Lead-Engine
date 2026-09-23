@@ -143,11 +143,14 @@ class ComputeCoordinator:
                 artifact_refs TEXT NOT NULL DEFAULT '[]',
                 verification TEXT,
                 authoritative_acceptance TEXT NOT NULL DEFAULT 'pending',
-                allocation_id TEXT
+                allocation_id TEXT,
+                placement_id TEXT
             )""")
             attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
             if "allocation_id" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
+            if "placement_id" not in attempt_columns:
+                connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN placement_id TEXT")
             if "rendezvous_endpoint" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN rendezvous_endpoint TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_execution_participants (
@@ -634,6 +637,13 @@ class ComputeCoordinator:
                 requirements = self.physical_requirements(payload)
                 allocation_id = f"{task_id}:{attempt_id}"
                 allocation = self.compute_scheduler.allocate(requirements, allocation_id)
+                if allocation.placement_id:
+                    with self._connect() as connection:
+                        connection.execute(
+                            "UPDATE compute_execution_attempts SET placement_id=? WHERE attempt_id=? AND generation=? AND status='leased'",
+                            (allocation.placement_id, attempt_id, generation),
+                        )
+                        connection.commit()
                 if not self.inventory.bind_allocation(
                     allocation.allocation_id,
                     task_id=task_id,
