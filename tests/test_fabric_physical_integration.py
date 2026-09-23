@@ -520,6 +520,62 @@ def test_degraded_path_state_and_exclusion_survive_inventory_reload(tmp_path):
     assert after["measurement_observed_at"] == 200
     assert reloaded.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
 
+
+def test_degraded_path_recovery_after_reload_requires_fresh_complete_reverification(tmp_path):
+    db = tmp_path / "inventory.sqlite3"
+    inventory = ComputeInventory(str(db))
+    path = _concrete_path()
+    inventory.persist_physical_path(path)
+    verified = PhysicalFabricVerification.verify(
+        path, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in path.segments]
+    )
+    inventory.persist_physical_verification(verified, evidence={"stage": "initial_verification"})
+    degraded = PhysicalFabricVerification.measure(
+        verified,
+        measurement={
+            "bandwidth_gbps": 60, "latency_us": 20, "sample_count": 8,
+            "status": "degraded", "degradation_reason": "probe reported degraded route",
+            "failure_domain": "inter_node_route",
+        },
+        observed_at=200,
+    )
+    inventory.persist_physical_verification(degraded, evidence={"stage": "degradation"})
+
+    reloaded = ComputeInventory(str(db))
+    current = reloaded.physical_paths()[0]
+    assert current["state"] == "DEGRADED"
+    recovered = PhysicalFabricVerification.recover(
+        FabricVerificationResult(
+            path_id=current["path_id"],
+            state=FabricPathState(current["state"]),
+            reason=current["reason"],
+            failure_domain=current["failure_domain"],
+            measurement=current["measurement"],
+            measurement_observed_at=current["measurement_observed_at"],
+            required_segments=tuple(current["segments"]),
+        )
+    )
+    reloaded.persist_physical_verification(recovered, evidence={"stage": "recovery"})
+    assert reloaded.physical_paths()[0]["state"] == "RECOVERED"
+    assert reloaded.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
+
+    partial = PhysicalFabricVerification.reverify(
+        recovered,
+        evidence=[{"segment": recovered.required_segments[0], "operation": "fresh_probe", "result": "pass"}],
+    )
+    reloaded.persist_physical_verification(partial, evidence={"stage": "partial_reverification"})
+    assert reloaded.physical_paths()[0]["state"] == "RECOVERED"
+    assert reloaded.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
+
+    complete = PhysicalFabricVerification.reverify(
+        recovered,
+        evidence=[{"segment": s, "operation": "fresh_probe", "result": "pass"} for s in recovered.required_segments],
+    )
+    assert complete.state is FabricPathState.REVERIFIED
+    reloaded.persist_physical_verification(complete, evidence={"stage": "complete_reverification"})
+    assert reloaded.physical_paths()[0]["state"] == "REVERIFIED"
+    assert [item["path_id"] for item in reloaded.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1")] == [path.path_id]
+
 def test_recovery_evidence_requires_fresh_verified_path(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
