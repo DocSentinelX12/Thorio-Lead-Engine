@@ -67,16 +67,20 @@ class ComputeScheduler:
         """Construct a complete verified placement without reserving resources."""
         if not isinstance(requirements, ComputeRequirements):
             raise TypeError("requirements must be ComputeRequirements")
+        evaluator = PlacementEvaluator(
+            self,
+            requirements,
+            self.inventory.eligible(),
+            self._performance_history(requirements),
+            self._route_health(),
+        )
         try:
-            return PlacementEvaluator(
-                self,
-                requirements,
-                self.inventory.eligible(),
-                self._performance_history(requirements),
-                self._route_health(),
-            ).evaluate()
+            placement = evaluator.evaluate()
         except RuntimeError as error:
+            self._last_placement_trace = tuple(evaluator.trace)
             raise ComputeSchedulingError(str(error)) from error
+        self._last_placement_trace = placement.decision_trace
+        return placement
 
     def _performance_history(self, requirements=None) -> dict[str, dict[str, Any]]:
         if self.performance_history_provider is None:
@@ -593,7 +597,24 @@ class ComputeScheduler:
     def allocate(self, requirements: ComputeRequirements, allocation_id: str) -> ComputeAllocation:
         if not allocation_id.strip():
             raise ValueError("allocation_id is required")
+        placement = None
+        if requirements.gpu.gpu_count > 0:
+            placement = self.placement(requirements)
         candidates = self._candidates(requirements)
+        if placement is not None:
+            selected_keys = set(placement.selected_resource_keys)
+            selected_nodes = set(placement.selected_node_ids)
+            candidates = [
+                {
+                    **candidate,
+                    "gpus": [
+                        gpu for gpu in candidate["gpus"]
+                        if str(gpu["resource_key"]) in selected_keys
+                    ],
+                }
+                for candidate in candidates
+                if str(candidate["node_id"]) in selected_nodes
+            ]
         performance_history = self._performance_history(requirements)
         route_health = self._route_health()
         needed = requirements.gpu.gpu_count
