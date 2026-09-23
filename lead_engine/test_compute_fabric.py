@@ -168,3 +168,127 @@ def test_controller_batch_size_is_not_a_global_backlog_cap():
     second = controller.cycle(max_allocations_per_cycle=2)
     assert len(first.scheduled_allocations) == 2
     assert len(second.scheduled_allocations) == 1
+
+
+def test_fault_recovery_fences_exact_generation_and_records_evidence(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    coordinator = ComputeCoordinator(str(Path(tmp_path) / "coordinator.sqlite3"), auth_token="token")
+    task_id = coordinator.enqueue({"compute_requirements": {"workload_class": "gpu_required"}})
+    attempt_id = "attempt-recovery-1"
+    now = time.time()
+    lease_token = "lease-recovery-1"
+    import hashlib
+    digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+    with coordinator._connect() as connection:
+        connection.execute(
+            """UPDATE compute_tasks
+               SET status='leased',worker_id='fabric:attempt-recovery-1',
+                   lease_token=?,lease_until=?,attempt_id=?,generation=1,attempts=1
+               WHERE task_id=?""",
+            (lease_token, now + 300, attempt_id, task_id),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at,
+                   allocation_id
+               ) VALUES(?,?,?,?,?,?,?,?)""",
+            (attempt_id, task_id, 1, "fabric:attempt-recovery-1", "leased", digest, now, None),
+        )
+        connection.commit()
+
+    result = coordinator.recover_compute_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        failure_class="distributed_process_failed",
+        reason="rank 3 exited non-zero",
+        evidence={"rank": 3, "exit_code": 1},
+    )
+    assert result["status"] == "requeued"
+    assert result["requeued"] is True
+    assert coordinator.task(task_id)["status"] == "queued"
+    assert coordinator.execution_attempt(attempt_id)["status"] == "failed"
+
+    history = coordinator.fabric_recovery_history(attempt_id)
+    assert len(history) == 1
+    assert history[0]["phase"] == "fenced"
+    assert history[0]["failure_class"] == "distributed_process_failed"
+    assert history[0]["evidence"]["rank"] == 3
+
+    duplicate = coordinator.recover_compute_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        failure_class="distributed_process_failed",
+        reason="duplicate stale worker report",
+        evidence={"rank": 3, "exit_code": 1},
+    )
+    assert duplicate["status"] == "already_fenced"
+    assert coordinator.task(task_id)["status"] == "queued"
+
+
+def test_fault_recovery_rejects_stale_generation_without_mutating_current_task(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    coordinator = ComputeCoordinator(str(Path(tmp_path) / "coordinator.sqlite3"), auth_token="token")
+    task_id = coordinator.enqueue({"compute_requirements": {"workload_class": "gpu_required"}})
+    attempt_id = "attempt-recovery-stale"
+    now = time.time()
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_tasks SET status='queued',attempt_id=?,generation=2,updated_at=? WHERE task_id=?",
+            ("new-attempt", now, task_id),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (attempt_id, task_id, 1, "fabric:old", "failed", "digest", now),
+        )
+        connection.commit()
+
+    result = coordinator.recover_compute_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        failure_class="stale_worker_report",
+        reason="old generation attempted recovery",
+        evidence={"observed_generation": 1},
+    )
+    assert result["status"] == "stale_generation"
+    assert coordinator.task(task_id)["attempt_id"] == "new-attempt"
+    assert coordinator.task(task_id)["generation"] == 2
+    history = coordinator.fabric_recovery_history(attempt_id)
+    assert history[0]["phase"] == "stale_generation"
+
+
+def test_recovery_supervisor_returns_stale_action_without_reallocating(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+    from lead_engine.compute_fabric import ComputeFabricRecoverySupervisor
+
+    coordinator = ComputeCoordinator(str(Path(tmp_path) / "coordinator.sqlite3"), auth_token="token")
+    now = time.time()
+    task_id = coordinator.enqueue({"compute_requirements": {"workload_class": "gpu_required"}})
+    attempt_id = "attempt-supervisor-stale"
+    with coordinator._connect() as connection:
+        connection.execute(
+            "UPDATE compute_tasks SET status='queued',attempt_id=?,generation=2,updated_at=? WHERE task_id=?",
+            ("current-attempt", now, task_id),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (attempt_id, task_id, 1, "fabric:old", "failed", "digest", now),
+        )
+        connection.commit()
+
+    supervisor = ComputeFabricRecoverySupervisor(coordinator)
+    action = supervisor.recover_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        failure_class="stale_worker_report",
+        reason="stale worker",
+        evidence={"generation": 1},
+    )
+    assert action.status == "stale_generation"
+    assert action.fresh_allocation_required is False
+    assert coordinator.task(task_id)["generation"] == 2
