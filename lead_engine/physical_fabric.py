@@ -431,6 +431,32 @@ class AdaptiveFabricRouteSelector:
         }
 
     @classmethod
+    def select_for_gpu_pairs(
+        cls,
+        paths: Sequence[Mapping[str, object]],
+        route_health: Mapping[str, Mapping[str, object]],
+        gpu_pairs: Sequence[tuple[str, str]],
+    ) -> tuple[dict[str, str], ...]:
+        """Select the observed best measured route independently for each GPU pair."""
+        selected: list[dict[str, str]] = []
+        for source_gpu, destination_gpu in gpu_pairs:
+            pair_paths = tuple(
+                path for path in paths
+                if str(path.get("source_gpu") or "") == str(source_gpu)
+                and str(path.get("destination_gpu") or "") == str(destination_gpu)
+            )
+            decision = cls.select(pair_paths, route_health)
+            path_id = decision.get("path_id")
+            if path_id is None:
+                continue
+            selected.append({
+                "source_gpu": str(source_gpu),
+                "destination_gpu": str(destination_gpu),
+                "path_id": str(path_id),
+            })
+        return tuple(selected)
+
+    @classmethod
     def migration(
         cls,
         paths: Sequence[Mapping[str, object]],
