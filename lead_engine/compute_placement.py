@@ -197,6 +197,8 @@ class PlacementEvaluator:
         selected.discard("")
         if len({str(gpu["node_id"]) for gpu in candidate}) < 2:
             return True, [], "same_node"
+        if not self.physical_paths:
+            return True, [], "no_canonical_concrete_path_records"
         paths = [
             path for path in self.physical_paths
             if str(path.get("state") or "") in {"VERIFIED", "MEASURED", "REVERIFIED"}
