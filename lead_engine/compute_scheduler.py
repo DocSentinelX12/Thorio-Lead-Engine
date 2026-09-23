@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .compute_inventory import ComputeInventory
+from .compute_placement import PlacementDecision, PlacementEvaluator
 from .compute_fabric_telemetry import physical_path_key, workload_performance_key
 from .compute_resources import ComputeRequirements, ResourceState, WorkloadClass
 
@@ -61,6 +62,21 @@ class ComputeScheduler:
         self.inventory = inventory
         self.performance_history_provider = performance_history_provider
         self.route_health_provider = route_health_provider or getattr(inventory, "fabric_route_health_index", None)
+
+    def placement(self, requirements: ComputeRequirements) -> PlacementDecision:
+        """Construct a complete verified placement without reserving resources."""
+        if not isinstance(requirements, ComputeRequirements):
+            raise TypeError("requirements must be ComputeRequirements")
+        try:
+            return PlacementEvaluator(
+                self,
+                requirements,
+                self.inventory.eligible(),
+                self._performance_history(requirements),
+                self._route_health(),
+            ).evaluate()
+        except RuntimeError as error:
+            raise ComputeSchedulingError(str(error)) from error
 
     def _performance_history(self, requirements=None) -> dict[str, dict[str, Any]]:
         if self.performance_history_provider is None:
