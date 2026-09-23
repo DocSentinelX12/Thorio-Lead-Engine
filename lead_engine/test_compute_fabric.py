@@ -214,6 +214,7 @@ def test_fault_recovery_fences_exact_generation_and_records_evidence(tmp_path):
     assert history[0]["phase"] == "fenced"
     assert history[0]["failure_class"] == "distributed_process_failed"
     assert history[0]["evidence"]["rank"] == 3
+    assert history[0]["evidence"]["failure_domain"] == "unresolved"
 
     duplicate = coordinator.recover_compute_attempt(
         attempt_id=attempt_id,
