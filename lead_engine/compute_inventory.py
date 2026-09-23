@@ -943,6 +943,41 @@ class ComputeInventory:
             })
         return {path_key: summarize_route_health(samples) for path_key, samples in grouped.items()}
 
+    def record_execution_path_observations(
+        self,
+        observations: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    ) -> tuple[str, ...]:
+        """Persist workload observations only for existing concrete fabric paths."""
+        recorded: list[str] = []
+        for observation in observations:
+            path_id = str(observation.get("fabric_path_id") or "").strip()
+            if not path_id:
+                continue
+            path = next((item for item in self.physical_paths() if str(item.get("path_id")) == path_id), None)
+            if path is None:
+                continue
+            evidence = dict(observation.get("evidence") or {})
+            evidence["fabric_path_id"] = path_id
+            path_identity = {
+                "node_id": "",
+                "gpu_uuid": str(path.get("source_gpu") or ""),
+                "nic": path_id,
+                "rdma_device": path_id,
+                "rdma_port": 1,
+                "link_layer": "concrete",
+            }
+            recorded.append(self.record_fabric_route_observation(
+                path_identity,
+                latency_ms=(
+                    float(observation["latency_us"]) / 1000.0
+                    if observation.get("latency_us") is not None else None
+                ),
+                success=bool(observation.get("success")),
+                observed_at=float(observation["observed_at"]),
+                evidence=evidence,
+            ))
+        return tuple(recorded)
+
     @staticmethod
     def _placement_record(placement: Any) -> dict[str, Any]:
         required = (
