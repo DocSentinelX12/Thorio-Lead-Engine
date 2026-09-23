@@ -232,25 +232,86 @@ class PlacementEvaluator:
     def _stable_key(self, candidate: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
         return tuple(sorted(str(row["resource_key"]) for row in candidate))
 
+    def _rank_gpu_rows(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        candidates = list(rows)
+        return sorted(
+            candidates,
+            key=lambda gpu: (
+                self.scheduler._gpu_placement_structure_key(gpu, candidates),
+                self.scheduler._gpu_performance_key(gpu, self.performance_history, self.requirements),
+                self.scheduler._gpu_route_health_key(gpu, self.route_health),
+                str(gpu.get("resource_key") or ""),
+            ),
+        )
+
     def _candidate_sets(self, nodes: list[dict[str, Any]]) -> Iterable[tuple[dict[str, Any], ...]]:
         needed = int(self.requirements.gpu.gpu_count)
         if needed < 1:
             return ()
-        if self.requirements.workload_class.value == "multi_node_gpu":
-            for node_count in range(2, len(nodes) + 1):
-                for selected_nodes in itertools.combinations(nodes, node_count):
-                    gpu_options = [tuple(node["gpus"]) for node in selected_nodes]
-                    if any(not options for options in gpu_options):
-                        continue
-                    for selected in itertools.product(*gpu_options):
-                        if len(selected) == needed:
-                            yield selected
-            return
+
+        valid_nodes: list[dict[str, Any]] = []
         for node in nodes:
-            if len(node["gpus"]) < needed:
-                continue
-            for selected in itertools.combinations(node["gpus"], needed):
-                yield selected
+            valid_gpus = []
+            for gpu in node["gpus"]:
+                valid, reason, evidence = self._valid_gpu(gpu)
+                if valid:
+                    valid_gpus.append(gpu)
+                else:
+                    self._trace(
+                        "complete_communication_path_validity",
+                        "rejected",
+                        reason=reason,
+                        resource_keys=(str(gpu["resource_key"]),),
+                        evidence=evidence,
+                    )
+            ranked = self._rank_gpu_rows(valid_gpus)
+            if ranked:
+                valid_nodes.append({**node, "gpus": ranked})
+
+        if self.requirements.workload_class.value != "multi_node_gpu":
+            for node in valid_nodes:
+                if len(node["gpus"]) >= needed:
+                    yield tuple(node["gpus"][:needed])
+            return
+
+        if len(valid_nodes) < 2:
+            return
+
+        # Build complete distributed candidates hierarchically rather than
+        # enumerating the combinatorial GPU-set space. Each node contributes
+        # verified GPUs, and nodes are ordered by their strongest verified
+        # participant. The candidate is filled until the exact world size is
+        # satisfied, with at least two nodes required.
+        ranked_nodes = sorted(
+            valid_nodes,
+            key=lambda node: (
+                self.scheduler._node_topology_score(node),
+                self.scheduler._gpu_performance_key(node["gpus"][0], self.performance_history, self.requirements),
+                self.scheduler._gpu_route_health_key(node["gpus"][0], self.route_health),
+                str(node["node_id"]),
+            ),
+            reverse=True,
+        )
+        selected_nodes = []
+        total = 0
+        for node in ranked_nodes:
+            selected_nodes.append(node)
+            total += len(node["gpus"])
+            if len(selected_nodes) >= 2 and total >= needed:
+                break
+        if len(selected_nodes) < 2 or total < needed:
+            return
+
+        selected: list[dict[str, Any]] = []
+        remaining = needed
+        for node in selected_nodes:
+            take = min(remaining, len(node["gpus"]))
+            selected.extend(node["gpus"][:take])
+            remaining -= take
+            if remaining == 0:
+                break
+        if remaining == 0:
+            yield tuple(selected)
 
     def evaluate(self) -> PlacementDecision:
         nodes = []
