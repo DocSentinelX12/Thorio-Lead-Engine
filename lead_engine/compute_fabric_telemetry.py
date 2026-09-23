@@ -90,6 +90,8 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
             "all_reduce_elapsed_ms": elapsed_ms,
             "physical_path": dict(path),
             "path_key": physical_path_key(path),
+            "fabric_path_id": str(path.get("fabric_path_id") or path.get("path_id") or "").strip(),
+            "placement_id": str(verification.get("placement_id") or "").strip(),
             "workload_signature": dict(workload_signature),
             "workload_key": workload_performance_key(path, workload_signature),
         })
