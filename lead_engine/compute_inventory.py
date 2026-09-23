@@ -91,6 +91,7 @@ class ComputeInventory:
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_route_observations (
                 observation_id TEXT PRIMARY KEY,
                 path_key TEXT NOT NULL,
+                fabric_path_id TEXT,
                 observed_at REAL NOT NULL,
                 latency_ms REAL,
                 success INTEGER NOT NULL,
@@ -900,8 +901,10 @@ class ComputeInventory:
             if latency_ms <= 0:
                 raise ValueError("latency_ms must be positive when provided")
         when = time.time() if observed_at is None else float(observed_at)
+        fabric_path_id = str((evidence or {}).get("fabric_path_id") or "").strip() or None
         payload = {
             "path_key": path_key,
+            "fabric_path_id": fabric_path_id,
             "observed_at": when,
             "latency_ms": latency_ms,
             "success": bool(success),
@@ -913,10 +916,10 @@ class ComputeInventory:
         with self._connect() as connection:
             connection.execute(
                 """INSERT OR IGNORE INTO compute_fabric_route_observations
-                   (observation_id,path_key,observed_at,latency_ms,success,evidence_json)
+                   (observation_id,path_key,fabric_path_id,observed_at,latency_ms,success,evidence_json)
                    VALUES(?,?,?,?,?,?)""",
                 (
-                    observation_id, path_key, when, latency_ms, int(bool(success)),
+                    observation_id, path_key, fabric_path_id, when, latency_ms, int(bool(success)),
                     json.dumps(dict(evidence or {}), ensure_ascii=False, sort_keys=True),
                 ),
             )
@@ -927,13 +930,13 @@ class ComputeInventory:
         """Return observed route health/congestion evidence keyed by physical path."""
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT path_key,observed_at,latency_ms,success
+                """SELECT path_key,fabric_path_id,observed_at,latency_ms,success
                    FROM compute_fabric_route_observations
                    ORDER BY path_key,observed_at,observation_id"""
             ).fetchall()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
-            grouped.setdefault(str(row["path_key"]), []).append({
+            grouped.setdefault(str(row["fabric_path_id"] or row["path_key"]), []).append({
                 "observed_at": float(row["observed_at"]),
                 "latency_ms": row["latency_ms"],
                 "success": bool(row["success"]),
@@ -1266,4 +1269,7 @@ class ComputeInventory:
             item = dict(row)
             item["resource_keys"] = json.loads(item.pop("resource_keys_json"))
             result.append(item)
-        return result
+        return result            route_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(compute_fabric_route_observations)").fetchall()}
+            if "fabric_path_id" not in route_columns:
+                connection.execute("ALTER TABLE compute_fabric_route_observations ADD COLUMN fabric_path_id TEXT")
+
