@@ -225,3 +225,46 @@ def test_physical_path_measurement_timestamp_is_durable_and_survives_reload(tmp_
     rows = reloaded.physical_paths()
     assert rows[0]["measurement"] == {"bandwidth_gbps": 180.0}
     assert rows[0]["measurement_observed_at"] == 200.0
+
+
+def test_physical_fabric_measurement_history_retains_each_observed_capability(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, FabricVerificationResult, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="path-history-1",
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+        segments=("gpu:src", "fabric:ib0", "gpu:dst"),
+        fabric_domains=("fabric:ib0",),
+        state=FabricPathState.CONSTRUCTED,
+    )
+    inventory.persist_physical_path(path)
+
+    first = FabricVerificationResult(
+        path_id=path.path_id,
+        state=FabricPathState.MEASURED,
+        measurement={"bandwidth_gbps": 500, "latency_us": 2.0, "sample_count": 16},
+        measurement_observed_at=100.0,
+        required_segments=path.segments,
+    )
+    inventory.persist_physical_verification(first, observed_at=100.0)
+
+    second = FabricVerificationResult(
+        path_id=path.path_id,
+        state=FabricPathState.MEASURED,
+        measurement={"bandwidth_gbps": 220, "latency_us": 4.0, "sample_count": 8},
+        measurement_observed_at=200.0,
+        required_segments=path.segments,
+    )
+    inventory.persist_physical_verification(second, observed_at=200.0)
+
+    history = inventory.physical_fabric_measurement_history()
+    assert [item["observed_at"] for item in history] == [100.0, 200.0]
+    assert history[0]["measurement"]["bandwidth_gbps"] == 500
+    assert history[1]["measurement"]["bandwidth_gbps"] == 220
+    assert all(item["path_id"] == path.path_id for item in history)
+
+    current = inventory.physical_paths()[0]
+    assert current["measurement"]["bandwidth_gbps"] == 220
+    assert current["measurement_observed_at"] == 200.0
