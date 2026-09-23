@@ -813,6 +813,30 @@ class ComputeCoordinator:
             return {"task_id": task_id, "attempt_id": attempt_id, "generation": generation, "payload": payload, "lease_token": lease_token,
                     "physical_allocation": None if allocation is None else {"allocation_id": allocation.allocation_id, "provider_id": allocation.provider_id, "domain_id": allocation.domain_id, "node_ids": list(allocation.node_ids), "resource_ids": list(allocation.resource_ids), "resource_keys": list(allocation.resource_keys), "capability_evidence": list(allocation.capability_evidence)}}
 
+    @staticmethod
+    def _failure_domain_from_evidence(evidence: Dict[str, Any]) -> str:
+        if not isinstance(evidence, dict):
+            return "unresolved"
+        physical_path = evidence.get("physical_path")
+        if isinstance(physical_path, dict) and all(
+            str(physical_path.get(field) or "").strip()
+            for field in ("gpu_uuid", "nic", "rdma_device")
+        ):
+            return "gpu_nic_rdma_path"
+        if str(evidence.get("gpu_uuid") or "").strip():
+            return "gpu"
+        if str(evidence.get("node_id") or "").strip():
+            return "node"
+        if str(evidence.get("rdma_device") or "").strip():
+            return "rdma_endpoint"
+        if isinstance(evidence.get("route"), dict):
+            return "inter_node_route"
+        if str(evidence.get("workload_path") or "").strip():
+            return "workload_path"
+        if str(evidence.get("attempt_id") or "").strip():
+            return "execution_attempt"
+        return "unresolved"
+
     def _record_fabric_recovery_event(
         self,
         connection: sqlite3.Connection,
@@ -891,6 +915,7 @@ class ComputeCoordinator:
             raise ValueError("failure_class is required")
         reason = str(reason)
         evidence = dict(evidence or {})
+        evidence.setdefault("failure_domain", self._failure_domain_from_evidence(evidence))
         now = time.time()
         attempt_to_release = None
         worker_to_release = None
