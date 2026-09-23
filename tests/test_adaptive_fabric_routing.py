@@ -290,3 +290,72 @@ def test_route_set_exposes_active_and_failure_domain_independent_standby_routes(
     assert route_set["active_path_id"] == "current"
     assert route_set["standby_path_ids"] == ("standby",)
     assert route_set["verified_path_ids"] == ("current", "standby")
+
+def test_placement_route_sets_preserve_active_and_independent_standby_routes_per_direction() -> None:
+    from lead_engine.compute_placement import PlacementEvaluator
+
+    current = _path("u0-u1-current")
+    current["source_gpu"], current["destination_gpu"] = "gpu:u0", "gpu:u1"
+    current["segments"] = (
+        "gpu:u0", "nic:src", "rdma:src", "rdma:src:1",
+        "fabric:ib0", "rdma:dst:1", "rdma:dst", "nic:dst", "gpu:u1",
+    )
+    current["fabric_domains"] = ("fabric:ib0",)
+
+    standby = dict(current)
+    standby["path_id"] = "u0-u1-standby"
+    standby["segments"] = (
+        "gpu:u0", "nic:src-2", "rdma:src-2", "rdma:src-2:1",
+        "fabric:ib1", "rdma:dst-2:1", "rdma:dst-2", "nic:dst-2", "gpu:u1",
+    )
+    standby["fabric_domains"] = ("fabric:ib1",)
+
+    reverse = dict(current)
+    reverse["path_id"] = "u1-u0-current"
+    reverse["source_gpu"], reverse["destination_gpu"] = "gpu:u1", "gpu:u0"
+    reverse["segments"] = tuple(reversed(current["segments"]))
+    reverse["fabric_domains"] = ("fabric:ib0",)
+
+    reverse_standby = dict(standby)
+    reverse_standby["path_id"] = "u1-u0-standby"
+    reverse_standby["source_gpu"], reverse_standby["destination_gpu"] = "gpu:u1", "gpu:u0"
+    reverse_standby["segments"] = tuple(reversed(standby["segments"]))
+    reverse_standby["fabric_domains"] = ("fabric:ib1",)
+
+    evaluator = PlacementEvaluator.__new__(PlacementEvaluator)
+    evaluator.physical_paths = (current, standby, reverse, reverse_standby)
+    evaluator.route_health = {
+        "u0-u1-current": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": -2.0, "latest_latency_ms": 2.0},
+        "u0-u1-standby": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": 0.0, "latest_latency_ms": 4.0},
+        "u1-u0-current": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": -2.0, "latest_latency_ms": 2.0},
+        "u1-u0-standby": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": 0.0, "latest_latency_ms": 4.0},
+    }
+
+    candidate = (
+        {"node_id": "node-a", "payload_json": '{"gpu_uuid":"u0"}'},
+        {"node_id": "node-b", "payload_json": '{"gpu_uuid":"u1"}'},
+    )
+    route_sets = evaluator._adaptive_route_sets(candidate)
+
+    assert route_sets == (
+        {
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "active_path_id": "u0-u1-current",
+            "standby_path_ids": ("u0-u1-standby",),
+            "verified_path_ids": ("u0-u1-current", "u0-u1-standby"),
+            "selection_reason": "observed_route_health",
+            "current_path_id": None,
+            "evidence": route_sets[0]["evidence"],
+        },
+        {
+            "source_gpu": "gpu:u1",
+            "destination_gpu": "gpu:u0",
+            "active_path_id": "u1-u0-current",
+            "standby_path_ids": ("u1-u0-standby",),
+            "verified_path_ids": ("u1-u0-current", "u1-u0-standby"),
+            "selection_reason": "observed_route_health",
+            "current_path_id": None,
+            "evidence": route_sets[1]["evidence"],
+        },
+    )
