@@ -230,3 +230,22 @@ def test_adaptive_replacement_plan_uses_only_failure_domain_independent_alternat
     assert plan[0]["migrate"] is True
     assert plan[0]["to_path_id"] == "independent"
     assert plan[0]["reason"] == "observed_route_health"
+
+
+
+def test_failure_domain_components_are_derived_by_component_identity_not_segment_position() -> None:
+    first = _path("first")
+    first["segments"] = (
+        "gpu:src", "pci:src-a", "pci:src-b", "numa:src", "nic:src", "rdma:src", "rdma:src:1",
+        "fabric:ib0", "rdma:dst:1", "rdma:dst", "nic:dst", "numa:dst", "pci:dst", "gpu:dst",
+    )
+    first["fabric_domains"] = ("fabric:ib0",)
+    second = dict(first)
+    second["path_id"] = "second"
+    second["segments"] = (
+        "gpu:src", "pci:src-x", "numa:src", "nic:src", "rdma:src-2", "rdma:src-2:1",
+        "fabric:ib1", "rdma:dst-2:1", "rdma:dst-2", "nic:dst-2", "numa:dst", "pci:dst", "gpu:dst",
+    )
+    second["fabric_domains"] = ("fabric:ib1",)
+
+    assert AdaptiveFabricRouteSelector.failure_domain_independent(first, second) is False
