@@ -25,6 +25,7 @@ class ComputeAllocation:
     resource_ids: tuple[str, ...]
     resource_keys: tuple[str, ...]
     capability_evidence: tuple[dict[str, Any], ...]
+    placement_id: str | None = None
 
 
 class ComputeSchedulingError(RuntimeError):
@@ -761,6 +762,7 @@ class ComputeScheduler:
                 for row in resources
             ),
             resource_keys=tuple(keys),
+            placement_id=placement.placement_id if placement is not None else None,
             capability_evidence=tuple(
                 json.loads(row["payload_json"]) | {"resource_key": row["resource_key"]} | (
                     {
