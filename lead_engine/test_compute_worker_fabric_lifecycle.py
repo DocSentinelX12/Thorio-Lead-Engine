@@ -158,6 +158,7 @@ def test_recorded_verification_persists_verified_rdma_path_evidence(tmp_path: Pa
     for item in verification["process_evidence"]:
         item["rdma_devices"] = ["mlx5_0"]
         item["verified_rdma_devices"] = ["mlx5_0"]
+        item["probe"]["all_reduce_elapsed_ms"] = 3.5
     assert coordinator.record_execution_verification(
         attempt_id=attempt_id,
         generation=claimed["generation"],
