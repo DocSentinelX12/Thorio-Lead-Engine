@@ -201,8 +201,16 @@ class PhysicalFabricVerification:
         verification: FabricVerificationResult,
         *,
         measurement: Mapping[str, object],
+        observed_at: float | None = None,
     ) -> FabricVerificationResult:
-        if verification.state not in (FabricPathState.VERIFIED, FabricPathState.REVERIFIED):
+        if verification.state not in (FabricPathState.VERIFIED, FabricPathState.REVERIFIED, FabricPathState.MEASURED):
+            return verification
+        if (
+            verification.state is FabricPathState.MEASURED
+            and observed_at is not None
+            and verification.measurement_observed_at is not None
+            and float(observed_at) <= float(verification.measurement_observed_at)
+        ):
             return verification
         history = verification.history
         if verification.state is FabricPathState.REVERIFIED:
@@ -219,6 +227,7 @@ class PhysicalFabricVerification:
             state=FabricPathState.MEASURED,
             history=history,
             measurement=dict(measurement),
+            measurement_observed_at=observed_at if observed_at is not None else verification.measurement_observed_at,
             required_segments=verification.required_segments,
         )
 
