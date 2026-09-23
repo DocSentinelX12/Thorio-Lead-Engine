@@ -1031,17 +1031,28 @@ class ComputeCoordinator:
                 or ""
             ).strip()
             if fabric_path_id:
-                self.inventory.fail_physical_path(
+                path_failure_evidence = {
+                    **evidence,
+                    "source": "execution_failure",
+                    "failure_domain": evidence.get("failure_domain") or "unresolved",
+                    "attempt_id": attempt_id,
+                    "generation": int(generation),
+                }
+                path_failed = self.inventory.fail_physical_path(
                     fabric_path_id,
                     reason=reason,
-                    evidence={
-                        **evidence,
-                        "failure_domain": evidence.get("failure_domain") or "unresolved",
-                        "attempt_id": attempt_id,
-                        "generation": int(generation),
-                    },
+                    evidence=path_failure_evidence,
                     observed_at=now,
                 )
+                if path_failed:
+                    self.inventory.record_fabric_route_observation(
+                        {},
+                        fabric_path_id=fabric_path_id,
+                        latency_ms=None,
+                        success=False,
+                        observed_at=now,
+                        evidence=path_failure_evidence,
+                    )
             self._release_physical_allocation(attempt_to_release, f"fabric recovery: {failure_class}")
             if worker_to_release and not worker_to_release.startswith("fabric:"):
                 self.pool.release_task_slot(worker_to_release)
