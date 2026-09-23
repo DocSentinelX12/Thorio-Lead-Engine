@@ -622,5 +622,6 @@ def test_runtime_exact_route_reconciliation_requires_peer_and_bound_path_identit
     assert reconciled[0]["observed_fabric_path_id"] == "path-fast"
 
     evidence[0]["peer_connections"] = []
-    with pytest.raises(Exception, match="peer connection"):
+    from lead_engine.nvidia_runtime import NvidiaRuntimeError
+    with pytest.raises(NvidiaRuntimeError, match="peer connection"):
         NvidiaRuntime.reconcile_exact_planned_fabric_paths(evidence, [path])
