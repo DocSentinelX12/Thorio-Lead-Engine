@@ -239,6 +239,71 @@ def test_exact_path_failure_removes_it_from_verified_placement_candidates(tmp_pa
     assert inventory.physical_paths()[0]["state"] == "FAILED"
 
 
+def test_failed_path_requires_fresh_verification_before_replacement_placement(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(
+        ProviderResourceSnapshot(
+            provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+            nodes=(_node("node-a", _gpu("node-a", "g0", "u0")), _node("node-b", _gpu("node-b", "g0", "u1"))),
+            authentication_state="authenticated", evidence={"network": _network()},
+        )
+    )
+    primary = _concrete_path()
+    inventory.persist_physical_path(primary)
+    primary_verification = PhysicalFabricVerification.verify(
+        primary, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in primary.segments]
+    )
+    inventory.persist_physical_verification(primary_verification, evidence={"stage": "initial_verification"})
+    assert ComputeScheduler(inventory).placement(_requirements()).placement_id
+
+    inventory.fail_physical_path(
+        primary.path_id,
+        reason="inter-node route failed",
+        evidence={"failure_domain": "inter_node_route", "attempt_id": "attempt-1"},
+    )
+    with pytest.raises(ComputeSchedulingError, match="complete physical placement"):
+        ComputeScheduler(inventory).placement(_requirements())
+
+    replacement = PhysicalFabricPathBuilder.build(
+        locality_graph={"components": [
+            {"component_type": "gpu", "identity": "gpu:u1", "node_id": "node-b"},
+            {"component_type": "pci", "identity": "pci:dst", "node_id": "node-b"},
+            {"component_type": "numa", "identity": "numa:dst", "node_id": "node-b"},
+            {"component_type": "nic", "identity": "nic:dst", "node_id": "node-b"},
+            {"component_type": "rdma_device", "identity": "rdma:dst", "node_id": "node-b"},
+            {"component_type": "rdma_port", "identity": "rdma:dst:1", "node_id": "node-b"},
+            {"component_type": "fabric", "identity": "fabric:ib0", "node_id": "domain-1"},
+            {"component_type": "rdma_port", "identity": "rdma:src:1", "node_id": "node-a"},
+            {"component_type": "rdma_device", "identity": "rdma:src", "node_id": "node-a"},
+            {"component_type": "nic", "identity": "nic:src", "node_id": "node-a"},
+            {"component_type": "numa", "identity": "numa:src", "node_id": "node-a"},
+            {"component_type": "pci", "identity": "pci:src", "node_id": "node-a"},
+            {"component_type": "gpu", "identity": "gpu:u0", "node_id": "node-a"},
+        ], "edges": [
+            {"relationship_type": "gpu_to_pci", "source": "gpu:u1", "target": "pci:dst", "state": "known"},
+            {"relationship_type": "gpu_to_numa", "source": "gpu:u1", "target": "numa:dst", "state": "known"},
+            {"relationship_type": "gpu_to_nic", "source": "gpu:u1", "target": "nic:dst", "state": "known"},
+            {"relationship_type": "nic_to_rdma_device", "source": "nic:dst", "target": "rdma:dst", "state": "known"},
+            {"relationship_type": "rdma_device_to_port", "source": "rdma:dst", "target": "rdma:dst:1", "state": "known"},
+            {"relationship_type": "rdma_port_to_fabric", "source": "rdma:dst:1", "target": "fabric:ib0", "state": "known"},
+            {"relationship_type": "fabric_to_rdma_port", "source": "fabric:ib0", "target": "rdma:src:1", "state": "known"},
+            {"relationship_type": "rdma_device_to_port", "source": "rdma:src", "target": "rdma:src:1", "state": "known"},
+            {"relationship_type": "nic_to_rdma_device", "source": "nic:src", "target": "rdma:src", "state": "known"},
+            {"relationship_type": "gpu_to_nic", "source": "gpu:u0", "target": "nic:src", "state": "known"},
+            {"relationship_type": "gpu_to_numa", "source": "gpu:u0", "target": "numa:src", "state": "known"},
+            {"relationship_type": "gpu_to_pci", "source": "gpu:u0", "target": "pci:src", "state": "known"},
+        ]}, source_gpu="gpu:u1", destination_gpu="gpu:u0"
+    )[0]
+    inventory.persist_physical_path(replacement)
+    fresh = PhysicalFabricVerification.reverify(
+        primary_verification,
+        evidence=[{"segment": s, "operation": "fresh_probe", "result": "pass"} for s in primary.segments],
+    )
+    inventory.persist_physical_verification(fresh, evidence={"stage": "fresh_reverification"})
+    assert inventory.physical_paths()[0]["state"] == "REVERIFIED"
+    placement = ComputeScheduler(inventory).placement(_requirements())
+    assert placement.evidence["concrete_physical_paths"]
+
 def test_recovery_evidence_requires_fresh_verified_path(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
