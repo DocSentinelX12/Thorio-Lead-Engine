@@ -1829,6 +1829,21 @@ class ComputeCoordinator:
                     path_key = str(metric.get("path_key") or "").strip()
                     if path_key:
                         affected_paths.add(path_key)
+                        physical_path = metric.get("physical_path")
+                        if isinstance(physical_path, dict):
+                            self.inventory.record_fabric_route_observation(
+                                physical_path,
+                                latency_ms=float(metric["all_reduce_elapsed_ms"]),
+                                success=True,
+                                observed_at=now,
+                                evidence={
+                                    "source": "observed_all_reduce",
+                                    "attempt_id": attempt_id,
+                                    "generation": generation,
+                                    "worker_id": worker_id,
+                                    "rank": int(metric["rank"]),
+                                },
+                            )
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
                            (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key)
