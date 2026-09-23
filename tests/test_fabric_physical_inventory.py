@@ -87,42 +87,45 @@ def test_physical_fabric_measurement_history_retains_each_observed_capability(tm
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = PhysicalFabricPath(path_id="path-history-1", source_gpu="gpu:src", destination_gpu="gpu:dst", segments=("gpu:src", "fabric:ib0", "gpu:dst"), fabric_domains=("fabric:ib0",), state=FabricPathState.CONSTRUCTED)
     inventory.persist_physical_path(path)
-    for observed_at, bandwidth, latency, count in ((100.0, 500, 2.0, 16), (200.0, 220, 4.0, 8)):
-        inventory.persist_physical_verification(FabricVerificationResult(path_id=path.path_id, state=FabricPathState.MEASURED, measurement={"bandwidth_gbps": bandwidth, "latency_us": latency, "sample_count": count}, measurement_observed_at=observed_at, required_segments=path.segments), observed_at=observed_at)
+    first = FabricVerificationResult(path_id=path.path_id, state=FabricPathState.MEASURED, measurement={"bandwidth_gbps": 500, "latency_us": 2.0, "sample_count": 16}, measurement_observed_at=100.0, required_segments=path.segments)
+    inventory.persist_physical_verification(first, observed_at=100.0)
+    second = FabricVerificationResult(path_id=path.path_id, state=FabricPathState.MEASURED, measurement={"bandwidth_gbps": 220, "latency_us": 4.0, "sample_count": 8}, measurement_observed_at=200.0, required_segments=path.segments)
+    inventory.persist_physical_verification(second, observed_at=200.0)
     history = inventory.physical_fabric_measurement_history()
     assert [item["observed_at"] for item in history] == [100.0, 200.0]
     assert [item["measurement"]["bandwidth_gbps"] for item in history] == [500, 220]
     assert all(item["path_id"] == path.path_id for item in history)
+    current = inventory.physical_paths()[0]
+    assert current["measurement"]["bandwidth_gbps"] == 220
+    assert current["measurement_observed_at"] == 200.0
 
 
-def test_route_health_exposes_observed_performance_change_without_threshold_policy(tmp_path):
+def test_route_health_index_uses_durable_observations_and_exposes_congestion_evidence(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    from lead_engine.physical_fabric import FabricPathState, FabricVerificationResult, PhysicalFabricPath
-    path = PhysicalFabricPath(path_id="route-health-1", source_gpu="gpu:src", destination_gpu="gpu:dst", segments=("gpu:src", "fabric:ib0", "gpu:dst"), fabric_domains=("fabric:ib0",), state=FabricPathState.CONSTRUCTED)
-    inventory.persist_physical_path(path)
-    for observed_at, bandwidth, latency in ((100.0, 500.0, 2.0), (200.0, 400.0, 3.0), (300.0, 350.0, 5.0)):
-        inventory.persist_physical_verification(FabricVerificationResult(path_id=path.path_id, state=FabricPathState.MEASURED, measurement={"bandwidth_gbps": bandwidth, "latency_us": latency, "sample_count": 8}, measurement_observed_at=observed_at, required_segments=path.segments), observed_at=observed_at)
-    health = inventory.physical_fabric_route_health(path_id=path.path_id)
-    assert health["path_id"] == path.path_id and health["observation_count"] == 3
-    assert health["latest"]["observed_at"] == 300.0 and health["latest"]["measurement"]["latency_us"] == 5.0
-    assert health["change"]["bandwidth_gbps"] == -150.0 and health["change"]["latency_us"] == 3.0
-    assert health["latest"]["state"] == "MEASURED"
+    path = {"node_id": "node-a", "gpu_uuid": "GPU-0", "nic": "mlx5_0", "rdma_device": "mlx5_0", "rdma_port": 1, "link_layer": "InfiniBand"}
+    for observed_at, latency, success in ((100.0, 2.0, True), (200.0, 3.0, True), (300.0, 5.0, False)):
+        inventory.record_fabric_route_observation(path, latency_ms=latency, success=success, observed_at=observed_at, evidence={"source": "fabric_probe"})
+    health = inventory.fabric_route_health_index()[inventory.fabric_path_key(path)]
+    assert health["sample_count"] == 3
+    assert health["success_count"] == 2
+    assert health["failure_count"] == 1
+    assert health["latest_latency_ms"] == 5.0
+    assert health["historical_mean_latency_ms"] == (2.0 + 3.0 + 5.0) / 3
+    assert health["latency_delta_from_mean_ms"] == 5.0 - ((2.0 + 3.0 + 5.0) / 3)
+    assert health["failure_rate"] == 1 / 3
 
 
-def test_route_health_survives_inventory_reload_and_isolated_paths(tmp_path):
-    from lead_engine.physical_fabric import FabricPathState, FabricVerificationResult, PhysicalFabricPath
-    db = str(tmp_path / "inventory.sqlite3"); inventory = ComputeInventory(db)
-    for path_id, values in (("path-a", ((100.0, 500.0, 2.0), (200.0, 450.0, 2.5))), ("path-b", ((100.0, 300.0, 6.0), (200.0, 320.0, 5.5)))):
-        path = PhysicalFabricPath(path_id=path_id, source_gpu="gpu:src", destination_gpu="gpu:dst", segments=("gpu:src", f"fabric:{path_id}", "gpu:dst"), fabric_domains=(path_id,), state=FabricPathState.CONSTRUCTED)
-        inventory.persist_physical_path(path)
-        for observed_at, bandwidth, latency in values:
-            inventory.persist_physical_verification(FabricVerificationResult(path_id=path_id, state=FabricPathState.MEASURED, measurement={"bandwidth_gbps": bandwidth, "latency_us": latency, "sample_count": 8}, measurement_observed_at=observed_at, required_segments=path.segments), observed_at=observed_at)
+def test_route_health_index_isolated_by_physical_path_and_survives_reload(tmp_path):
+    db = str(tmp_path / "inventory.sqlite3")
+    inventory = ComputeInventory(db)
+    path_a = {"node_id": "node-a", "gpu_uuid": "GPU-A", "nic": "mlx5_0", "rdma_device": "mlx5_0", "rdma_port": 1, "link_layer": "InfiniBand"}
+    path_b = {"node_id": "node-a", "gpu_uuid": "GPU-B", "nic": "mlx5_1", "rdma_device": "mlx5_1", "rdma_port": 1, "link_layer": "InfiniBand"}
+    inventory.record_fabric_route_observation(path_a, latency_ms=2.0, success=True, observed_at=100.0)
+    inventory.record_fabric_route_observation(path_a, latency_ms=4.0, success=True, observed_at=200.0)
+    inventory.record_fabric_route_observation(path_b, latency_ms=9.0, success=True, observed_at=100.0)
     reloaded = ComputeInventory(db)
-    a = reloaded.physical_fabric_route_health(path_id="path-a"); b = reloaded.physical_fabric_route_health(path_id="path-b")
-    assert a["change"]["bandwidth_gbps"] == -50.0 and b["change"]["bandwidth_gbps"] == 20.0
-    assert a["latest"]["latency_us"] == 2.5 and b["latest"]["latency_us"] == 5.5
-
-
-def test_route_health_with_no_history_is_evidence_empty_not_healthy(tmp_path):
-    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    assert inventory.physical_fabric_route_health(path_id="missing") == {"path_id": "missing", "observation_count": 0, "latest": None, "change": {}}
+    index = reloaded.fabric_route_health_index()
+    assert index[reloaded.fabric_path_key(path_a)]["sample_count"] == 2
+    assert index[reloaded.fabric_path_key(path_a)]["latest_latency_ms"] == 4.0
+    assert index[reloaded.fabric_path_key(path_b)]["sample_count"] == 1
+    assert index[reloaded.fabric_path_key(path_b)]["latest_latency_ms"] == 9.0
