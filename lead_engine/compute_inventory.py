@@ -900,15 +900,17 @@ class ComputeInventory:
         success: bool,
         observed_at: float | None = None,
         evidence: dict[str, Any] | None = None,
+        fabric_path_id: str | None = None,
     ) -> str:
         """Persist one authoritative route observation idempotently."""
-        path_key = self.fabric_path_key(path)
+        exact_path_id = str(fabric_path_id or (evidence or {}).get("fabric_path_id") or "").strip()
+        path_key = exact_path_id or self.fabric_path_key(path)
         if latency_ms is not None:
             latency_ms = float(latency_ms)
             if latency_ms <= 0:
                 raise ValueError("latency_ms must be positive when provided")
         when = time.time() if observed_at is None else float(observed_at)
-        fabric_path_id = str((evidence or {}).get("fabric_path_id") or "").strip() or None
+        fabric_path_id = exact_path_id or None
         payload = {
             "path_key": path_key,
             "fabric_path_id": fabric_path_id,
@@ -924,7 +926,7 @@ class ComputeInventory:
             connection.execute(
                 """INSERT OR IGNORE INTO compute_fabric_route_observations
                    (observation_id,path_key,fabric_path_id,observed_at,latency_ms,success,evidence_json)
-                   VALUES(?,?,?,?,?,?)""",
+                   VALUES(?,?,?,?,?,?,?)""",
                 (
                     observation_id, path_key, fabric_path_id, when, latency_ms, int(bool(success)),
                     json.dumps(dict(evidence or {}), ensure_ascii=False, sort_keys=True),
@@ -965,16 +967,9 @@ class ComputeInventory:
                 continue
             evidence = dict(observation.get("evidence") or {})
             evidence["fabric_path_id"] = path_id
-            path_identity = {
-                "node_id": "",
-                "gpu_uuid": str(path.get("source_gpu") or ""),
-                "nic": path_id,
-                "rdma_device": path_id,
-                "rdma_port": 1,
-                "link_layer": "concrete",
-            }
             recorded.append(self.record_fabric_route_observation(
-                path_identity,
+                {},
+                fabric_path_id=path_id,
                 latency_ms=(
                     float(observation["latency_us"]) / 1000.0
                     if observation.get("latency_us") is not None else None
@@ -1311,3 +1306,4 @@ class ComputeInventory:
             item = dict(row)
             item["resource_keys"] = json.loads(item.pop("resource_keys_json"))
             result.append(item)
+        return result
