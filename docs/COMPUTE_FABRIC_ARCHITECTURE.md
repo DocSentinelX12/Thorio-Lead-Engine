@@ -93,3 +93,51 @@ Source I/O scaling remains a separate fabric. GPU availability MUST NOT be requi
 ## Change discipline
 
 Foundation changes are additive and independently testable. Existing queue, backlog, research, qualification, routing, Airtable, and revenue tests are regression gates before production participation.
+
+
+## GPU placement intelligence
+
+Complete placement is the unit of distributed scheduling intelligence.
+
+The placement pipeline is:
+
+\`requirements -> eligible GPUs -> capability compatibility -> verified physical evidence -> topology/locality -> complete candidate construction -> observed workload performance -> observed route health -> deterministic placement -> ComputeAllocation -> existing coordinator/worker execution\`
+
+A placement records:
+- stable placement identity
+- workload requirements and performance signature
+- selected GPUs and nodes
+- verified GPU/NIC/RDMA evidence where required and available
+- topology and NUMA evidence
+- observed workload-performance evidence
+- observed route-health evidence
+- candidate acceptance/rejection evidence
+- deterministic decision trace
+
+Hard physical and capability constraints are evaluated before performance or route preferences. Unknown evidence remains unknown and is never converted into a synthetic score.
+
+\`ComputeAllocation\` remains the authoritative reservation boundary. Placement evidence explains why that allocation was selected and does not create a second reservation or execution system.
+
+Execution verification feeds only observed results back into workload-performance and route-health history. Recovery retains the original placement and failure evidence and re-enters the same complete placement construction path for replacement resources.
+
+The initial 12 computers are the physical foundation only. Placement construction has no fixed node, GPU, provider, NIC, RDMA, topology-domain, or observation ceiling. Hierarchical candidate construction is used to remain tractable as verified inventory grows.
+
+## Placement persistence and execution identity
+
+Durable placement records are historical evidence. Allocation release does not erase placement history.
+
+Execution attempts retain the placement identity that produced their allocation, and durable execution metrics retain that identity alongside workload and physical-path evidence. This keeps the placement-to-execution-to-verification feedback loop auditable without creating a parallel execution state machine.
+
+## Recovery evidence domains
+
+Recovery evidence records the narrowest domain that can be established directly from supplied evidence, including:
+- GPU
+- GPU/NIC/RDMA path
+- node
+- RDMA endpoint
+- inter-node route
+- workload path
+- execution attempt
+- unresolved
+
+An unresolved failure is retained as unresolved. The system does not permanently quarantine unrelated resources from an unexplained execution failure.
