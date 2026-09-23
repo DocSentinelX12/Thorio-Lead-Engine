@@ -349,6 +349,35 @@ class ComputeScheduler:
         )
 
     @classmethod
+    def _gpu_placement_structure_key(
+        cls,
+        gpu: dict[str, Any],
+        gpus: list[dict[str, Any]],
+    ) -> tuple[int, float, float, int, int]:
+        """Return only the verified physical/topology portion of GPU placement rank."""
+        payload = json.loads(gpu["payload_json"])
+        topology_key = cls._topology_group_key(gpu)
+        topology_counts = sum(1 for candidate in gpus if cls._topology_group_key(candidate) == topology_key)
+        numa_node = payload.get("numa_node")
+        numa_counts = sum(
+            1
+            for candidate in gpus
+            if cls._topology_group_key(candidate) == topology_key
+            and json.loads(candidate["payload_json"]).get("numa_node") == numa_node
+        )
+        paths = cls._rank_fabric_paths(cls._verified_gpu_nic_rdma_path(gpu, payload.get("gpu_uuid")))
+        primary = paths[0] if paths else {}
+        bandwidth = primary.get("bandwidth_gbps")
+        latency = primary.get("latency_us")
+        return (
+            0 if paths else 1,
+            -(float(bandwidth) if bandwidth is not None else 0.0),
+            float(latency) if latency is not None else float("inf"),
+            -topology_counts,
+            -numa_counts,
+        )
+
+    @classmethod
     def _rank_gpus_for_placement(cls, gpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
         topology_counts: dict[str, int] = {}
         numa_counts: dict[tuple[str, Any], int] = {}
@@ -534,7 +563,12 @@ class ComputeScheduler:
                 "cpu": cpu,
                 "gpus": sorted(
                     self._rank_gpus_for_placement(compatible),
-                    key=lambda gpu: (self._gpu_performance_key(gpu, performance_history, requirements), self._gpu_route_health_key(gpu, route_health), str(gpu.get("resource_key") or "")),
+                    key=lambda gpu: (
+                        self._gpu_placement_structure_key(gpu, compatible),
+                        self._gpu_performance_key(gpu, performance_history, requirements),
+                        self._gpu_route_health_key(gpu, route_health),
+                        str(gpu.get("resource_key") or ""),
+                    ),
                 ),
                 "payload": node_payload,
             })
@@ -619,7 +653,8 @@ class ComputeScheduler:
                     -self._node_topology_score(candidate)[0],
                     -self._node_topology_score(candidate)[1],
                     -self._node_topology_score(candidate)[2],
-                    self._gpu_performance_key(candidate["gpus"][0], performance_history) if candidate["gpus"] else (1, float("inf"), 0),
+                    self._gpu_performance_key(candidate["gpus"][0], performance_history, requirements) if candidate["gpus"] else (1, float("inf"), 0),
+                    self._gpu_route_health_key(candidate["gpus"][0], route_health) if candidate["gpus"] else (1, float("inf"), float("inf"), float("inf"), 0),
                     str(candidate["node_id"]),
                 ),
             )
@@ -640,13 +675,13 @@ class ComputeScheduler:
             if needed < len(selected):
                 raise ComputeSchedulingError("multi-node allocation needs at least one GPU per selected node")
             for candidate in selected:
-                ranked = self._rank_gpus_for_placement(candidate["gpus"])
+                ranked = candidate["gpus"]
                 gpu_rows.append(ranked[0])
                 remaining -= 1
             for candidate in selected:
                 if remaining <= 0:
                     break
-                ranked = self._rank_gpus_for_placement(candidate["gpus"])
+                ranked = candidate["gpus"]
                 extras = ranked[1:1 + remaining]
                 gpu_rows.extend(extras)
                 remaining -= len(extras)
