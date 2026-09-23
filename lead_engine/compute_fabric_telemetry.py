@@ -65,7 +65,7 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
         gpu_binding = item.get("gpu_binding")
         physical_path = gpu_binding.get("planned_physical_path") if isinstance(gpu_binding, Mapping) else None
         path = physical_path if isinstance(physical_path, Mapping) else {}
-        metrics.append({"rank": int(item.get("rank", probe.get("rank", -1))), "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(), "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "", "transport": str(probe.get("network_transport") or "").strip() or None, "all_reduce_elapsed_ms": elapsed_ms, "physical_path": dict(path), "path_key": physical_path_key(path), "fabric_path_id": str(path.get("fabric_path_id") or path.get("path_id") or "").strip(), "placement_id": str(verification.get("placement_id") or "").strip(), "workload_signature": dict(workload_signature), "workload_key": workload_performance_key(path, workload_signature)})
+        metrics.append({"rank": int(item.get("rank", probe.get("rank", -1))), "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(), "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "", "transport": str(probe.get("network_transport") or "").strip() or None, "all_reduce_elapsed_ms": elapsed_ms, "physical_path": dict(path), "path_key": physical_path_key(path), "fabric_path_id": str(path.get("fabric_path_id") or path.get("path_id") or "").strip(), "placement_id": str(verification.get("placement_id") or "").strip(), "execution_attempt_id": str(verification.get("execution_attempt_id") or verification.get("attempt_id") or "").strip(), "generation": verification.get("generation"), "workload_signature": dict(workload_signature), "workload_key": workload_performance_key(path, workload_signature)})
     return tuple(sorted(metrics, key=lambda item: (int(item["rank"]), str(item["gpu_uuid"]))))
 
 
@@ -165,17 +165,20 @@ def extract_execution_path_observations(
         if not fabric_path_id:
             continue
         elapsed_ms = float(metric["all_reduce_elapsed_ms"])
+        evidence = {
+            "source": "observed_all_reduce",
+            "placement_id": str(metric.get("placement_id") or ""),
+            "execution_attempt_id": str(metric.get("execution_attempt_id") or ""),
+            "generation": metric.get("generation"),
+            "rank": int(metric["rank"]),
+            "gpu_uuid": str(metric.get("gpu_uuid") or ""),
+            "network_transport": metric.get("transport"),
+        }
         observations.append({
             "fabric_path_id": fabric_path_id,
             "latency_us": elapsed_ms * 1000.0,
             "success": True,
             "observed_at": float(observed_at),
-            "evidence": {
-                "source": "observed_all_reduce",
-                "placement_id": str(metric.get("placement_id") or ""),
-                "rank": int(metric["rank"]),
-                "gpu_uuid": str(metric.get("gpu_uuid") or ""),
-                "network_transport": metric.get("transport"),
-            },
+            "evidence": evidence,
         })
     return tuple(observations)
