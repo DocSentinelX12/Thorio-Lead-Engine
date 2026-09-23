@@ -187,7 +187,6 @@ def test_multiple_verified_concrete_paths_remain_available_to_placement(tmp_path
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path_ab = _concrete_path()
     inventory.persist_physical_path(path_ab)
-    # A second independently identified path must remain selectable.
     path_ba = PhysicalFabricPathBuilder.build(
         locality_graph={"components": [
             {"component_type": "gpu", "identity": "gpu:u1", "node_id": "node-b"},
@@ -280,7 +279,7 @@ def test_concrete_measured_capability_is_the_authoritative_fabric_gate(tmp_path)
         GpuRequirements(gpu_count=2, require_nccl=True, min_fabric_bandwidth_gbps=400.0),
         same_node=False,
     )
-    with pytest.raises(ComputeSchedulingError, match="complete placement"):
+    with pytest.raises(ComputeSchedulingError, match="physical placement"):
         ComputeScheduler(inventory).placement(too_fast)
     compatible = ComputeRequirements(
         WorkloadClass.MULTI_NODE_GPU,
@@ -377,6 +376,7 @@ def test_failed_path_requires_fresh_verification_before_replacement_placement(tm
     )
     placement = ComputeScheduler(inventory).placement(_requirements())
     assert placement.evidence["concrete_physical_paths"][0]["path_id"] == replacement.path_id
+
 
 def test_recovery_evidence_requires_fresh_verified_path(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
