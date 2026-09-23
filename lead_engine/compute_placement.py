@@ -83,9 +83,6 @@ class PlacementEvaluator:
         paths = self._verified_paths(gpu)
         evidence = {"gpu_uuid": payload.get("gpu_uuid"), "gpu_id": payload.get("gpu_id"), "node_id": gpu["node_id"], "paths": list(paths)}
         canonical_paths_present = bool(self.physical_paths)
-        # Once canonical concrete paths exist, measured bandwidth/latency is
-        # authoritative and must be evaluated by _valid_candidate. Keep the
-        # legacy per-GPU contract only for redundancy or legacy inventories.
         legacy_fabric_requested = (
             self.requirements.gpu.require_redundant_fabric_path
             or (not canonical_paths_present and (
@@ -174,6 +171,42 @@ class PlacementEvaluator:
         missing = node_pairs - covered_pairs
         return not missing, evidence, "missing_verified_concrete_inter_node_path" if missing else "verified"
 
+    def _candidate_concrete_performance(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Rank candidates using only directly observed concrete-path measurements.
+
+        No synthetic score is created. Missing observations sort behind observed
+        measurements, and the individual measured dimensions remain visible in the
+        returned evidence and decision trace.
+        """
+        concrete_ok, paths, _ = self._concrete_path_evidence(candidate)
+        if not concrete_ok or not paths:
+            return (1, float("inf"), float("inf"), 0, "")
+        measurements = [path.get("measurement") for path in paths if isinstance(path.get("measurement"), dict)]
+        if not measurements:
+            return (1, float("inf"), float("inf"), 0, "")
+        bandwidths = []
+        latencies = []
+        samples = 0
+        freshest = float("-inf")
+        for measurement in measurements:
+            try:
+                if measurement.get("bandwidth_gbps") is not None:
+                    bandwidths.append(float(measurement["bandwidth_gbps"]))
+                if measurement.get("latency_us") is not None:
+                    latencies.append(float(measurement["latency_us"]))
+                samples += int(measurement.get("sample_count", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            try:
+                freshest = max(freshest, float(measurement.get("observed_at", float("-inf"))))
+            except (TypeError, ValueError):
+                pass
+        if not bandwidths and not latencies:
+            return (1, float("inf"), float("inf"), -samples, "")
+        # Direct observations only: lower latency first, then higher bandwidth,
+        # then more samples, then newer observations, then deterministic path ID.
+        return (0, min(latencies, default=float("inf")), -max(bandwidths, default=0.0), -samples, str(max((str(path.get("path_id") or "") for path in paths), default="")))
+
     def _candidate_performance(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
         observations = []
         for gpu in candidate:
@@ -226,7 +259,7 @@ class PlacementEvaluator:
                 if valid:
                     valid_gpus.append(gpu)
                 else:
-                    self._trace("complete_communication_path_validity", "rejected", reason=reason, resource_keys=(str(gpu["resource_key"]),), evidence=evidence)
+                    self._trace("complete_communication_path_validity", "rejected", reason=reason, resource_keys=(str(gpu["resource_key"],),), evidence=evidence)
             ranked = self._rank_gpu_rows(valid_gpus)
             if ranked:
                 valid_nodes.append({**node, "gpus": ranked})
@@ -296,9 +329,9 @@ class PlacementEvaluator:
         if not valid:
             self._trace("complete_physical_validation", "rejected", reason="no_complete_physical_placement", rejected_candidates=rejection_count)
             raise RuntimeError("no complete physical placement")
-        ranked = sorted(valid, key=lambda item: (self._candidate_performance(item[0]), self._candidate_route_health(item[0]), self._stable_key(item[0])))
+        ranked = sorted(valid, key=lambda item: (self._candidate_performance(item[0]), self._candidate_route_health(item[0]), self._candidate_concrete_performance(item[0]), self._stable_key(item[0])))
         selected, evidence = ranked[0]
-        self._trace("workload_performance", "applied", key=self._candidate_performance(selected)); self._trace("route_health", "applied", key=self._candidate_route_health(selected)); self._trace("stable_resource_ordering", "applied", resource_keys=self._stable_key(selected))
+        self._trace("workload_performance", "applied", key=self._candidate_performance(selected)); self._trace("route_health", "applied", key=self._candidate_route_health(selected)); self._trace("concrete_path_performance", "applied", key=self._candidate_concrete_performance(selected)); self._trace("stable_resource_ordering", "applied", resource_keys=self._stable_key(selected))
         provider_ids = {str(row["provider_id"]) for row in selected}; domain_ids = {str(row["domain_id"]) for row in selected}
         if len(provider_ids) != 1 or len(domain_ids) != 1:
             raise RuntimeError("complete placement must remain within one provider and domain")
@@ -309,4 +342,4 @@ class PlacementEvaluator:
         workload_signature = tuple(getattr(self.requirements, "performance_signature", ()) or ())
         stable_identity = {"provider_id": next(iter(provider_ids)), "domain_id": next(iter(domain_ids)), "workload_class": getattr(getattr(self.requirements, "workload_class", None), "value", getattr(self.requirements, "workload_class", None)), "workload_signature": workload_signature, "gpu_requirements": {"gpu_count": self.requirements.gpu.gpu_count, "min_vram_bytes": self.requirements.gpu.min_vram_bytes, "min_compute_capability": self.requirements.gpu.min_compute_capability, "required_cuda_version": self.requirements.gpu.required_cuda_version, "required_driver_version": self.requirements.gpu.required_driver_version, "required_nvlink_domain": self.requirements.gpu.required_nvlink_domain, "require_nccl": self.requirements.gpu.require_nccl, "min_fabric_bandwidth_gbps": self.requirements.gpu.min_fabric_bandwidth_gbps, "max_fabric_latency_us": self.requirements.gpu.max_fabric_latency_us, "require_redundant_fabric_path": self.requirements.gpu.require_redundant_fabric_path}, "min_cpu_count": self.requirements.min_cpu_count, "min_memory_bytes": self.requirements.min_memory_bytes, "same_node": self.requirements.same_node, "topology_domain": self.requirements.topology_domain, "allowed_node_ids": tuple(self.requirements.allowed_node_ids), "gpu_ids": gpu_ids, "node_ids": node_ids, "resource_keys": resource_keys, "paths": [{key: path.get(key) for key in sorted(path) if key not in {"verified_rdma_link", "bandwidth_gbps", "latency_us"}} for path in path_evidence]}
         placement_id = hashlib.sha256(json.dumps(stable_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-        return PlacementDecision(placement_id=placement_id, provider_id=next(iter(provider_ids)), domain_id=next(iter(domain_ids)), workload_signature=workload_signature, selected_gpu_ids=gpu_ids, selected_node_ids=node_ids, selected_resource_keys=resource_keys, evidence={"physical_paths": path_evidence, "gpu_nic_rdma": locality, "topology": evidence["topology"], "shared_network": evidence["shared_network"], "concrete_physical_paths": evidence.get("concrete_physical_paths", []), "workload_performance": self._candidate_performance(selected), "route_health": self._candidate_route_health(selected), "candidate_evaluations": candidate_evidence, "rejection_count": rejection_count}, decision_trace=tuple(self.trace))
+        return PlacementDecision(placement_id=placement_id, provider_id=next(iter(provider_ids)), domain_id=next(iter(domain_ids)), workload_signature=workload_signature, selected_gpu_ids=gpu_ids, selected_node_ids=node_ids, selected_resource_keys=resource_keys, evidence={"physical_paths": path_evidence, "gpu_nic_rdma": locality, "topology": evidence["topology"], "shared_network": evidence["shared_network"], "concrete_physical_paths": evidence.get("concrete_physical_paths", []), "workload_performance": self._candidate_performance(selected), "route_health": self._candidate_route_health(selected), "concrete_path_performance": self._candidate_concrete_performance(selected), "candidate_evaluations": candidate_evidence, "rejection_count": rejection_count}, decision_trace=tuple(self.trace))
