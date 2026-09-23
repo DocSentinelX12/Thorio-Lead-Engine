@@ -55,7 +55,7 @@ def test_extract_execution_path_observations_requires_explicit_concrete_path_ide
         "generation": 3,
         "process_evidence": [{
             "rank": 0,
-            "gpu_binding": {"planned_physical_path": {"fabric_path_id": "fabric-path-1", "path_id": "fabric-path-1"}},
+            "gpu_binding": {"planned_physical_path": {"fabric_path_id": "fabric-path-1", "path_id": "fabric-path-1"}, "observed_fabric_path_id": "fabric-path-1"},
             "probe": {"rank": 0, "gpu_uuid": "GPU-0", "all_reduce_elapsed_ms": 2.5, "network_transport": "IB"},
         }],
     }
