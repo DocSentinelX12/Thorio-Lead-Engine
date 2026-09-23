@@ -6,6 +6,7 @@ qualification, outreach, revenue, or Partnership state.
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -743,6 +744,12 @@ class ComputeScheduler:
         if len(provider_ids) != 1 or len(domain_ids) != 1:
             self.release(keys)
             raise ComputeSchedulingError("allocation must remain within one provider and domain")
+        if placement is not None:
+            try:
+                self.inventory.persist_placement(placement)
+            except (TypeError, ValueError, sqlite3.Error) as error:
+                self.release(keys)
+                raise ComputeSchedulingError(f"placement persistence failed: {error}") from error
         return ComputeAllocation(
             allocation_id=allocation_id,
             provider_id=next(iter(provider_ids)),
@@ -756,6 +763,13 @@ class ComputeScheduler:
             resource_keys=tuple(keys),
             capability_evidence=tuple(
                 json.loads(row["payload_json"]) | {"resource_key": row["resource_key"]} | (
+                    {
+                        "placement_id": placement.placement_id,
+                        "placement_schema_version": 1,
+                    }
+                    if placement is not None
+                    else {}
+                ) | (
                     {"placement_decision": {
                         "signal": (
                             "verified_gpu_nic_rdma_path"
