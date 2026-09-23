@@ -35,6 +35,7 @@ class FabricVerificationResult:
     reason: str | None = None
     failure_domain: str | None = None
     history: tuple[dict[str, object], ...] = ()
+    measurement: Mapping[str, object] = field(default_factory=dict)
 
 
 def _path_id(
@@ -204,6 +205,7 @@ class PhysicalFabricVerification:
             path_id=verification.path_id,
             state=FabricPathState.MEASURED,
             history=verification.history,
+            measurement=dict(measurement),
         )
 
     @staticmethod
@@ -241,4 +243,55 @@ class PhysicalFabricVerification:
             path_id=verification.path_id,
             state=FabricPathState.RECOVERED,
             history=history,
+        )
+
+
+    @staticmethod
+    def fail(
+        verification: FabricVerificationResult,
+        *,
+        reason: str,
+        failure_domain: str,
+    ) -> FabricVerificationResult:
+        history = verification.history + (
+            {
+                "state": verification.state.value,
+                "reason": reason,
+                "failure_domain": failure_domain,
+                "measurement": dict(verification.measurement),
+            },
+        )
+        return FabricVerificationResult(
+            path_id=verification.path_id,
+            state=FabricPathState.FAILED,
+            reason=reason,
+            failure_domain=failure_domain,
+            history=history,
+            measurement=dict(verification.measurement),
+        )
+
+    @staticmethod
+    def reverify(
+        verification: FabricVerificationResult,
+        *,
+        evidence: Sequence[Mapping[str, object]],
+    ) -> FabricVerificationResult:
+        covered = {
+            str(item.get("segment"))
+            for item in evidence
+            if str(item.get("result") or "").lower() == "pass"
+            and item.get("segment")
+        }
+        return FabricVerificationResult(
+            path_id=verification.path_id,
+            state=FabricPathState.REVERIFIED if covered else verification.state,
+            reason=None if covered else "fresh path-segment evidence is incomplete",
+            history=verification.history + (
+                {
+                    "state": verification.state.value,
+                    "reason": verification.reason,
+                    "fresh_evidence_segments": sorted(covered),
+                },
+            ),
+            measurement=dict(verification.measurement),
         )
