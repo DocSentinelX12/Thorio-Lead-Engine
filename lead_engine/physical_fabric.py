@@ -352,6 +352,57 @@ class PhysicalFabricVerification:
         )
 
 
+
+
+def resolve_observed_fabric_path_id(
+    paths: Sequence[Mapping[str, object]],
+    *,
+    source_gpu: str,
+    destination_gpu: str,
+    source_rdma_device: str,
+    source_rdma_port: int,
+    destination_rdma_device: str,
+    destination_rdma_port: int,
+) -> str | None:
+    """Resolve a runtime route to one canonical physical path only when unique."""
+    source_gpu = str(source_gpu).strip()
+    destination_gpu = str(destination_gpu).strip()
+    source_rdma_device = str(source_rdma_device).strip()
+    destination_rdma_device = str(destination_rdma_device).strip()
+    if (
+        not source_gpu
+        or not destination_gpu
+        or not source_rdma_device
+        or not destination_rdma_device
+        or not isinstance(source_rdma_port, int)
+        or source_rdma_port < 1
+        or not isinstance(destination_rdma_port, int)
+        or destination_rdma_port < 1
+    ):
+        return None
+
+    source_port = f"rdma:{source_rdma_device}:{source_rdma_port}"
+    destination_port = f"rdma:{destination_rdma_device}:{destination_rdma_port}"
+    matches: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, Mapping):
+            continue
+        path_id = str(raw.get("path_id") or "").strip()
+        if not path_id:
+            continue
+        if (
+            str(raw.get("source_gpu") or "").strip() != source_gpu
+            or str(raw.get("destination_gpu") or "").strip() != destination_gpu
+        ):
+            continue
+        segments = raw.get("segments")
+        if not isinstance(segments, (list, tuple)):
+            continue
+        normalized = {str(segment).strip() for segment in segments if str(segment).strip()}
+        if source_port in normalized and destination_port in normalized:
+            matches.append(path_id)
+    return matches[0] if len(matches) == 1 else None
+
 class AdaptiveFabricRouteSelector:
     """Select and reselect physical routes from current, path-specific evidence."""
 
