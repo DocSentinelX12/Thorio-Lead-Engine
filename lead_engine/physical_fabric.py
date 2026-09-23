@@ -213,6 +213,30 @@ class PhysicalFabricVerification:
             and float(observed_at) <= float(verification.measurement_observed_at)
         ):
             return verification
+        if str(measurement.get("status") or "").strip().lower() == "degraded":
+            reason = str(measurement.get("degradation_reason") or "").strip()
+            failure_domain = str(measurement.get("failure_domain") or "").strip()
+            if reason and failure_domain:
+                degraded = PhysicalFabricVerification.degrade(
+                    verification,
+                    reason=reason,
+                    failure_domain=failure_domain,
+                )
+                return FabricVerificationResult(
+                    path_id=degraded.path_id,
+                    state=degraded.state,
+                    reason=degraded.reason,
+                    failure_domain=degraded.failure_domain,
+                    history=degraded.history,
+                    measurement=dict(measurement),
+                    measurement_observed_at=(
+                        observed_at
+                        if observed_at is not None
+                        else verification.measurement_observed_at
+                    ),
+                    required_segments=degraded.required_segments,
+                )
+
         history = verification.history
         if verification.state is FabricPathState.REVERIFIED:
             history = history + (
