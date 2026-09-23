@@ -172,26 +172,31 @@ class PlacementEvaluator:
         missing = node_pairs - covered_pairs
         return not missing, evidence, "missing_verified_concrete_inter_node_path" if missing else "verified"
 
-    def _adaptive_route_selection(self, candidate: tuple[dict[str, Any], ...]) -> tuple[dict[str, str], ...]:
-        """Select the observed best measured canonical route for each cross-node GPU pair."""
-        gpu_pairs: list[tuple[str, str]] = []
-        for index, gpu in enumerate(candidate):
-            source_uuid = str(self._payload(gpu).get("gpu_uuid") or "").strip()
+    @classmethod
+    def _cross_node_gpu_pairs(cls, candidate: tuple[dict[str, Any], ...]) -> tuple[tuple[str, str], ...]:
+        """Enumerate every directional cross-node GPU pair required by runtime peers."""
+        pairs: list[tuple[str, str]] = []
+        for source in candidate:
+            source_uuid = str(cls._payload(source).get("gpu_uuid") or "").strip()
             if not source_uuid:
                 continue
-            for destination in candidate[index + 1:]:
-                if str(gpu["node_id"]) == str(destination["node_id"]):
+            for destination in candidate:
+                if source is destination or str(source["node_id"]) == str(destination["node_id"]):
                     continue
-                destination_uuid = str(self._payload(destination).get("gpu_uuid") or "").strip()
-                if not destination_uuid:
-                    continue
-                gpu_pairs.append((f"gpu:{source_uuid}", f"gpu:{destination_uuid}"))
+                destination_uuid = str(cls._payload(destination).get("gpu_uuid") or "").strip()
+                if destination_uuid:
+                    pairs.append((f"gpu:{source_uuid}", f"gpu:{destination_uuid}"))
+        return tuple(pairs)
+
+    def _adaptive_route_selection(self, candidate: tuple[dict[str, Any], ...]) -> tuple[dict[str, str], ...]:
+        """Select the observed best measured canonical route for each directional GPU pair."""
+        gpu_pairs = self._cross_node_gpu_pairs(candidate)
         if not gpu_pairs:
             return ()
         return AdaptiveFabricRouteSelector.select_for_gpu_pairs(
             self.physical_paths,
             self.route_health,
-            tuple(gpu_pairs),
+            gpu_pairs,
         )
 
     def _candidate_concrete_performance(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
