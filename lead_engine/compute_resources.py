@@ -142,7 +142,7 @@ class ComputeRequirements:
     same_node: bool = True
     topology_domain: Optional[str] = None
     allowed_node_ids: Tuple[str, ...] = field(default_factory=tuple)
-    performance_signature: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
+    performance_signature: Tuple[Tuple[str, Any], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.min_cpu_count < 1 or self.min_memory_bytes < 1:
@@ -153,12 +153,23 @@ class ComputeRequirements:
             raise ValueError("allowed_node_ids must contain non-empty node IDs")
         if len(set(self.allowed_node_ids)) != len(self.allowed_node_ids):
             raise ValueError("allowed_node_ids must be unique")
-        normalized_signature = tuple((str(key).strip(), str(value).strip()) for key, value in self.performance_signature)
-        if any(not key or not value for key, value in normalized_signature):
-            raise ValueError("performance_signature keys and values must be non-empty")
+        normalized_signature = []
+        for key, value in self.performance_signature:
+            normalized_key = str(key).strip()
+            if not normalized_key:
+                raise ValueError("performance_signature keys must be non-empty")
+            if value is None:
+                raise ValueError("performance_signature values must be non-empty")
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    raise ValueError("performance_signature values must be non-empty")
+            elif not isinstance(value, (int, float, bool)):
+                raise ValueError("performance_signature values must be scalar")
+            normalized_signature.append((normalized_key, value))
         if len({key for key, _ in normalized_signature}) != len(normalized_signature):
             raise ValueError("performance_signature keys must be unique")
-        object.__setattr__(self, "performance_signature", normalized_signature)
+        object.__setattr__(self, "performance_signature", tuple(normalized_signature))
 
 
 @dataclass(frozen=True)
