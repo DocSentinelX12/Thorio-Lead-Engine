@@ -221,6 +221,24 @@ def test_multiple_verified_concrete_paths_remain_available_to_placement(tmp_path
     assert {item["path_id"] for item in inventory.physical_paths()} == {path_ab.path_id, path_ba.path_id}
 
 
+def test_exact_path_failure_removes_it_from_verified_placement_candidates(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = _concrete_path()
+    inventory.persist_physical_path(path)
+    verification = PhysicalFabricVerification.verify(
+        path, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in path.segments]
+    )
+    inventory.persist_physical_verification(verification, evidence={"stage": "path_verification"})
+    assert inventory.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1")
+    assert inventory.fail_physical_path(
+        path.path_id,
+        reason="RDMA path failure",
+        evidence={"failure_domain": "rdma_port", "attempt_id": "attempt-1"},
+    )
+    assert inventory.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
+    assert inventory.physical_paths()[0]["state"] == "FAILED"
+
+
 def test_recovery_evidence_requires_fresh_verified_path(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
