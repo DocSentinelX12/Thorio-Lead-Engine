@@ -307,3 +307,66 @@ def test_placement_identity_includes_stable_workload_constraints(tmp_path):
 
     assert first.selected_resource_keys == second.selected_resource_keys
     assert first.placement_id != second.placement_id
+
+
+def test_placement_can_be_persisted_and_retrieved_without_mutating_allocation(tmp_path):
+    nodes = (_node("node-a", _gpu("node-a", "g0", "u0"), _gpu("node-a", "g1", "u1")),)
+    network = _network(
+        [
+            _locality("node-a", "u0", "eth0", "mlx5_0"),
+            _locality("node-a", "u1", "eth1", "mlx5_1"),
+        ],
+        [_link("mlx5_0"), _link("mlx5_1")],
+        domains={"node-a": ["fabric-a"]},
+    )
+    inventory = _snapshot(tmp_path, nodes=nodes, network=network)
+    scheduler = ComputeScheduler(inventory)
+    placement = scheduler.placement(_requirements())
+
+    stored = inventory.persist_placement(placement)
+
+    assert stored["placement_id"] == placement.placement_id
+    assert inventory.placement(placement.placement_id)["selected_gpu_ids"] == list(placement.selected_gpu_ids)
+    assert inventory.allocations() == []
+
+
+def test_persisted_placement_identity_is_idempotent(tmp_path):
+    nodes = (_node("node-a", _gpu("node-a", "g0", "u0"), _gpu("node-a", "g1", "u1")),)
+    network = _network(
+        [
+            _locality("node-a", "u0", "eth0", "mlx5_0"),
+            _locality("node-a", "u1", "eth1", "mlx5_1"),
+        ],
+        [_link("mlx5_0"), _link("mlx5_1")],
+        domains={"node-a": ["fabric-a"]},
+    )
+    inventory = _snapshot(tmp_path, nodes=nodes, network=network)
+    placement = ComputeScheduler(inventory).placement(_requirements())
+
+    first = inventory.persist_placement(placement)
+    second = inventory.persist_placement(placement)
+
+    assert first == second
+    assert len(inventory.placements()) == 1
+
+
+def test_allocation_can_reference_placement_without_creating_second_reservation(tmp_path):
+    nodes = (_node("node-a", _gpu("node-a", "g0", "u0"), _gpu("node-a", "g1", "u1")),)
+    network = _network(
+        [
+            _locality("node-a", "u0", "eth0", "mlx5_0"),
+            _locality("node-a", "u1", "eth1", "mlx5_1"),
+        ],
+        [_link("mlx5_0"), _link("mlx5_1")],
+        domains={"node-a": ["fabric-a"]},
+    )
+    inventory = _snapshot(tmp_path, nodes=nodes, network=network)
+    scheduler = ComputeScheduler(inventory)
+    placement = scheduler.placement(_requirements())
+    inventory.persist_placement(placement)
+
+    allocation = scheduler.allocate(_requirements(), "placement-allocation")
+
+    assert allocation.capability_evidence
+    assert inventory.placement(placement.placement_id)["placement_id"] == placement.placement_id
+    assert len(inventory.allocations(state="reserved")) == 1
