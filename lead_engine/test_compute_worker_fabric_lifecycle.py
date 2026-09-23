@@ -209,6 +209,8 @@ def test_worker_receives_durable_participant_and_launch_contract(tmp_path: Path)
         assert assignment["generation"] == claimed["generation"]
         assert assignment["worker_id"] == "worker-1"
         assert assignment["lease_token"] == claimed["lease_token"]
+        assert coordinator.execution_attempt(claimed["attempt_id"])["placement_id"]
+        assert inventory.placement(coordinator.execution_attempt(claimed["attempt_id"])["placement_id"]) is not None
 
         plan = client.fabric_launch_plan(
             assignment["attempt_id"],
