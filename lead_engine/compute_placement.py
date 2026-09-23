@@ -37,12 +37,14 @@ class PlacementEvaluator:
         rows: list[dict[str, Any]],
         performance_history: dict[str, dict[str, Any]],
         route_health: dict[str, dict[str, Any]],
+        physical_paths: Iterable[dict[str, Any]] = (),
     ):
         self.scheduler = scheduler
         self.requirements = requirements
         self.rows = rows
         self.performance_history = performance_history
         self.route_health = route_health
+        self.physical_paths = tuple(physical_paths)
         self.trace: list[dict[str, Any]] = []
 
     def _trace(self, stage: str, status: str, **details: Any) -> None:
@@ -139,6 +141,14 @@ class PlacementEvaluator:
                     "gpu_evidence": gpu_evidence,
                 }
 
+        concrete_ok, concrete_paths, concrete_reason = self._concrete_path_evidence(candidate)
+        if not concrete_ok:
+            return False, {
+                "stage": "complete_communication_path_validity",
+                "reason": concrete_reason,
+                "physical_paths": concrete_paths,
+            }
+
         node_ids = tuple(dict.fromkeys(str(gpu["node_id"]) for gpu in candidate))
         node_candidates = [
             self._node_candidate(node_id, self._node_rows()[node_id])
@@ -179,7 +189,42 @@ class PlacementEvaluator:
             "node_ids": node_ids,
             "shared_network": shared_network,
             "topology": topology,
+            "concrete_physical_paths": concrete_paths,
         }
+
+    def _concrete_path_evidence(self, candidate: tuple[dict[str, Any], ...]) -> tuple[bool, list[dict[str, Any]], str]:
+        selected = {str(self._payload(gpu).get("gpu_uuid") or "") for gpu in candidate}
+        selected.discard("")
+        if len({str(gpu["node_id"]) for gpu in candidate}) < 2:
+            return True, [], "same_node"
+        paths = [
+            path for path in self.physical_paths
+            if str(path.get("state") or "") in {"VERIFIED", "MEASURED", "REVERIFIED"}
+        ]
+        evidence = [
+            path for path in paths
+            if str(path.get("source_gpu") or "").removeprefix("gpu:") in selected
+            or str(path.get("destination_gpu") or "").removeprefix("gpu:") in selected
+        ]
+        node_pairs = {
+            tuple(sorted((str(gpu["node_id"]), str(other["node_id"]))))
+            for index, gpu in enumerate(candidate)
+            for other in candidate[index + 1:]
+            if str(gpu["node_id"]) != str(other["node_id"])
+        }
+        covered_pairs = set()
+        for path in evidence:
+            source = str(path.get("source_gpu") or "").removeprefix("gpu:")
+            destination = str(path.get("destination_gpu") or "").removeprefix("gpu:")
+            for gpu in selected:
+                if gpu == source or gpu == destination:
+                    continue
+            source_node = next((str(gpu["node_id"]) for gpu in candidate if str(self._payload(gpu).get("gpu_uuid")) == source), None)
+            destination_node = next((str(gpu["node_id"]) for gpu in candidate if str(self._payload(gpu).get("gpu_uuid")) == destination), None)
+            if source_node and destination_node and source_node != destination_node:
+                covered_pairs.add(tuple(sorted((source_node, destination_node))))
+        missing = node_pairs - covered_pairs
+        return not missing, evidence, "missing_verified_concrete_inter_node_path" if missing else "verified"
 
     def _candidate_performance(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
         observations = []
@@ -510,6 +555,7 @@ class PlacementEvaluator:
                 "gpu_nic_rdma": locality,
                 "topology": evidence["topology"],
                 "shared_network": evidence["shared_network"],
+                "concrete_physical_paths": evidence.get("concrete_physical_paths", []),
                 "workload_performance": self._candidate_performance(selected),
                 "route_health": self._candidate_route_health(selected),
                 "candidate_evaluations": candidate_evidence,
