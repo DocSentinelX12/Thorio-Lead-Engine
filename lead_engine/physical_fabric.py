@@ -36,6 +36,7 @@ class FabricVerificationResult:
     failure_domain: str | None = None
     history: tuple[dict[str, object], ...] = ()
     measurement: Mapping[str, object] = field(default_factory=dict)
+    required_segments: tuple[str, ...] = ()
 
 
 def _path_id(
@@ -187,10 +188,12 @@ class PhysicalFabricVerification:
                 path_id=path.path_id,
                 state=FabricPathState.CONSTRUCTED,
                 reason="required path-segment evidence is incomplete",
+                required_segments=path.segments,
             )
         return FabricVerificationResult(
             path_id=path.path_id,
             state=FabricPathState.VERIFIED,
+            required_segments=path.segments,
         )
 
     @staticmethod
@@ -206,6 +209,7 @@ class PhysicalFabricVerification:
             state=FabricPathState.MEASURED,
             history=verification.history,
             measurement=dict(measurement),
+            required_segments=verification.required_segments,
         )
 
     @staticmethod
@@ -268,6 +272,7 @@ class PhysicalFabricVerification:
             failure_domain=failure_domain,
             history=history,
             measurement=dict(verification.measurement),
+            required_segments=verification.required_segments,
         )
 
     @staticmethod
@@ -282,10 +287,12 @@ class PhysicalFabricVerification:
             if str(item.get("result") or "").lower() == "pass"
             and item.get("segment")
         }
+        required = set(verification.required_segments)
+        complete = bool(required) and required.issubset(covered)
         return FabricVerificationResult(
             path_id=verification.path_id,
-            state=FabricPathState.REVERIFIED if covered else verification.state,
-            reason=None if covered else "fresh path-segment evidence is incomplete",
+            state=FabricPathState.REVERIFIED if complete else verification.state,
+            reason=None if complete else "fresh path-segment evidence is incomplete",
             history=verification.history + (
                 {
                     "state": verification.state.value,
@@ -294,4 +301,5 @@ class PhysicalFabricVerification:
                 },
             ),
             measurement=dict(verification.measurement),
+            required_segments=verification.required_segments,
         )
