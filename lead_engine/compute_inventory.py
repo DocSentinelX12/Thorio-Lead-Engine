@@ -164,6 +164,26 @@ class ComputeInventory:
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_components_identity "
                 "ON compute_physical_components(identity)"
             )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_physical_component_history (
+                observation_id TEXT PRIMARY KEY,
+                component_key TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                domain_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                component_type TEXT NOT NULL,
+                identity TEXT NOT NULL,
+                parent_identity TEXT,
+                pci_parent_identity TEXT,
+                numa_identity TEXT,
+                attributes_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                observed_at REAL NOT NULL,
+                recorded_at REAL NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_component_history_component "
+                "ON compute_physical_component_history(component_key,observed_at)"
+            )
             connection.commit()
 
     @staticmethod
@@ -282,6 +302,33 @@ class ComputeInventory:
                 component_key = hashlib.sha256(
                     json.dumps(key_material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
                 ).hexdigest()
+                observation_material = {
+                    "component_key": component_key,
+                    "provider_id": snapshot.provider_id,
+                    "domain_id": snapshot.domain_id,
+                    "node_id": record["node_id"],
+                    "component_type": record["component_type"],
+                    "identity": record["identity"],
+                    "observed_at": snapshot.observed_at,
+                }
+                observation_id = hashlib.sha256(
+                    json.dumps(observation_material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest()
+                connection.execute(
+                    """INSERT OR IGNORE INTO compute_physical_component_history
+                       (observation_id,component_key,provider_id,domain_id,node_id,component_type,identity,
+                        parent_identity,pci_parent_identity,numa_identity,attributes_json,evidence_json,
+                        observed_at,recorded_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        observation_id, component_key, snapshot.provider_id, snapshot.domain_id, record["node_id"],
+                        record["component_type"], record["identity"], record["parent_identity"],
+                        record["pci_parent_identity"], record["numa_identity"],
+                        json.dumps(record["attributes"], ensure_ascii=False, sort_keys=True),
+                        json.dumps(record["evidence"], ensure_ascii=False, sort_keys=True),
+                        snapshot.observed_at, now,
+                    ),
+                )
                 connection.execute(
                     """INSERT INTO compute_physical_components
                        (component_key,provider_id,domain_id,node_id,component_type,identity,
@@ -316,6 +363,23 @@ class ComputeInventory:
                           evidence_json,observed_at,first_seen_at,last_seen_at
                    FROM compute_physical_components
                    ORDER BY provider_id,domain_id,node_id,component_type,identity"""
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["attributes"] = json.loads(item.pop("attributes_json") or "{}")
+            item["evidence"] = json.loads(item.pop("evidence_json") or "{}")
+            result.append(item)
+        return result
+
+    def physical_component_history(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT observation_id,component_key,provider_id,domain_id,node_id,component_type,identity,
+                          parent_identity,pci_parent_identity,numa_identity,attributes_json,evidence_json,
+                          observed_at,recorded_at
+                   FROM compute_physical_component_history
+                   ORDER BY observed_at,observation_id"""
             ).fetchall()
         result = []
         for row in rows:
