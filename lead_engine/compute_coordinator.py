@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
-from .compute_fabric_telemetry import aggregate_execution_metrics, extract_execution_metrics
+from .compute_fabric_telemetry import aggregate_execution_metrics, extract_execution_metrics, extract_execution_path_observations
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
 from .compute_provider import ProviderResourceSnapshot
@@ -1855,9 +1855,14 @@ class ComputeCoordinator:
             if evidence_keys != set(expected_bindings):
                 return False
 
-            metrics = extract_execution_metrics(verification)
+            execution_verification = dict(verification)
+            execution_verification["execution_attempt_id"] = attempt_id
+            execution_verification["generation"] = int(generation)
+            execution_verification["placement_id"] = str(row["placement_id"] or verification.get("placement_id") or "").strip()
+            metrics = extract_execution_metrics(execution_verification)
+            path_observations = extract_execution_path_observations(execution_verification, observed_at=now)
             metric_summary = aggregate_execution_metrics(metrics)
-            verification = dict(verification)
+            verification = execution_verification
             verification["fabric_execution_metrics"] = {
                 **metric_summary,
                 "samples": [dict(item) for item in metrics],
@@ -1889,21 +1894,8 @@ class ComputeCoordinator:
                     path_key = str(metric.get("path_key") or "").strip()
                     if path_key:
                         affected_paths.add(path_key)
-                        physical_path = metric.get("physical_path")
-                        if isinstance(physical_path, dict):
-                            self.inventory.record_fabric_route_observation(
-                                physical_path,
-                                latency_ms=float(metric["all_reduce_elapsed_ms"]),
-                                success=True,
-                                observed_at=now,
-                                evidence={
-                                    "source": "observed_all_reduce",
-                                    "attempt_id": attempt_id,
-                                    "generation": generation,
-                                    "worker_id": worker_id,
-                                    "rank": int(metric["rank"]),
-                                },
-                            )
+                for observation in path_observations:
+                    self.inventory.record_execution_path_observations((observation,))
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
                            (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key,placement_id,fabric_path_id)
