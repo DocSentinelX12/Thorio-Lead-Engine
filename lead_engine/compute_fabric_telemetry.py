@@ -183,8 +183,10 @@ def extract_execution_path_observations(
             "gpu_uuid": str(metric.get("gpu_uuid") or ""),
             "network_transport": metric.get("transport"),
         }
-            evidence["destination_rank"] = observed_path.get("destination_rank")
-            evidence["destination_gpu"] = observed_path.get("destination_gpu")
+            if observed_path.get("destination_rank") is not None:
+                evidence["destination_rank"] = observed_path.get("destination_rank")
+            if observed_path.get("destination_gpu") is not None:
+                evidence["destination_gpu"] = observed_path.get("destination_gpu")
             observations.append({
                 "fabric_path_id": fabric_path_id,
                 "latency_us": elapsed_ms * 1000.0,
