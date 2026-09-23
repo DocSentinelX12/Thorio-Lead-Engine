@@ -189,6 +189,86 @@ class ComputeFabricOrchestrator:
             provider.close()
 
 
+
+@dataclass(frozen=True)
+class FabricRecoveryAction:
+    task_id: str
+    attempt_id: str
+    generation: int
+    failure_class: str
+    status: str
+    requeued: bool
+    fresh_allocation_required: bool
+    evidence_recorded: bool
+
+
+class ComputeFabricRecoverySupervisor:
+    """Coordinate evidence-backed failure recovery without replacing lifecycle authorities.
+
+    The coordinator remains authoritative for durable task and execution state.
+    The inventory remains authoritative for physical resource state. The scheduler
+    remains authoritative for fresh placement. This supervisor only sequences
+    those authorities and exposes one idempotent recovery operation.
+    """
+
+    def __init__(self, coordinator: Any, *, fabric: ComputeFabricOrchestrator | None = None, clock=time) -> None:
+        self.coordinator = coordinator
+        self.fabric = fabric or coordinator.compute_fabric
+        self._clock = clock
+
+    def recover_attempt(
+        self,
+        *,
+        attempt_id: str,
+        generation: int,
+        failure_class: str,
+        reason: str,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> FabricRecoveryAction:
+        attempt = self.coordinator.execution_attempt(attempt_id)
+        if not attempt:
+            raise ValueError(f"execution attempt does not exist: {attempt_id}")
+        if int(attempt["generation"]) != int(generation):
+            return FabricRecoveryAction(
+                task_id=str(attempt["task_id"]),
+                attempt_id=attempt_id,
+                generation=int(attempt["generation"]),
+                failure_class=str(failure_class),
+                status="stale_generation",
+                requeued=False,
+                fresh_allocation_required=False,
+                evidence_recorded=False,
+            )
+        result = self.coordinator.recover_fabric_attempt(
+            attempt_id=attempt_id,
+            generation=generation,
+            failure_class=str(failure_class),
+            reason=str(reason),
+            evidence=dict(evidence or {}),
+        )
+        return FabricRecoveryAction(
+            task_id=str(result["task_id"]),
+            attempt_id=attempt_id,
+            generation=int(generation),
+            failure_class=str(failure_class),
+            status=str(result["status"]),
+            requeued=bool(result["requeued"]),
+            fresh_allocation_required=bool(result["requeued"]),
+            evidence_recorded=bool(result["evidence_recorded"]),
+        )
+
+    def cycle(self) -> dict[str, Any]:
+        """Recover expired/lost executions, then refresh physical truth."""
+        expired = int(self.coordinator.recover_expired_tasks())
+        reconciled = self.coordinator.reconcile_fabric()
+        refresh = self.fabric.refresh()
+        return {
+            "recovered_expired_tasks": expired,
+            "reconciled_attempts": int(reconciled.get("reconciled", 0)),
+            "requeued_tasks": int(reconciled.get("requeued", 0)),
+            "refresh": refresh,
+        }
+
 class ComputeFabricController:
     """Continuously drive the durable compute queue through the fabric.
 
@@ -200,15 +280,20 @@ class ComputeFabricController:
     def __init__(self, coordinator: Any, *, fabric: ComputeFabricOrchestrator | None = None, clock=time, sleeper=None) -> None:
         self.coordinator = coordinator
         self.fabric = fabric or coordinator.compute_fabric
+        self.recovery = ComputeFabricRecoverySupervisor(coordinator, fabric=self.fabric, clock=clock)
         self._clock = clock
         self._sleep = sleeper or __import__("time").sleep
 
     def cycle(self, *, max_allocations_per_cycle: int = 50) -> FabricControllerCycle:
         if max_allocations_per_cycle < 1:
             raise ValueError("max_allocations_per_cycle must be positive")
-        recovered = int(self.coordinator.recover_expired_tasks())
-        reconciliation = self.coordinator.reconcile_fabric()
-        refresh = self.fabric.refresh()
+        recovery = self.recovery.cycle()
+        recovered = int(recovery["recovered_expired_tasks"])
+        reconciliation = {
+            "reconciled": int(recovery["reconciled_attempts"]),
+            "requeued": int(recovery["requeued_tasks"]),
+        }
+        refresh = recovery["refresh"]
         scheduled: list[dict[str, Any]] = []
         for _ in range(max_allocations_per_cycle):
             assignment = self.coordinator.claim_physical()
