@@ -220,6 +220,151 @@ class PhysicalFabricTopology:
             "network_domain_membership_not_used_as_physical_proof": True,
         }
 
+    @staticmethod
+    def build_locality_graph(
+        *,
+        components: Sequence[Mapping[str, object]],
+        relationships: Sequence[Mapping[str, object]],
+    ) -> dict[str, object]:
+        """Build a deterministic evidence-backed physical locality graph."""
+        component_records: dict[str, dict[str, object]] = {}
+        for raw in components:
+            if not isinstance(raw, Mapping):
+                continue
+            identity = str(raw.get("identity") or "").strip()
+            component_type = str(raw.get("component_type") or "").strip()
+            node_id = str(raw.get("node_id") or "").strip()
+            if not identity or not component_type or not node_id:
+                continue
+            candidate = {
+                "identity": identity,
+                "component_type": component_type,
+                "node_id": node_id,
+            }
+            existing = component_records.get(identity)
+            if existing is None:
+                component_records[identity] = candidate
+            elif existing != candidate:
+                component_records[identity] = {
+                    "identity": identity,
+                    "component_type": "conflict",
+                    "node_id": "",
+                }
+
+        observations: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+        for raw in relationships:
+            if not isinstance(raw, Mapping):
+                continue
+            relationship_type = str(raw.get("relationship_type") or "").strip()
+            source = str(raw.get("source") or "").strip()
+            target = str(raw.get("target") or "").strip()
+            if not relationship_type or not source or not target:
+                continue
+            source_record = component_records.get(source)
+            target_record = component_records.get(target)
+            if source_record is None or target_record is None:
+                state = "unknown"
+                reason = "endpoint identity is not present in canonical physical inventory"
+            elif source_record["component_type"] == "conflict" or target_record["component_type"] == "conflict":
+                state = "conflict"
+                reason = "component identity has contradictory physical observations"
+            else:
+                requested_state = str(raw.get("state") or "known").strip().lower()
+                state = requested_state if requested_state in {"known", "unknown", "conflict"} else "unknown"
+                reason = str(raw.get("reason") or "").strip()
+            evidence = raw.get("evidence")
+            evidence_record = dict(evidence) if isinstance(evidence, Mapping) else {}
+            if reason:
+                evidence_record.setdefault("reason", reason)
+            key = (relationship_type, source, target)
+            observations.setdefault(key, []).append({
+                "state": state,
+                "evidence": evidence_record,
+            })
+
+        edges: list[dict[str, object]] = []
+        component_types = {
+            identity: record["component_type"]
+            for identity, record in component_records.items()
+            if record["component_type"] != "conflict"
+        }
+        for (relationship_type, source, target), items in observations.items():
+            known = [item for item in items if item["state"] == "known"]
+            unique_evidence = {
+                json.dumps(item["evidence"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                for item in known
+            }
+            if any(item["state"] == "conflict" for item in items) or len(unique_evidence) > 1:
+                state = "conflict"
+            elif known:
+                state = "known"
+            else:
+                state = "unknown"
+            evidence = []
+            seen_evidence: set[str] = set()
+            for item in sorted(
+                items,
+                key=lambda item: json.dumps(item["evidence"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            ):
+                encoded = json.dumps(item["evidence"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                if encoded in seen_evidence:
+                    continue
+                seen_evidence.add(encoded)
+                evidence.append(dict(item["evidence"]))
+            edges.append({
+                "relationship_type": relationship_type,
+                "source": source,
+                "target": target,
+                "source_component_type": component_types.get(source),
+                "target_component_type": component_types.get(target),
+                "state": state,
+                "evidence": evidence,
+            })
+
+        expected_relationships = (
+            ("gpu", "pci", "gpu_to_pci"),
+            ("gpu", "numa", "gpu_to_numa"),
+            ("gpu", "nic", "gpu_to_nic"),
+            ("nic", "pci", "nic_to_pci"),
+            ("nic", "rdma_device", "nic_to_rdma_device"),
+            ("rdma_device", "rdma_port", "rdma_device_to_port"),
+        )
+        known_keys = {(edge["relationship_type"], edge["source"], edge["target"]) for edge in edges}
+        identities = sorted(component_records)
+        for source_type, target_type, relationship_type in expected_relationships:
+            sources = [identity for identity in identities if component_records[identity]["component_type"] == source_type]
+            targets = [identity for identity in identities if component_records[identity]["component_type"] == target_type]
+            for source in sources:
+                for target in targets:
+                    if source == target:
+                        continue
+                    key = (relationship_type, source, target)
+                    if key in known_keys:
+                        continue
+                    if component_records[source]["node_id"] != component_records[target]["node_id"]:
+                        continue
+                    edges.append({
+                        "relationship_type": relationship_type,
+                        "source": source,
+                        "target": target,
+                        "source_component_type": source_type,
+                        "target_component_type": target_type,
+                        "state": "unknown",
+                        "evidence": [],
+                    })
+
+        edges.sort(key=lambda edge: (
+            str(edge["relationship_type"]),
+            str(edge["source"]),
+            str(edge["target"]),
+        ))
+        return {
+            "schema_version": 1,
+            "provider_neutral": True,
+            "components": [component_records[identity] for identity in sorted(component_records)],
+            "edges": edges,
+        }
+
     def discover(self) -> dict[str, object]:
         gpu_nic = self._exec(("nvidia-smi", "topo", "-nic"))
         pci_inventory = self.parse_pci_inventory(self._exec(("lspci", "-D", "-nn")))
