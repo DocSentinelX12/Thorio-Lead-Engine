@@ -42,7 +42,7 @@ class ComputeCoordinator:
         self.lease_seconds = lease_seconds
         inventory_path = os.environ.get("THORIO_COMPUTE_INVENTORY_DB", f"{db_path}.inventory.sqlite3")
         self.inventory = inventory or ComputeInventory(inventory_path)
-        self.compute_scheduler = ComputeScheduler(self.inventory)
+        self.compute_scheduler = ComputeScheduler(self.inventory, performance_history_provider=self.fabric_path_performance)
         self.compute_fabric = ComputeFabricOrchestrator(self.inventory, scheduler=self.compute_scheduler)
         self.compute_fabric_recovery = ComputeFabricRecoverySupervisor(self, fabric=self.compute_fabric)
         self.compute_fabric_controller = ComputeFabricController(self, fabric=self.compute_fabric)
@@ -204,9 +204,26 @@ class ComputeCoordinator:
                 transport TEXT,
                 all_reduce_elapsed_ms REAL NOT NULL,
                 observed_at REAL NOT NULL,
+                path_key TEXT NOT NULL DEFAULT '',
                 UNIQUE(attempt_id, generation, worker_id, rank)
             )""")
+            metric_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_fabric_execution_metrics)")}
+            if "path_key" not in metric_columns:
+                connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN path_key TEXT NOT NULL DEFAULT ''")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_attempt ON compute_fabric_execution_metrics(attempt_id, generation, observed_at)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_path ON compute_fabric_execution_metrics(path_key, observed_at)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_path_performance (
+                path_key TEXT PRIMARY KEY,
+                sample_count INTEGER NOT NULL,
+                total_elapsed_ms REAL NOT NULL,
+                min_all_reduce_elapsed_ms REAL NOT NULL,
+                max_all_reduce_elapsed_ms REAL NOT NULL,
+                last_all_reduce_elapsed_ms REAL NOT NULL,
+                avg_all_reduce_elapsed_ms REAL NOT NULL,
+                transport TEXT,
+                last_observed_at REAL NOT NULL
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_path_performance_observed ON compute_fabric_path_performance(last_observed_at)")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_task_checkpoints (
                 task_id TEXT NOT NULL,
                 item_key TEXT NOT NULL,
@@ -1792,15 +1809,40 @@ class ComputeCoordinator:
                 for metric in metrics:
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
-                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
                             current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
                             str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
-                            float(metric["all_reduce_elapsed_ms"]), now,
+                            float(metric["all_reduce_elapsed_ms"]), now, str(metric.get("path_key") or ""),
                         ),
                     )
+                    path_key = str(metric.get("path_key") or "").strip()
+                    if path_key:
+                        elapsed = float(metric["all_reduce_elapsed_ms"])
+                        transport = metric.get("transport")
+                        connection.execute(
+                            """INSERT INTO compute_fabric_path_performance(
+                                   path_key,sample_count,total_elapsed_ms,min_all_reduce_elapsed_ms,
+                                   max_all_reduce_elapsed_ms,last_all_reduce_elapsed_ms,
+                                   avg_all_reduce_elapsed_ms,transport,last_observed_at)
+                               VALUES(?,?,?,?,?,?,?,?,?)
+                               ON CONFLICT(path_key) DO UPDATE SET
+                                   sample_count=compute_fabric_path_performance.sample_count+1,
+                                   total_elapsed_ms=compute_fabric_path_performance.total_elapsed_ms+excluded.total_elapsed_ms,
+                                   min_all_reduce_elapsed_ms=MIN(compute_fabric_path_performance.min_all_reduce_elapsed_ms,excluded.min_all_reduce_elapsed_ms),
+                                   max_all_reduce_elapsed_ms=MAX(compute_fabric_path_performance.max_all_reduce_elapsed_ms,excluded.max_all_reduce_elapsed_ms),
+                                   last_all_reduce_elapsed_ms=excluded.last_all_reduce_elapsed_ms,
+                                   avg_all_reduce_elapsed_ms=(compute_fabric_path_performance.total_elapsed_ms+excluded.total_elapsed_ms)/(compute_fabric_path_performance.sample_count+1),
+                                   transport=CASE
+                                       WHEN compute_fabric_path_performance.transport=excluded.transport THEN compute_fabric_path_performance.transport
+                                       WHEN compute_fabric_path_performance.transport IS NULL THEN excluded.transport
+                                       ELSE NULL
+                                   END,
+                                   last_observed_at=excluded.last_observed_at""",
+                            (path_key, 1, elapsed, elapsed, elapsed, elapsed, elapsed, transport, now),
+                        )
                 updated = connection.execute(
                     """UPDATE compute_execution_participants
                        SET verification=?,status='running',heartbeat_at=?,last_error=''
@@ -1822,6 +1864,18 @@ class ComputeCoordinator:
                 connection.commit()
         return True
 
+
+    def fabric_path_performance(self) -> Dict[str, Dict[str, Any]]:
+        """Return durable observed performance history keyed by physical path identity."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT path_key,sample_count,total_elapsed_ms,min_all_reduce_elapsed_ms,
+                          max_all_reduce_elapsed_ms,last_all_reduce_elapsed_ms,
+                          avg_all_reduce_elapsed_ms,transport,last_observed_at
+                   FROM compute_fabric_path_performance
+                   WHERE path_key<>'' ORDER BY path_key"""
+            ).fetchall()
+        return {str(row["path_key"]): dict(row) for row in rows}
 
     def fabric_execution_metrics(self, attempt_id: str, generation: int | None = None) -> Dict[str, Any]:
         """Return durable observed performance metrics for one execution attempt."""
