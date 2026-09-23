@@ -926,18 +926,6 @@ class ComputeCoordinator:
                 if attempt_updated.rowcount != 1:
                     connection.rollback()
                     raise RuntimeError("fabric recovery lost the exact execution-generation fence")
-                for metric in metrics:
-                    connection.execute(
-                        """INSERT OR REPLACE INTO compute_fabric_execution_metrics
-                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
-                            current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
-                            str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
-                            float(metric["all_reduce_elapsed_ms"]), now,
-                        ),
-                    )
                 connection.execute(
                     """UPDATE compute_execution_participants
                        SET status='failed',last_error=?,heartbeat_at=?
@@ -1801,6 +1789,18 @@ class ComputeCoordinator:
                 ):
                     connection.rollback()
                     return False
+                for metric in metrics:
+                    connection.execute(
+                        """INSERT OR REPLACE INTO compute_fabric_execution_metrics
+                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
+                            current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
+                            str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
+                            float(metric["all_reduce_elapsed_ms"]), now,
+                        ),
+                    )
                 updated = connection.execute(
                     """UPDATE compute_execution_participants
                        SET verification=?,status='running',heartbeat_at=?,last_error=''
