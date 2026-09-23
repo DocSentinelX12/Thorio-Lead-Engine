@@ -6,7 +6,25 @@ It never invents performance values, health scores, or scheduling policy.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Mapping
+
+
+def physical_path_key(path: Mapping[str, Any]) -> str:
+    """Return a stable identity for one observed physical GPU-to-NIC/RDMA path."""
+    normalized = {
+        str(key): path[key]
+        for key in (
+            "node_id", "gpu_uuid", "nic", "nic_pci_bus_id",
+            "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer",
+        )
+        if path.get(key) is not None and str(path.get(key)).strip() != ""
+    }
+    if not normalized:
+        return ""
+    serialized = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -29,13 +47,22 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
             continue
         if elapsed_ms <= 0:
             continue
+        gpu_binding = item.get("gpu_binding")
+        physical_path = (
+            gpu_binding.get("planned_physical_path")
+            if isinstance(gpu_binding, Mapping)
+            else None
+        )
+        path = physical_path if isinstance(physical_path, Mapping) else {}
         metrics.append({
             "rank": int(item.get("rank", probe.get("rank", -1))),
             "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(),
-            "node_id": str(item.get("gpu_binding", {}).get("node_id") or "").strip()
-                if isinstance(item.get("gpu_binding"), Mapping) else "",
+            "node_id": str(gpu_binding.get("node_id") or "").strip()
+                if isinstance(gpu_binding, Mapping) else "",
             "transport": str(probe.get("network_transport") or "").strip() or None,
             "all_reduce_elapsed_ms": elapsed_ms,
+            "physical_path": dict(path),
+            "path_key": physical_path_key(path),
         })
     return tuple(sorted(metrics, key=lambda item: (int(item["rank"]), str(item["gpu_uuid"]))))
 
