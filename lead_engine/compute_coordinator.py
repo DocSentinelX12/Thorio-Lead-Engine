@@ -224,6 +224,20 @@ class ComputeCoordinator:
                 last_observed_at REAL NOT NULL
             )""")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_path_performance_observed ON compute_fabric_path_performance(last_observed_at)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_workload_performance (
+                workload_path_key TEXT PRIMARY KEY,
+                path_key TEXT NOT NULL,
+                workload_signature_json TEXT NOT NULL,
+                sample_count INTEGER NOT NULL,
+                total_elapsed_ms REAL NOT NULL,
+                min_all_reduce_elapsed_ms REAL NOT NULL,
+                max_all_reduce_elapsed_ms REAL NOT NULL,
+                last_all_reduce_elapsed_ms REAL NOT NULL,
+                avg_all_reduce_elapsed_ms REAL NOT NULL,
+                transport TEXT,
+                last_observed_at REAL NOT NULL
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_workload_performance_path ON compute_fabric_workload_performance(path_key,last_observed_at)")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_task_checkpoints (
                 task_id TEXT NOT NULL,
                 item_key TEXT NOT NULL,
@@ -1813,13 +1827,67 @@ class ComputeCoordinator:
                         affected_paths.add(path_key)
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
-                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
                             current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
                             str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
                             float(metric["all_reduce_elapsed_ms"]), now, path_key,
+                            str(metric.get("workload_key") or ""),
+                        ),
+                    )
+                affected_workloads = {
+                    str(metric.get("workload_key") or "").strip()
+                    for metric in metrics
+                    if str(metric.get("workload_key") or "").strip()
+                }
+                for workload_key in sorted(affected_workloads):
+                    aggregate = connection.execute(
+                        """SELECT path_key,COUNT(*) AS sample_count,
+                                  SUM(all_reduce_elapsed_ms) AS total_elapsed_ms,
+                                  MIN(all_reduce_elapsed_ms) AS min_all_reduce_elapsed_ms,
+                                  MAX(all_reduce_elapsed_ms) AS max_all_reduce_elapsed_ms,
+                                  AVG(all_reduce_elapsed_ms) AS avg_all_reduce_elapsed_ms,
+                                  MAX(observed_at) AS last_observed_at
+                           FROM compute_fabric_execution_metrics
+                           WHERE workload_key=?""",
+                        (workload_key,),
+                    ).fetchone()
+                    transport_rows = connection.execute(
+                        """SELECT DISTINCT transport
+                           FROM compute_fabric_execution_metrics
+                           WHERE workload_key=? AND transport IS NOT NULL AND transport<>''""",
+                        (workload_key,),
+                    ).fetchall()
+                    transports = {str(item["transport"]) for item in transport_rows}
+                    transport = next(iter(transports)) if len(transports) == 1 else None
+                    connection.execute(
+                        """INSERT INTO compute_fabric_workload_performance(
+                               workload_path_key,path_key,workload_signature_json,sample_count,
+                               total_elapsed_ms,min_all_reduce_elapsed_ms,max_all_reduce_elapsed_ms,
+                               last_all_reduce_elapsed_ms,avg_all_reduce_elapsed_ms,transport,last_observed_at)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(workload_path_key) DO UPDATE SET
+                               path_key=excluded.path_key,
+                               workload_signature_json=excluded.workload_signature_json,
+                               sample_count=excluded.sample_count,
+                               total_elapsed_ms=excluded.total_elapsed_ms,
+                               min_all_reduce_elapsed_ms=excluded.min_all_reduce_elapsed_ms,
+                               max_all_reduce_elapsed_ms=excluded.max_all_reduce_elapsed_ms,
+                               last_all_reduce_elapsed_ms=(
+                                   SELECT all_reduce_elapsed_ms FROM compute_fabric_execution_metrics
+                                   WHERE workload_key=? ORDER BY observed_at DESC, metric_id DESC LIMIT 1
+                               ),
+                               avg_all_reduce_elapsed_ms=excluded.avg_all_reduce_elapsed_ms,
+                               transport=excluded.transport,
+                               last_observed_at=excluded.last_observed_at""",
+                        (
+                            workload_key, str(aggregate["path_key"] or ""), "{}",
+                            int(aggregate["sample_count"]), float(aggregate["total_elapsed_ms"]),
+                            float(aggregate["min_all_reduce_elapsed_ms"]), float(aggregate["max_all_reduce_elapsed_ms"]),
+                            float(aggregate["max_all_reduce_elapsed_ms"]), float(aggregate["avg_all_reduce_elapsed_ms"]),
+                            transport, float(aggregate["last_observed_at"]), workload_key,
                         ),
                     )
                 for path_key in sorted(affected_paths):
@@ -1896,8 +1964,8 @@ class ComputeCoordinator:
         return True
 
 
-    def fabric_path_performance(self) -> Dict[str, Dict[str, Any]]:
-        """Return durable observed performance history keyed by physical path identity."""
+    def fabric_path_performance(self, requirements: Any | None = None) -> Dict[str, Dict[str, Any]]:
+        """Return durable path and workload-specific observed performance evidence."""
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT path_key,sample_count,total_elapsed_ms,min_all_reduce_elapsed_ms,
@@ -1906,7 +1974,17 @@ class ComputeCoordinator:
                    FROM compute_fabric_path_performance
                    WHERE path_key<>'' ORDER BY path_key"""
             ).fetchall()
-        return {str(row["path_key"]): dict(row) for row in rows}
+            workload_rows = connection.execute(
+                """SELECT workload_path_key,path_key,workload_signature_json,sample_count,
+                          total_elapsed_ms,min_all_reduce_elapsed_ms,max_all_reduce_elapsed_ms,
+                          last_all_reduce_elapsed_ms,avg_all_reduce_elapsed_ms,transport,last_observed_at
+                   FROM compute_fabric_workload_performance
+                   ORDER BY workload_path_key"""
+            ).fetchall()
+        result = {str(row["path_key"]): dict(row) for row in rows}
+        for row in workload_rows:
+            result[str(row["workload_path_key"])] = dict(row)
+        return result
 
     def fabric_execution_metrics(self, attempt_id: str, generation: int | None = None) -> Dict[str, Any]:
         """Return durable observed performance metrics for one execution attempt."""
