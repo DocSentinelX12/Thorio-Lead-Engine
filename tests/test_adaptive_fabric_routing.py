@@ -155,3 +155,46 @@ def test_cross_node_gpu_pairs_include_both_runtime_directions() -> None:
         ("gpu:u2", "gpu:u0"),
         ("gpu:u2", "gpu:u1"),
     )
+
+
+
+def test_failure_domain_independence_rejects_shared_physical_components_and_requires_known_domains() -> None:
+    shared_source = _path("shared-source")
+    shared_source["segments"] = (
+        "gpu:src", "pci:src", "numa:src", "nic:src", "rdma:src", "rdma:src:1",
+        "fabric:ib0", "rdma:dst:1", "rdma:dst", "nic:dst", "gpu:dst",
+    )
+    shared_source["fabric_domains"] = ("fabric:ib0",)
+
+    shared_source_alternate = dict(shared_source)
+    shared_source_alternate["path_id"] = "shared-source-alternate"
+    shared_source_alternate["segments"] = tuple(
+        "nic:src" if segment == "nic:src-2" else segment
+        for segment in (
+            "gpu:src", "pci:src-2", "numa:src", "nic:src", "rdma:src", "rdma:src:2",
+            "fabric:ib0", "rdma:dst:2", "rdma:dst", "nic:dst", "gpu:dst",
+        )
+    )
+    shared_source_alternate["fabric_domains"] = ("fabric:ib0",)
+
+    independent = _path("independent")
+    independent["segments"] = (
+        "gpu:src", "pci:src-2", "numa:src", "nic:src-2", "rdma:src-2", "rdma:src-2:1",
+        "fabric:ib1", "rdma:dst-2:1", "rdma:dst-2", "nic:dst-2", "gpu:dst",
+    )
+    independent["fabric_domains"] = ("fabric:ib1",)
+
+    assert AdaptiveFabricRouteSelector.failure_domain_independent(shared_source, shared_source_alternate) is False
+    assert AdaptiveFabricRouteSelector.failure_domain_independent(shared_source, independent) is True
+
+
+def test_failure_domain_independence_does_not_invent_redundancy_when_domain_data_is_missing() -> None:
+    first = _path("first")
+    first["segments"] = ("gpu:src", "nic:src", "rdma:src", "rdma:src:1", "rdma:dst:1", "rdma:dst", "nic:dst", "gpu:dst")
+    second = dict(first)
+    second["path_id"] = "second"
+    second["segments"] = ("gpu:src", "nic:src-2", "rdma:src-2", "rdma:src-2:1", "rdma:dst-2:1", "rdma:dst-2", "nic:dst-2", "gpu:dst")
+    first.pop("fabric_domains", None)
+    second.pop("fabric_domains", None)
+
+    assert AdaptiveFabricRouteSelector.failure_domain_independent(first, second) is False
