@@ -1915,7 +1915,6 @@ class ComputeCoordinator:
             execution_verification["generation"] = int(generation)
             execution_verification["placement_id"] = str(row["placement_id"] or verification.get("placement_id") or "").strip()
             metrics = extract_execution_metrics(execution_verification)
-            path_observations = extract_execution_path_observations(execution_verification, observed_at=now)
             metric_summary = aggregate_execution_metrics(metrics)
             verification = execution_verification
             verification["fabric_execution_metrics"] = {
@@ -1963,8 +1962,6 @@ class ComputeCoordinator:
                             str(metric.get("fabric_path_id") or ""),
                         ),
                     )
-                for observation in path_observations:
-                    self.inventory.record_execution_path_observations((observation,))
                 affected_workloads = {
                     str(metric.get("workload_key") or "").strip()
                     for metric in metrics
@@ -2215,6 +2212,23 @@ class ComputeCoordinator:
                         world_size=int(launch["world_size"]),
                         nnodes=int(launch["nnodes"]),
                     )
+                    exact_process_evidence = NvidiaRuntime.reconcile_exact_planned_fabric_paths(
+                        aggregated_process_evidence,
+                        self.inventory.physical_paths(),
+                    )
+                    exact_observations = []
+                    for item in exact_process_evidence:
+                        verification = {
+                            "placement_id": str(attempt["placement_id"] or ""),
+                            "execution_attempt_id": attempt_id,
+                            "generation": int(generation),
+                            "process_evidence": [item],
+                        }
+                        exact_observations.extend(
+                            extract_execution_path_observations(verification, observed_at=now)
+                        )
+                    for observation in exact_observations:
+                        self.inventory.record_execution_path_observations((observation,))
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError, NvidiaRuntimeError) as error:
                     return {
                         "converged": False,
