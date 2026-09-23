@@ -137,3 +137,21 @@ def test_adaptive_replacement_plan_reselects_each_gpu_pair_from_current_route_he
             "reason": "current_route_remains_selected",
         },
     )
+
+
+def test_cross_node_gpu_pairs_include_both_runtime_directions() -> None:
+    from lead_engine.compute_placement import PlacementEvaluator
+
+    candidate = (
+        {"node_id": "node-a", "payload_json": '{"gpu_uuid":"u0"}'},
+        {"node_id": "node-b", "payload_json": '{"gpu_uuid":"u1"}'},
+        {"node_id": "node-c", "payload_json": '{"gpu_uuid":"u2"}'},
+    )
+    assert PlacementEvaluator._cross_node_gpu_pairs(candidate) == (
+        ("gpu:u0", "gpu:u1"),
+        ("gpu:u0", "gpu:u2"),
+        ("gpu:u1", "gpu:u0"),
+        ("gpu:u1", "gpu:u2"),
+        ("gpu:u2", "gpu:u0"),
+        ("gpu:u2", "gpu:u1"),
+    )
