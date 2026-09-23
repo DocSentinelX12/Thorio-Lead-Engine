@@ -1894,8 +1894,6 @@ class ComputeCoordinator:
                     path_key = str(metric.get("path_key") or "").strip()
                     if path_key:
                         affected_paths.add(path_key)
-                for observation in path_observations:
-                    self.inventory.record_execution_path_observations((observation,))
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
                            (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key,placement_id,fabric_path_id)
@@ -1910,6 +1908,8 @@ class ComputeCoordinator:
                             str(metric.get("fabric_path_id") or ""),
                         ),
                     )
+                for observation in path_observations:
+                    self.inventory.record_execution_path_observations((observation,))
                 affected_workloads = {
                     str(metric.get("workload_key") or "").strip()
                     for metric in metrics
