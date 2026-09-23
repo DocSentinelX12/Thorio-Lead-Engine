@@ -579,6 +579,18 @@ class AdaptiveFabricRouteSelector:
                 if str(path.get("source_gpu") or "") == source_gpu
                 and str(path.get("destination_gpu") or "") == destination_gpu
             )
+            current_path = next(
+                (path for path in pair_paths if str(path.get("path_id") or "") == current_path_id),
+                None,
+            )
+            if isinstance(current_path, Mapping) and current_path.get("fabric_domains") and current_path.get("segments"):
+                independent_paths = tuple(
+                    path
+                    for path in pair_paths
+                    if str(path.get("path_id") or "") == current_path_id
+                    or cls.failure_domain_independent(current_path, path)
+                )
+                pair_paths = independent_paths
             decision = cls.migration(pair_paths, route_health, current_path_id=current_path_id)
             plan.append({
                 "source_gpu": source_gpu,
