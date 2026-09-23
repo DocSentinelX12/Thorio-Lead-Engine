@@ -482,6 +482,44 @@ def test_failed_path_requires_fresh_verification_before_replacement_placement(tm
     assert placement.evidence["concrete_physical_paths"][0]["path_id"] == replacement.path_id
 
 
+
+def test_degraded_path_state_and_exclusion_survive_inventory_reload(tmp_path):
+    db = tmp_path / "inventory.sqlite3"
+    inventory = ComputeInventory(str(db))
+    path = _concrete_path()
+    inventory.persist_physical_path(path)
+    verified = PhysicalFabricVerification.verify(
+        path, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in path.segments]
+    )
+    measured = PhysicalFabricVerification.measure(
+        verified, measurement={"bandwidth_gbps": 200, "latency_us": 5, "sample_count": 8}, observed_at=100
+    )
+    inventory.persist_physical_verification(measured, evidence={"stage": "measurement"})
+    degraded = PhysicalFabricVerification.measure(
+        measured,
+        measurement={
+            "bandwidth_gbps": 60, "latency_us": 20, "sample_count": 8,
+            "status": "degraded", "degradation_reason": "probe reported degraded route",
+            "failure_domain": "inter_node_route",
+        },
+        observed_at=200,
+    )
+    inventory.persist_physical_verification(degraded, evidence={"stage": "degradation"})
+    before = inventory.physical_paths()[0]
+    assert before["state"] == "DEGRADED"
+    assert before["measurement"]["bandwidth_gbps"] == 60
+    assert before["measurement_observed_at"] == 200
+    assert inventory.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
+
+    reloaded = ComputeInventory(str(db))
+    after = reloaded.physical_paths()[0]
+    assert after["path_id"] == path.path_id
+    assert after["state"] == "DEGRADED"
+    assert after["failure_domain"] == "inter_node_route"
+    assert after["measurement"]["bandwidth_gbps"] == 60
+    assert after["measurement_observed_at"] == 200
+    assert reloaded.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
+
 def test_recovery_evidence_requires_fresh_verified_path(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
