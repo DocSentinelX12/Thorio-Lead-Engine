@@ -1024,6 +1024,24 @@ class ComputeCoordinator:
                 connection.commit()
                 attempt_to_release = dict(row)
                 worker_to_release = str(row["worker_id"] or "")
+            fabric_path_id = str(
+                evidence.get("fabric_path_id")
+                or (evidence.get("physical_path") or {}).get("fabric_path_id")
+                or (evidence.get("physical_path") or {}).get("path_id")
+                or ""
+            ).strip()
+            if fabric_path_id:
+                self.inventory.fail_physical_path(
+                    fabric_path_id,
+                    reason=reason,
+                    evidence={
+                        **evidence,
+                        "failure_domain": evidence.get("failure_domain") or "unresolved",
+                        "attempt_id": attempt_id,
+                        "generation": int(generation),
+                    },
+                    observed_at=now,
+                )
             self._release_physical_allocation(attempt_to_release, f"fabric recovery: {failure_class}")
             if worker_to_release and not worker_to_release.startswith("fabric:"):
                 self.pool.release_task_slot(worker_to_release)
