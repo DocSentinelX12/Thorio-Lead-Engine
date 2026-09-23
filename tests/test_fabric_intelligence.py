@@ -95,6 +95,7 @@ def test_scheduler_uses_workload_specific_history_before_legacy_path_history(tmp
             node_id="n", architecture="x86_64",
             cpu=CpuResource(node_id="n", cpu_count=8, memory_bytes=64 * 1024**3),
             gpus=(gpu("n", "g0", "u0"), gpu("n", "g1", "u1")),
+            state=ResourceState.HEALTHY,
         ),),
         authentication_state="authenticated",
         evidence={"network": {
