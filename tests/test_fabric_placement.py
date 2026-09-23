@@ -384,7 +384,7 @@ def test_claimed_execution_attempt_retains_placement_identity(tmp_path):
         [_link("mlx5_0"), _link("mlx5_1")],
         domains={"node-a": ["fabric-a"]},
     )
-    inventory = _snapshot(tmp_path / "inventory", nodes=nodes, network=network)
+    inventory = _snapshot(tmp_path, nodes=nodes, network=network)
     coordinator = ComputeCoordinator(
         str(tmp_path / "coordinator.sqlite3"),
         "test-token",
