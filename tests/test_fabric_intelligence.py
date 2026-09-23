@@ -78,14 +78,14 @@ def test_route_health_summary_preserves_unknown_evidence():
 def test_scheduler_uses_workload_specific_history_before_legacy_path_history(tmp_path):
     from lead_engine.compute_inventory import ComputeInventory
     from lead_engine.compute_provider import ProviderResourceSnapshot
-    from lead_engine.compute_resources import ComputeRequirements, GpuRequirements, WorkloadClass, CpuResource, GpuResource, NodeResource
+    from lead_engine.compute_resources import ComputeRequirements, GpuRequirements, WorkloadClass, CpuResource, GpuResource, NodeResource, ResourceState
     from lead_engine.compute_scheduler import ComputeScheduler
     import time
 
     def gpu(node, gid, uuid):
         return GpuResource(
             node_id=node, gpu_id=gid, gpu_uuid=uuid, vram_bytes=24 * 1024**3,
-            compute_capability="8.0", health_state="healthy", availability_state="available",
+            compute_capability="8.0", health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
         )
 
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
