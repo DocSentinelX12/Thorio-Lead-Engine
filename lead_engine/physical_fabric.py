@@ -510,15 +510,33 @@ class AdaptiveFabricRouteSelector:
     @staticmethod
     def _failure_domain_components(path: Mapping[str, object]) -> frozenset[str]:
         segments = path.get("segments")
-        if not isinstance(segments, (list, tuple)):
+        domains = path.get("fabric_domains")
+        if not isinstance(segments, (list, tuple)) or not isinstance(domains, (list, tuple)):
             return frozenset()
-        source_gpu = str(path.get("source_gpu") or "").strip()
-        destination_gpu = str(path.get("destination_gpu") or "").strip()
-        return frozenset(
-            str(segment).strip()
-            for segment in segments
-            if str(segment).strip() and str(segment).strip() not in {source_gpu, destination_gpu}
-        )
+        normalized_segments = tuple(str(segment).strip() for segment in segments)
+        normalized_domains = frozenset(str(domain).strip() for domain in domains if str(domain).strip())
+        if not normalized_domains:
+            return frozenset()
+        components: set[str] = set()
+        for domain in normalized_domains:
+            start = 0
+            while True:
+                try:
+                    index = normalized_segments.index(domain, start)
+                except ValueError:
+                    break
+                if index >= 3 and index + 3 < len(normalized_segments):
+                    source_nic = normalized_segments[index - 3]
+                    source_rdma = normalized_segments[index - 2]
+                    destination_rdma = normalized_segments[index + 2]
+                    destination_nic = normalized_segments[index + 3]
+                    components.update(
+                        component
+                        for component in (source_nic, source_rdma, destination_rdma, destination_nic)
+                        if component
+                    )
+                start = index + 1
+        return frozenset(components)
 
     @classmethod
     def failure_domain_independent(
