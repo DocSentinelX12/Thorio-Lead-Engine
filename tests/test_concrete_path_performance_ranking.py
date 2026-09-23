@@ -112,5 +112,6 @@ def test_candidate_route_health_uses_canonical_adaptive_route_evidence_for_cross
         "slow-path": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": 4.0, "latest_latency_ms": 8.0},
         "fast-path": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": -1.0, "latest_latency_ms": 3.0},
     }
+    evaluator.scheduler = type("Scheduler", (), {"_verified_gpu_nic_rdma_path": staticmethod(lambda *_args: ())})()
 
     assert evaluator._candidate_route_health(_candidate("u0", "u1", "a", "b")) == (0, -1.0, 0.0, 3.0, -8)
