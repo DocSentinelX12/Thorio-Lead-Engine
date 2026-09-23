@@ -544,7 +544,8 @@ class ComputeScheduler:
         if not allocation_id.strip():
             raise ValueError("allocation_id is required")
         candidates = self._candidates(requirements)
-        performance_history = self._performance_history()
+        performance_history = self._performance_history(requirements)
+        route_health = self._route_health()
         needed = requirements.gpu.gpu_count
         if requirements.workload_class == WorkloadClass.IO_BOUND and needed == 0:
             needed = 0
@@ -595,6 +596,7 @@ class ComputeScheduler:
                         -self._node_topology_score(candidate)[1],
                         -self._node_topology_score(candidate)[2],
                         self._gpu_performance_key(candidate["gpus"][0], performance_history, requirements) if candidate["gpus"] else (1, float("inf"), 0),
+                        self._gpu_route_health_key(candidate["gpus"][0], route_health) if candidate["gpus"] else (1, float("inf"), float("inf"), float("inf"), 0),
                         str(candidate["node_id"]),
                     ),
                 )
