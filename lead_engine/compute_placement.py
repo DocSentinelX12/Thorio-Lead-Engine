@@ -304,29 +304,51 @@ class PlacementEvaluator:
                 "rejected",
                 reason="no_provider_and_domain_can_satisfy_complete_placement",
             )
-            return
+            raise RuntimeError("no provider and domain can satisfy complete placement")
+
+        # Prefer a verified shared network domain whenever network-domain
+        # evidence is actually available. This prevents a high-capacity node
+        # from being combined with an incompatible network island.
+        network_group_options: list[tuple[str, list[dict[str, Any]]]] = []
+        for group in viable_groups:
+            domains: dict[str, list[dict[str, Any]]] = {}
+            for node in group:
+                for domain in self._network_domains(node):
+                    domains.setdefault(domain, []).append(node)
+            for domain, members in domains.items():
+                if len(members) >= 2 and sum(len(node["gpus"]) for node in members) >= needed:
+                    network_group_options.append((domain, members))
+        if network_group_options:
+            network_group_options.sort(
+                key=lambda item: (
+                    -sum(len(node["gpus"]) for node in item[1]),
+                    -sum(self.scheduler._node_topology_score(node)[0] for node in item[1]),
+                    str(item[0]),
+                )
+            )
+            ranked_group = network_group_options[0][1]
+        else:
+            ranked_group = max(
+                viable_groups,
+                key=lambda group: (
+                    sum(len(node["gpus"]) for node in group),
+                    tuple(sorted(str(node["node_id"]) for node in group)),
+                ),
+            )
 
         # Build complete distributed candidates hierarchically rather than
         # enumerating the combinatorial GPU-set space. Each node contributes
         # verified GPUs, and nodes are ordered by their strongest verified
         # participant. The candidate is filled until the exact world size is
         # satisfied, with at least two nodes required.
-        ranked_group = max(
-            viable_groups,
-            key=lambda group: (
-                sum(len(node["gpus"]) for node in group),
-                tuple(sorted(str(node["node_id"]) for node in group)),
-            ),
-        )
         ranked_nodes = sorted(
             ranked_group,
             key=lambda node: (
-                self.scheduler._node_topology_score(node),
+                tuple(-value for value in self.scheduler._node_topology_score(node)),
                 self.scheduler._gpu_performance_key(node["gpus"][0], self.performance_history, self.requirements),
                 self.scheduler._gpu_route_health_key(node["gpus"][0], self.route_health),
                 str(node["node_id"]),
             ),
-            reverse=True,
         )
         selected_nodes = []
         total = 0
