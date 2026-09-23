@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+import json
+
+from lead_engine.compute_placement import PlacementEvaluator
+
+
+def _candidate(source_gpu: str, destination_gpu: str, left: str, right: str) -> tuple[dict, dict]:
+    return (
+        {"node_id": "node-a", "payload_json": json.dumps({"gpu_uuid": source_gpu}), "resource_key": left},
+        {"node_id": "node-b", "payload_json": json.dumps({"gpu_uuid": destination_gpu}), "resource_key": right},
+    )
+
+
+def _evaluator(paths: tuple[dict, ...]) -> PlacementEvaluator:
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.physical_paths = paths
+    return evaluator
+
+
+def test_concrete_path_performance_ranking_uses_observed_measurements_only():
+    evaluator = _evaluator((
+        {
+            "path_id": "slow-path",
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "state": "MEASURED",
+            "measurement": {"bandwidth_gbps": 100.0, "latency_us": 8.0, "sample_count": 10},
+        },
+        {
+            "path_id": "fast-path",
+            "source_gpu": "gpu:u2",
+            "destination_gpu": "gpu:u3",
+            "state": "MEASURED",
+            "measurement": {"bandwidth_gbps": 400.0, "latency_us": 3.0, "sample_count": 20},
+        },
+    ))
+    slow = evaluator._candidate_concrete_performance(_candidate("u0", "u1", "a", "b"))
+    fast = evaluator._candidate_concrete_performance(_candidate("u2", "u3", "c", "d"))
+    assert fast < slow
+
+
+def test_unmeasured_concrete_path_is_ranked_after_measured_path():
+    evaluator = _evaluator((
+        {
+            "path_id": "unmeasured-path",
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "state": "VERIFIED",
+            "measurement": {},
+        },
+        {
+            "path_id": "measured-path",
+            "source_gpu": "gpu:u2",
+            "destination_gpu": "gpu:u3",
+            "state": "MEASURED",
+            "measurement": {"bandwidth_gbps": 200.0, "latency_us": 5.0, "sample_count": 1},
+        },
+    ))
+    unmeasured = evaluator._candidate_concrete_performance(_candidate("u0", "u1", "a", "b"))
+    measured = evaluator._candidate_concrete_performance(_candidate("u2", "u3", "c", "d"))
+    assert measured < unmeasured
