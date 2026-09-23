@@ -135,3 +135,91 @@ def test_reconciliation_is_deterministic() -> None:
     )
 
     assert first == second
+
+
+def test_runtime_exposes_the_same_canonical_locality_graph(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from lead_engine.fabric_topology import PhysicalFabricTopology
+    from lead_engine.fabric_topology_runtime import verify_provider_snapshot
+
+    node = SimpleNamespace(
+        node_id="node-a",
+        gpus=(
+            SimpleNamespace(
+                gpu_id="0",
+                gpu_uuid="GPU-0",
+                pci_bus_id="0000:01:00.0",
+            ),
+        ),
+    )
+    snapshot = SimpleNamespace(
+        nodes=(node,),
+        evidence={
+            "network": {
+                "link_capabilities": {
+                    "eth0": {"bus_info": "0000:01:00.1"},
+                },
+                "rdma": {
+                    "devices": [{"device": "mlx5_0", "pci_bus_id": "0000:01:00.1"}],
+                    "links": [
+                        {
+                            "rdma_device": "mlx5_0",
+                            "port": 1,
+                            "netdev": "eth0",
+                            "link_layer": "InfiniBand",
+                        }
+                    ],
+                },
+            }
+        },
+    )
+
+    monkeypatch.setattr(
+        PhysicalFabricTopology,
+        "discover",
+        lambda self: {
+            "gpu_nic_topology": {
+                "matrix": {"0": {"eth0": "PIX"}},
+            },
+            "pci_inventory": (),
+            "evidence_sources": (),
+        },
+    )
+    monkeypatch.setattr(
+        PhysicalFabricTopology,
+        "reconcile",
+        staticmethod(
+            lambda **kwargs: {
+                "paths": [
+                    {
+                        "gpu_uuid": "GPU-0",
+                        "nic": "eth0",
+                        "gpu_nic_distance": "PIX",
+                        "nic_pci_bus_id": "0000:01:00.1",
+                        "rdma_links": [
+                            {
+                                "rdma_device": "mlx5_0",
+                                "port": 1,
+                                "link_layer": "InfiniBand",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+    )
+
+    result = verify_provider_snapshot(snapshot)
+    edges = result["locality_graph"]["edges"]
+
+    assert any(
+        edge["relationship_type"] == "gpu_to_nic"
+        and edge["state"] == "known"
+        for edge in edges
+    )
+    assert any(
+        edge["relationship_type"] == "rdma_device_to_port"
+        and edge["state"] == "known"
+        for edge in edges
+    )
