@@ -445,6 +445,60 @@ class ComputeInventory:
             )
             connection.commit()
 
+    def fail_physical_path(
+        self,
+        path_id: str,
+        *,
+        reason: str,
+        evidence: dict[str, Any] | None = None,
+        observed_at: float | None = None,
+    ) -> bool:
+        """Move one exact concrete path to FAILED and retain immutable evidence."""
+        timestamp = time.time() if observed_at is None else observed_at
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT source_gpu,destination_gpu FROM compute_physical_fabric_paths WHERE path_id=?",
+                (str(path_id),),
+            ).fetchone()
+            if row is None:
+                return False
+            connection.execute(
+                "UPDATE compute_physical_fabric_paths SET state='FAILED',updated_at=? WHERE path_id=?",
+                (timestamp, str(path_id)),
+            )
+            connection.commit()
+        verification_id = hashlib.sha256(
+            json.dumps(
+                {
+                    "path_id": str(path_id),
+                    "state": "FAILED",
+                    "reason": str(reason),
+                    "evidence": dict(evidence or {}),
+                    "observed_at": timestamp,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO compute_physical_fabric_verifications
+                   (verification_id,path_id,state,reason,failure_domain,evidence_json,observed_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    verification_id,
+                    str(path_id),
+                    "FAILED",
+                    str(reason),
+                    str((evidence or {}).get("failure_domain") or "unresolved"),
+                    json.dumps(dict(evidence or {}), ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                ),
+            )
+            connection.commit()
+        return True
+
     def verified_physical_paths(
         self,
         *,
