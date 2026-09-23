@@ -1881,6 +1881,14 @@ class ComputeCoordinator:
                     ).fetchall()
                     transports = {str(item["transport"]) for item in transport_rows}
                     transport = next(iter(transports)) if len(transports) == 1 else None
+                    signature = next(
+                        (
+                            dict(metric.get("workload_signature") or {})
+                            for metric in metrics
+                            if str(metric.get("workload_key") or "").strip() == workload_key
+                        ),
+                        {},
+                    )
                     connection.execute(
                         """INSERT INTO compute_fabric_workload_performance(
                                workload_path_key,path_key,workload_signature_json,sample_count,
@@ -1902,7 +1910,7 @@ class ComputeCoordinator:
                                transport=excluded.transport,
                                last_observed_at=excluded.last_observed_at""",
                         (
-                            workload_key, str(aggregate["path_key"] or ""), "{}",
+                            workload_key, str(aggregate["path_key"] or ""), json.dumps(signature, ensure_ascii=False, sort_keys=True),
                             int(aggregate["sample_count"]), float(aggregate["total_elapsed_ms"]),
                             float(aggregate["min_all_reduce_elapsed_ms"]), float(aggregate["max_all_reduce_elapsed_ms"]),
                             float(aggregate["max_all_reduce_elapsed_ms"]), float(aggregate["avg_all_reduce_elapsed_ms"]),
