@@ -60,3 +60,32 @@ def test_unmeasured_concrete_path_is_ranked_after_measured_path():
     unmeasured = evaluator._candidate_concrete_performance(_candidate("u0", "u1", "a", "b"))
     measured = evaluator._candidate_concrete_performance(_candidate("u2", "u3", "c", "d"))
     assert measured < unmeasured
+
+
+def test_placement_evaluator_uses_adaptive_route_selection_for_each_gpu_pair():
+    evaluator = _evaluator((
+        {
+            "path_id": "slow-path",
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "state": "MEASURED",
+            "measurement": {"bandwidth_gbps": 100.0, "latency_us": 8.0, "sample_count": 10},
+        },
+        {
+            "path_id": "fast-path",
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "state": "MEASURED",
+            "measurement": {"bandwidth_gbps": 400.0, "latency_us": 3.0, "sample_count": 20},
+        },
+    ))
+    evaluator.route_health = {
+        "slow-path": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": 4.0, "latest_latency_ms": 8.0},
+        "fast-path": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": -1.0, "latest_latency_ms": 3.0},
+    }
+
+    selected = evaluator._adaptive_route_selection(_candidate("u0", "u1", "a", "b"))
+
+    assert selected == (
+        {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "fast-path"},
+    )
