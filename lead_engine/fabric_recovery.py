@@ -43,5 +43,6 @@ def failover_after_exact_path_failure(
 
 
 # Compatibility seam: preserve the established selector API while exposing the
-# new recovery decision from the same authoritative selector type.
+# new recovery decision from the same authoritative selector type. This is the
+# package-level integration seam until the selector implementation is expanded.
 AdaptiveFabricRouteSelector.failover_after_exact_path_failure = staticmethod(failover_after_exact_path_failure)
