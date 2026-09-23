@@ -181,7 +181,15 @@ class PlacementEvaluator:
         concrete_ok, paths, _ = self._concrete_path_evidence(candidate)
         if not concrete_ok or not paths:
             return (1, float("inf"), float("inf"), 0, "")
-        measurements = [path.get("measurement") for path in paths if isinstance(path.get("measurement"), dict)]
+        # A REVERIFIED path may retain historical measurement evidence, but that
+        # observation is not current performance authority until a fresh MEASURED
+        # observation is recorded.
+        measurements = [
+            path.get("measurement")
+            for path in paths
+            if str(path.get("state") or "") == "MEASURED"
+            and isinstance(path.get("measurement"), dict)
+        ]
         if not measurements:
             return (1, float("inf"), float("inf"), 0, "")
         bandwidths = []
