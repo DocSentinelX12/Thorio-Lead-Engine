@@ -56,8 +56,49 @@ def _version_at_least(actual: str | None, required: str | None) -> bool:
 class ComputeScheduler:
     """Atomically reserves concrete inventory resources for execution."""
 
-    def __init__(self, inventory: ComputeInventory):
+    def __init__(self, inventory: ComputeInventory, performance_history_provider=None):
         self.inventory = inventory
+        self.performance_history_provider = performance_history_provider
+
+    def _performance_history(self) -> dict[str, dict[str, Any]]:
+        if self.performance_history_provider is None:
+            return {}
+        value = self.performance_history_provider()
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _gpu_performance_key(gpu: dict[str, Any], history: dict[str, dict[str, Any]]) -> tuple[int, float, int]:
+        payload = json.loads(gpu["payload_json"])
+        gpu_uuid = str(payload.get("gpu_uuid") or "").strip()
+        paths = ComputeScheduler._verified_gpu_nic_rdma_path(gpu, gpu_uuid)
+        import hashlib
+        observations = []
+        for path in paths:
+            identity = {
+                str(key): path[key]
+                for key in (
+                    "node_id", "gpu_uuid", "nic", "nic_pci_bus_id",
+                    "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer",
+                )
+                if path.get(key) is not None and str(path.get(key)).strip() != ""
+            }
+            if not identity:
+                continue
+            serialized = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            key = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+            if key in history:
+                observations.append(history[key])
+        if not observations:
+            return (1, float("inf"), 0)
+        best = min(
+            observations,
+            key=lambda item: float(item.get("avg_all_reduce_elapsed_ms", float("inf"))),
+        )
+        return (
+            0,
+            float(best.get("avg_all_reduce_elapsed_ms", float("inf"))),
+            -int(best.get("sample_count", 0)),
+        )
 
     @staticmethod
     def _gpu_matches(row: dict[str, Any], requirements) -> bool:
@@ -385,6 +426,7 @@ class ComputeScheduler:
         rows = self.inventory.eligible()
         grouped = self._node_from_rows(rows)
         candidates = []
+        performance_history = self._performance_history()
         for node_id, node_rows in grouped.items():
             if requirements.allowed_node_ids and node_id not in set(requirements.allowed_node_ids):
                 continue
@@ -440,7 +482,10 @@ class ComputeScheduler:
             candidates.append({
                 "node_id": node_id,
                 "cpu": cpu,
-                "gpus": self._rank_gpus_for_placement(compatible),
+                "gpus": sorted(
+                    self._rank_gpus_for_placement(compatible),
+                    key=lambda gpu: self._gpu_performance_key(gpu, performance_history),
+                ),
                 "payload": node_payload,
             })
         return candidates
@@ -449,6 +494,7 @@ class ComputeScheduler:
         if not allocation_id.strip():
             raise ValueError("allocation_id is required")
         candidates = self._candidates(requirements)
+        performance_history = self._performance_history()
         needed = requirements.gpu.gpu_count
         if requirements.workload_class == WorkloadClass.IO_BOUND and needed == 0:
             needed = 0
@@ -498,6 +544,7 @@ class ComputeScheduler:
                         -self._node_topology_score(candidate)[0],
                         -self._node_topology_score(candidate)[1],
                         -self._node_topology_score(candidate)[2],
+                        self._gpu_performance_key(candidate["gpus"][0], performance_history) if candidate["gpus"] else (1, float("inf"), 0),
                         str(candidate["node_id"]),
                     ),
                 )
@@ -520,6 +567,7 @@ class ComputeScheduler:
                     -self._node_topology_score(candidate)[0],
                     -self._node_topology_score(candidate)[1],
                     -self._node_topology_score(candidate)[2],
+                    self._gpu_performance_key(candidate["gpus"][0], performance_history) if candidate["gpus"] else (1, float("inf"), 0),
                     str(candidate["node_id"]),
                 ),
             )
