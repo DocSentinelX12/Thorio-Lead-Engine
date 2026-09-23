@@ -1314,6 +1314,23 @@ class ComputeCoordinator:
         return existing or resolved
 
     @staticmethod
+    def _adaptive_launch_routes(placement: dict[str, Any], gpu_pair: tuple[str, str]) -> tuple[str, ...]:
+        """Return durable placement-selected route IDs for one directed GPU pair."""
+        evidence = placement.get("evidence") if isinstance(placement, dict) else None
+        routes = evidence.get("adaptive_routes") if isinstance(evidence, dict) else None
+        if not isinstance(routes, (list, tuple)):
+            return ()
+        source, destination = (str(value).strip() for value in gpu_pair)
+        return tuple(
+            str(route.get("path_id")).strip()
+            for route in routes
+            if isinstance(route, dict)
+            and str(route.get("source_gpu") or "").strip() == source
+            and str(route.get("destination_gpu") or "").strip() == destination
+            and str(route.get("path_id") or "").strip()
+        )
+
+    @staticmethod
     def _planned_physical_path(resource: dict[str, Any], gpu_uuid: str) -> dict[str, Any] | None:
         paths = ComputeScheduler._verified_gpu_nic_rdma_path(resource, gpu_uuid)
         if not paths:
@@ -1353,7 +1370,7 @@ class ComputeCoordinator:
         now = time.time()
         with self._connect() as connection:
             attempt_row = connection.execute(
-                """SELECT a.status,a.generation,a.lease_token_digest,a.rendezvous_endpoint,
+                """SELECT a.status,a.generation,a.lease_token_digest,a.rendezvous_endpoint,a.placement_id,
                           t.status AS task_status,t.lease_until,t.payload
                    FROM compute_execution_attempts a
                    JOIN compute_tasks t ON t.attempt_id=a.attempt_id
@@ -1384,6 +1401,10 @@ class ComputeCoordinator:
             task_payload = json.loads(attempt_row["payload"] or "{}")
         except (TypeError, json.JSONDecodeError) as exc:
             raise ValueError("execution task payload is invalid") from exc
+        placement_id = str(attempt_row["placement_id"] or "").strip()
+        placement = self.inventory.placement(placement_id) if placement_id else None
+        if placement_id and placement is None:
+            raise ValueError(f"durable placement is missing: {placement_id}")
         compute_requirements = task_payload.get("compute_requirements") or {}
         gpu_requirements = compute_requirements.get("gpu") or {}
         min_fabric_bandwidth_gbps = gpu_requirements.get("min_fabric_bandwidth_gbps")
@@ -1455,6 +1476,7 @@ class ComputeCoordinator:
                     "pci_bus_id": gpu.get("pci_bus_id"),
                     "rank": total_processes + local_rank,
                     "local_rank": local_rank,
+                    "planned_fabric_path_ids": [],
                 }
                 bound_resource = next(
                     (
@@ -1468,6 +1490,28 @@ class ComputeCoordinator:
                     ),
                     None,
                 )
+                if placement is not None:
+                    # The placement is authoritative for adaptive route selection.
+                    # Runtime launch must carry those exact IDs forward rather than
+                    # reconstructing a different route from hardware identity.
+                    peer_gpu_uuids = []
+                    for other_participant in participants:
+                        for other_resource_id in other_participant["resource_ids"]:
+                            other_resource = self.inventory.get(str(other_resource_id))
+                            if not other_resource or other_resource.get("resource_type") != "gpu":
+                                continue
+                            other_payload = json.loads(other_resource["payload_json"] or "{}")
+                            other_uuid = str(other_payload.get("gpu_uuid") or "").strip()
+                            if other_uuid and other_uuid != gpu_uuid:
+                                peer_gpu_uuids.append(other_uuid)
+                    for peer_uuid in sorted(set(peer_gpu_uuids)):
+                        binding["planned_fabric_path_ids"].extend(
+                            self._adaptive_launch_routes(
+                                placement,
+                                (f"gpu:{gpu_uuid}", f"gpu:{peer_uuid}"),
+                            )
+                        )
+                    binding["planned_fabric_path_ids"] = sorted(set(binding["planned_fabric_path_ids"]))
                 if bound_resource is not None:
                     if bound_resource.get("state") != ResourceState.RESERVED.value:
                         raise ValueError(
