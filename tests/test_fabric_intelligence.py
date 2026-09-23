@@ -159,3 +159,40 @@ def test_route_health_observations_are_durable_and_idempotent(tmp_path):
     assert health["sample_count"] == 2
     assert health["failure_count"] == 1
     assert health["latest_latency_ms"] == 9.0
+
+
+def test_execution_metrics_carry_explicit_workload_identity():
+    from lead_engine.compute_fabric_telemetry import extract_execution_metrics
+
+    verification = {
+        "workload": {
+            "workload_class": "multi_gpu",
+            "collective": "all_reduce",
+            "world_size": 4,
+            "message_size_bytes": 4096,
+            "dtype": "fp16",
+        },
+        "process_evidence": [{
+            "rank": 0,
+            "gpu_binding": {
+                "node_id": "node-a",
+                "planned_physical_path": {
+                    "node_id": "node-a",
+                    "gpu_uuid": "gpu-0",
+                    "nic": "eth0",
+                    "rdma_device": "mlx5_0",
+                    "rdma_port": 1,
+                    "link_layer": "InfiniBand",
+                },
+            },
+            "probe": {
+                "rank": 0,
+                "gpu_uuid": "gpu-0",
+                "network_transport": "nccl",
+                "all_reduce_elapsed_ms": 3.5,
+            },
+        }],
+    }
+    metric = extract_execution_metrics(verification)[0]
+    assert metric["workload_signature"]["message_size_bytes"] == 4096
+    assert metric["workload_key"]
