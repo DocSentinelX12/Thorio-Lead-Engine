@@ -14,6 +14,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, Mapping, Sequence
 
+from .physical_fabric import resolve_observed_fabric_path_id
+
 
 class NvidiaRuntimeError(RuntimeError):
     """Raised when required NVIDIA CUDA/NCCL runtime evidence is unavailable."""
@@ -300,6 +302,99 @@ class NvidiaRuntime:
         if nnodes > 1 and len(transports) != 1: raise NvidiaRuntimeError("distributed ranks selected inconsistent NCCL network transports: " + ", ".join(sorted(transports)))
         if sorted(rank for rank,_ in rank_keys) != list(range(world_size)): raise NvidiaRuntimeError("distributed network evidence does not cover every global rank")
         return {"verified":True,"world_size":world_size,"nnodes":nnodes,"network_transport":next(iter(transports)) if len(transports)==1 else None,"rank_paths":sorted(paths,key=lambda item:int(item["rank"]))}
+
+    @staticmethod
+    def reconcile_exact_planned_fabric_paths(
+        process_evidence: Sequence[Mapping[str, object]],
+        physical_paths: Sequence[Mapping[str, object]],
+    ) -> tuple[dict[str, object], ...]:
+        """Require every bound adaptive route to be uniquely proven by runtime endpoints."""
+        by_rank = {}
+        by_gpu = {}
+        for item in process_evidence:
+            if not isinstance(item, Mapping):
+                raise NvidiaRuntimeError("process evidence contains a non-object")
+            binding = item.get("gpu_binding")
+            if not isinstance(binding, Mapping):
+                raise NvidiaRuntimeError("process evidence is missing its GPU binding")
+            rank = int(binding.get("rank", -1))
+            gpu_uuid = str(binding.get("gpu_uuid") or "").strip()
+            if rank < 0 or not gpu_uuid or rank in by_rank or gpu_uuid in by_gpu:
+                raise NvidiaRuntimeError("process evidence has ambiguous rank or GPU identity")
+            by_rank[rank] = item
+            by_gpu[gpu_uuid] = item
+
+        reconciled = []
+        for item in process_evidence:
+            binding = item["gpu_binding"]
+            planned_ids = tuple(
+                str(path_id).strip()
+                for path_id in binding.get("planned_fabric_path_ids", ())
+                if str(path_id).strip()
+            )
+            if not planned_ids:
+                reconciled.append(dict(item))
+                continue
+            locality = item.get("gpu_nic_locality")
+            if not isinstance(locality, Mapping):
+                raise NvidiaRuntimeError(f"rank {binding.get('rank')} has bound fabric paths but no runtime GPU/NIC locality")
+            source_gpu = f"gpu:{str(binding.get('gpu_uuid') or '').strip()}"
+            source_device = str(locality.get("rdma_device") or "").strip()
+            source_port = locality.get("rdma_port")
+            if not source_device or not isinstance(source_port, int):
+                raise NvidiaRuntimeError(f"rank {binding.get('rank')} has no verified runtime source RDMA endpoint")
+
+            observed_paths = []
+            for path_id in planned_ids:
+                path = next((candidate for candidate in physical_paths if str(candidate.get("path_id") or "").strip() == path_id), None)
+                if path is None:
+                    raise NvidiaRuntimeError(f"bound fabric path does not exist in durable physical inventory: {path_id}")
+                destination_gpu = str(path.get("destination_gpu") or "").strip()
+                destination_uuid = destination_gpu.removeprefix("gpu:")
+                peer_item = by_gpu.get(destination_uuid)
+                if peer_item is None:
+                    raise NvidiaRuntimeError(f"bound fabric path {path_id} has no runtime peer GPU evidence")
+                peer_binding = peer_item["gpu_binding"]
+                destination_rank = int(peer_binding.get("rank", -1))
+                peer_connections = item.get("peer_connections", ())
+                if not any(
+                    isinstance(edge, Mapping)
+                    and int(edge.get("peer_rank", -1)) == destination_rank
+                    and str(edge.get("transport") or "").strip().upper() == "IB"
+                    for edge in peer_connections
+                ):
+                    raise NvidiaRuntimeError(
+                        f"rank {binding.get('rank')} has no runtime NCCL peer connection proving fabric path {path_id}"
+                    )
+                destination_locality = peer_item.get("gpu_nic_locality")
+                if not isinstance(destination_locality, Mapping):
+                    raise NvidiaRuntimeError(f"peer rank {destination_rank} has no runtime GPU/NIC locality")
+                destination_device = str(destination_locality.get("rdma_device") or "").strip()
+                destination_port = destination_locality.get("rdma_port")
+                observed_id = resolve_observed_fabric_path_id(
+                    (path,),
+                    source_gpu=source_gpu,
+                    destination_gpu=destination_gpu,
+                    source_rdma_device=source_device,
+                    source_rdma_port=source_port,
+                    destination_rdma_device=destination_device,
+                    destination_rdma_port=destination_port,
+                )
+                if observed_id != path_id:
+                    raise NvidiaRuntimeError(
+                        f"runtime physical endpoints do not prove bound fabric path {path_id}"
+                    )
+                observed_paths.append({
+                    "destination_rank": destination_rank,
+                    "destination_gpu": destination_gpu,
+                    "fabric_path_id": path_id,
+                })
+            enriched = dict(item)
+            enriched["observed_fabric_paths"] = observed_paths
+            if len(observed_paths) == 1:
+                enriched["observed_fabric_path_id"] = observed_paths[0]["fabric_path_id"]
+            reconciled.append(enriched)
+        return tuple(reconciled)
 
     @staticmethod
     def validate_distributed_probe_output(stdout: str, world_size: int, *, expected_rank: int | None = None, expected_gpu_uuid: str | None = None, log_output: str | None = None) -> dict[str, object]:
