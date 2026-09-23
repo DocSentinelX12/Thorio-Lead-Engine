@@ -504,7 +504,9 @@ def test_competing_path_states_remain_independent_across_reload(tmp_path) -> Non
     assert records[paths[0].path_id]["state"] == "DEGRADED"
     assert records[paths[1].path_id]["state"] == "MEASURED"
     assert [record["path_id"] for record in reloaded.verified_physical_paths()] == [paths[1].path_id]
-\n\ndef test_reverified_path_old_measurement_is_not_performance_authority_until_fresh_measurement() -> None:
+
+
+def test_reverified_path_old_measurement_is_not_performance_authority_until_fresh_measurement() -> None:
     graph = {"components": _components(), "edges": _relationships()}
     path = PhysicalFabricPathBuilder.build(
         locality_graph=graph, source_gpu="gpu:src", destination_gpu="gpu:dst"
