@@ -421,3 +421,85 @@ def test_reverification_rejects_partial_fresh_path_evidence() -> None:
     )
     assert partial.state is FabricPathState.FAILED
     assert partial.reason == "fresh path-segment evidence is incomplete"
+
+
+def test_competing_path_states_remain_independent_across_reload(tmp_path) -> None:
+    relationships = _relationships()
+    relationships.extend(
+        [
+            {"relationship_type": "gpu_to_nic", "source": "gpu:src", "target": "nic:src-2", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "nic_to_rdma_device", "source": "nic:src-2", "target": "rdma:src-2", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "rdma_device_to_port", "source": "rdma:src-2", "target": "rdma:src-2:1", "state": "known", "evidence": {"source": "probe"}},
+            {"relationship_type": "rdma_port_to_fabric", "source": "rdma:src-2:1", "target": "fabric:ib0", "state": "known", "evidence": {"source": "probe"}},
+        ]
+    )
+    components = _components() + [
+        {"component_type": "nic", "identity": "nic:src-2", "node_id": "node-a"},
+        {"component_type": "rdma_device", "identity": "rdma:src-2", "node_id": "node-a"},
+        {"component_type": "rdma_port", "identity": "rdma:src-2:1", "node_id": "node-a"},
+    ]
+    paths = PhysicalFabricPathBuilder.build(
+        locality_graph={"components": components, "edges": relationships},
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )
+    assert len(paths) == 2
+
+    inventory = __import__("lead_engine.compute_inventory", fromlist=["ComputeInventory"]).ComputeInventory(
+        str(tmp_path / "inventory.sqlite3")
+    )
+    for path in paths:
+        inventory.persist_physical_path(path)
+        verified = PhysicalFabricVerification.verify(
+            path,
+            evidence=[{"segment": segment, "operation": "probe", "result": "pass"} for segment in path.segments],
+        )
+        inventory.persist_physical_verification(
+            verified,
+            evidence={"stage": "inter_node_collective", "operation": "probe"},
+        )
+        measured = PhysicalFabricVerification.measure(
+            verified,
+            measurement={"bandwidth_gbps": 200 if path.path_id == paths[0].path_id else 180, "sample_count": 8},
+            observed_at=100.0,
+        )
+        inventory.persist_physical_verification(
+            measured,
+            evidence={"stage": "inter_node_collective", "operation": "measurement"},
+        )
+
+    degraded = PhysicalFabricVerification.measure(
+        next(
+            FabricVerificationResult(
+                path_id=record["path_id"],
+                state=FabricPathState(record["state"]),
+                reason=record.get("reason"),
+                failure_domain=record.get("failure_domain"),
+                measurement=record.get("measurement") or {},
+                measurement_observed_at=record.get("measurement_observed_at"),
+                required_segments=tuple(record["segments"]),
+            )
+            for record in inventory.physical_paths()
+            if record["path_id"] == paths[0].path_id
+        ),
+        measurement={
+            "bandwidth_gbps": 60,
+            "sample_count": 8,
+            "status": "degraded",
+            "degradation_reason": "probe reported degraded route",
+            "failure_domain": "inter_node_route",
+        },
+        observed_at=200.0,
+    )
+    inventory.persist_physical_verification(
+        degraded,
+        evidence={"stage": "inter_node_collective", "operation": "measurement"},
+    )
+
+    reloaded = __import__("lead_engine.compute_inventory", fromlist=["ComputeInventory"]).ComputeInventory(
+        str(tmp_path / "inventory.sqlite3")
+    )
+    records = {record["path_id"]: record for record in reloaded.physical_paths()}
+    assert records[paths[0].path_id]["state"] == "DEGRADED"
+    assert records[paths[1].path_id]["state"] == "MEASURED"
+    assert [record["path_id"] for record in reloaded.verified_physical_paths()] == [paths[1].path_id]
