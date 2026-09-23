@@ -4,12 +4,13 @@ import tempfile
 from pathlib import Path
 
 from lead_engine.compute_bridge import REMOTE_SAFE_AGENTS
-from lead_engine.compute_fabric_telemetry import aggregate_execution_metrics, extract_execution_metrics
+from lead_engine.compute_fabric_telemetry import aggregate_execution_metrics, extract_execution_metrics, physical_path_key
 from lead_engine.compute_coordinator import ComputeCoordinator
 from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_pool import WorkerIdentity
 from lead_engine.compute_provider import ProviderResourceSnapshot
 from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
+from lead_engine.compute_scheduler import ComputeScheduler
 from lead_engine.nccl_all_reduce_probe import build_probe_evidence
 from lead_engine.nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 
@@ -98,6 +99,67 @@ def test_fabric_telemetry_extracts_only_observed_collective_timings():
         "avg_all_reduce_elapsed_ms": 2.0,
         "transport": "IB",
     }
+
+
+def test_fabric_telemetry_keys_physical_paths_deterministically():
+    path = {
+        "node_id": "node-a",
+        "gpu_uuid": "GPU-0",
+        "nic": "eth0",
+        "nic_pci_bus_id": "0000:01:00.0",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "rdma_pci_bus_id": "0000:01:00.0",
+        "link_layer": "InfiniBand",
+    }
+    reordered = dict(reversed(list(path.items())))
+    assert physical_path_key(path) == physical_path_key(reordered)
+    assert physical_path_key({}) == ""
+
+
+def test_scheduler_prefers_observed_lower_latency_fabric_path():
+    row = {
+        "resource_key": "provider/domain/node-a/gpu/GPU-0",
+        "node_id": "node-a",
+        "resource_type": "gpu",
+        "payload_json": json.dumps({"gpu_uuid": "GPU-0", "gpu_id": "0"}),
+        "evidence_json": json.dumps({
+            "network": {
+                "gpu_nic_locality": [{
+                    "gpu_uuid": "GPU-0",
+                    "nic": "eth0",
+                    "nic_pci_bus_id": "0000:01:00.0",
+                    "rdma_device": "mlx5_0",
+                    "rdma_port": 1,
+                    "link_layer": "InfiniBand",
+                }],
+                "rdma": {
+                    "devices": [{"device": "mlx5_0"}],
+                    "links": [{
+                        "rdma_device": "mlx5_0",
+                        "port": 1,
+                        "link_layer": "InfiniBand",
+                        "state": "ACTIVE",
+                        "physical_state": "LINK_UP",
+                    }],
+                },
+            },
+        }),
+    }
+    key = physical_path_key({
+        "node_id": "node-a",
+        "gpu_uuid": "GPU-0",
+        "nic": "eth0",
+        "nic_pci_bus_id": "0000:01:00.0",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "rdma_pci_bus_id": None,
+        "link_layer": "InfiniBand",
+    })
+    assert ComputeScheduler._gpu_performance_key(
+        row,
+        {key: {"sample_count": 4, "avg_all_reduce_elapsed_ms": 1.25}},
+    ) == (0, 1.25, -4)
 
 
 def test_coordinator_exposes_durable_distributed_fabric_execution_telemetry(tmp_path):
