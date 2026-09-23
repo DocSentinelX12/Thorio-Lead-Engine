@@ -508,6 +508,43 @@ class AdaptiveFabricRouteSelector:
         return tuple(selected)
 
     @classmethod
+    def adaptive_replacement_plan(
+        cls,
+        paths: Sequence[Mapping[str, object]],
+        route_health: Mapping[str, Mapping[str, object]],
+        current_routes: Sequence[Mapping[str, object]],
+    ) -> tuple[dict[str, object], ...]:
+        """Build independent replacement decisions for each active GPU-to-GPU route."""
+        plan: list[dict[str, object]] = []
+        for route in current_routes:
+            if not isinstance(route, Mapping):
+                continue
+            source_gpu = str(route.get("source_gpu") or "").strip()
+            destination_gpu = str(route.get("destination_gpu") or "").strip()
+            current_path_id = str(route.get("current_path_id") or "").strip()
+            if not source_gpu or not destination_gpu or not current_path_id:
+                continue
+            pair_paths = tuple(
+                path for path in paths
+                if str(path.get("source_gpu") or "") == source_gpu
+                and str(path.get("destination_gpu") or "") == destination_gpu
+            )
+            decision = cls.migration(pair_paths, route_health, current_path_id=current_path_id)
+            plan.append({
+                "source_gpu": source_gpu,
+                "destination_gpu": destination_gpu,
+                "from_path_id": str(decision["from_path_id"]),
+                "to_path_id": (
+                    str(decision["to_path_id"])
+                    if decision["to_path_id"] is not None
+                    else None
+                ),
+                "migrate": bool(decision["migrate"]),
+                "reason": str(decision["reason"]),
+            })
+        return tuple(plan)
+
+    @classmethod
     def migration(
         cls,
         paths: Sequence[Mapping[str, object]],
