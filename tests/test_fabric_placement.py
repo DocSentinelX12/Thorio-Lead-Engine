@@ -370,3 +370,42 @@ def test_allocation_can_reference_placement_without_creating_second_reservation(
     assert allocation.capability_evidence
     assert inventory.placement(placement.placement_id)["placement_id"] == placement.placement_id
     assert len(inventory.allocations(state="reserved")) == 1
+
+
+def test_claimed_execution_attempt_retains_placement_identity(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    nodes = (_node("node-a", _gpu("node-a", "g0", "u0"), _gpu("node-a", "g1", "u1")),)
+    network = _network(
+        [
+            _locality("node-a", "u0", "eth0", "mlx5_0"),
+            _locality("node-a", "u1", "eth1", "mlx5_1"),
+        ],
+        [_link("mlx5_0"), _link("mlx5_1")],
+        domains={"node-a": ["fabric-a"]},
+    )
+    inventory = _snapshot(tmp_path / "inventory", nodes=nodes, network=network)
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        "test-token",
+        inventory=inventory,
+    )
+    coordinator.enqueue(
+        {
+            "compute_requirements": {
+                "workload_class": "multi_gpu",
+                "gpu": {"gpu_count": 2, "require_nccl": True},
+                "min_cpu_count": 1,
+                "min_memory_bytes": 1,
+                "same_node": True,
+            }
+        },
+        task_id="placement-task",
+    )
+
+    claimed = coordinator.claim_physical()
+
+    assert claimed is not None
+    attempt = coordinator.execution_attempt(claimed["attempt_id"])
+    assert attempt["placement_id"]
+    assert inventory.placement(attempt["placement_id"]) is not None
