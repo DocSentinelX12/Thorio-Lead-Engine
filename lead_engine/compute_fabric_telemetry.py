@@ -27,11 +27,38 @@ def physical_path_key(path: Mapping[str, Any]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def extract_workload_signature(verification: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract only workload descriptors explicitly present in execution evidence."""
+    candidates = []
+    for key in ("workload", "fabric_workload", "workload_signature"):
+        value = verification.get(key)
+        if isinstance(value, Mapping):
+            candidates.append(value)
+    for item in verification.get("process_evidence", []) if isinstance(verification.get("process_evidence"), list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        probe = item.get("probe")
+        if isinstance(probe, Mapping):
+            candidates.append(probe)
+    allowed = (
+        "workload_class", "collective", "world_size", "message_size_bytes",
+        "dtype", "reduce_op", "algorithm", "protocol",
+    )
+    result = {}
+    for candidate in candidates:
+        for key in allowed:
+            value = candidate.get(key)
+            if value is not None and (not isinstance(value, str) or value.strip()):
+                result[key] = value.strip() if isinstance(value, str) else value
+    return result
+
+
 def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
     """Return one metric record per rank with an observed all-reduce duration."""
     process_evidence = verification.get("process_evidence")
     if not isinstance(process_evidence, list):
         return ()
+    workload_signature = extract_workload_signature(verification)
 
     metrics: list[dict[str, Any]] = []
     for item in process_evidence:
@@ -63,6 +90,8 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
             "all_reduce_elapsed_ms": elapsed_ms,
             "physical_path": dict(path),
             "path_key": physical_path_key(path),
+            "workload_signature": dict(workload_signature),
+            "workload_key": workload_performance_key(path, workload_signature),
         })
     return tuple(sorted(metrics, key=lambda item: (int(item["rank"]), str(item["gpu_uuid"]))))
 
