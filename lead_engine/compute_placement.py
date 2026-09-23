@@ -387,11 +387,20 @@ class PlacementEvaluator:
             raise RuntimeError("no eligible GPU placement candidates")
 
         valid: list[tuple[tuple[dict[str, Any], ...], dict[str, Any]]] = []
+        candidate_evidence: list[dict[str, Any]] = []
         rejection_count = 0
         for candidate in self._candidate_sets(nodes):
             valid_candidate, evidence = self._valid_candidate(candidate)
             if not valid_candidate:
                 rejection_count += 1
+                rejection = {
+                    "status": "rejected",
+                    "resource_keys": self._stable_key(candidate),
+                    "stage": evidence["stage"],
+                    "reason": evidence["reason"],
+                    "evidence": evidence,
+                }
+                candidate_evidence.append(rejection)
                 self._trace(
                     evidence["stage"],
                     "rejected",
@@ -399,6 +408,12 @@ class PlacementEvaluator:
                     resource_keys=self._stable_key(candidate),
                 )
                 continue
+            accepted = {
+                "status": "accepted",
+                "resource_keys": self._stable_key(candidate),
+                "evidence": evidence,
+            }
+            candidate_evidence.append(accepted)
             valid.append((candidate, evidence))
             self._trace(
                 "complete_physical_validation",
@@ -453,6 +468,23 @@ class PlacementEvaluator:
                 getattr(self.requirements, "workload_class", None),
             ),
             "workload_signature": workload_signature,
+            "gpu_requirements": {
+                "gpu_count": self.requirements.gpu.gpu_count,
+                "min_vram_bytes": self.requirements.gpu.min_vram_bytes,
+                "min_compute_capability": self.requirements.gpu.min_compute_capability,
+                "required_cuda_version": self.requirements.gpu.required_cuda_version,
+                "required_driver_version": self.requirements.gpu.required_driver_version,
+                "required_nvlink_domain": self.requirements.gpu.required_nvlink_domain,
+                "require_nccl": self.requirements.gpu.require_nccl,
+                "min_fabric_bandwidth_gbps": self.requirements.gpu.min_fabric_bandwidth_gbps,
+                "max_fabric_latency_us": self.requirements.gpu.max_fabric_latency_us,
+                "require_redundant_fabric_path": self.requirements.gpu.require_redundant_fabric_path,
+            },
+            "min_cpu_count": self.requirements.min_cpu_count,
+            "min_memory_bytes": self.requirements.min_memory_bytes,
+            "same_node": self.requirements.same_node,
+            "topology_domain": self.requirements.topology_domain,
+            "allowed_node_ids": tuple(self.requirements.allowed_node_ids),
             "gpu_ids": gpu_ids,
             "node_ids": node_ids,
             "resource_keys": resource_keys,
@@ -480,6 +512,8 @@ class PlacementEvaluator:
                 "shared_network": evidence["shared_network"],
                 "workload_performance": self._candidate_performance(selected),
                 "route_health": self._candidate_route_health(selected),
+                "candidate_evaluations": candidate_evidence,
+                "rejection_count": rejection_count,
             },
             decision_trace=tuple(self.trace),
         )
