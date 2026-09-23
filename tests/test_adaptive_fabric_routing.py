@@ -61,7 +61,7 @@ def test_migration_reselects_only_when_current_route_is_no_longer_selected() -> 
 
 
 def test_migration_does_not_reselect_without_a_verified_alternative() -> None:
-    paths = [_path("current")]
-    health = {"current": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": 0.0, "latest_latency_ms": 5.0}}
+    paths = [_path("current", "DEGRADED")]
+    health = {"current": {"sample_count": 8, "failure_rate": 1.0, "latency_delta_from_mean_ms": 5.0, "latest_latency_ms": 10.0}}
     decision = AdaptiveFabricRouteSelector.migration(paths, health, current_path_id="current")
     assert decision == {"migrate": False, "from_path_id": "current", "to_path_id": None, "reason": "no_verified_alternative"}
