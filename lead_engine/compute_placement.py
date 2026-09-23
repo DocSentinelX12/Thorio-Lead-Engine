@@ -149,6 +149,48 @@ class PlacementEvaluator:
                 "physical_paths": concrete_paths,
             }
 
+        if len({str(gpu["node_id"]) for gpu in candidate}) > 1:
+            required_bandwidth = self.requirements.gpu.min_fabric_bandwidth_gbps
+            required_latency = self.requirements.gpu.max_fabric_latency_us
+            if required_bandwidth is not None or required_latency is not None:
+                selected_uuids = {
+                    str(self._payload(gpu).get("gpu_uuid") or "").strip()
+                    for gpu in candidate
+                }
+                capability_paths = [
+                    path for path in concrete_paths
+                    if str(path.get("source_gpu") or "").removeprefix("gpu:") in selected_uuids
+                    or str(path.get("destination_gpu") or "").removeprefix("gpu:") in selected_uuids
+                ]
+                eligible_capability_paths = []
+                for path in capability_paths:
+                    measurement = path.get("measurement")
+                    if not isinstance(measurement, dict):
+                        continue
+                    bandwidth = measurement.get("bandwidth_gbps")
+                    latency = measurement.get("latency_us")
+                    if required_bandwidth is not None:
+                        try:
+                            if bandwidth is None or float(bandwidth) < float(required_bandwidth):
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                    if required_latency is not None:
+                        try:
+                            if latency is None or float(latency) > float(required_latency):
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                    eligible_capability_paths.append(path)
+                if not eligible_capability_paths:
+                    return False, {
+                        "stage": "measured_fabric_capability",
+                        "reason": "no_verified_concrete_path_meets_measured_fabric_requirements",
+                        "required_bandwidth_gbps": required_bandwidth,
+                        "required_latency_us": required_latency,
+                        "physical_paths": capability_paths,
+                    }
+
         node_ids = tuple(dict.fromkeys(str(gpu["node_id"]) for gpu in candidate))
         node_candidates = [
             self._node_candidate(node_id, self._node_rows()[node_id])
