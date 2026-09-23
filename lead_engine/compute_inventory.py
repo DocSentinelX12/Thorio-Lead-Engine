@@ -551,7 +551,7 @@ class ComputeInventory:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,
-                          state,created_at,updated_at
+                          state,measurement_json,created_at,updated_at
                    FROM compute_physical_fabric_paths
                    ORDER BY created_at,path_id"""
             ).fetchall()
@@ -563,6 +563,7 @@ class ComputeInventory:
                 "segments": json.loads(row["segments_json"]),
                 "fabric_domains": json.loads(row["fabric_domains_json"]),
                 "state": row["state"],
+                "measurement": json.loads(row["measurement_json"] or "{}"),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
             }
