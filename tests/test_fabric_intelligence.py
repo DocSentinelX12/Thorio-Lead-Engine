@@ -73,3 +73,61 @@ def test_route_health_summary_exposes_observed_regression_without_threshold_poli
 def test_route_health_summary_preserves_unknown_evidence():
     summary = summarize_route_health([])
     assert summary == {"sample_count": 0, "success_count": 0, "failure_count": 0}
+
+
+def test_scheduler_uses_workload_specific_history_before_legacy_path_history(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+    from lead_engine.compute_provider import ProviderResourceSnapshot
+    from lead_engine.compute_resources import ComputeRequirements, GpuRequirements, WorkloadClass, CpuResource, GpuResource, NodeResource
+    from lead_engine.compute_scheduler import ComputeScheduler
+    import time
+
+    def gpu(node, gid, uuid):
+        return GpuResource(
+            node_id=node, gpu_id=gid, gpu_uuid=uuid, vram_bytes=24 * 1024**3,
+            compute_capability="8.0", health_state="healthy", availability_state="available",
+        )
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="p", domain_id="d", observed_at=time.time(),
+        nodes=(NodeResource(
+            node_id="n", architecture="x86_64",
+            cpu=CpuResource(node_id="n", cpu_count=8, memory_bytes=64 * 1024**3),
+            gpus=(gpu("n", "g0", "u0"), gpu("n", "g1", "u1")),
+        ),),
+        authentication_state="authenticated",
+        evidence={"network": {
+            "source": "test",
+            "gpu_nic_locality": [
+                {"gpu_uuid": "u0", "nic": "e0", "rdma_device": "r0", "rdma_port": 1, "link_layer": "ib"},
+                {"gpu_uuid": "u1", "nic": "e1", "rdma_device": "r1", "rdma_port": 1, "link_layer": "ib"},
+            ],
+            "rdma": {"devices": [{"device": "r0"}, {"device": "r1"}], "links": [
+                {"rdma_device": "r0", "port": 1, "link_layer": "ib", "state": "ACTIVE", "physical_state": "LINK_UP"},
+                {"rdma_device": "r1", "port": 1, "link_layer": "ib", "state": "ACTIVE", "physical_state": "LINK_UP"},
+            ]},
+        }},
+    ))
+    from lead_engine.compute_fabric_telemetry import workload_performance_key, physical_path_key
+    paths = {
+        "u0": {"node_id": "n", "gpu_uuid": "u0", "nic": "e0", "rdma_device": "r0", "rdma_port": 1, "link_layer": "ib"},
+        "u1": {"node_id": "n", "gpu_uuid": "u1", "nic": "e1", "rdma_device": "r1", "rdma_port": 1, "link_layer": "ib"},
+    }
+    workload = {"workload_class": "multi_gpu", "collective": "all_reduce", "world_size": 2, "message_size_bytes": 1048576}
+    history = {
+        workload_performance_key(paths["u0"], workload): {"avg_all_reduce_elapsed_ms": 2.0, "sample_count": 5},
+        workload_performance_key(paths["u1"], workload): {"avg_all_reduce_elapsed_ms": 8.0, "sample_count": 5},
+        physical_path_key(paths["u0"]): {"avg_all_reduce_elapsed_ms": 99.0, "sample_count": 100},
+        physical_path_key(paths["u1"]): {"avg_all_reduce_elapsed_ms": 1.0, "sample_count": 100},
+    }
+    scheduler = ComputeScheduler(inventory, performance_history_provider=lambda: history)
+    allocation = scheduler.allocate(
+        ComputeRequirements(
+            WorkloadClass.MULTI_GPU,
+            GpuRequirements(gpu_count=1),
+            performance_signature=tuple(workload.items()),
+        ),
+        "workload-specific",
+    )
+    assert allocation.resource_ids[-1] == "n/g0"
