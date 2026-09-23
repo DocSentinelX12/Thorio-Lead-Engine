@@ -1806,7 +1806,11 @@ class ComputeCoordinator:
                 ):
                     connection.rollback()
                     return False
+                affected_paths = set()
                 for metric in metrics:
+                    path_key = str(metric.get("path_key") or "").strip()
+                    if path_key:
+                        affected_paths.add(path_key)
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
                            (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key)
@@ -1815,34 +1819,61 @@ class ComputeCoordinator:
                             f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
                             current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
                             str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
-                            float(metric["all_reduce_elapsed_ms"]), now, str(metric.get("path_key") or ""),
+                            float(metric["all_reduce_elapsed_ms"]), now, path_key,
                         ),
                     )
-                    path_key = str(metric.get("path_key") or "").strip()
-                    if path_key:
-                        elapsed = float(metric["all_reduce_elapsed_ms"])
-                        transport = metric.get("transport")
-                        connection.execute(
-                            """INSERT INTO compute_fabric_path_performance(
-                                   path_key,sample_count,total_elapsed_ms,min_all_reduce_elapsed_ms,
-                                   max_all_reduce_elapsed_ms,last_all_reduce_elapsed_ms,
-                                   avg_all_reduce_elapsed_ms,transport,last_observed_at)
-                               VALUES(?,?,?,?,?,?,?,?,?)
-                               ON CONFLICT(path_key) DO UPDATE SET
-                                   sample_count=compute_fabric_path_performance.sample_count+1,
-                                   total_elapsed_ms=compute_fabric_path_performance.total_elapsed_ms+excluded.total_elapsed_ms,
-                                   min_all_reduce_elapsed_ms=MIN(compute_fabric_path_performance.min_all_reduce_elapsed_ms,excluded.min_all_reduce_elapsed_ms),
-                                   max_all_reduce_elapsed_ms=MAX(compute_fabric_path_performance.max_all_reduce_elapsed_ms,excluded.max_all_reduce_elapsed_ms),
-                                   last_all_reduce_elapsed_ms=excluded.last_all_reduce_elapsed_ms,
-                                   avg_all_reduce_elapsed_ms=(compute_fabric_path_performance.total_elapsed_ms+excluded.total_elapsed_ms)/(compute_fabric_path_performance.sample_count+1),
-                                   transport=CASE
-                                       WHEN compute_fabric_path_performance.transport=excluded.transport THEN compute_fabric_path_performance.transport
-                                       WHEN compute_fabric_path_performance.transport IS NULL THEN excluded.transport
-                                       ELSE NULL
-                                   END,
-                                   last_observed_at=excluded.last_observed_at""",
-                            (path_key, 1, elapsed, elapsed, elapsed, elapsed, elapsed, transport, now),
-                        )
+                for path_key in sorted(affected_paths):
+                    aggregate = connection.execute(
+                        """SELECT COUNT(*) AS sample_count,
+                                  SUM(all_reduce_elapsed_ms) AS total_elapsed_ms,
+                                  MIN(all_reduce_elapsed_ms) AS min_all_reduce_elapsed_ms,
+                                  MAX(all_reduce_elapsed_ms) AS max_all_reduce_elapsed_ms,
+                                  AVG(all_reduce_elapsed_ms) AS avg_all_reduce_elapsed_ms,
+                                  MAX(observed_at) AS last_observed_at
+                           FROM compute_fabric_execution_metrics
+                           WHERE path_key=?""",
+                        (path_key,),
+                    ).fetchone()
+                    transport_rows = connection.execute(
+                        """SELECT DISTINCT transport
+                           FROM compute_fabric_execution_metrics
+                           WHERE path_key=? AND transport IS NOT NULL AND transport<>''""",
+                        (path_key,),
+                    ).fetchall()
+                    transports = {str(item["transport"]) for item in transport_rows}
+                    transport = next(iter(transports)) if len(transports) == 1 else None
+                    connection.execute(
+                        """INSERT INTO compute_fabric_path_performance(
+                               path_key,sample_count,total_elapsed_ms,min_all_reduce_elapsed_ms,
+                               max_all_reduce_elapsed_ms,last_all_reduce_elapsed_ms,
+                               avg_all_reduce_elapsed_ms,transport,last_observed_at)
+                           VALUES(?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(path_key) DO UPDATE SET
+                               sample_count=excluded.sample_count,
+                               total_elapsed_ms=excluded.total_elapsed_ms,
+                               min_all_reduce_elapsed_ms=excluded.min_all_reduce_elapsed_ms,
+                               max_all_reduce_elapsed_ms=excluded.max_all_reduce_elapsed_ms,
+                               last_all_reduce_elapsed_ms=(
+                                   SELECT all_reduce_elapsed_ms
+                                   FROM compute_fabric_execution_metrics
+                                   WHERE path_key=? ORDER BY observed_at DESC, metric_id DESC LIMIT 1
+                               ),
+                               avg_all_reduce_elapsed_ms=excluded.avg_all_reduce_elapsed_ms,
+                               transport=excluded.transport,
+                               last_observed_at=excluded.last_observed_at""",
+                        (
+                            path_key,
+                            int(aggregate["sample_count"]),
+                            float(aggregate["total_elapsed_ms"]),
+                            float(aggregate["min_all_reduce_elapsed_ms"]),
+                            float(aggregate["max_all_reduce_elapsed_ms"]),
+                            float(aggregate["max_all_reduce_elapsed_ms"]),
+                            float(aggregate["avg_all_reduce_elapsed_ms"]),
+                            transport,
+                            float(aggregate["last_observed_at"]),
+                            path_key,
+                        ),
+                    )
                 updated = connection.execute(
                     """UPDATE compute_execution_participants
                        SET verification=?,status='running',heartbeat_at=?,last_error=''
