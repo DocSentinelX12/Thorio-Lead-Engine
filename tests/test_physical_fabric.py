@@ -4,6 +4,7 @@ import pytest
 
 from lead_engine.physical_fabric import (
     FabricPathState,
+    FabricVerificationResult,
     PhysicalFabricPathBuilder,
     PhysicalFabricVerification,
 )
