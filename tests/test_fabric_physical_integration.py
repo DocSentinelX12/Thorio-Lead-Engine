@@ -257,8 +257,8 @@ def test_measured_physical_path_capability_is_durable_and_reaches_placement(tmp_
     assert placement.evidence["concrete_physical_paths"][0]["measurement"]["bandwidth_gbps"] == 392.5
 
 
-def test_concrete_measured_capability_is_the_authoritative_fabric_gate():
-    inventory = ComputeInventory(str(tmp_path := __import__("pathlib").Path("/tmp") / "thorio-measured-capability-test.sqlite3"))
+def test_concrete_measured_capability_is_the_authoritative_fabric_gate(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     inventory.observe(
         ProviderResourceSnapshot(
             provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
