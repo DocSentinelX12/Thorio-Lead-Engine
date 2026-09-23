@@ -290,6 +290,26 @@ def test_concrete_measured_capability_is_the_authoritative_fabric_gate(tmp_path)
     assert placement.evidence["concrete_physical_paths"][0]["measurement"]["bandwidth_gbps"] == 392.5
 
 
+
+def test_explicitly_degraded_path_is_excluded_while_healthy_competing_path_remains_eligible(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+        nodes=(_node("node-a", _gpu("node-a", "g0", "u0")), _node("node-b", _gpu("node-b", "g0", "u1"))),
+        authentication_state="authenticated", evidence={"network": _network()},
+    ))
+    primary = _concrete_path()
+    inventory.persist_physical_path(primary)
+    verified = PhysicalFabricVerification.verify(primary, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in primary.segments])
+    measured = PhysicalFabricVerification.measure(verified, measurement={"bandwidth_gbps": 200, "latency_us": 5, "sample_count": 8}, observed_at=100)
+    inventory.persist_physical_verification(measured, evidence={"stage": "measurement"})
+    inventory.persist_physical_verification(
+        PhysicalFabricVerification.measure(measured, measurement={"bandwidth_gbps": 60, "latency_us": 20, "sample_count": 8, "status": "degraded", "degradation_reason": "probe reported degraded inter-node route", "failure_domain": "inter_node_route"}, observed_at=200),
+        evidence={"stage": "degradation"},
+    )
+    assert inventory.physical_paths()[0]["state"] == "DEGRADED"
+    assert inventory.verified_physical_paths(source_gpu="gpu:u0", destination_gpu="gpu:u1") == []
+
 def test_exact_path_failure_removes_it_from_verified_placement_candidates(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
