@@ -869,9 +869,7 @@ class ComputeCoordinator:
                         "evidence_recorded": True,
                     }
 
-                if row["task_status"] != "leased" or row["status"] != "leased" or (
-                    row["lease_until"] is not None and float(row["lease_until"]) <= now
-                ):
+                if row["task_status"] != "leased" or row["status"] != "leased":
                     self._record_fabric_recovery_event(
                         connection,
                         task_id=task_id,
