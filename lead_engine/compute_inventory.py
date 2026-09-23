@@ -184,6 +184,33 @@ class ComputeInventory:
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_component_history_component "
                 "ON compute_physical_component_history(component_key,observed_at)"
             )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_physical_fabric_paths (
+                path_id TEXT PRIMARY KEY,
+                source_gpu TEXT NOT NULL,
+                destination_gpu TEXT NOT NULL,
+                segments_json TEXT NOT NULL,
+                fabric_domains_json TEXT NOT NULL,
+                state TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_paths_endpoints "
+                "ON compute_physical_fabric_paths(source_gpu,destination_gpu,state)"
+            )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_physical_fabric_verifications (
+                verification_id TEXT PRIMARY KEY,
+                path_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                reason TEXT,
+                failure_domain TEXT,
+                evidence_json TEXT NOT NULL,
+                observed_at REAL NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_verifications_path "
+                "ON compute_physical_fabric_verifications(path_id,observed_at)"
+            )
             connection.commit()
 
     @staticmethod
@@ -354,6 +381,105 @@ class ComputeInventory:
                 )
             connection.commit()
         return len(records)
+
+    def persist_physical_path(self, path: Any) -> None:
+        """Persist the current concrete path state without replacing history."""
+        now = time.time()
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO compute_physical_fabric_paths
+                   (path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,state,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)
+                   ON CONFLICT(path_id) DO UPDATE SET
+                     segments_json=excluded.segments_json,
+                     fabric_domains_json=excluded.fabric_domains_json,
+                     state=excluded.state,
+                     updated_at=excluded.updated_at""",
+                (
+                    path.path_id, path.source_gpu, path.destination_gpu,
+                    json.dumps(list(path.segments), ensure_ascii=False, sort_keys=True),
+                    json.dumps(list(path.fabric_domains), ensure_ascii=False, sort_keys=True),
+                    path.state.value, now, now,
+                ),
+            )
+            connection.commit()
+
+    def persist_physical_verification(
+        self,
+        verification: Any,
+        *,
+        evidence: dict[str, Any] | None = None,
+        observed_at: float | None = None,
+    ) -> None:
+        """Append an immutable verification observation for one exact path."""
+        timestamp = time.time() if observed_at is None else observed_at
+        evidence_payload = dict(evidence or {})
+        material = {
+            "path_id": verification.path_id,
+            "state": verification.state.value,
+            "reason": verification.reason,
+            "failure_domain": verification.failure_domain,
+            "evidence": evidence_payload,
+            "observed_at": timestamp,
+        }
+        verification_id = hashlib.sha256(
+            json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO compute_physical_fabric_verifications
+                   (verification_id,path_id,state,reason,failure_domain,evidence_json,observed_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    verification_id, verification.path_id, verification.state.value,
+                    verification.reason, verification.failure_domain,
+                    json.dumps(evidence_payload, ensure_ascii=False, sort_keys=True),
+                    timestamp,
+                ),
+            )
+            connection.commit()
+
+    def physical_paths(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,
+                          state,created_at,updated_at
+                   FROM compute_physical_fabric_paths
+                   ORDER BY created_at,path_id"""
+            ).fetchall()
+        return [
+            {
+                "path_id": row["path_id"],
+                "source_gpu": row["source_gpu"],
+                "destination_gpu": row["destination_gpu"],
+                "segments": json.loads(row["segments_json"]),
+                "fabric_domains": json.loads(row["fabric_domains_json"]),
+                "state": row["state"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    def physical_verification_history(self) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT verification_id,path_id,state,reason,failure_domain,evidence_json,observed_at
+                   FROM compute_physical_fabric_verifications
+                   ORDER BY observed_at,verification_id"""
+            ).fetchall()
+        return [
+            {
+                "verification_id": row["verification_id"],
+                "path_id": row["path_id"],
+                "state": row["state"],
+                "reason": row["reason"],
+                "failure_domain": row["failure_domain"],
+                "evidence": json.loads(row["evidence_json"]),
+                "observed_at": row["observed_at"],
+            }
+            for row in rows
+        ]
 
     def physical_component_observations(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
