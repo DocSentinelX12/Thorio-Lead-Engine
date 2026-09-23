@@ -7,6 +7,7 @@ from lead_engine.physical_fabric import (
     FabricVerificationResult,
     PhysicalFabricPathBuilder,
     PhysicalFabricVerification,
+    resolve_observed_fabric_path_id,
 )
 
 
@@ -574,3 +575,16 @@ def test_reverified_path_old_measurement_is_not_performance_authority_until_fres
         }],
     )
     assert evaluator._candidate_concrete_performance((row,))[0] == 1
+
+
+def test_resolve_observed_fabric_path_id_requires_unique_exact_runtime_route():
+    paths = [{"path_id": "path-fast", "source_gpu": "gpu:src", "destination_gpu": "gpu:dst", "segments": ("gpu:src", "rdma:src:1", "fabric:ib0", "rdma:dst:1", "gpu:dst")}]
+    assert resolve_observed_fabric_path_id(paths, source_gpu="gpu:src", destination_gpu="gpu:dst", source_rdma_device="src", source_rdma_port=1, destination_rdma_device="dst", destination_rdma_port=1) == "path-fast"
+
+
+def test_resolve_observed_fabric_path_id_rejects_ambiguous_routes():
+    paths = [
+        {"path_id": "path-a", "source_gpu": "gpu:src", "destination_gpu": "gpu:dst", "segments": ("gpu:src", "rdma:src:1", "fabric:ib0", "rdma:dst:1", "gpu:dst")},
+        {"path_id": "path-b", "source_gpu": "gpu:src", "destination_gpu": "gpu:dst", "segments": ("gpu:src", "rdma:src:1", "fabric:ib1", "rdma:dst:1", "gpu:dst")},
+    ]
+    assert resolve_observed_fabric_path_id(paths, source_gpu="gpu:src", destination_gpu="gpu:dst", source_rdma_device="src", source_rdma_port=1, destination_rdma_device="dst", destination_rdma_port=1) is None
