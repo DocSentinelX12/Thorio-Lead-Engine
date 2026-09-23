@@ -60,10 +60,11 @@ def _version_at_least(actual: str | None, required: str | None) -> bool:
 class ComputeScheduler:
     """Atomically reserves concrete inventory resources for execution."""
 
-    def __init__(self, inventory: ComputeInventory, performance_history_provider=None, route_health_provider=None):
+    def __init__(self, inventory: ComputeInventory, performance_history_provider=None, route_health_provider=None, physical_path_provider=None):
         self.inventory = inventory
         self.performance_history_provider = performance_history_provider
         self.route_health_provider = route_health_provider or getattr(inventory, "fabric_route_health_index", None)
+        self.physical_path_provider = physical_path_provider or getattr(inventory, "verified_physical_paths", None)
 
     def placement(self, requirements: ComputeRequirements) -> PlacementDecision:
         """Construct a complete verified placement without reserving resources."""
@@ -75,6 +76,7 @@ class ComputeScheduler:
             self.inventory.eligible(),
             self._performance_history(requirements),
             self._route_health(),
+            self._verified_physical_paths(),
         )
         try:
             placement = evaluator.evaluate()
@@ -134,6 +136,12 @@ class ComputeScheduler:
             float(best.get("avg_all_reduce_elapsed_ms", float("inf"))),
             -int(best.get("sample_count", 0)),
         )
+
+    def _verified_physical_paths(self) -> tuple[dict[str, Any], ...]:
+        if self.physical_path_provider is None:
+            return ()
+        value = self.physical_path_provider()
+        return tuple(item for item in value if isinstance(item, dict) and str(item.get("path_id") or "").strip())
 
     def _route_health(self) -> dict[str, dict[str, Any]]:
         if self.route_health_provider is None:
