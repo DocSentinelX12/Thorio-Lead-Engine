@@ -232,6 +232,8 @@ class PhysicalFabricVerification:
             reason=reason,
             failure_domain=failure_domain,
             history=history,
+            measurement=dict(verification.measurement),
+            required_segments=verification.required_segments,
         )
 
     @staticmethod
@@ -247,6 +249,8 @@ class PhysicalFabricVerification:
             path_id=verification.path_id,
             state=FabricPathState.RECOVERED,
             history=history,
+            measurement=dict(verification.measurement),
+            required_segments=verification.required_segments,
         )
 
 
