@@ -202,12 +202,22 @@ class PhysicalFabricVerification:
         *,
         measurement: Mapping[str, object],
     ) -> FabricVerificationResult:
-        if verification.state is not FabricPathState.VERIFIED:
+        if verification.state not in (FabricPathState.VERIFIED, FabricPathState.REVERIFIED):
             return verification
+        history = verification.history
+        if verification.state is FabricPathState.REVERIFIED:
+            history = history + (
+                {
+                    "state": verification.state.value,
+                    "reason": "fresh post-recovery measurement",
+                    "failure_domain": verification.failure_domain,
+                    "prior_measurement": dict(verification.measurement),
+                },
+            )
         return FabricVerificationResult(
             path_id=verification.path_id,
             state=FabricPathState.MEASURED,
-            history=verification.history,
+            history=history,
             measurement=dict(measurement),
             required_segments=verification.required_segments,
         )
