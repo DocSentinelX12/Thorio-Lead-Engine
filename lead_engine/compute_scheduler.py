@@ -57,9 +57,10 @@ def _version_at_least(actual: str | None, required: str | None) -> bool:
 class ComputeScheduler:
     """Atomically reserves concrete inventory resources for execution."""
 
-    def __init__(self, inventory: ComputeInventory, performance_history_provider=None):
+    def __init__(self, inventory: ComputeInventory, performance_history_provider=None, route_health_provider=None):
         self.inventory = inventory
         self.performance_history_provider = performance_history_provider
+        self.route_health_provider = route_health_provider or getattr(inventory, "fabric_route_health_index", None)
 
     def _performance_history(self, requirements=None) -> dict[str, dict[str, Any]]:
         if self.performance_history_provider is None:
@@ -109,6 +110,42 @@ class ComputeScheduler:
         return (
             0,
             float(best.get("avg_all_reduce_elapsed_ms", float("inf"))),
+            -int(best.get("sample_count", 0)),
+        )
+
+    def _route_health(self) -> dict[str, dict[str, Any]]:
+        if self.route_health_provider is None:
+            return {}
+        value = self.route_health_provider()
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _gpu_route_health_key(
+        gpu: dict[str, Any],
+        health: dict[str, dict[str, Any]],
+    ) -> tuple[int, float, float, float, int]:
+        payload = json.loads(gpu["payload_json"])
+        paths = ComputeScheduler._verified_gpu_nic_rdma_path(gpu, payload.get("gpu_uuid"))
+        observations = []
+        for path in paths:
+            key = physical_path_key(path)
+            if key in health:
+                observations.append(health[key])
+        if not observations:
+            return (1, float("inf"), float("inf"), float("inf"), 0)
+        best = min(
+            observations,
+            key=lambda item: (
+                float(item.get("latency_delta_from_mean_ms", float("inf"))),
+                float(item.get("failure_rate", float("inf"))),
+                float(item.get("latest_latency_ms", float("inf"))),
+            ),
+        )
+        return (
+            0,
+            float(best.get("latency_delta_from_mean_ms", float("inf"))),
+            float(best.get("failure_rate", float("inf"))),
+            float(best.get("latest_latency_ms", float("inf"))),
             -int(best.get("sample_count", 0)),
         )
 
@@ -439,6 +476,7 @@ class ComputeScheduler:
         grouped = self._node_from_rows(rows)
         candidates = []
         performance_history = self._performance_history(requirements)
+        route_health = self._route_health()
         for node_id, node_rows in grouped.items():
             if requirements.allowed_node_ids and node_id not in set(requirements.allowed_node_ids):
                 continue
@@ -496,7 +534,7 @@ class ComputeScheduler:
                 "cpu": cpu,
                 "gpus": sorted(
                     self._rank_gpus_for_placement(compatible),
-                    key=lambda gpu: self._gpu_performance_key(gpu, performance_history, requirements),
+                    key=lambda gpu: (self._gpu_performance_key(gpu, performance_history, requirements), self._gpu_route_health_key(gpu, route_health), str(gpu.get("resource_key") or "")),
                 ),
                 "payload": node_payload,
             })
