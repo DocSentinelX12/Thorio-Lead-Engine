@@ -244,3 +244,43 @@ def test_inventory_persists_path_identity_and_verification_history(tmp_path) -> 
     assert history[0]["path_id"] == path.path_id
     assert history[0]["state"] == "VERIFIED"
     assert history[0]["evidence"]["stage"] == "inter_node_collective"
+
+
+def test_failure_and_reverification_require_fresh_exact_path_evidence() -> None:
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )[0]
+    verified = PhysicalFabricVerification.verify(
+        path,
+        evidence=[
+            {"segment": segment, "operation": "probe", "result": "pass"}
+            for segment in path.segments
+        ],
+    )
+    measured = PhysicalFabricVerification.measure(
+        verified,
+        measurement={"bandwidth_gbps": 100},
+    )
+    assert measured.measurement["bandwidth_gbps"] == 100
+
+    failed = PhysicalFabricVerification.fail(
+        measured,
+        reason="rdma port stopped responding",
+        failure_domain="rdma_port",
+    )
+    assert failed.state is FabricPathState.FAILED
+    assert failed.failure_domain == "rdma_port"
+
+    reverified = PhysicalFabricVerification.reverify(
+        failed,
+        evidence=[
+            {"segment": segment, "operation": "probe", "result": "pass"}
+            for segment in path.segments
+        ],
+    )
+    assert reverified.state is FabricPathState.REVERIFIED
+    assert reverified.path_id == path.path_id
+    assert reverified.history[-1]["state"] == "FAILED"
