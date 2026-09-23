@@ -38,13 +38,11 @@ def test_summarize_route_health_empty_or_invalid_samples_are_evidence_empty():
         "sample_count": 0,
         "success_count": 0,
         "failure_count": 0,
-        "failure_rate": 0.0,
     }
     assert summarize_route_health([{"observed_at": 1.0, "latency_ms": 2.0, "success": "yes"}]) == {
         "sample_count": 0,
         "success_count": 0,
         "failure_count": 0,
-        "failure_rate": 0.0,
     }
 
 
