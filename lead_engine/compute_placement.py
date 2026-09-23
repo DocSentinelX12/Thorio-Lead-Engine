@@ -155,7 +155,8 @@ class PlacementEvaluator:
         shared_network = None
         if len(node_ids) > 1:
             shared_network = self.scheduler._shared_verified_network_domain(node_candidates)
-            if shared_network is None:
+            network_known = any(self._network_domains(candidate) for candidate in node_candidates)
+            if network_known and shared_network is None:
                 return False, {
                     "stage": "complete_communication_path_validity",
                     "reason": "missing_verified_shared_network_domain",
