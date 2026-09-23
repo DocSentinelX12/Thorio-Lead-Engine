@@ -129,6 +129,45 @@ def test_repeated_observation_is_idempotent_and_preserves_multiple_paths(tmp_pat
     }
 
 
+def test_newer_observation_updates_current_state_and_retains_prior_evidence(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    first = {
+        "physical_fabric": {
+            "components": [
+                {
+                    "component_type": "nic",
+                    "identity": "nic:mlx5_0",
+                    "node_id": "node-a",
+                    "attributes": {"pci_bus_id": "0000:5e:00.0", "link_speed": "100G"},
+                }
+            ]
+        }
+    }
+    second = {
+        "physical_fabric": {
+            "components": [
+                {
+                    "component_type": "nic",
+                    "identity": "nic:mlx5_0",
+                    "node_id": "node-a",
+                    "attributes": {"pci_bus_id": "0000:5e:00.0", "link_speed": "200G"},
+                }
+            ]
+        }
+    }
+
+    inventory.observe(_snapshot(evidence=first, observed_at=100.0))
+    inventory.observe(_snapshot(evidence=second, observed_at=101.0))
+
+    current = inventory.physical_component_observations()
+    assert len(current) == 1
+    assert current[0]["attributes"]["link_speed"] == "200G"
+
+    history = inventory.physical_component_history()
+    assert len(history) == 2
+    assert [item["attributes"]["link_speed"] for item in history] == ["100G", "200G"]
+
+
 def test_missing_optional_hardware_fields_remain_unknown(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     evidence = {
