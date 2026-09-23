@@ -263,3 +263,47 @@ def test_placement_evidence_retains_rejection_reason(tmp_path):
         and item["stage"] == "complete_communication_path_validity"
         for item in scheduler._last_placement_trace
     )
+
+
+def test_successful_placement_persists_candidate_evaluations_and_requirements(tmp_path):
+    nodes = (_node("node-a", _gpu("node-a", "g0", "u0"), _gpu("node-a", "g1", "u1")),)
+    network = _network(
+        [
+            _locality("node-a", "u0", "eth0", "mlx5_0"),
+            _locality("node-a", "u1", "eth1", "mlx5_1"),
+        ],
+        [_link("mlx5_0"), _link("mlx5_1")],
+        domains={"node-a": ["fabric-a"]},
+    )
+    inventory = _snapshot(tmp_path, nodes=nodes, network=network)
+    scheduler = ComputeScheduler(inventory)
+    placement = scheduler.placement(_requirements())
+
+    assert placement.evidence["candidate_evaluations"]
+    assert placement.evidence["rejection_count"] == 0
+    assert placement.evidence["candidate_evaluations"][0]["status"] == "accepted"
+
+
+def test_placement_identity_includes_stable_workload_constraints(tmp_path):
+    nodes = (_node("node-a", _gpu("node-a", "g0", "u0"), _gpu("node-a", "g1", "u1")),)
+    network = _network(
+        [
+            _locality("node-a", "u0", "eth0", "mlx5_0"),
+            _locality("node-a", "u1", "eth1", "mlx5_1"),
+        ],
+        [_link("mlx5_0"), _link("mlx5_1")],
+        domains={"node-a": ["fabric-a"]},
+    )
+    inventory = _snapshot(tmp_path, nodes=nodes, network=network)
+    scheduler = ComputeScheduler(inventory)
+
+    first = scheduler.placement(_requirements())
+    constrained = ComputeRequirements(
+        WorkloadClass.MULTI_GPU,
+        GpuRequirements(gpu_count=2, min_vram_bytes=24 * 1024**3, require_nccl=True),
+        performance_signature=_requirements().performance_signature,
+    )
+    second = scheduler.placement(constrained)
+
+    assert first.selected_resource_keys == second.selected_resource_keys
+    assert first.placement_id != second.placement_id
