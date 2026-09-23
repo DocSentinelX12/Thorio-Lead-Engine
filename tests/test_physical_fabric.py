@@ -212,3 +212,35 @@ def test_path_construction_has_no_fixed_hardware_or_path_ceiling() -> None:
         destination_gpu="gpu:dst",
     )
     assert len(paths) == 21
+
+
+def test_inventory_persists_path_identity_and_verification_history(tmp_path) -> None:
+    from lead_engine.compute_inventory import ComputeInventory
+
+    graph = {"components": _components(), "edges": _relationships()}
+    path = PhysicalFabricPathBuilder.build(
+        locality_graph=graph,
+        source_gpu="gpu:src",
+        destination_gpu="gpu:dst",
+    )[0]
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.persist_physical_path(path)
+    verification = PhysicalFabricVerification.verify(
+        path,
+        evidence=[
+            {"segment": segment, "operation": "probe", "result": "pass"}
+            for segment in path.segments
+        ],
+    )
+    inventory.persist_physical_verification(
+        verification,
+        evidence={"stage": "inter_node_collective", "operation": "probe"},
+    )
+
+    records = inventory.physical_paths()
+    history = inventory.physical_verification_history()
+    assert records[0]["path_id"] == path.path_id
+    assert records[0]["state"] == "CONSTRUCTED"
+    assert history[0]["path_id"] == path.path_id
+    assert history[0]["state"] == "VERIFIED"
+    assert history[0]["evidence"]["stage"] == "inter_node_collective"
