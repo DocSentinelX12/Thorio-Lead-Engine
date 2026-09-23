@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
+from .compute_fabric_telemetry import aggregate_execution_metrics, extract_execution_metrics
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
 from .compute_provider import ProviderResourceSnapshot
@@ -191,6 +192,21 @@ class ComputeCoordinator:
                 UNIQUE(attempt_id, generation, failure_class, phase)
             )""")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_fabric_recovery_attempt ON compute_fabric_recovery_events(attempt_id, generation, created_at)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_execution_metrics (
+                metric_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                worker_id TEXT NOT NULL,
+                rank INTEGER NOT NULL,
+                gpu_uuid TEXT NOT NULL,
+                node_id TEXT NOT NULL DEFAULT '',
+                transport TEXT,
+                all_reduce_elapsed_ms REAL NOT NULL,
+                observed_at REAL NOT NULL,
+                UNIQUE(attempt_id, generation, worker_id, rank)
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_attempt ON compute_fabric_execution_metrics(attempt_id, generation, observed_at)")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_task_checkpoints (
                 task_id TEXT NOT NULL,
                 item_key TEXT NOT NULL,
@@ -910,6 +926,18 @@ class ComputeCoordinator:
                 if attempt_updated.rowcount != 1:
                     connection.rollback()
                     raise RuntimeError("fabric recovery lost the exact execution-generation fence")
+                for metric in metrics:
+                    connection.execute(
+                        """INSERT OR REPLACE INTO compute_fabric_execution_metrics
+                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
+                            current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
+                            str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
+                            float(metric["all_reduce_elapsed_ms"]), now,
+                        ),
+                    )
                 connection.execute(
                     """UPDATE compute_execution_participants
                        SET status='failed',last_error=?,heartbeat_at=?
@@ -1744,6 +1772,13 @@ class ComputeCoordinator:
             if evidence_keys != set(expected_bindings):
                 return False
 
+            metrics = extract_execution_metrics(verification)
+            metric_summary = aggregate_execution_metrics(metrics)
+            verification = dict(verification)
+            verification["fabric_execution_metrics"] = {
+                **metric_summary,
+                "samples": [dict(item) for item in metrics],
+            }
             serialized = json.dumps(verification, ensure_ascii=False, sort_keys=True)
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -1787,6 +1822,30 @@ class ComputeCoordinator:
                 connection.commit()
         return True
 
+
+    def fabric_execution_metrics(self, attempt_id: str, generation: int | None = None) -> Dict[str, Any]:
+        """Return durable observed performance metrics for one execution attempt."""
+        if not str(attempt_id).strip():
+            raise ValueError("attempt_id is required")
+        query = "SELECT * FROM compute_fabric_execution_metrics WHERE attempt_id=?"
+        params: list[Any] = [attempt_id]
+        if generation is not None:
+            query += " AND generation=?"
+            params.append(int(generation))
+        query += " ORDER BY generation,worker_id,rank"
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        samples = [dict(row) for row in rows]
+        values = [float(row["all_reduce_elapsed_ms"]) for row in samples]
+        return {
+            "attempt_id": attempt_id,
+            "generation": generation,
+            "sample_count": len(samples),
+            "min_all_reduce_elapsed_ms": min(values) if values else None,
+            "max_all_reduce_elapsed_ms": max(values) if values else None,
+            "avg_all_reduce_elapsed_ms": (sum(values) / len(values)) if values else None,
+            "samples": samples,
+        }
 
     def converge_fabric_execution(
         self, *, attempt_id: str, generation: int, worker_id: str, lease_token: str,
