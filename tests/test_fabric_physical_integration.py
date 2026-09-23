@@ -63,7 +63,7 @@ def _requirements() -> ComputeRequirements:
 
 def _concrete_path() -> object:
     components = [
-        {"component_type": "gpu", "identity": "gpu:src", "node_id": "node-a"},
+        {"component_type": "gpu", "identity": "gpu:u0", "node_id": "node-a"},
         {"component_type": "pci", "identity": "pci:src", "node_id": "node-a"},
         {"component_type": "numa", "identity": "numa:src", "node_id": "node-a"},
         {"component_type": "nic", "identity": "nic:src", "node_id": "node-a"},
@@ -75,22 +75,22 @@ def _concrete_path() -> object:
         {"component_type": "nic", "identity": "nic:dst", "node_id": "node-b"},
         {"component_type": "numa", "identity": "numa:dst", "node_id": "node-b"},
         {"component_type": "pci", "identity": "pci:dst", "node_id": "node-b"},
-        {"component_type": "gpu", "identity": "gpu:dst", "node_id": "node-b"},
+        {"component_type": "gpu", "identity": "gpu:u1", "node_id": "node-b"},
     ]
     def rel(kind: str, source: str, target: str) -> dict[str, object]:
         return {"relationship_type": kind, "source": source, "target": target, "state": "known", "evidence": {"source": "probe"}}
     edges = [
-        rel("gpu_to_pci", "gpu:src", "pci:src"), rel("gpu_to_numa", "gpu:src", "numa:src"),
-        rel("gpu_to_nic", "gpu:src", "nic:src"), rel("nic_to_pci", "nic:src", "pci:src"),
+        rel("gpu_to_pci", "gpu:u0", "pci:src"), rel("gpu_to_numa", "gpu:u0", "numa:src"),
+        rel("gpu_to_nic", "gpu:u0", "nic:src"), rel("nic_to_pci", "nic:src", "pci:src"),
         rel("nic_to_rdma_device", "nic:src", "rdma:src"), rel("rdma_device_to_port", "rdma:src", "rdma:src:1"),
         rel("rdma_port_to_fabric", "rdma:src:1", "fabric:ib0"), rel("fabric_to_rdma_port", "fabric:ib0", "rdma:dst:1"),
         rel("rdma_device_to_port", "rdma:dst", "rdma:dst:1"), rel("nic_to_rdma_device", "nic:dst", "rdma:dst"),
-        rel("nic_to_pci", "nic:dst", "pci:dst"), rel("gpu_to_nic", "gpu:dst", "nic:dst"),
-        rel("gpu_to_numa", "gpu:dst", "numa:dst"), rel("gpu_to_pci", "gpu:dst", "pci:dst"),
+        rel("nic_to_pci", "nic:dst", "pci:dst"), rel("gpu_to_nic", "gpu:u1", "nic:dst"),
+        rel("gpu_to_numa", "gpu:u1", "numa:dst"), rel("gpu_to_pci", "gpu:u1", "pci:dst"),
     ]
     path = PhysicalFabricPathBuilder.build(
         locality_graph={"components": components, "edges": edges},
-        source_gpu="gpu:src", destination_gpu="gpu:dst",
+        source_gpu="gpu:u0", destination_gpu="gpu:u1",
     )[0]
     verification = PhysicalFabricVerification.verify(
         path,
@@ -135,7 +135,7 @@ def test_multiple_verified_concrete_paths_remain_available_to_placement(tmp_path
     # A second independently identified path must remain selectable.
     path_ba = PhysicalFabricPathBuilder.build(
         locality_graph={"components": [
-            {"component_type": "gpu", "identity": "gpu:dst", "node_id": "node-b"},
+            {"component_type": "gpu", "identity": "gpu:u1", "node_id": "node-b"},
             {"component_type": "pci", "identity": "pci:dst", "node_id": "node-b"},
             {"component_type": "numa", "identity": "numa:dst", "node_id": "node-b"},
             {"component_type": "nic", "identity": "nic:dst", "node_id": "node-b"},
@@ -147,21 +147,21 @@ def test_multiple_verified_concrete_paths_remain_available_to_placement(tmp_path
             {"component_type": "nic", "identity": "nic:src", "node_id": "node-a"},
             {"component_type": "numa", "identity": "numa:src", "node_id": "node-a"},
             {"component_type": "pci", "identity": "pci:src", "node_id": "node-a"},
-            {"component_type": "gpu", "identity": "gpu:src", "node_id": "node-a"},
+            {"component_type": "gpu", "identity": "gpu:u0", "node_id": "node-a"},
         ], "edges": [
-            {"relationship_type": "gpu_to_pci", "source": "gpu:dst", "target": "pci:dst", "state": "known"},
-            {"relationship_type": "gpu_to_numa", "source": "gpu:dst", "target": "numa:dst", "state": "known"},
-            {"relationship_type": "gpu_to_nic", "source": "gpu:dst", "target": "nic:dst", "state": "known"},
+            {"relationship_type": "gpu_to_pci", "source": "gpu:u1", "target": "pci:dst", "state": "known"},
+            {"relationship_type": "gpu_to_numa", "source": "gpu:u1", "target": "numa:dst", "state": "known"},
+            {"relationship_type": "gpu_to_nic", "source": "gpu:u1", "target": "nic:dst", "state": "known"},
             {"relationship_type": "nic_to_rdma_device", "source": "nic:dst", "target": "rdma:dst", "state": "known"},
             {"relationship_type": "rdma_device_to_port", "source": "rdma:dst", "target": "rdma:dst:1", "state": "known"},
             {"relationship_type": "rdma_port_to_fabric", "source": "rdma:dst:1", "target": "fabric:ib0", "state": "known"},
             {"relationship_type": "fabric_to_rdma_port", "source": "fabric:ib0", "target": "rdma:src:1", "state": "known"},
             {"relationship_type": "rdma_device_to_port", "source": "rdma:src", "target": "rdma:src:1", "state": "known"},
             {"relationship_type": "nic_to_rdma_device", "source": "nic:src", "target": "rdma:src", "state": "known"},
-            {"relationship_type": "gpu_to_nic", "source": "gpu:src", "target": "nic:src", "state": "known"},
-            {"relationship_type": "gpu_to_numa", "source": "gpu:src", "target": "numa:src", "state": "known"},
-            {"relationship_type": "gpu_to_pci", "source": "gpu:src", "target": "pci:src", "state": "known"},
-        ]})[0]
+            {"relationship_type": "gpu_to_nic", "source": "gpu:u0", "target": "nic:src", "state": "known"},
+            {"relationship_type": "gpu_to_numa", "source": "gpu:u0", "target": "numa:src", "state": "known"},
+            {"relationship_type": "gpu_to_pci", "source": "gpu:u0", "target": "pci:src", "state": "known"},
+        ]}, source_gpu="gpu:u1", destination_gpu="gpu:u0")[0]
     inventory.persist_physical_path(path_ba)
     assert {item["path_id"] for item in inventory.physical_paths()} == {path_ab.path_id, path_ba.path_id}
 
