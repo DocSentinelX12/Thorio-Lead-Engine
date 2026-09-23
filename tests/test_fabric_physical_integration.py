@@ -257,6 +257,40 @@ def test_measured_physical_path_capability_is_durable_and_reaches_placement(tmp_
     assert placement.evidence["concrete_physical_paths"][0]["measurement"]["bandwidth_gbps"] == 392.5
 
 
+def test_concrete_measured_capability_is_the_authoritative_fabric_gate():
+    inventory = ComputeInventory(str(tmp_path := __import__("pathlib").Path("/tmp") / "thorio-measured-capability-test.sqlite3"))
+    inventory.observe(
+        ProviderResourceSnapshot(
+            provider_id="provider-a", domain_id="domain-a", observed_at=time.time(),
+            nodes=(_node("node-a", _gpu("node-a", "g0", "u0")), _node("node-b", _gpu("node-b", "g0", "u1"))),
+            authentication_state="authenticated", evidence={"network": _network()},
+        )
+    )
+    path = _concrete_path()
+    inventory.persist_physical_path(path)
+    measured = PhysicalFabricVerification.measure(
+        PhysicalFabricVerification.verify(
+            path, evidence=[{"segment": s, "operation": "probe", "result": "pass"} for s in path.segments]
+        ),
+        measurement={"bandwidth_gbps": 392.5, "latency_us": 4.7, "transport": "RDMA", "sample_count": 8},
+    )
+    inventory.persist_physical_verification(measured, evidence={"measurement": dict(measured.measurement)})
+    too_fast = ComputeRequirements(
+        WorkloadClass.MULTI_NODE_GPU,
+        GpuRequirements(gpu_count=2, require_nccl=True, min_fabric_bandwidth_gbps=400.0),
+        same_node=False,
+    )
+    with pytest.raises(ComputeSchedulingError, match="complete placement"):
+        ComputeScheduler(inventory).placement(too_fast)
+    compatible = ComputeRequirements(
+        WorkloadClass.MULTI_NODE_GPU,
+        GpuRequirements(gpu_count=2, require_nccl=True, min_fabric_bandwidth_gbps=390.0, max_fabric_latency_us=5.0),
+        same_node=False,
+    )
+    placement = ComputeScheduler(inventory).placement(compatible)
+    assert placement.evidence["concrete_physical_paths"][0]["measurement"]["bandwidth_gbps"] == 392.5
+
+
 def test_exact_path_failure_removes_it_from_verified_placement_candidates(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
