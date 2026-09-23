@@ -36,6 +36,7 @@ class FabricVerificationResult:
     failure_domain: str | None = None
     history: tuple[dict[str, object], ...] = ()
     measurement: Mapping[str, object] = field(default_factory=dict)
+    measurement_observed_at: float | None = None
     required_segments: tuple[str, ...] = ()
 
 
