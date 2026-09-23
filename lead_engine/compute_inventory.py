@@ -548,7 +548,7 @@ class ComputeInventory:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,state,"
-                "measurement_json,created_at,updated_at FROM compute_physical_fabric_paths WHERE "
+                "measurement_json,measurement_observed_at,created_at,updated_at FROM compute_physical_fabric_paths WHERE "
                 + " AND ".join(clauses)
                 + " ORDER BY path_id",
                 tuple(params),
