@@ -64,7 +64,7 @@ class ComputeScheduler:
         self.inventory = inventory
         self.performance_history_provider = performance_history_provider
         self.route_health_provider = route_health_provider or getattr(inventory, "fabric_route_health_index", None)
-        self.physical_path_provider = physical_path_provider or getattr(inventory, "verified_physical_paths", None)
+        self.physical_path_provider = physical_path_provider or getattr(inventory, "physical_paths", None)
 
     def placement(self, requirements: ComputeRequirements) -> PlacementDecision:
         """Construct a complete verified placement without reserving resources."""
@@ -76,7 +76,7 @@ class ComputeScheduler:
             self.inventory.eligible(),
             self._performance_history(requirements),
             self._route_health(),
-            self._verified_physical_paths(),
+            self._physical_paths(),
         )
         try:
             placement = evaluator.evaluate()
@@ -137,7 +137,7 @@ class ComputeScheduler:
             -int(best.get("sample_count", 0)),
         )
 
-    def _verified_physical_paths(self) -> tuple[dict[str, Any], ...]:
+    def _physical_paths(self) -> tuple[dict[str, Any], ...]:
         if self.physical_path_provider is None:
             return ()
         value = self.physical_path_provider()
