@@ -193,6 +193,15 @@ def test_missing_optional_hardware_fields_remain_unknown(tmp_path):
 def test_physical_path_measurement_timestamp_is_durable_and_survives_reload(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
 
+    class Path:
+        path_id = "path-a"
+        source_gpu = "gpu:src"
+        destination_gpu = "gpu:dst"
+        segments = ("gpu:src", "fabric:ib0", "gpu:dst")
+        fabric_domains = ("ib",)
+        state = type("State", (), {"value": "MEASURED"})()
+        measurement = {"bandwidth_gbps": 180.0}
+
     class Verification:
         path_id = "path-a"
         state = type("State", (), {"value": "MEASURED"})()
@@ -201,6 +210,7 @@ def test_physical_path_measurement_timestamp_is_durable_and_survives_reload(tmp_
         measurement = {"bandwidth_gbps": 180.0}
         measurement_observed_at = 200.0
 
+    inventory.persist_physical_path(Path())
     inventory.persist_physical_verification(
         Verification(),
         evidence={"measurement": {"bandwidth_gbps": 180.0}},
@@ -208,4 +218,10 @@ def test_physical_path_measurement_timestamp_is_durable_and_survives_reload(tmp_
     )
 
     rows = inventory.physical_paths()
-    assert rows == []
+    assert rows[0]["measurement"] == {"bandwidth_gbps": 180.0}
+    assert rows[0]["measurement_observed_at"] == 200.0
+
+    reloaded = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    rows = reloaded.physical_paths()
+    assert rows[0]["measurement"] == {"bandwidth_gbps": 180.0}
+    assert rows[0]["measurement_observed_at"] == 200.0
