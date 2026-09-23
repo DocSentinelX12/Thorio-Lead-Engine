@@ -66,9 +66,118 @@ def verify_provider_snapshot(snapshot: Any, *, runner=None) -> dict[str, object]
         )
     except FabricTopologyError as exc:
         raise FabricTopologyRuntimeError(str(exc)) from exc
+
+    physical_fabric = evidence.get("physical_fabric")
+    if isinstance(physical_fabric, Mapping):
+        components = physical_fabric.get("components")
+        relationships = physical_fabric.get("relationships")
+        if not isinstance(components, list):
+            components = []
+        if not isinstance(relationships, list):
+            relationships = []
+    else:
+        components = []
+        relationships = []
+
+    if not components:
+        component_by_identity: dict[str, dict[str, object]] = {}
+
+        def add_component(component_type: str, identity: str, node_id: str) -> None:
+            if not identity or not node_id:
+                return
+            component_by_identity.setdefault(
+                identity,
+                {
+                    "component_type": component_type,
+                    "identity": identity,
+                    "node_id": node_id,
+                },
+            )
+
+        for gpu in gpus:
+            add_component("gpu", f"gpu:{gpu['gpu_uuid']}", str(node.node_id))
+            add_component("pci", f"pci:{gpu['pci_bus_id']}", str(node.node_id))
+            relationships.append({
+                "relationship_type": "gpu_to_pci",
+                "source": f"gpu:{gpu['gpu_uuid']}",
+                "target": f"pci:{gpu['pci_bus_id']}",
+                "evidence": {"source": "provider_gpu_pci_identity"},
+            })
+        for nic in nics:
+            add_component("nic", f"nic:{nic['netdev']}", str(node.node_id))
+            add_component("pci", f"pci:{nic['pci_bus_id']}", str(node.node_id))
+            relationships.append({
+                "relationship_type": "nic_to_pci",
+                "source": f"nic:{nic['netdev']}",
+                "target": f"pci:{nic['pci_bus_id']}",
+                "evidence": {"source": "provider_nic_pci_identity"},
+            })
+        for device in rdma_devices:
+            rdma_name = str(device.get("device") or "").strip()
+            if not rdma_name:
+                continue
+            add_component("rdma_device", f"rdma:{rdma_name}", str(node.node_id))
+            pci_bus_id = str(device.get("pci_bus_id") or "").strip()
+            if pci_bus_id:
+                add_component("pci", f"pci:{pci_bus_id}", str(node.node_id))
+                relationships.append({
+                    "relationship_type": "rdma_device_to_pci",
+                    "source": f"rdma:{rdma_name}",
+                    "target": f"pci:{pci_bus_id}",
+                    "evidence": {"source": "provider_rdma_pci_identity"},
+                })
+        for link in rdma_links:
+            rdma_name = str(link.get("rdma_device") or "").strip()
+            port = link.get("port")
+            if not rdma_name or port is None:
+                continue
+            port_identity = f"rdma:{rdma_name}:{port}"
+            add_component("rdma_port", port_identity, str(node.node_id))
+            relationships.append({
+                "relationship_type": "rdma_device_to_port",
+                "source": f"rdma:{rdma_name}",
+                "target": port_identity,
+                "evidence": {
+                    "source": "provider_rdma_link",
+                    "link_layer": link.get("link_layer"),
+                },
+            })
+
+        for path in graph["paths"]:
+            gpu_identity = f"gpu:{path['gpu_uuid']}"
+            nic_identity = f"nic:{path['nic']}"
+            relationships.append({
+                "relationship_type": "gpu_to_nic",
+                "source": gpu_identity,
+                "target": nic_identity,
+                "evidence": {
+                    "source": "nvidia-smi topo -nic",
+                    "distance": path["gpu_nic_distance"],
+                },
+            })
+            for link in path["rdma_links"]:
+                rdma_name = str(link.get("rdma_device") or "").strip()
+                if not rdma_name:
+                    continue
+                relationships.append({
+                    "relationship_type": "nic_to_rdma_device",
+                    "source": nic_identity,
+                    "target": f"rdma:{rdma_name}",
+                    "evidence": {
+                        "source": "rdma-pci-identity",
+                        "pci_bus_id": path["nic_pci_bus_id"],
+                    },
+                })
+        components = list(component_by_identity.values())
+
+    locality_graph = PhysicalFabricTopology.build_locality_graph(
+        components=components,
+        relationships=relationships,
+    )
     return {
         "verified": True,
         "graph": graph,
+        "locality_graph": locality_graph,
         "gpu_nic_topology": gpu_nic_topology,
         "pci_inventory": topology.get("pci_inventory", ()),
         "evidence_sources": topology.get("evidence_sources", ()),
