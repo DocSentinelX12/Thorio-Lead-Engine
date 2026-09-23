@@ -122,6 +122,11 @@ def test_repeated_observation_is_idempotent_and_preserves_multiple_paths(tmp_pat
     assert {record["identity"] for record in records} == {
         "nic:mlx5_0", "rdma:mlx5_0", "nic:mlx5_1", "rdma:mlx5_1"
     }
+    history = inventory.physical_component_history()
+    assert len(history) == 4
+    assert {item["identity"] for item in history} == {
+        "nic:mlx5_0", "rdma:mlx5_0", "nic:mlx5_1", "rdma:mlx5_1"
+    }
 
 
 def test_missing_optional_hardware_fields_remain_unknown(tmp_path):
