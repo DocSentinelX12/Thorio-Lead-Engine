@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import time
 
 
 def build_probe_evidence(
@@ -19,6 +20,7 @@ def build_probe_evidence(
     expected_sum: int,
     gpu_uuid: str,
     hostname: str,
+    all_reduce_elapsed_ms: float,
 ) -> dict[str, object]:
     """Build only evidence directly observed by the NCCL probe itself.
 
@@ -38,6 +40,7 @@ def build_probe_evidence(
         "verified_on_gpu": True,
         "gpu_uuid": gpu_uuid,
         "hostname": hostname,
+        "all_reduce_elapsed_ms": all_reduce_elapsed_ms,
     }
 
 
@@ -84,7 +87,9 @@ def main() -> None:
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
     try:
         value = torch.tensor([rank + 1], dtype=torch.int64, device=device)
+        started = time.perf_counter()
         dist.all_reduce(value, op=dist.ReduceOp.SUM)
+        all_reduce_elapsed_ms = (time.perf_counter() - started) * 1000.0
         expected = world_size * (world_size + 1) // 2
         actual = int(value.item())
         if actual != expected:
@@ -98,6 +103,7 @@ def main() -> None:
                 expected_sum=expected,
                 gpu_uuid=observed_gpu_uuid,
                 hostname=socket.gethostname(),
+                all_reduce_elapsed_ms=all_reduce_elapsed_ms,
             ),
             sort_keys=True,
         ), flush=True)
