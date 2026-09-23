@@ -89,3 +89,28 @@ def test_placement_evaluator_uses_adaptive_route_selection_for_each_gpu_pair():
     assert selected == (
         {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "fast-path"},
     )
+
+
+def test_candidate_route_health_uses_canonical_adaptive_route_evidence_for_cross_node_pairs():
+    evaluator = _evaluator((
+        {
+            "path_id": "slow-path",
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "state": "MEASURED",
+            "measurement": {"bandwidth_gbps": 100.0, "latency_us": 8.0, "sample_count": 10},
+        },
+        {
+            "path_id": "fast-path",
+            "source_gpu": "gpu:u0",
+            "destination_gpu": "gpu:u1",
+            "state": "MEASURED",
+            "measurement": {"bandwidth_gbps": 400.0, "latency_us": 3.0, "sample_count": 20},
+        },
+    ))
+    evaluator.route_health = {
+        "slow-path": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": 4.0, "latest_latency_ms": 8.0},
+        "fast-path": {"sample_count": 8, "failure_rate": 0.0, "latency_delta_from_mean_ms": -1.0, "latest_latency_ms": 3.0},
+    }
+
+    assert evaluator._candidate_route_health(_candidate("u0", "u1", "a", "b")) == (0, -1.0, 0.0, 3.0, -8)
