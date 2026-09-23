@@ -150,3 +150,32 @@ def summarize_route_health(samples: Any) -> dict[str, Any]:
     result["consecutive_failures"] = consecutive_failures
     result["consecutive_successes"] = consecutive_successes
     return result
+
+
+def extract_execution_path_observations(
+    verification: Mapping[str, Any],
+    *,
+    observed_at: float,
+) -> tuple[dict[str, Any], ...]:
+    """Convert only exact-path workload observations into route-health evidence."""
+    metrics = extract_execution_metrics(verification)
+    observations: list[dict[str, Any]] = []
+    for metric in metrics:
+        fabric_path_id = str(metric.get("fabric_path_id") or "").strip()
+        if not fabric_path_id:
+            continue
+        elapsed_ms = float(metric["all_reduce_elapsed_ms"])
+        observations.append({
+            "fabric_path_id": fabric_path_id,
+            "latency_us": elapsed_ms * 1000.0,
+            "success": True,
+            "observed_at": float(observed_at),
+            "evidence": {
+                "source": "observed_all_reduce",
+                "placement_id": str(metric.get("placement_id") or ""),
+                "rank": int(metric["rank"]),
+                "gpu_uuid": str(metric.get("gpu_uuid") or ""),
+                "network_transport": metric.get("transport"),
+            },
+        })
+    return tuple(observations)
