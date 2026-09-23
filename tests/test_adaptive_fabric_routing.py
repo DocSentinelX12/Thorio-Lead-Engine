@@ -249,3 +249,44 @@ def test_failure_domain_components_are_derived_by_component_identity_not_segment
     second["fabric_domains"] = ("fabric:ib1",)
 
     assert AdaptiveFabricRouteSelector.failure_domain_independent(first, second) is False
+
+def test_route_set_exposes_active_and_failure_domain_independent_standby_routes() -> None:
+    current = _path("current")
+    current["segments"] = (
+        "gpu:src", "nic:src", "rdma:src", "rdma:src:1",
+        "fabric:ib0", "rdma:dst:1", "rdma:dst", "nic:dst", "gpu:dst",
+    )
+    current["fabric_domains"] = ("fabric:ib0",)
+
+    standby = dict(current)
+    standby["path_id"] = "standby"
+    standby["segments"] = (
+        "gpu:src", "nic:src-2", "rdma:src-2", "rdma:src-2:1",
+        "fabric:ib1", "rdma:dst-2:1", "rdma:dst-2", "nic:dst-2", "gpu:dst",
+    )
+    standby["fabric_domains"] = ("fabric:ib1",)
+
+    shared = dict(current)
+    shared["path_id"] = "shared"
+    shared["segments"] = (
+        "gpu:src", "nic:src", "rdma:src", "rdma:src:2",
+        "fabric:ib2", "rdma:dst-3:2", "rdma:dst-3", "nic:dst-3", "gpu:dst",
+    )
+    shared["fabric_domains"] = ("fabric:ib2",)
+
+    health = {
+        "current": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": -2.0, "latest_latency_ms": 2.0},
+        "standby": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": 0.0, "latest_latency_ms": 4.0},
+        "shared": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": -1.0, "latest_latency_ms": 3.0},
+    }
+
+    route_set = AdaptiveFabricRouteSelector.select_resilient_route_set(
+        [current, standby, shared],
+        health,
+        ("gpu:src", "gpu:dst"),
+        current_path_id="current",
+    )
+
+    assert route_set["active_path_id"] == "current"
+    assert route_set["standby_path_ids"] == ("standby",)
+    assert route_set["verified_path_ids"] == ("current", "standby")
