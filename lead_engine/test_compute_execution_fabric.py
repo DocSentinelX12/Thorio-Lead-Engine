@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 from lead_engine.compute_bridge import REMOTE_SAFE_AGENTS
+from lead_engine.compute_fabric_telemetry import aggregate_execution_metrics, extract_execution_metrics
 from lead_engine.compute_coordinator import ComputeCoordinator
 from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_pool import WorkerIdentity
@@ -21,6 +22,7 @@ def test_nccl_probe_evidence_builder_contains_only_observed_core_fields():
         expected_sum=10,
         gpu_uuid="GPU-test-1",
         hostname="worker-2",
+        all_reduce_elapsed_ms=1.75,
     )
     assert evidence == {
         "backend": "nccl",
@@ -33,6 +35,7 @@ def test_nccl_probe_evidence_builder_contains_only_observed_core_fields():
         "verified_on_gpu": True,
         "gpu_uuid": "GPU-test-1",
         "hostname": "worker-2",
+        "all_reduce_elapsed_ms": 1.75,
     }
 
 
@@ -50,6 +53,89 @@ NCCL INFO Channel 01/0 : 0[0] -> 3[3] [recv] via NET/IB/1
         {"channel": "01/0", "local_rank": 0, "peer_rank": 3, "direction": "recv", "transport": "IB/1"},
     )
 
+
+
+
+def test_fabric_telemetry_extracts_only_observed_collective_timings():
+    verification = {
+        "process_evidence": [
+            {
+                "rank": 1,
+                "gpu_binding": {"node_id": "node-b"},
+                "probe": {
+                    "rank": 1,
+                    "gpu_uuid": "GPU-1",
+                    "network_transport": "IB",
+                    "all_reduce_elapsed_ms": 2.5,
+                },
+            },
+            {
+                "rank": 0,
+                "gpu_binding": {"node_id": "node-a"},
+                "probe": {
+                    "rank": 0,
+                    "gpu_uuid": "GPU-0",
+                    "network_transport": "IB",
+                    "all_reduce_elapsed_ms": 1.5,
+                },
+            },
+            {
+                "rank": 2,
+                "probe": {
+                    "rank": 2,
+                    "gpu_uuid": "GPU-2",
+                    "all_reduce_elapsed_ms": "not-a-measurement",
+                },
+            },
+        ]
+    }
+    metrics = extract_execution_metrics(verification)
+    assert [item["rank"] for item in metrics] == [0, 1]
+    assert aggregate_execution_metrics(metrics) == {
+        "sample_count": 2,
+        "min_all_reduce_elapsed_ms": 1.5,
+        "max_all_reduce_elapsed_ms": 2.5,
+        "avg_all_reduce_elapsed_ms": 2.0,
+        "transport": "IB",
+    }
+
+
+def test_coordinator_exposes_durable_distributed_fabric_execution_telemetry(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "test-token")
+    with coordinator._connect() as connection:
+        now = 1000.0
+        connection.execute(
+            """INSERT INTO compute_tasks
+               (task_id,payload,status,worker_id,lease_token,lease_until,attempt_id,generation,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            ("task-telemetry", "{}", "leased", "worker-1", "lease", now + 300, "attempt-telemetry", 1, now, now),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts
+               (attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at,allocation_id,rendezvous_endpoint)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            ("attempt-telemetry", "task-telemetry", 1, "worker-1", "leased",
+             __import__("hashlib").sha256(b"lease").hexdigest(), now, None, "127.0.0.1:29500"),
+        )
+        connection.execute(
+            """INSERT INTO compute_fabric_execution_metrics
+               (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            ("metric-seed-0","task-telemetry","attempt-telemetry",1,"worker-1",0,"GPU-0","worker-1","IB",2.0,now),
+        )
+        connection.execute(
+            """INSERT INTO compute_fabric_execution_metrics
+               (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            ("metric-seed-1","task-telemetry","attempt-telemetry",1,"worker-1",1,"GPU-1","worker-2","IB",3.0,now),
+        )
+        connection.commit()
+    result = coordinator.fabric_execution_metrics("attempt-telemetry", 1)
+    assert result["sample_count"] == 2
+    assert result["min_all_reduce_elapsed_ms"] == 2.0
+    assert result["max_all_reduce_elapsed_ms"] == 3.0
+    assert result["avg_all_reduce_elapsed_ms"] == 2.5
+    assert [row["rank"] for row in result["samples"]] == [0, 1]
 
 def _worker():
     return WorkerIdentity(
