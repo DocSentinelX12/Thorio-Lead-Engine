@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
 from .compute_fabric_telemetry import physical_path_key
+from .physical_fabric import AdaptiveFabricRouteSelector
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,28 @@ class PlacementEvaluator:
                 covered_pairs.add(tuple(sorted((source_node, destination_node))))
         missing = node_pairs - covered_pairs
         return not missing, evidence, "missing_verified_concrete_inter_node_path" if missing else "verified"
+
+    def _adaptive_route_selection(self, candidate: tuple[dict[str, Any], ...]) -> tuple[dict[str, str], ...]:
+        """Select the observed best measured canonical route for each cross-node GPU pair."""
+        gpu_pairs: list[tuple[str, str]] = []
+        for index, gpu in enumerate(candidate):
+            source_uuid = str(self._payload(gpu).get("gpu_uuid") or "").strip()
+            if not source_uuid:
+                continue
+            for destination in candidate[index + 1:]:
+                if str(gpu["node_id"]) == str(destination["node_id"]):
+                    continue
+                destination_uuid = str(self._payload(destination).get("gpu_uuid") or "").strip()
+                if not destination_uuid:
+                    continue
+                gpu_pairs.append((f"gpu:{source_uuid}", f"gpu:{destination_uuid}"))
+        if not gpu_pairs:
+            return ()
+        return AdaptiveFabricRouteSelector.select_for_gpu_pairs(
+            self.physical_paths,
+            self.route_health,
+            tuple(gpu_pairs),
+        )
 
     def _candidate_concrete_performance(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
         """Rank candidates using only directly observed concrete-path measurements.
@@ -339,7 +362,7 @@ class PlacementEvaluator:
             raise RuntimeError("no complete physical placement")
         ranked = sorted(valid, key=lambda item: (self._candidate_performance(item[0]), self._candidate_route_health(item[0]), self._candidate_concrete_performance(item[0]), self._stable_key(item[0])))
         selected, evidence = ranked[0]
-        self._trace("workload_performance", "applied", key=self._candidate_performance(selected)); self._trace("route_health", "applied", key=self._candidate_route_health(selected)); self._trace("concrete_path_performance", "applied", key=self._candidate_concrete_performance(selected)); self._trace("stable_resource_ordering", "applied", resource_keys=self._stable_key(selected))
+        self._trace("workload_performance", "applied", key=self._candidate_performance(selected)); self._trace("route_health", "applied", key=self._candidate_route_health(selected)); adaptive_routes = self._adaptive_route_selection(selected); self._trace("adaptive_route_selection", "applied", selected_routes=adaptive_routes); self._trace("concrete_path_performance", "applied", key=self._candidate_concrete_performance(selected)); self._trace("stable_resource_ordering", "applied", resource_keys=self._stable_key(selected))
         provider_ids = {str(row["provider_id"]) for row in selected}; domain_ids = {str(row["domain_id"]) for row in selected}
         if len(provider_ids) != 1 or len(domain_ids) != 1:
             raise RuntimeError("complete placement must remain within one provider and domain")
@@ -348,6 +371,6 @@ class PlacementEvaluator:
         for row in selected:
             payload = self._payload(row); path_evidence.extend(self._verified_paths(row)); locality.extend(self.scheduler._gpu_nic_locality_evidence(row, payload.get("gpu_uuid")))
         workload_signature = tuple(getattr(self.requirements, "performance_signature", ()) or ())
-        stable_identity = {"provider_id": next(iter(provider_ids)), "domain_id": next(iter(domain_ids)), "workload_class": getattr(getattr(self.requirements, "workload_class", None), "value", getattr(self.requirements, "workload_class", None)), "workload_signature": workload_signature, "gpu_requirements": {"gpu_count": self.requirements.gpu.gpu_count, "min_vram_bytes": self.requirements.gpu.min_vram_bytes, "min_compute_capability": self.requirements.gpu.min_compute_capability, "required_cuda_version": self.requirements.gpu.required_cuda_version, "required_driver_version": self.requirements.gpu.required_driver_version, "required_nvlink_domain": self.requirements.gpu.required_nvlink_domain, "require_nccl": self.requirements.gpu.require_nccl, "min_fabric_bandwidth_gbps": self.requirements.gpu.min_fabric_bandwidth_gbps, "max_fabric_latency_us": self.requirements.gpu.max_fabric_latency_us, "require_redundant_fabric_path": self.requirements.gpu.require_redundant_fabric_path}, "min_cpu_count": self.requirements.min_cpu_count, "min_memory_bytes": self.requirements.min_memory_bytes, "same_node": self.requirements.same_node, "topology_domain": self.requirements.topology_domain, "allowed_node_ids": tuple(self.requirements.allowed_node_ids), "gpu_ids": gpu_ids, "node_ids": node_ids, "resource_keys": resource_keys, "paths": [{key: path.get(key) for key in sorted(path) if key not in {"verified_rdma_link", "bandwidth_gbps", "latency_us"}} for path in path_evidence]}
+        stable_identity = {"provider_id": next(iter(provider_ids)), "domain_id": next(iter(domain_ids)), "workload_class": getattr(getattr(self.requirements, "workload_class", None), "value", getattr(self.requirements, "workload_class", None)), "workload_signature": workload_signature, "gpu_requirements": {"gpu_count": self.requirements.gpu.gpu_count, "min_vram_bytes": self.requirements.gpu.min_vram_bytes, "min_compute_capability": self.requirements.gpu.min_compute_capability, "required_cuda_version": self.requirements.gpu.required_cuda_version, "required_driver_version": self.requirements.gpu.required_driver_version, "required_nvlink_domain": self.requirements.gpu.required_nvlink_domain, "require_nccl": self.requirements.gpu.require_nccl, "min_fabric_bandwidth_gbps": self.requirements.gpu.min_fabric_bandwidth_gbps, "max_fabric_latency_us": self.requirements.gpu.max_fabric_latency_us, "require_redundant_fabric_path": self.requirements.gpu.require_redundant_fabric_path}, "min_cpu_count": self.requirements.min_cpu_count, "min_memory_bytes": self.requirements.min_memory_bytes, "same_node": self.requirements.same_node, "topology_domain": self.requirements.topology_domain, "allowed_node_ids": tuple(self.requirements.allowed_node_ids), "gpu_ids": gpu_ids, "node_ids": node_ids, "resource_keys": resource_keys, "paths": [{key: path.get(key) for key in sorted(path) if key not in {"verified_rdma_link", "bandwidth_gbps", "latency_us"}} for path in path_evidence], "adaptive_routes": adaptive_routes}
         placement_id = hashlib.sha256(json.dumps(stable_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-        return PlacementDecision(placement_id=placement_id, provider_id=next(iter(provider_ids)), domain_id=next(iter(domain_ids)), workload_signature=workload_signature, selected_gpu_ids=gpu_ids, selected_node_ids=node_ids, selected_resource_keys=resource_keys, evidence={"physical_paths": path_evidence, "gpu_nic_rdma": locality, "topology": evidence["topology"], "shared_network": evidence["shared_network"], "concrete_physical_paths": evidence.get("concrete_physical_paths", []), "workload_performance": self._candidate_performance(selected), "route_health": self._candidate_route_health(selected), "concrete_path_performance": self._candidate_concrete_performance(selected), "candidate_evaluations": candidate_evidence, "rejection_count": rejection_count}, decision_trace=tuple(self.trace))
+        return PlacementDecision(placement_id=placement_id, provider_id=next(iter(provider_ids)), domain_id=next(iter(domain_ids)), workload_signature=workload_signature, selected_gpu_ids=gpu_ids, selected_node_ids=node_ids, selected_resource_keys=resource_keys, evidence={"physical_paths": path_evidence, "gpu_nic_rdma": locality, "topology": evidence["topology"], "shared_network": evidence["shared_network"], "concrete_physical_paths": evidence.get("concrete_physical_paths", []), "workload_performance": self._candidate_performance(selected), "route_health": self._candidate_route_health(selected), "concrete_path_performance": self._candidate_concrete_performance(selected), "adaptive_routes": adaptive_routes, "candidate_evaluations": candidate_evidence, "rejection_count": rejection_count}, decision_trace=tuple(self.trace))
