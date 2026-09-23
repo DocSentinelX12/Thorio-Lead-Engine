@@ -100,6 +100,40 @@ def _concrete_path() -> object:
     return path
 
 
+def test_execution_telemetry_preserves_concrete_path_and_placement_identity():
+    from lead_engine.compute_fabric_telemetry import extract_execution_metrics
+
+    verification = {
+        "placement_id": "placement-123",
+        "workload_signature": {"workload_class": "multi_node_gpu", "collective": "all_reduce"},
+        "process_evidence": [
+            {
+                "rank": 0,
+                "gpu_binding": {
+                    "node_id": "node-a",
+                    "planned_physical_path": {
+                        "fabric_path_id": "path-123",
+                        "node_id": "node-a",
+                        "gpu_uuid": "u0",
+                        "nic": "eth0",
+                        "rdma_device": "mlx5_0",
+                        "rdma_port": 1,
+                        "link_layer": "InfiniBand",
+                    },
+                },
+                "probe": {
+                    "gpu_uuid": "u0",
+                    "all_reduce_elapsed_ms": 4.5,
+                    "network_transport": "IB",
+                },
+            }
+        ],
+    }
+    metrics = extract_execution_metrics(verification)
+    assert metrics[0]["fabric_path_id"] == "path-123"
+    assert metrics[0]["placement_id"] == "placement-123"
+
+
 def test_execution_metric_is_bound_to_concrete_path_id_and_placement_id(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     path = _concrete_path()
