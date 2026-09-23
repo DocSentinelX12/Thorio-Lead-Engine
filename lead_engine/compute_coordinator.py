@@ -209,6 +209,7 @@ class ComputeCoordinator:
                 observed_at REAL NOT NULL,
                 path_key TEXT NOT NULL DEFAULT '',
                 workload_key TEXT NOT NULL DEFAULT '',
+                placement_id TEXT NOT NULL DEFAULT '',
                 UNIQUE(attempt_id, generation, worker_id, rank)
             )""")
             metric_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_fabric_execution_metrics)")}
@@ -216,6 +217,8 @@ class ComputeCoordinator:
                 connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN path_key TEXT NOT NULL DEFAULT ''")
             if "workload_key" not in metric_columns:
                 connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN workload_key TEXT NOT NULL DEFAULT ''")
+            if "placement_id" not in metric_columns:
+                connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN placement_id TEXT NOT NULL DEFAULT ''")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_attempt ON compute_fabric_execution_metrics(attempt_id, generation, observed_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_path ON compute_fabric_execution_metrics(path_key, observed_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_workload ON compute_fabric_execution_metrics(workload_key, observed_at)")
@@ -1628,7 +1631,7 @@ class ComputeCoordinator:
             with self._connect() as connection:
                 row = connection.execute(
                     """SELECT a.status,a.task_id,a.generation,a.lease_token_digest,
-                              a.rendezvous_endpoint,p.status AS participant_status,
+                              a.rendezvous_endpoint,a.placement_id,p.status AS participant_status,
                               p.resource_ids,p.allocation_id
                        FROM compute_execution_attempts a
                        JOIN compute_execution_participants p
@@ -1856,14 +1859,15 @@ class ComputeCoordinator:
                             )
                     connection.execute(
                         """INSERT OR REPLACE INTO compute_fabric_execution_metrics
-                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           (metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key,placement_id)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             f"{attempt_id}:{generation}:{worker_id}:{int(metric['rank'])}",
                             current["task_id"], attempt_id, generation, worker_id, int(metric["rank"]),
                             str(metric["gpu_uuid"]), str(metric["node_id"]), metric.get("transport"),
                             float(metric["all_reduce_elapsed_ms"]), now, path_key,
                             str(metric.get("workload_key") or ""),
+                            str(row["placement_id"] or ""),
                         ),
                     )
                 affected_workloads = {
