@@ -1346,28 +1346,35 @@ class ComputeCoordinator:
             }
         source_gpu = str(failed.get("source_gpu") or "").strip()
         destination_gpu = str(failed.get("destination_gpu") or "").strip()
-        decision = AdaptiveFabricRouteSelector.orchestrate_exact_path_recovery(
-            physical_paths,
-            route_health,
-            failed_path_id=failed_id,
-            gpu_pair=(source_gpu, destination_gpu),
-            attempt_id=str(attempt_id),
-            placement_id=str(placement.get("placement_id") or ""),
-            generation=int(generation),
-        )
-        selected = str(decision.get("to_path_id") or "").strip()
         route_set = ComputeCoordinator._adaptive_launch_route_set(
             placement,
             (source_gpu, destination_gpu),
         )
         standby_ids = set(route_set["standby_path_ids"])
         verified_ids = set(route_set["verified_path_ids"])
+        independent_standbys = tuple(
+            path
+            for path in physical_paths
+            if str(path.get("path_id") or "").strip() in standby_ids
+            and str(path.get("path_id") or "").strip() in verified_ids
+            and AdaptiveFabricRouteSelector.failure_domain_independent(failed, path)
+        )
+        selection = AdaptiveFabricRouteSelector.select(independent_standbys, route_health)
+        selected = str(selection.get("path_id") or "").strip()
         if selected and (selected not in standby_ids or selected not in verified_ids):
             raise ValueError(
                 f"selected rebind path is not a durable verified standby: {selected}"
             )
         return {
-            **decision,
+            "migrate": bool(selected),
+            "from_path_id": failed_id,
+            "to_path_id": selected or None,
+            "reason": "exact_path_failure_independent_standby" if selected else "no_independently_verified_standby",
+            "attempt_id": str(attempt_id),
+            "placement_id": str(placement.get("placement_id") or ""),
+            "generation": int(generation),
+            "source_gpu": source_gpu,
+            "destination_gpu": destination_gpu,
             "next_generation": int(generation) + 1,
             "status": "standby_selected" if selected else "no_standby_available",
         }
