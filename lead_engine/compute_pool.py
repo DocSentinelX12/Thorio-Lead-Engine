@@ -322,6 +322,20 @@ class ComputePool:
         return self.set_worker_status(worker_id, "revoked", reason)
 
     def readmit_worker(self, worker_id: str, reason: str = "") -> bool:
+        """Readmit only after fresh heartbeat and physical GPU evidence are present."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT status,last_heartbeat,gpu_discovery_state,physical_fabric_evidence_json "
+                "FROM compute_workers WHERE worker_id=?",
+                (worker_id,),
+            ).fetchone()
+        if not row:
+            return False
+        evidence = json.loads(row["physical_fabric_evidence_json"] or "{}")
+        if row["gpu_discovery_state"] != "ready" or not isinstance(evidence, dict) or not evidence:
+            return False
+        if float(row["last_heartbeat"] or 0) <= 0:
+            return False
         return self.set_worker_status(worker_id, "ready", reason)
 
     def reserve_task_slot(self, worker_id: str) -> bool:
