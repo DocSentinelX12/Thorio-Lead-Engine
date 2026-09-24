@@ -416,12 +416,12 @@ def test_fleet_resource_intelligence_keeps_expired_resources_out_of_eligible_cap
 
 def test_continuous_self_optimization_preserves_future_single_node_flexibility():
     from lead_engine.compute_placement import PlacementEvaluator
-    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+    from lead_engine.compute_resources import ComputeRequirements, GpuRequirements, WorkloadClass
 
     requirements = ComputeRequirements(
         workload_class=WorkloadClass.GPU_REQUIRED,
         performance_signature=(),
-        gpu={"gpu_count": 1},
+        gpu=GpuRequirements(gpu_count=1),
     )
     def gpu(key, node):
         return {
