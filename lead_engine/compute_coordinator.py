@@ -2961,7 +2961,7 @@ class ComputeCoordinator:
                 leased = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]
                 completed = connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='completed'").fetchone()[0]
             capacity = self.pool.capacity_snapshot()
-            return {"ok": True, "free_only": True, "queued": queued, "leased": leased, "completed": completed, "capacity": capacity}
+            return {"ok": True, "free_only": True, "paid_capacity_allowed": False, "queued": queued, "leased": leased, "completed": completed, "capacity": capacity, "fleet": self.inventory.fleet_resource_intelligence(now=time.time()), "free_compute": self.free_compute_acquisition.status()}
 
 
 class _Handler(BaseHTTPRequestHandler):
