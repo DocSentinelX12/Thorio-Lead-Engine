@@ -220,6 +220,9 @@ def test_gpu_process_termination_targets_process_group_on_posix(monkeypatch):
         pid = 4321
         terminated = False
 
+        def poll(self):
+            return None
+
         def terminate(self):
             self.terminated = True
 
