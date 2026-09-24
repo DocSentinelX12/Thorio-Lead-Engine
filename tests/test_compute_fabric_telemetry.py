@@ -216,3 +216,67 @@ def test_fabric_rebind_validation_requires_new_placement_to_activate_selected_st
         },
     }
     assert ComputeCoordinator._validate_fabric_rebind_placement(rebind, wrong) is False
+
+
+def test_predict_route_evidence_classifies_a_measurable_degrading_trend():
+    from lead_engine.compute_fabric_telemetry import predict_route_evidence
+
+    result = predict_route_evidence([
+        {"observed_at": 100.0, "latency_ms": 2.0, "success": True},
+        {"observed_at": 200.0, "latency_ms": 2.1, "success": True},
+        {"observed_at": 300.0, "latency_ms": 3.8, "success": True},
+        {"observed_at": 400.0, "latency_ms": 4.0, "success": True},
+    ])
+    assert result["state"] == "degrading"
+    assert result["sample_count"] == 4
+    assert result["baseline_latency_ms"] == 2.05
+    assert result["recent_latency_ms"] == 3.9
+    assert result["trend_delta_ms"] == 1.85
+    assert result["evidence"]["first_observed_at"] == 100.0
+    assert result["evidence"]["last_observed_at"] == 400.0
+
+
+def test_predict_route_evidence_requires_temporal_evidence_and_does_not_invent_values():
+    from lead_engine.compute_fabric_telemetry import predict_route_evidence
+
+    result = predict_route_evidence([
+        {"observed_at": 100.0, "latency_ms": None, "success": True},
+        {"observed_at": 200.0, "latency_ms": 4.0, "success": True},
+    ])
+    assert result["state"] == "insufficient_evidence"
+    assert result["sample_count"] == 2
+    assert result["baseline_latency_ms"] == 4.0
+    assert result["recent_latency_ms"] == 4.0
+    assert result["trend_delta_ms"] is None
+
+
+def test_predict_route_evidence_can_classify_improvement_and_stability():
+    from lead_engine.compute_fabric_telemetry import predict_route_evidence
+
+    improving = predict_route_evidence([
+        {"observed_at": 100.0, "latency_ms": 5.0, "success": True},
+        {"observed_at": 200.0, "latency_ms": 4.8, "success": True},
+        {"observed_at": 300.0, "latency_ms": 3.0, "success": True},
+        {"observed_at": 400.0, "latency_ms": 2.9, "success": True},
+    ])
+    stable = predict_route_evidence([
+        {"observed_at": 100.0, "latency_ms": 3.0, "success": True},
+        {"observed_at": 200.0, "latency_ms": 3.1, "success": True},
+        {"observed_at": 300.0, "latency_ms": 2.9, "success": True},
+        {"observed_at": 400.0, "latency_ms": 3.0, "success": True},
+    ])
+    assert improving["state"] == "improving"
+    assert stable["state"] == "stable"
+
+
+def test_predict_route_evidence_is_not_false_certainty_for_noisy_observations():
+    from lead_engine.compute_fabric_telemetry import predict_route_evidence
+
+    result = predict_route_evidence([
+        {"observed_at": 100.0, "latency_ms": 1.0, "success": True},
+        {"observed_at": 200.0, "latency_ms": 5.0, "success": True},
+        {"observed_at": 300.0, "latency_ms": 1.2, "success": True},
+        {"observed_at": 400.0, "latency_ms": 4.8, "success": True},
+    ])
+    assert result["state"] == "insufficient_evidence"
+    assert result["trend_delta_ms"] is not None
