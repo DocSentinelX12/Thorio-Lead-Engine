@@ -1359,8 +1359,18 @@ class ComputeCoordinator:
             and str(path.get("path_id") or "").strip() in verified_ids
             and AdaptiveFabricRouteSelector.failure_domain_independent(failed, path)
         )
-        selection = AdaptiveFabricRouteSelector.select(independent_standbys, route_health)
-        selected = str(selection.get("path_id") or "").strip()
+        candidates = [
+            {
+                "path_id": str(path.get("path_id") or "").strip(),
+                "health": dict(route_health[str(path.get("path_id") or "").strip()]),
+                "measurement": dict(path.get("measurement") or {}),
+                "state": str(path.get("state") or "").strip(),
+            }
+            for path in independent_standbys
+            if str(path.get("path_id") or "").strip() in route_health
+            and isinstance(path.get("measurement"), dict)
+        ]
+        selected = str(min(candidates, key=AdaptiveFabricRouteSelector._key)["path_id"]).strip() if candidates else ""
         if selected and (selected not in standby_ids or selected not in verified_ids):
             raise ValueError(
                 f"selected rebind path is not a durable verified standby: {selected}"
