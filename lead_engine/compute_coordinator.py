@@ -2914,6 +2914,8 @@ class _Handler(BaseHTTPRequestHandler):
                     body.get("driver_version"), body.get("cuda_version"), body.get("nccl_version"),
                     tuple(str(x) for x in body.get("nic_names", ())), str(body.get("gpu_discovery_state", "not_probed")),
                     str(body.get("gpu_discovery_error", "")),
+                    str(body.get("domain_id") or worker_id),
+                    body.get("physical_fabric_evidence") or {},
                 )
                 self._send(200, self.server.coordinator.register_worker(identity))
             elif self.path == "/workers/heartbeat":
