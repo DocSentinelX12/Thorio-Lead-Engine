@@ -939,16 +939,21 @@ class ComputeInventory:
         """Return observed route health/congestion evidence keyed by physical path."""
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT path_key,fabric_path_id,observed_at,latency_ms,success
+                """SELECT path_key,fabric_path_id,observed_at,latency_ms,success,evidence_json
                    FROM compute_fabric_route_observations
                    ORDER BY path_key,observed_at,observation_id"""
             ).fetchall()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
+            try:
+                evidence = json.loads(row["evidence_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                evidence = {}
             grouped.setdefault(str(row["fabric_path_id"] or row["path_key"]), []).append({
                 "observed_at": float(row["observed_at"]),
                 "latency_ms": row["latency_ms"],
                 "success": bool(row["success"]),
+                "evidence": evidence if isinstance(evidence, dict) else {},
             })
         return {path_key: summarize_route_health(samples) for path_key, samples in grouped.items()}
 
