@@ -260,7 +260,7 @@ def test_fleet_resource_intelligence_aggregates_capacity_by_provider_domain_and_
                 node_id="node-a",
                 architecture="x86_64",
                 cpu=CpuResource("node-a", 16, 64 * 1024**3),
-                gpus=(gpu("node-a", "0", "uuid-a0", ResourceState.AVAILABLE), gpu("node-a", "1", "uuid-a1")),
+                gpus=(gpu("node-a", "0", "uuid-a0"), gpu("node-a", "1", "uuid-a1", ResourceState.AVAILABLE)),
                 state=ResourceState.HEALTHY,
             ),
             NodeResource(
