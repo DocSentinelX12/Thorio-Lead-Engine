@@ -588,3 +588,59 @@ def test_summarize_route_health_exposes_predictive_failure_by_workload_key_witho
 
     assert summary["predictive_failure_by_workload_key"]["a"]["state"] == "failure_pattern"
     assert summary["predictive_failure_by_workload_key"]["b"]["state"] == "stable"
+
+
+def test_continuous_optimization_evidence_balances_observed_performance_and_capacity():
+    from lead_engine.compute_fabric_telemetry import derive_continuous_optimization_evidence
+
+    evidence = derive_continuous_optimization_evidence([
+        {
+            "candidate_key": "candidate-a",
+            "observed_latency_ms": 2.0,
+            "future_feasible_domain_count": 3,
+            "future_single_node_count": 2,
+            "sample_count": 8,
+        },
+        {
+            "candidate_key": "candidate-b",
+            "observed_latency_ms": 3.0,
+            "future_feasible_domain_count": 1,
+            "future_single_node_count": 1,
+            "sample_count": 8,
+        },
+    ])
+
+    assert evidence["state"] == "balanced"
+    assert evidence["performance_preference"] == ("candidate-a",)
+    assert evidence["capacity_preference"] == ("candidate-a",)
+    assert evidence["balanced_preference"] == ("candidate-a",)
+
+
+def test_continuous_optimization_evidence_preserves_sparse_unknowns_without_synthetic_values():
+    from lead_engine.compute_fabric_telemetry import derive_continuous_optimization_evidence
+
+    evidence = derive_continuous_optimization_evidence([
+        {"candidate_key": "a"},
+        {"candidate_key": "b", "future_single_node_count": 2},
+    ])
+
+    assert evidence["state"] == "capacity_preservation"
+    assert evidence["performance_preference"] == ()
+    assert evidence["capacity_preference"] == ("b",)
+    assert evidence["candidates"][0]["observed_latency_ms"] is None
+    assert "score" not in evidence
+    assert "probability" not in evidence
+
+
+def test_continuous_optimization_evidence_is_deterministic_and_does_not_cross_candidate_keys():
+    from lead_engine.compute_fabric_telemetry import derive_continuous_optimization_evidence
+
+    evidence = derive_continuous_optimization_evidence([
+        {"candidate_key": "z", "observed_latency_ms": 2.0, "future_feasible_domain_count": 1},
+        {"candidate_key": "a", "observed_latency_ms": 2.0, "future_feasible_domain_count": 1},
+        {"candidate_key": "other-workload", "observed_latency_ms": 1.0, "future_feasible_domain_count": 0},
+    ])
+
+    assert evidence["performance_preference"] == ("other-workload",)
+    assert evidence["capacity_preference"] == ("a", "z")
+    assert evidence["balanced_preference"] == ()
