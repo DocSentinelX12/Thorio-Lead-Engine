@@ -498,3 +498,23 @@ def test_continuous_self_optimization_is_final_and_cannot_override_observed_perf
     )
 
     assert ranked[0] == candidate_b
+
+
+def test_fabric_cycle_exposes_read_only_continuous_optimization_snapshot(tmp_path):
+    from lead_engine.compute_fabric import ComputeFabricOrchestrator
+
+    inventory = __import__("lead_engine.compute_inventory", fromlist=["ComputeInventory"]).ComputeInventory(
+        str(tmp_path / "inventory.sqlite3")
+    )
+    fabric = ComputeFabricOrchestrator(inventory)
+
+    snapshot = fabric.continuous_optimization()
+
+    assert snapshot["state"] == "insufficient_evidence"
+    assert snapshot["policy"]["placement_recomputed_from_current_inventory"] is True
+    assert snapshot["policy"]["observed_execution_feedback_is_reused"] is True
+    assert snapshot["policy"]["hard_validation_remains_authoritative"] is True
+    assert snapshot["policy"]["compute_allocation_remains_authoritative"] is True
+    assert snapshot["policy"]["synthetic_performance_values"] is False
+    assert snapshot["policy"]["synthetic_capacity_values"] is False
+    assert inventory.fleet_resource_intelligence()["totals"]["eligible"] == 0
