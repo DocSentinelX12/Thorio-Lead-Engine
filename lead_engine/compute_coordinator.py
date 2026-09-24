@@ -662,6 +662,7 @@ class ComputeCoordinator:
             try:
                 requirements = self.physical_requirements(payload)
                 allocation_id = f"{task_id}:{attempt_id}"
+                pending_rebind = self._pending_fabric_rebind(task_id)
                 allocation = self.compute_scheduler.allocate(requirements, allocation_id)
                 if allocation.placement_id:
                     with self._connect() as connection:
@@ -823,7 +824,6 @@ class ComputeCoordinator:
             payload = json.loads(selected["payload"])
             with self._connect() as checkpoint_connection:
                 payload = self._claim_checkpointed_payload(checkpoint_connection, task_id, payload)
-            pending_rebind = self._pending_fabric_rebind(task_id)
             allocation = None
             if "compute_requirements" in payload:
                 allocation_id = f"{task_id}:{attempt_id}"
