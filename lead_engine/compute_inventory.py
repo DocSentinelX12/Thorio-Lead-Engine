@@ -1190,6 +1190,7 @@ class ComputeInventory:
 
         def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
             counts = empty_counts()
+            gpu_counts = empty_counts()
             gpu_items = [item for item in items if item.get("resource_type") == "gpu"]
             known_vram = 0
             unknown_vram = 0
@@ -1218,6 +1219,9 @@ class ComputeInventory:
                     effective_state = None
                 if effective_state in counts and effective_state != "TOTAL":
                     counts[effective_state] += 1
+                if item.get("resource_type") == "gpu" and effective_state in gpu_counts and effective_state != "TOTAL":
+                    gpu_counts[effective_state] += 1
+                    gpu_counts["TOTAL"] += 1
 
                 authenticated = str(item.get("authentication_state") or "unknown") == "authenticated"
                 unexpired = item.get("expires_at") is None or float(item["expires_at"]) > current
@@ -1257,7 +1261,7 @@ class ComputeInventory:
                 "eligible": eligible,
                 "node_state_counts": dict(sorted(node_state_counts.items())),
                 "gpu": {
-                    **{key: value for key, value in counts.items()},
+                    **{key: value for key, value in gpu_counts.items()},
                     "known_vram_bytes": known_vram,
                     "unknown_vram_count": unknown_vram,
                     "available_known_vram_bytes": available_known_vram,
