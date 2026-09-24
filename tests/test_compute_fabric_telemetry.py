@@ -177,3 +177,42 @@ def test_fabric_rebind_contract_promotes_only_a_verified_independent_standby_for
         "next_generation": 8,
         "status": "standby_selected",
     }
+
+
+def test_fabric_rebind_validation_requires_new_placement_to_activate_selected_standby():
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    rebind = {
+        "source_gpu": "gpu:u0",
+        "destination_gpu": "gpu:u1",
+        "from_path_id": "path-active",
+        "to_path_id": "path-standby",
+        "next_generation": 8,
+    }
+    replacement = {
+        "placement_id": "placement-next",
+        "evidence": {
+            "adaptive_route_sets": ({
+                "source_gpu": "gpu:u0",
+                "destination_gpu": "gpu:u1",
+                "active_path_id": "path-standby",
+                "standby_path_ids": ("path-other",),
+                "verified_path_ids": ("path-standby", "path-other"),
+            },)
+        },
+    }
+    assert ComputeCoordinator._validate_fabric_rebind_placement(rebind, replacement) is True
+
+    wrong = {
+        **replacement,
+        "evidence": {
+            "adaptive_route_sets": ({
+                "source_gpu": "gpu:u0",
+                "destination_gpu": "gpu:u1",
+                "active_path_id": "path-other",
+                "standby_path_ids": ("path-standby",),
+                "verified_path_ids": ("path-other", "path-standby"),
+            },)
+        },
+    }
+    assert ComputeCoordinator._validate_fabric_rebind_placement(rebind, wrong) is False
