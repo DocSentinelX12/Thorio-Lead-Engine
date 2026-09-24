@@ -2028,6 +2028,71 @@ class ComputeCoordinator:
             )
             return
 
+    def record_gpu_execution_verification(
+        self, *, attempt_id: str, generation: int, worker_id: str,
+        lease_token: str, verification: Dict[str, Any],
+    ) -> bool:
+        """Accept one generic GPU workload result against the exact allocation."""
+        if not isinstance(verification, dict) or verification.get("verified") is not True:
+            raise ValueError("verified GPU execution evidence is required")
+        if verification.get("execution_kind") != "gpu_workload":
+            return False
+        lease_digest = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        now = time.time()
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT a.status,a.task_id,a.generation,a.lease_token_digest,a.allocation_id,"
+                    "p.status AS participant_status,p.resource_ids "
+                    "FROM compute_execution_attempts a "
+                    "JOIN compute_execution_participants p ON p.attempt_id=a.attempt_id AND p.generation=a.generation "
+                    "JOIN compute_tasks t ON t.task_id=a.task_id "
+                    "WHERE a.attempt_id=? AND a.generation=? AND p.worker_id=? "
+                    "AND t.status='leased' AND t.lease_until > ?",
+                    (attempt_id, generation, worker_id, now),
+                ).fetchone()
+                if not row or row["status"] != "leased" or row["lease_token_digest"] != lease_digest:
+                    return False
+                if row["participant_status"] not in {"bound", "launching", "active", "running"}:
+                    return False
+                allocation = self.inventory.allocation(str(row["allocation_id"] or ""))
+                if not allocation:
+                    return False
+                reported = verification.get("gpu_bindings")
+                if not isinstance(reported, list) or not reported:
+                    return False
+                allowed = {str(item) for item in allocation.get("resource_keys") or ()}
+                allowed.update(str(item) for item in allocation.get("resource_ids") or ())
+                reported_resources = {
+                    str(item.get("resource_id") or "").strip()
+                    for item in reported if isinstance(item, dict)
+                }
+                if not reported_resources or not reported_resources.issubset(allowed):
+                    return False
+                if str(verification.get("worker_id") or "").strip() != worker_id:
+                    return False
+                serialized = json.dumps(
+                    {**verification, "execution_attempt_id": attempt_id, "generation": int(generation)},
+                    ensure_ascii=False, sort_keys=True,
+                )
+                cursor = connection.execute(
+                    "UPDATE compute_execution_participants "
+                    "SET verification=?,status='running',heartbeat_at=? "
+                    "WHERE attempt_id=? AND generation=? AND worker_id=? "
+                    "AND status IN ('bound','launching','active','running')",
+                    (serialized, now, attempt_id, generation, worker_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    "UPDATE compute_execution_attempts SET verification=?,heartbeat_at=? "
+                    "WHERE attempt_id=? AND generation=? AND status='leased'",
+                    (serialized, now, attempt_id, generation),
+                )
+                connection.commit()
+                return True
+
     def record_execution_verification(
         self, *, attempt_id: str, generation: int, worker_id: str,
         lease_token: str, verification: Dict[str, Any],
@@ -2972,6 +3037,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200 if result.get("converged") else 409, result)
             elif self.path == "/fabric/verification":
                 ok = self.server.coordinator.record_execution_verification(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    verification=body["verification"]
+                )
+                self._send(200 if ok else 409, {"ok": ok})
+            elif self.path == "/fabric/gpu-verification":
+                ok = self.server.coordinator.record_gpu_execution_verification(
                     attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
                     worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
                     verification=body["verification"]
