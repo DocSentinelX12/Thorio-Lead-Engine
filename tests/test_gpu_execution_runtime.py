@@ -88,7 +88,7 @@ def test_gpu_workload_runs_only_after_exact_identity_verification():
     assert calls[1][1]["CUDA_VISIBLE_DEVICES"] == "0"
     assert calls[1][1]["THORIO_EXPECTED_GPU_UUIDS"] == json.dumps(["GPU-1"])
     assert client.states[:2] == [("launching", ""), ("active", "")]
-    assert client.converged == 1
+    assert client.verification["execution_kind"] == "gpu_workload"
 
 
 def test_gpu_workload_rejects_identity_mismatch_before_launch():
