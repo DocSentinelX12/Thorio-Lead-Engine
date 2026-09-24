@@ -186,3 +186,135 @@ def test_predictive_route_without_evidence_remains_neutral():
     evaluator.route_health = {}
     evaluator._adaptive_route_selection = lambda _candidate: ()
     assert evaluator._candidate_predictive_route(()) == (1,)
+
+
+def test_multidimensional_workload_preference_uses_exact_observed_combination_and_path():
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+    from lead_engine.compute_fabric_telemetry import workload_performance_key
+
+    paths = (
+        {
+            "path_id": "observed-path",
+            "node_id": "node-a",
+            "gpu_uuid": "gpu:u0",
+            "nic": "nic0",
+            "nic_pci_bus_id": "0000:01:00.0",
+            "rdma_device": "rdma0",
+            "rdma_port": 1,
+            "rdma_pci_bus_id": "0000:02:00.0",
+            "link_layer": "infiniband",
+        },
+        {
+            "path_id": "unobserved-path",
+            "node_id": "node-b",
+            "gpu_uuid": "gpu:u1",
+            "nic": "nic1",
+            "nic_pci_bus_id": "0000:03:00.0",
+            "rdma_device": "rdma1",
+            "rdma_port": 1,
+            "rdma_pci_bus_id": "0000:04:00.0",
+            "link_layer": "infiniband",
+        },
+    )
+    requirements = ComputeRequirements(
+        workload_class=WorkloadClass.GPU_REQUIRED,
+        performance_signature=(
+            ("collective", "all_reduce"),
+            ("world_size", 8),
+            ("message_size_bytes", 4096),
+            ("dtype", "fp16"),
+        ),
+    )
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = requirements
+    evaluator.physical_paths = paths
+    workload = {
+        "workload_class": "gpu_required",
+        "collective": "all_reduce",
+        "world_size": 8,
+        "message_size_bytes": 4096,
+        "dtype": "fp16",
+    }
+    observed_key = workload_performance_key(paths[0], workload)
+    evaluator.route_health = {
+        "observed-path": {
+            "multidimensional_by_workload_key": {
+                observed_key: {
+                    "workload_key": observed_key,
+                    "sample_count": 7,
+                    "dimensions": workload,
+                    "observations": (
+                        {"observed_at": 100.0, "latency_ms": 2.0, "success": True},
+                    ),
+                }
+            }
+        }
+    }
+    evaluator._adaptive_route_selection = lambda _candidate: (
+        {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "observed-path"},
+    )
+
+    assert evaluator._candidate_multidimensional_workload((
+        {"node_id": "node-a", "payload_json": json.dumps({"gpu_uuid": "gpu:u0"}), "resource_key": "gpu-a"},
+    )) == (0, -7, ("observed-path",))
+
+
+def test_multidimensional_workload_preference_does_not_cross_message_size_or_collective():
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+
+    path = {
+        "path_id": "path-1",
+        "node_id": "node-a",
+        "gpu_uuid": "gpu:u0",
+        "nic": "nic0",
+        "nic_pci_bus_id": "0000:01:00.0",
+        "rdma_device": "rdma0",
+        "rdma_port": 1,
+        "rdma_pci_bus_id": "0000:02:00.0",
+        "link_layer": "infiniband",
+    }
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = ComputeRequirements(
+        workload_class=WorkloadClass.GPU_REQUIRED,
+        performance_signature=(
+            ("collective", "all_reduce"),
+            ("world_size", 8),
+            ("message_size_bytes", 4096),
+        ),
+    )
+    evaluator.physical_paths = (path,)
+    evaluator.route_health = {
+        "path-1": {
+            "multidimensional_by_workload_key": {
+                "different": {
+                    "workload_key": "different",
+                    "sample_count": 100,
+                    "dimensions": {
+                        "collective": "all_gather",
+                        "world_size": 8,
+                        "message_size_bytes": 16384,
+                    },
+                    "observations": (),
+                }
+            }
+        }
+    }
+    evaluator._adaptive_route_selection = lambda _candidate: (
+        {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "path-1"},
+    )
+
+    assert evaluator._candidate_multidimensional_workload((
+        {"node_id": "node-a", "payload_json": json.dumps({"gpu_uuid": "gpu:u0"}), "resource_key": "gpu-a"},
+    )) == (1, 0, ())
+
+
+def test_multidimensional_workload_evidence_is_subordinate_to_predictive_route_and_existing_performance():
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = ComputeRequirements(workload_class=WorkloadClass.GPU_REQUIRED)
+    evaluator.physical_paths = ()
+    evaluator.route_health = {}
+    evaluator._adaptive_route_selection = lambda _candidate: ()
+
+    assert evaluator._candidate_multidimensional_workload(()) == (1, 0, ())
