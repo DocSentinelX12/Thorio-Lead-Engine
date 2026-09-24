@@ -618,6 +618,11 @@ class NvidiaProvider(ComputeProvider):
         if isinstance(network_evidence, dict):
             network_evidence["rdma"] = self._discover_rdma()
             network_evidence["gpu_nic_locality"] = self._correlate_gpu_nic_locality(gpus, network_evidence)
+            network_evidence["physical_fabric"] = self._physical_fabric_evidence(
+                node_id=self.node_id,
+                gpus=gpus,
+                network=network_evidence,
+            )
 
         toolkit_version = None
         nvcc = shutil.which(os.environ.get("THORIO_NVCC", "nvcc"))
@@ -657,6 +662,130 @@ class NvidiaProvider(ComputeProvider):
             state=ResourceState.AVAILABLE,
         )
         return ProviderResourceSnapshot(provider_id=self.provider_id, domain_id=self.domain_id, observed_at=observed_at, nodes=(node,), authentication_state="authenticated", evidence=evidence)
+
+    @staticmethod
+    def _physical_fabric_evidence(
+        *,
+        node_id: str,
+        gpus: Sequence[GpuResource],
+        network: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Build canonical physical identities only from explicitly observed host evidence."""
+        components: dict[str, dict[str, object]] = {}
+        relationships: list[dict[str, object]] = []
+
+        def add_component(component_type: str, identity: str, attributes: Mapping[str, object] | None = None) -> None:
+            identity = str(identity).strip()
+            if not identity:
+                return
+            item = components.setdefault(
+                identity,
+                {"component_type": component_type, "identity": identity, "node_id": node_id, "attributes": {}},
+            )
+            if isinstance(attributes, Mapping):
+                item["attributes"] = {**dict(item.get("attributes") or {}), **dict(attributes)}
+
+        def add_relationship(
+            relationship_type: str,
+            source: str,
+            target: str,
+            evidence: Mapping[str, object],
+        ) -> None:
+            if source and target:
+                relationships.append({
+                    "relationship_type": relationship_type,
+                    "source": source,
+                    "target": target,
+                    "evidence": dict(evidence),
+                })
+
+        for gpu in gpus:
+            gpu_identity = f"gpu:{gpu.gpu_uuid}"
+            add_component("gpu", gpu_identity, {"gpu_id": gpu.gpu_id, "pci_bus_id": gpu.pci_bus_id, "numa_node": gpu.numa_node})
+            if gpu.pci_bus_id:
+                pci_identity = f"pci:{gpu.pci_bus_id}"
+                add_component("pci", pci_identity)
+                add_relationship("gpu_to_pci", gpu_identity, pci_identity, {"source": "nvidia-smi", "field": "pci.bus_id"})
+            if gpu.numa_node is not None:
+                numa_identity = f"numa:{gpu.numa_node}"
+                add_component("numa", numa_identity, {"node": gpu.numa_node})
+                add_relationship("gpu_to_numa", gpu_identity, numa_identity, {"source": "sysfs", "field": "pci.numa_node"})
+
+        link_capabilities = network.get("link_capabilities")
+        if isinstance(link_capabilities, Mapping):
+            for name, raw in sorted(link_capabilities.items(), key=lambda item: str(item[0])):
+                if not isinstance(raw, Mapping):
+                    continue
+                netdev = str(name).strip()
+                pci_bus_id = str(raw.get("bus_info") or "").strip()
+                if not netdev:
+                    continue
+                nic_identity = f"nic:{netdev}"
+                add_component("nic", nic_identity, dict(raw))
+                if pci_bus_id:
+                    pci_identity = f"pci:{pci_bus_id}"
+                    add_component("pci", pci_identity)
+                    add_relationship("nic_to_pci", nic_identity, pci_identity, {"source": "ethtool", "field": "bus_info"})
+
+        locality_rows = network.get("gpu_nic_locality")
+        if isinstance(locality_rows, list):
+            for row in locality_rows:
+                if not isinstance(row, Mapping):
+                    continue
+                gpu_uuid = str(row.get("gpu_uuid") or "").strip()
+                nic = str(row.get("nic") or "").strip()
+                if not gpu_uuid or not nic:
+                    continue
+                gpu_identity = f"gpu:{gpu_uuid}"
+                nic_identity = f"nic:{nic}"
+                if row.get("shared_pci_ancestor") is not None or row.get("same_numa_node") is True:
+                    add_relationship("gpu_to_nic", gpu_identity, nic_identity, {
+                        "source": row.get("source") or "sysfs",
+                        "shared_pci_ancestor": row.get("shared_pci_ancestor"),
+                        "same_numa_node": row.get("same_numa_node"),
+                        "gpu_pci_bus_id": row.get("gpu_pci_bus_id"),
+                        "nic_pci_bus_id": row.get("nic_pci_bus_id"),
+                    })
+
+        rdma = network.get("rdma")
+        if isinstance(rdma, Mapping):
+            devices = rdma.get("devices")
+            links = rdma.get("links")
+            if isinstance(devices, list):
+                for raw in devices:
+                    if not isinstance(raw, Mapping):
+                        continue
+                    device = str(raw.get("device") or "").strip()
+                    if not device:
+                        continue
+                    rdma_identity = f"rdma:{device}"
+                    add_component("rdma_device", rdma_identity, dict(raw))
+                    pci_bus_id = str(raw.get("pci_bus_id") or "").strip()
+                    if pci_bus_id:
+                        pci_identity = f"pci:{pci_bus_id}"
+                        add_component("pci", pci_identity)
+                        add_relationship("rdma_device_to_pci", rdma_identity, pci_identity, {"source": "rdma", "field": "pci_bus_id"})
+            if isinstance(links, list):
+                for raw in links:
+                    if not isinstance(raw, Mapping):
+                        continue
+                    device = str(raw.get("rdma_device") or "").strip()
+                    port = raw.get("port")
+                    if not device or not isinstance(port, int) or port < 1:
+                        continue
+                    rdma_identity = f"rdma:{device}"
+                    port_identity = f"rdma:{device}:{port}"
+                    add_component("rdma_port", port_identity, dict(raw))
+                    add_relationship("rdma_device_to_port", rdma_identity, port_identity, {"source": "rdma", "link_layer": raw.get("link_layer")})
+                    netdev = str(raw.get("netdev") or "").strip()
+                    if netdev:
+                        add_relationship("nic_to_rdma_device", f"nic:{netdev}", rdma_identity, {"source": "rdma", "netdev": netdev, "port": port})
+
+        return {
+            "components": tuple(components[key] for key in sorted(components)),
+            "relationships": tuple(relationships),
+            "evidence_source": "worker-local-physical-discovery",
+        }
 
     @staticmethod
     def _host_memory_bytes() -> int:
