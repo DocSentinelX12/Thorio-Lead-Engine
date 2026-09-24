@@ -287,7 +287,7 @@ def test_fleet_resource_intelligence_aggregates_capacity_by_provider_domain_and_
     assert summary["totals"]["gpu"]["QUARANTINED"] == 1
     assert summary["provider_domains"]["provider-a/domain-a"]["gpu"]["AVAILABLE"] == 1
     assert summary["provider_domains"]["provider-a/domain-a"]["nodes"]["TOTAL"] == 2
-    assert summary["provider_domains"]["provider-a/domain-a"]["gpu"]["known_vram_bytes"] == 3 * 24 * 1024**3
+    assert summary["provider_domains"]["provider-a/domain-a"]["gpu"]["known_vram_bytes"] == 4 * 24 * 1024**3
 
 
 def test_fleet_resource_intelligence_reconciles_bound_allocations_as_leased(tmp_path):
