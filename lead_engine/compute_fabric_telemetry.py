@@ -193,6 +193,120 @@ def derive_multidimensional_workload_evidence(samples: Any) -> dict[str, Any]:
     }
 
 
+
+def predict_failure_degradation_evidence(samples: Any) -> dict[str, Any]:
+    """Derive conservative early-warning evidence from observed route outcomes only."""
+    import math
+
+    if not isinstance(samples, (list, tuple)):
+        return {"state": "insufficient_evidence", "sample_count": 0}
+
+    valid: list[dict[str, Any]] = []
+    for sample in samples:
+        if not isinstance(sample, Mapping) or not isinstance(sample.get("success"), bool):
+            continue
+        try:
+            observed_at = float(sample.get("observed_at"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(observed_at):
+            continue
+        latency = None
+        if sample.get("latency_ms") is not None:
+            try:
+                parsed = float(sample.get("latency_ms"))
+            except (TypeError, ValueError):
+                parsed = None
+            if parsed is not None and math.isfinite(parsed) and parsed > 0:
+                latency = parsed
+        evidence = sample.get("evidence")
+        valid.append({
+            "observed_at": observed_at,
+            "success": bool(sample["success"]),
+            "latency_ms": latency,
+            "evidence": dict(evidence) if isinstance(evidence, Mapping) else {},
+        })
+
+    valid.sort(key=lambda item: (item["observed_at"], item["success"], item["latency_ms"] is None))
+    count = len(valid)
+    result: dict[str, Any] = {
+        "state": "insufficient_evidence",
+        "sample_count": count,
+        "success_count": sum(1 for item in valid if item["success"]),
+        "failure_count": sum(1 for item in valid if not item["success"]),
+    }
+    if not valid:
+        return result
+
+    consecutive_failures = 0
+    for item in reversed(valid):
+        if item["success"]:
+            break
+        consecutive_failures += 1
+    consecutive_successes = 0
+    for item in reversed(valid):
+        if not item["success"]:
+            break
+        consecutive_successes += 1
+    result["consecutive_failures"] = consecutive_failures
+    result["consecutive_successes"] = consecutive_successes
+
+    failure_pattern = consecutive_failures >= 2 and count >= 4
+    result["failure_pattern"] = failure_pattern
+
+    if count >= 4:
+        midpoint = count // 2
+        earlier = valid[:midpoint]
+        recent = valid[midpoint:]
+        earlier_failures = sum(1 for item in earlier if not item["success"])
+        recent_failures = sum(1 for item in recent if not item["success"])
+        earlier_rate = earlier_failures / len(earlier)
+        recent_rate = recent_failures / len(recent)
+        result["earlier_failure_rate"] = earlier_rate
+        result["recent_failure_rate"] = recent_rate
+        result["failure_rate_delta"] = recent_rate - earlier_rate
+
+        latency_values = [item["latency_ms"] for item in valid if item["latency_ms"] is not None]
+        latency_deltas = [
+            right - left
+            for left, right in zip(latency_values, latency_values[1:])
+        ]
+        latency_degrading = len(latency_values) >= 4 and all(delta > 0 for delta in latency_deltas)
+        result["latency_degrading"] = latency_degrading
+
+        if failure_pattern:
+            state = "failure_pattern"
+        elif recent_rate > earlier_rate or latency_degrading:
+            state = "degrading"
+        elif result["failure_count"] == 0 and latency_values:
+            mean = sum(latency_values) / len(latency_values)
+            variance = sum((value - mean) ** 2 for value in latency_values) / len(latency_values)
+            coefficient_of_variation = math.sqrt(variance) / mean if mean > 0 else float("inf")
+            result["coefficient_of_variation"] = coefficient_of_variation
+            if coefficient_of_variation <= 0.10:
+                state = "stable"
+            else:
+                state = "insufficient_evidence"
+        else:
+            state = "insufficient_evidence"
+        result["state"] = state
+
+    result["evidence"] = {
+        "first_observed_at": valid[0]["observed_at"],
+        "last_observed_at": valid[-1]["observed_at"],
+        "observations": tuple(valid),
+    }
+    explicit_domains = sorted({
+        str(item["evidence"].get("failure_domain")).strip()
+        for item in valid
+        if isinstance(item["evidence"], Mapping)
+        and str(item["evidence"].get("failure_domain") or "").strip()
+    })
+    if explicit_domains:
+        result["failure_domains"] = tuple(explicit_domains)
+    return result
+
+
 def predict_route_evidence(samples: Any) -> dict[str, Any]:
     """Derive conservative temporal route evidence from observed latency only."""
     import math
