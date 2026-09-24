@@ -3009,6 +3009,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": self.server.coordinator.heartbeat(str(body["worker_id"]), int(body.get("current_load", 0)))})
             elif self.path == "/fabric/assignments":
                 self._send(200, {"assignments": self.server.coordinator.fabric_assignments(str(body["worker_id"]))})
+            elif self.path == "/fabric/fleet":
+                self._send(200, self.server.coordinator.inventory.fleet_resource_intelligence(now=time.time()))
+            elif self.path == "/fabric/acquisition/status":
+                self._send(200, self.server.coordinator.free_compute_status())
             elif self.path == "/fabric/heartbeat":
                 ok = self.server.coordinator.heartbeat_execution_participant(
                     attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
