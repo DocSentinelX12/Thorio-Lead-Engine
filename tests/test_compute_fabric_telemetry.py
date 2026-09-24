@@ -111,3 +111,66 @@ def test_fabric_launch_contract_carries_resilient_standby_route_ids_without_prom
         "standby_path_ids": ("path-standby-a", "path-standby-b"),
         "verified_path_ids": ("path-active", "path-standby-a", "path-standby-b"),
     }
+
+
+def test_fabric_rebind_contract_promotes_only_a_verified_independent_standby_for_next_generation():
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    current = {
+        "path_id": "path-active",
+        "source_gpu": "gpu:u0",
+        "destination_gpu": "gpu:u1",
+        "state": "FAILED",
+        "segments": ("gpu:u0", "nic:0", "rdma:0", "fabric:ib0", "gpu:u1"),
+        "fabric_domains": ("fabric:ib0",),
+    }
+    shared = {
+        "path_id": "path-shared",
+        "source_gpu": "gpu:u0",
+        "destination_gpu": "gpu:u1",
+        "state": "MEASURED",
+        "segments": ("gpu:u0", "nic:0", "rdma:0", "fabric:ib1", "gpu:u1"),
+        "fabric_domains": ("fabric:ib1",),
+    }
+    standby = {
+        "path_id": "path-standby",
+        "source_gpu": "gpu:u0",
+        "destination_gpu": "gpu:u1",
+        "state": "MEASURED",
+        "segments": ("gpu:u0", "nic:2", "rdma:2", "fabric:ib2", "gpu:u1"),
+        "fabric_domains": ("fabric:ib2",),
+    }
+    placement = {
+        "placement_id": "placement-1",
+        "evidence": {
+            "adaptive_route_sets": ({
+                "source_gpu": "gpu:u0",
+                "destination_gpu": "gpu:u1",
+                "active_path_id": "path-active",
+                "standby_path_ids": ("path-shared", "path-standby"),
+                "verified_path_ids": ("path-active", "path-shared", "path-standby"),
+            },)
+        },
+    }
+    health = {
+        "path-shared": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": -10.0, "latest_latency_ms": 1.0},
+        "path-standby": {"sample_count": 10, "failure_rate": 0.0, "latency_delta_from_mean_ms": 1.0, "latest_latency_ms": 4.0},
+    }
+    assert ComputeCoordinator._fabric_rebind_contract(
+        placement,
+        (current, shared, standby),
+        health,
+        failed_path_id="path-active",
+        attempt_id="attempt-1",
+        generation=7,
+    ) == {
+        "attempt_id": "attempt-1",
+        "placement_id": "placement-1",
+        "generation": 7,
+        "source_gpu": "gpu:u0",
+        "destination_gpu": "gpu:u1",
+        "from_path_id": "path-active",
+        "to_path_id": "path-standby",
+        "next_generation": 8,
+        "status": "standby_selected",
+    }
