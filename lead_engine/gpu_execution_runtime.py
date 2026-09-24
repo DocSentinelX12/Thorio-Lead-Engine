@@ -167,6 +167,7 @@ def execute_gpu_workload(
     client.fabric_state(attempt_id, generation, lease_token, "launching")
     stop = threading.Event()
     heartbeat_error: list[str] = []
+    process_holder: list[subprocess.Popen[str]] = []
 
     def heartbeat() -> None:
         while not stop.wait(heartbeat_seconds):
@@ -175,10 +176,14 @@ def execute_gpu_workload(
                 if response.get("ok") is not True:
                     heartbeat_error.append("coordinator rejected GPU workload heartbeat")
                     stop.set()
+                    if process_holder and process_holder[0].poll() is None:
+                        process_holder[0].terminate()
                     return
             except Exception as exc:
                 heartbeat_error.append(str(exc))
                 stop.set()
+                if process_holder and process_holder[0].poll() is None:
+                    process_holder[0].terminate()
                 return
 
     thread = threading.Thread(target=heartbeat, daemon=True)
@@ -195,7 +200,29 @@ def execute_gpu_workload(
         timeout_seconds = float(timeout) if timeout is not None else None
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
-        rc, stdout, stderr = run_command(command, env, timeout_seconds)
+        if runner is not None:
+            rc, stdout, stderr = run_command(command, env, timeout_seconds)
+        else:
+            try:
+                process = subprocess.Popen(
+                    list(command),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    start_new_session=(os.name == "posix"),
+                )
+                process_holder.append(process)
+                try:
+                    stdout, stderr = process.communicate(timeout=timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    if process.poll() is None:
+                        process.terminate()
+                    stdout, stderr = process.communicate(timeout=5)
+                    raise GpuExecutionError("GPU workload execution timed out")
+                rc = process.returncode
+            except OSError as exc:
+                raise GpuExecutionError(f"GPU workload process failed to start: {exc}") from exc
         if heartbeat_error:
             raise GpuExecutionError(heartbeat_error[-1])
         if int(rc) != 0:
