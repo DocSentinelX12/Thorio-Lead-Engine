@@ -219,11 +219,8 @@ def execute_gpu_workload(
             "stderr": str(stderr)[-8000:],
             "artifact_refs": artifacts,
         }
-        if not client.fabric_record_verification(attempt_id, generation, lease_token, evidence).get("ok", True):
+        if not client.gpu_record_verification(attempt_id, generation, lease_token, evidence).get("ok", True):
             raise GpuExecutionError("coordinator rejected GPU execution evidence")
-        converged = client.fabric_converge(attempt_id, generation, lease_token)
-        if not converged.get("converged", True):
-            raise GpuExecutionError("GPU execution did not converge in the coordinator")
         return evidence
     except Exception as exc:
         try:
