@@ -197,3 +197,32 @@ def test_execution_metrics_carry_explicit_workload_identity():
     metric = extract_execution_metrics(verification)[0]
     assert metric["workload_signature"]["message_size_bytes"] == 4096
     assert metric["workload_key"]
+
+
+def test_inventory_route_health_exposes_predictive_failure_degradation_without_new_storage(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = {
+        "node_id": "node-a",
+        "gpu_uuid": "gpu-0",
+        "nic": "eth0",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "link_layer": "InfiniBand",
+    }
+    workload_key = "workload-a"
+    for observed_at, success in ((1.0, True), (2.0, True), (3.0, False), (4.0, False)):
+        inventory.record_fabric_route_observation(
+            path,
+            latency_ms=3.0,
+            success=success,
+            observed_at=observed_at,
+            evidence={"workload_key": workload_key, "fabric_path_id": "path-a"},
+            fabric_path_id="path-a",
+        )
+
+    health = inventory.fabric_route_health_index()["path-a"]
+    assert health["failure_count"] == 2
+    assert health["predictive_failure_degradation"]["state"] == "failure_pattern"
+    assert health["predictive_failure_by_workload_key"][workload_key]["state"] == "failure_pattern"
