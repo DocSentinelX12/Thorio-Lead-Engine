@@ -96,6 +96,8 @@ class WorkerIdentity:
     nic_names: tuple[str, ...] = ()
     gpu_discovery_state: str = "not_probed"
     gpu_discovery_error: str = ""
+    domain_id: str = ""
+    physical_fabric_evidence: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.cpu_count < 1 or self.memory_mb < 1:
@@ -106,6 +108,11 @@ class WorkerIdentity:
             raise ValueError("worker GPU identities must be unique")
         if self.gpu_discovery_state not in {"not_probed", "healthy", "no_gpu", "degraded"}:
             raise ValueError("unsupported gpu_discovery_state")
+        domain_id = self.domain_id.strip() or self.worker_id
+        if not isinstance(self.physical_fabric_evidence, Mapping):
+            raise ValueError("physical_fabric_evidence must be a mapping")
+        object.__setattr__(self, "domain_id", domain_id)
+        object.__setattr__(self, "physical_fabric_evidence", dict(self.physical_fabric_evidence))
 
 
 def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
@@ -135,6 +142,7 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
         capacity.node_id, socket.gethostname(), capacity.architecture,
         capacity.cpu_count, capacity.memory_mb, ("lead-processing",),
         gpu_resources, driver_version, cuda_version, nccl_version, tuple(sorted(nic_names)), gpu_state, gpu_error,
+        domain_id, physical_fabric_evidence,
     )
 
 
