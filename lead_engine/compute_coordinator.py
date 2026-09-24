@@ -499,10 +499,12 @@ class ComputeCoordinator:
             "gpu_discovery_error": identity.gpu_discovery_error,
             "gpu_count": len(identity.gpu_resources),
             "hardware_attestation": "worker-local-nvidia-discovery",
+            "physical_fabric": dict(identity.physical_fabric_evidence),
+            "domain_id": identity.domain_id,
         }
         snapshot = ProviderResourceSnapshot(
             provider_id="worker_pool",
-            domain_id=identity.worker_id,
+            domain_id=identity.domain_id,
             observed_at=now,
             expires_at=now + max(60, self.lease_seconds * 2),
             ephemeral=True,
@@ -541,6 +543,8 @@ class ComputeCoordinator:
                     nccl_version=worker.get("nccl_version"), nic_names=tuple(worker.get("nic_names", ())),
                     gpu_discovery_state=str(worker.get("gpu_discovery_state", "not_probed")),
                     gpu_discovery_error=str(worker.get("gpu_discovery_error", "")),
+                    domain_id=str(worker.get("domain_id") or worker["worker_id"]),
+                    physical_fabric_evidence=worker.get("physical_fabric_evidence") or {},
                 ))
         return ok
 
