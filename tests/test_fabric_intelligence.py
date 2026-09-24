@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from lead_engine.compute_fabric_telemetry import (
     workload_performance_key,
     summarize_route_health,
