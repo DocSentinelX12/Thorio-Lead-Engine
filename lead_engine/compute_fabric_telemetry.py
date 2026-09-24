@@ -449,6 +449,7 @@ def summarize_route_health(samples: Any) -> dict[str, Any]:
         consecutive_successes += 1
     result["consecutive_failures"] = consecutive_failures
     result["consecutive_successes"] = consecutive_successes
+    result["predictive_failure_degradation"] = predict_failure_degradation_evidence(samples)
 
     workload_samples: dict[str, list[dict[str, Any]]] = {}
     for sample in samples:
