@@ -466,6 +466,10 @@ def summarize_route_health(samples: Any) -> dict[str, Any]:
             key: predict_route_evidence(items)
             for key, items in sorted(workload_samples.items())
         }
+        result["predictive_failure_by_workload_key"] = {
+            key: predict_failure_degradation_evidence(items)
+            for key, items in sorted(workload_samples.items())
+        }
         multidimensional = derive_multidimensional_workload_evidence(samples)
         result["multidimensional_by_workload_key"] = {
             item["workload_key"]: item
