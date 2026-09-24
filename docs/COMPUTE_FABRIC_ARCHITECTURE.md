@@ -42,6 +42,22 @@ GPU identity consists of stable hardware evidence where available:
 
 Missing optional hardware evidence is represented explicitly, never fabricated.
 
+## Physical worker enrollment
+
+Physical GPU workers enroll through the existing authenticated coordinator/worker path. Each worker performs local NVIDIA discovery and publishes the observed GPU identities together with explicit PCI, NUMA, NIC, RDMA device, RDMA port, and GPU-to-NIC locality evidence when available.
+
+Worker enrollment preserves:
+- stable worker and physical domain identity
+- exact GPU UUID and PCI identity
+- observed physical-fabric component identities
+- provenance for physical relationships
+- unknown optional hardware fields without inference
+- durable current state and historical physical observations through the existing inventory
+
+The worker's configured compute domain is carried with its physical inventory. This allows the initial supercomputer domains to be represented as real provider/domain scopes without introducing a twelve-domain limit. Every additional authenticated worker contributes its own observed hardware evidence through the same path.
+
+The coordinator republishes the worker's physical discovery into the existing ComputeInventory. ComputeScheduler, ComputeAllocation, and the existing coordinator/worker execution path remain the only placement, reservation, and execution authorities. No second worker registry or physical telemetry store is introduced.
+
 ## Scheduling
 
 Work requests express requirements. The scheduler selects concrete resources satisfying all required constraints.
