@@ -107,6 +107,20 @@ A bound allocation is represented as LEASED in the fleet view only while its exa
 
 The fleet view also exposes authenticated, unexpired eligible-resource counts and the latest observed inventory timestamp. Expired resources remain historical inventory but do not contribute to eligible capacity. This is a read-only intelligence surface. It does not reserve, release, quarantine, rebind, or otherwise mutate resources, and it does not create a second scheduler or queue.
 
+## Continuous self-optimization
+
+Observed execution results and current fleet capacity form a closed feedback loop into subsequent placement construction. Each placement is recomputed against current eligible inventory and the exact observed workload/path evidence already retained by the fabric.
+
+Self-optimization is bounded by existing authority:
+- hard physical, capability, lease, and communication validation cannot be overridden
+- observed workload performance, route health, predictive degradation, multidimensional workload evidence, and measured path evidence remain stronger authorities than capacity preservation
+- fleet optimization may preserve future placement flexibility only after those stronger authorities have been applied
+- ComputeAllocation remains the authoritative reservation boundary
+- no synthetic performance, probability, future capacity, or failure estimate is created
+- the optimization surface is read-only and does not mutate resource state, queue state, or business state
+
+The optimization loop is restart-safe because it derives from durable inventory, allocation, route, placement, and execution evidence rather than an in-memory learning model. New observations automatically participate in the next placement evaluation without a separate retraining job or fixed optimization horizon.
+
 ## Change discipline
 
 Foundation changes are additive and independently testable. Existing queue, backlog, research, qualification, routing, Airtable, and revenue tests are regression gates before production participation.
