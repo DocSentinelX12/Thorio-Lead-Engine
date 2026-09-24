@@ -121,24 +121,27 @@ def test_fabric_rebind_contract_promotes_only_a_verified_independent_standby_for
         "source_gpu": "gpu:u0",
         "destination_gpu": "gpu:u1",
         "state": "FAILED",
-        "segments": ("gpu:u0", "nic:0", "rdma:0", "fabric:ib0", "gpu:u1"),
+        "segments": ("gpu:u0", "nic:src", "rdma:src", "rdma:src:1", "fabric:ib0", "rdma:fabric:dst", "rdma:dst", "nic:dst", "gpu:u1"),
         "fabric_domains": ("fabric:ib0",),
+        "measurement": {"bandwidth_gbps": 100.0, "latency_us": 5.0},
     }
     shared = {
         "path_id": "path-shared",
         "source_gpu": "gpu:u0",
         "destination_gpu": "gpu:u1",
         "state": "MEASURED",
-        "segments": ("gpu:u0", "nic:0", "rdma:0", "fabric:ib1", "gpu:u1"),
+        "segments": ("gpu:u0", "nic:src", "rdma:src", "rdma:src:1", "fabric:ib1", "rdma:fabric:dst", "rdma:dst", "nic:dst", "gpu:u1"),
         "fabric_domains": ("fabric:ib1",),
+        "measurement": {"bandwidth_gbps": 100.0, "latency_us": 5.0},
     }
     standby = {
         "path_id": "path-standby",
         "source_gpu": "gpu:u0",
         "destination_gpu": "gpu:u1",
         "state": "MEASURED",
-        "segments": ("gpu:u0", "nic:2", "rdma:2", "fabric:ib2", "gpu:u1"),
+        "segments": ("gpu:u0", "nic:src-2", "rdma:src-2", "rdma:src-2:1", "fabric:ib2", "rdma:fabric:dst-2", "rdma:dst-2", "nic:dst-2", "gpu:u1"),
         "fabric_domains": ("fabric:ib2",),
+        "measurement": {"bandwidth_gbps": 100.0, "latency_us": 5.0},
     }
     placement = {
         "placement_id": "placement-1",
