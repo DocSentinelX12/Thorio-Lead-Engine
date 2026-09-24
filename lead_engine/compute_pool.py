@@ -163,6 +163,7 @@ class ComputePool:
                 gpu_resources_json TEXT NOT NULL DEFAULT '[]', driver_version TEXT, cuda_version TEXT,
                 nccl_version TEXT, nic_names_json TEXT NOT NULL DEFAULT '[]',
                 gpu_discovery_state TEXT NOT NULL DEFAULT 'not_probed', gpu_discovery_error TEXT NOT NULL DEFAULT '',
+                domain_id TEXT NOT NULL DEFAULT '', physical_fabric_evidence_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL DEFAULT 'ready', last_heartbeat REAL NOT NULL,
                 current_load INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL)""")
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(compute_workers)").fetchall()}
@@ -174,6 +175,8 @@ class ComputePool:
                 "nic_names_json": "ALTER TABLE compute_workers ADD COLUMN nic_names_json TEXT NOT NULL DEFAULT '[]'",
                 "gpu_discovery_state": "ALTER TABLE compute_workers ADD COLUMN gpu_discovery_state TEXT NOT NULL DEFAULT 'not_probed'",
                 "gpu_discovery_error": "ALTER TABLE compute_workers ADD COLUMN gpu_discovery_error TEXT NOT NULL DEFAULT ''",
+                "domain_id": "ALTER TABLE compute_workers ADD COLUMN domain_id TEXT NOT NULL DEFAULT ''",
+                "physical_fabric_evidence_json": "ALTER TABLE compute_workers ADD COLUMN physical_fabric_evidence_json TEXT NOT NULL DEFAULT '{}'",
             }
             for column, statement in migrations.items():
                 if column not in columns:
@@ -217,19 +220,21 @@ class ComputePool:
             connection.execute("""INSERT INTO compute_workers
                 (worker_id,hostname,architecture,cpu_count,memory_mb,capabilities_json,
                  gpu_resources_json,driver_version,cuda_version,nccl_version,nic_names_json,
-                 gpu_discovery_state,gpu_discovery_error,status,last_heartbeat,current_load,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,0,?)
+                 gpu_discovery_state,gpu_discovery_error,domain_id,physical_fabric_evidence_json,status,last_heartbeat,current_load,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,0,?)
                 ON CONFLICT(worker_id) DO UPDATE SET hostname=excluded.hostname,
                 architecture=excluded.architecture,cpu_count=excluded.cpu_count,memory_mb=excluded.memory_mb,
                 capabilities_json=excluded.capabilities_json,gpu_resources_json=excluded.gpu_resources_json,
                 driver_version=excluded.driver_version,cuda_version=excluded.cuda_version,
                 nccl_version=excluded.nccl_version,nic_names_json=excluded.nic_names_json,
                 gpu_discovery_state=excluded.gpu_discovery_state,gpu_discovery_error=excluded.gpu_discovery_error,
+                domain_id=excluded.domain_id,physical_fabric_evidence_json=excluded.physical_fabric_evidence_json,
                 status='ready',last_heartbeat=excluded.last_heartbeat,updated_at=excluded.updated_at""",
                 (identity.worker_id, identity.hostname, identity.architecture, identity.cpu_count, identity.memory_mb,
                  json.dumps(identity.capabilities), self._gpu_json(identity.gpu_resources), identity.driver_version,
                  identity.cuda_version, identity.nccl_version, json.dumps(identity.nic_names), identity.gpu_discovery_state,
-                 identity.gpu_discovery_error, now, now))
+                 identity.gpu_discovery_error, identity.domain_id,
+                 json.dumps(identity.physical_fabric_evidence, ensure_ascii=False, sort_keys=True), now, now))
             connection.commit()
         return self.worker(identity.worker_id) or {}
 
@@ -261,6 +266,8 @@ class ComputePool:
         item["capabilities"] = json.loads(item.pop("capabilities_json"))
         item["gpu_resources"] = self._gpu_resources(item.pop("gpu_resources_json", "[]"))
         item["nic_names"] = tuple(json.loads(item.pop("nic_names_json", "[]")))
+        item["physical_fabric_evidence"] = json.loads(item.pop("physical_fabric_evidence_json", "{}") or "{}")
+        item["domain_id"] = str(item.get("domain_id") or item["worker_id"])
         return item
 
     def workers(self, include_stale: bool = True) -> list[Dict[str, Any]]:
@@ -274,6 +281,8 @@ class ComputePool:
             item["capabilities"] = json.loads(item.pop("capabilities_json"))
             item["gpu_resources"] = self._gpu_resources(item.pop("gpu_resources_json", "[]"))
             item["nic_names"] = tuple(json.loads(item.pop("nic_names_json", "[]")))
+            item["physical_fabric_evidence"] = json.loads(item.pop("physical_fabric_evidence_json", "{}") or "{}")
+            item["domain_id"] = str(item.get("domain_id") or item["worker_id"])
             result.append(item)
         return result
 
@@ -327,11 +336,11 @@ class ComputePool:
     def capacity_snapshot(self) -> Dict[str, Any]:
         self.reap_stale_workers()
         with self._connect() as connection:
-            rows = connection.execute("""SELECT worker_id,hostname,architecture,cpu_count,memory_mb,status,current_load,last_heartbeat,capabilities_json,gpu_resources_json,gpu_discovery_state,gpu_discovery_error
+            rows = connection.execute("""SELECT worker_id,hostname,architecture,cpu_count,memory_mb,status,current_load,last_heartbeat,capabilities_json,gpu_resources_json,gpu_discovery_state,gpu_discovery_error,domain_id
                 FROM compute_workers ORDER BY worker_id""").fetchall()
         worker_items = []
         for row in rows:
             status = row["status"]; active = int(row["current_load"]); logical_slots = self.LOGICAL_SLOTS_PER_WORKER if status == "ready" else 0; gpus = self._gpu_resources(row["gpu_resources_json"])
-            worker_items.append({"worker_id": row["worker_id"], "hostname": row["hostname"], "architecture": row["architecture"], "cpu_count": int(row["cpu_count"]), "memory_mb": int(row["memory_mb"]), "status": status, "capabilities": json.loads(row["capabilities_json"]), "gpu_count": len(gpus), "gpu_discovery_state": row["gpu_discovery_state"], "gpu_discovery_error": row["gpu_discovery_error"], "logical_slots": logical_slots, "recommended_slots": self.LOGICAL_SLOTS_PER_WORKER, "active_load": active, "available_slots": max(0, logical_slots - active), "last_heartbeat": float(row["last_heartbeat"])})
+            worker_items.append({"worker_id": row["worker_id"], "domain_id": str(row["domain_id"] or row["worker_id"]), "hostname": row["hostname"], "architecture": row["architecture"], "cpu_count": int(row["cpu_count"]), "memory_mb": int(row["memory_mb"]), "status": status, "capabilities": json.loads(row["capabilities_json"]), "gpu_count": len(gpus), "gpu_discovery_state": row["gpu_discovery_state"], "gpu_discovery_error": row["gpu_discovery_error"], "logical_slots": logical_slots, "recommended_slots": self.LOGICAL_SLOTS_PER_WORKER, "active_load": active, "available_slots": max(0, logical_slots - active), "last_heartbeat": float(row["last_heartbeat"])})
         ready = [item for item in worker_items if item["status"] == "ready"]
         return {"free_only": True, "worker_count": len(worker_items), "ready_workers": len(ready), "stale_workers": sum(item["status"] == "stale" for item in worker_items), "logical_slots": len(ready), "active_leases": sum(item["active_load"] for item in ready), "available_slots": sum(item["available_slots"] for item in ready), "total_cpu": sum(item["cpu_count"] for item in ready), "total_memory_mb": sum(item["memory_mb"] for item in ready), "workers": worker_items}
