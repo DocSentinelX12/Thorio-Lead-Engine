@@ -38,6 +38,7 @@ class FabricCycleReport:
     reconciled_attempts: int = 0
     requeued_tasks: int = 0
     continuous_optimization: dict[str, Any] = field(default_factory=dict)
+    closed_loop: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,16 @@ class ComputeFabricController:
             })
         reconciled = int(reconciliation.get("reconciled", 0))
         requeued = int(reconciliation.get("requeued", 0))
+        closed_loop = (
+            self.coordinator.fabric_closed_loop_evidence(
+                scheduled_allocations=len(scheduled),
+                recovered_expired_tasks=recovered,
+                reconciled_attempts=reconciled,
+                requeued_tasks=requeued,
+            )
+            if callable(getattr(self.coordinator, "fabric_closed_loop_evidence", None))
+            else {}
+        )
         cycle_report = FabricCycleReport(
             observed=refresh.observed,
             eligible_resources=len(self.fabric.inventory.eligible(now=self._clock())),
@@ -323,6 +334,7 @@ class ComputeFabricController:
                 if callable(getattr(self.fabric, "continuous_optimization", None))
                 else {}
             ),
+            closed_loop=closed_loop,
         )
         return FabricControllerCycle(
             refresh=cycle_report,
