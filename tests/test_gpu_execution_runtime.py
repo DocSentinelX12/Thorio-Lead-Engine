@@ -30,9 +30,9 @@ class Client:
         self.verification = verification
         return {"ok": True}
 
-    def fabric_converge(self, attempt_id, generation, lease_token):
-        self.converged += 1
-        return {"converged": True}
+    def gpu_record_verification(self, attempt_id, generation, lease_token, verification):
+        self.verification = verification
+        return {"ok": True}
 
 
 def task():
