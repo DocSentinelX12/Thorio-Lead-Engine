@@ -1138,6 +1138,191 @@ class ComputeInventory:
             connection.commit()
             return cursor.rowcount == 1
 
+
+    def fleet_resource_intelligence(self, *, now: float | None = None) -> dict[str, Any]:
+        """Aggregate observed fleet capacity without creating a second scheduling authority.
+
+        The result is derived entirely from the current inventory and active allocation
+        records. It preserves exact provider/domain/node boundaries, explicit resource
+        states, capability unknowns, and GPU fragmentation. It never estimates missing
+        capacity or mutates inventory.
+        """
+        current = time.time() if now is None else float(now)
+        resources = self.resources()
+        active_allocations = self.allocations()
+        allocation_state_by_resource: dict[str, str] = {}
+        for allocation in active_allocations:
+            state = str(allocation.get("state") or "").strip()
+            if state not in {"reserved", "bound"}:
+                continue
+            effective = "LEASED" if state == "bound" else "RESERVED"
+            for resource_key in allocation.get("resource_keys") or ():
+                key = str(resource_key)
+                previous = allocation_state_by_resource.get(key)
+                if previous != "LEASED":
+                    allocation_state_by_resource[key] = effective
+
+        states = ("TOTAL", "HEALTHY", "AVAILABLE", "RESERVED", "LEASED", "DEGRADED", "QUARANTINED")
+
+        def empty_counts() -> dict[str, int]:
+            return {state: 0 for state in states}
+
+        def capability_counts(items: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+            result: dict[str, dict[str, int]] = {
+                "model": {},
+                "compute_capability": {},
+                "cuda_version": {},
+                "driver_version": {},
+                "topology_domain": {},
+            }
+            for item in items:
+                try:
+                    payload = json.loads(item.get("payload_json") or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload = {}
+                for field in result:
+                    value = payload.get(field)
+                    if value is None or (isinstance(value, str) and not value.strip()):
+                        continue
+                    key = str(value).strip() if isinstance(value, str) else str(value)
+                    result[field][key] = result[field].get(key, 0) + 1
+            return {field: dict(sorted(values.items())) for field, values in result.items()}
+
+        def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
+            counts = empty_counts()
+            gpu_items = [item for item in items if item.get("resource_type") == "gpu"]
+            known_vram = 0
+            unknown_vram = 0
+            available_known_vram = 0
+            available_by_node: dict[str, int] = {}
+            node_state_counts: dict[str, int] = {}
+            eligible = 0
+
+            for item in items:
+                counts["TOTAL"] += 1
+                raw_state = str(item.get("state") or "").strip()
+                allocation_state = allocation_state_by_resource.get(str(item.get("resource_key") or ""))
+                if raw_state == ResourceState.QUARANTINED.value:
+                    effective_state = "QUARANTINED"
+                elif raw_state == ResourceState.DEGRADED.value:
+                    effective_state = "DEGRADED"
+                elif allocation_state == "LEASED":
+                    effective_state = "LEASED"
+                elif allocation_state == "RESERVED" or raw_state == ResourceState.RESERVED.value:
+                    effective_state = "RESERVED"
+                elif raw_state == ResourceState.AVAILABLE.value:
+                    effective_state = "AVAILABLE"
+                elif raw_state == ResourceState.HEALTHY.value:
+                    effective_state = "HEALTHY"
+                else:
+                    effective_state = None
+                if effective_state in counts and effective_state != "TOTAL":
+                    counts[effective_state] += 1
+
+                authenticated = str(item.get("authentication_state") or "unknown") == "authenticated"
+                unexpired = item.get("expires_at") is None or float(item["expires_at"]) > current
+                if raw_state in {ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value} and authenticated and unexpired:
+                    eligible += 1
+
+                if item.get("resource_type") == "cpu":
+                    node_state = raw_state or "unknown"
+                    node_state_counts[node_state] = node_state_counts.get(node_state, 0) + 1
+
+            for item in gpu_items:
+                try:
+                    payload = json.loads(item.get("payload_json") or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload = {}
+                vram = payload.get("vram_bytes")
+                if vram is None:
+                    unknown_vram += 1
+                else:
+                    try:
+                        parsed_vram = int(vram)
+                    except (TypeError, ValueError):
+                        parsed_vram = None
+                    if parsed_vram is None or parsed_vram < 0:
+                        unknown_vram += 1
+                    else:
+                        known_vram += parsed_vram
+                        if str(item.get("state") or "") in {ResourceState.HEALTHY.value, ResourceState.AVAILABLE.value} and str(item.get("authentication_state") or "") == "authenticated" and (item.get("expires_at") is None or float(item["expires_at"]) > current):
+                            available_known_vram += parsed_vram
+                if str(item.get("state") or "") == ResourceState.AVAILABLE.value and str(item.get("authentication_state") or "") == "authenticated" and (item.get("expires_at") is None or float(item["expires_at"]) > current):
+                    node_id = str(item.get("node_id") or "")
+                    if node_id:
+                        available_by_node[node_id] = available_by_node.get(node_id, 0) + 1
+
+            return {
+                "counts": counts,
+                "eligible": eligible,
+                "node_state_counts": dict(sorted(node_state_counts.items())),
+                "gpu": {
+                    **{key: value for key, value in counts.items()},
+                    "known_vram_bytes": known_vram,
+                    "unknown_vram_count": unknown_vram,
+                    "available_known_vram_bytes": available_known_vram,
+                    "capability_families": capability_counts(gpu_items),
+                    "available_by_node": dict(sorted(available_by_node.items())),
+                    "max_available_per_node": max(available_by_node.values(), default=0),
+                },
+            }
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        node_grouped: dict[str, list[dict[str, Any]]] = {}
+        for item in resources:
+            scope = f"{item['provider_id']}/{item['domain_id']}"
+            grouped.setdefault(scope, []).append(item)
+            node_key = f"{scope}/{item['node_id']}"
+            node_grouped.setdefault(node_key, []).append(item)
+
+        total = summarize(resources)
+        provider_domains: dict[str, dict[str, Any]] = {}
+        for scope in sorted(grouped):
+            items = grouped[scope]
+            summary = summarize(items)
+            nodes = {str(item["node_id"]) for item in items}
+            node_summaries: dict[str, Any] = {}
+            for node_id in sorted(nodes):
+                node_items = node_grouped.get(f"{scope}/{node_id}", [])
+                node_summary = summarize(node_items)
+                node_summaries[node_id] = {
+                    "resources": node_summary["counts"],
+                    "eligible": node_summary["eligible"],
+                    "gpu": node_summary["gpu"],
+                }
+            provider, domain = scope.split("/", 1)
+            provider_domains[scope] = {
+                "provider_id": provider,
+                "domain_id": domain,
+                "resources": summary["counts"],
+                "eligible": summary["eligible"],
+                "nodes": {
+                    "TOTAL": len(nodes),
+                    "by_state": summary["node_state_counts"],
+                },
+                "gpu": summary["gpu"],
+                "by_node": node_summaries,
+            }
+
+        observed_at_values = []
+        for item in resources:
+            try:
+                observed_at_values.append(float(item["observed_at"]))
+            except (TypeError, ValueError, KeyError):
+                continue
+
+        return {
+            "as_of": current,
+            "latest_observed_at": max(observed_at_values) if observed_at_values else None,
+            "totals": {
+                "resources": total["counts"],
+                "eligible": total["eligible"],
+                "gpu": total["gpu"],
+                "nodes": {"TOTAL": len({(str(item["provider_id"]), str(item["domain_id"]), str(item["node_id"])) for item in resources})},
+            },
+            "provider_domains": provider_domains,
+        }
+
     def resources(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
