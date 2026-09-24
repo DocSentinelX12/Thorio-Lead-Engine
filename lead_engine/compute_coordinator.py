@@ -670,6 +670,12 @@ class ComputeCoordinator:
                             (allocation.placement_id, attempt_id, generation),
                         )
                         connection.commit()
+                if pending_rebind is not None:
+                    replacement_placement = self.inventory.placement(str(allocation.placement_id or "")) if allocation.placement_id else None
+                    if replacement_placement is None or not self._validate_fabric_rebind_placement(pending_rebind, replacement_placement):
+                        raise ComputeSchedulingError(
+                            "fresh allocation did not activate the exact verified standby required by fabric recovery"
+                        )
                 if not self.inventory.bind_allocation(
                     allocation.allocation_id,
                     task_id=task_id,
@@ -719,6 +725,26 @@ class ComputeCoordinator:
                     )
                     self.release(execution_identity, task_id, lease_token, "participant binding rejected")
                     return None
+                if pending_rebind is not None:
+                    with self._connect() as connection:
+                        self._record_fabric_recovery_event(
+                            connection,
+                            task_id=task_id,
+                            attempt_id=str(pending_rebind["attempt_id"]),
+                            generation=int(pending_rebind["generation"]),
+                            failure_class="exact_path_failover",
+                            phase="standby_rebind_activated",
+                            reason=f"standby {pending_rebind['to_path_id']} activated in generation {generation}",
+                            evidence={
+                                "source": "fresh_generation_placement",
+                                "fabric_rebind": dict(pending_rebind),
+                                "new_attempt_id": attempt_id,
+                                "new_generation": generation,
+                                "new_placement_id": str(allocation.placement_id or ""),
+                            },
+                            created_at=time.time(),
+                        )
+                        connection.commit()
             except Exception as error:
                 if allocation is not None:
                     self._release_physical_allocation(
@@ -797,6 +823,7 @@ class ComputeCoordinator:
             payload = json.loads(selected["payload"])
             with self._connect() as checkpoint_connection:
                 payload = self._claim_checkpointed_payload(checkpoint_connection, task_id, payload)
+            pending_rebind = self._pending_fabric_rebind(task_id)
             allocation = None
             if "compute_requirements" in payload:
                 allocation_id = f"{task_id}:{attempt_id}"
