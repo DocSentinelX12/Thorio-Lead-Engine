@@ -318,6 +318,7 @@ class ComputeFabricController:
             scheduled_allocations=len(scheduled),
             reconciled_attempts=reconciled,
             requeued_tasks=requeued,
+            continuous_optimization=self.fabric.continuous_optimization(),
         )
         return FabricControllerCycle(
             refresh=cycle_report,
