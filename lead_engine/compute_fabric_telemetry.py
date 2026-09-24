@@ -399,6 +399,116 @@ def predict_route_evidence(samples: Any) -> dict[str, Any]:
     }
 
 
+def derive_continuous_optimization_evidence(candidates: Any) -> dict[str, Any]:
+    """Derive deterministic placement adaptation from observed candidate evidence.
+
+    This is deliberately not a synthetic score. It only compares explicit
+    observed performance and exact future-capacity preservation supplied by the
+    caller. Missing dimensions remain unknown.
+    """
+    import math
+
+    if not isinstance(candidates, (list, tuple)):
+        return {"state": "insufficient_evidence", "candidate_count": 0}
+
+    valid = []
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        candidate_key = str(candidate.get("candidate_key") or "").strip()
+        if not candidate_key:
+            continue
+        item = {
+            "candidate_key": candidate_key,
+            "observed_latency_ms": None,
+            "future_feasible_domain_count": None,
+            "future_single_node_count": None,
+            "sample_count": int(candidate.get("sample_count", 0) or 0),
+        }
+        latency = candidate.get("observed_latency_ms")
+        if latency is not None:
+            try:
+                parsed = float(latency)
+            except (TypeError, ValueError):
+                parsed = None
+            if parsed is not None and math.isfinite(parsed) and parsed > 0:
+                item["observed_latency_ms"] = parsed
+        for field in ("future_feasible_domain_count", "future_single_node_count"):
+            value = candidate.get(field)
+            if value is not None:
+                try:
+                    parsed = int(value)
+                except (TypeError, ValueError):
+                    parsed = None
+                if parsed is not None and parsed >= 0:
+                    item[field] = parsed
+        valid.append(item)
+
+    valid.sort(key=lambda item: item["candidate_key"])
+    if not valid:
+        return {"state": "insufficient_evidence", "candidate_count": 0}
+
+    observed = [item for item in valid if item["observed_latency_ms"] is not None]
+    performance_preference = ()
+    if observed:
+        best_latency = min(float(item["observed_latency_ms"]) for item in observed)
+        performance_preference = tuple(
+            item["candidate_key"]
+            for item in observed
+            if float(item["observed_latency_ms"]) == best_latency
+        )
+
+    capacity_observed = [
+        item for item in valid
+        if item["future_feasible_domain_count"] is not None
+        or item["future_single_node_count"] is not None
+    ]
+    capacity_preference = ()
+    if capacity_observed:
+        max_domain_count = max(
+            item["future_feasible_domain_count"]
+            if item["future_feasible_domain_count"] is not None else -1
+            for item in capacity_observed
+        )
+        domain_best = [
+            item for item in capacity_observed
+            if (item["future_feasible_domain_count"] if item["future_feasible_domain_count"] is not None else -1) == max_domain_count
+        ]
+        max_single_node_count = max(
+            item["future_single_node_count"]
+            if item["future_single_node_count"] is not None else -1
+            for item in domain_best
+        )
+        capacity_preference = tuple(
+            item["candidate_key"]
+            for item in domain_best
+            if (item["future_single_node_count"] if item["future_single_node_count"] is not None else -1) == max_single_node_count
+        )
+
+    balanced = tuple(
+        key for key in performance_preference
+        if key in set(capacity_preference)
+    )
+    if balanced:
+        state = "balanced"
+    elif performance_preference:
+        state = "performance_preference"
+    elif capacity_preference:
+        state = "capacity_preservation"
+    else:
+        state = "insufficient_evidence"
+
+    return {
+        "state": state,
+        "candidate_count": len(valid),
+        "performance_preference": performance_preference,
+        "capacity_preference": capacity_preference,
+        "balanced_preference": balanced,
+        "candidates": tuple(valid),
+    }
+
+
+
 def summarize_route_health(samples: Any) -> dict[str, Any]:
     """Summarize observed route outcomes without applying a health threshold."""
     if not isinstance(samples, (list, tuple)):
