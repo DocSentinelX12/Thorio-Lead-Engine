@@ -103,6 +103,96 @@ def workload_performance_key(path: Mapping[str, Any], workload: Mapping[str, Any
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def derive_multidimensional_workload_evidence(samples: Any) -> dict[str, Any]:
+    """Derive explainable workload/path evidence from explicitly observed dimensions only."""
+    if not isinstance(samples, (list, tuple)):
+        return {"state": "insufficient_evidence", "sample_count": 0, "workload_combination_count": 0}
+
+    dimension_keys = (
+        "workload_class",
+        "collective",
+        "world_size",
+        "message_size_bytes",
+        "dtype",
+        "reduce_op",
+        "algorithm",
+        "protocol",
+    )
+    observed: list[dict[str, Any]] = []
+    combinations: dict[str, dict[str, Any]] = {}
+
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            continue
+        evidence = sample.get("evidence")
+        if not isinstance(evidence, Mapping):
+            continue
+        signature = evidence.get("workload_signature")
+        if not isinstance(signature, Mapping):
+            continue
+        dimensions = {}
+        for key in dimension_keys:
+            value = signature.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                value = value.strip()
+                if not value:
+                    continue
+            if isinstance(value, (str, int, float, bool)):
+                dimensions[key] = value
+        if not dimensions:
+            continue
+
+        measurements: dict[str, Any] = {
+            "observed_at": sample.get("observed_at"),
+            "success": sample.get("success"),
+        }
+        for key in ("latency_ms", "bandwidth_gbps"):
+            value = sample.get(key)
+            if value is not None:
+                measurements[key] = value
+        entry = {"dimensions": dimensions, **measurements}
+        observed.append(entry)
+
+        workload_key = str(evidence.get("workload_key") or "").strip()
+        if not workload_key:
+            continue
+        combination = combinations.setdefault(
+            workload_key,
+            {
+                "workload_key": workload_key,
+                "dimensions": dict(sorted(dimensions.items())),
+                "sample_count": 0,
+                "observations": [],
+            },
+        )
+        # The key is derived from the complete explicit signature, so conflicting
+        # dimensions under one key indicate malformed evidence, not a reason to
+        # merge or invent a value.
+        if combination["dimensions"] != dict(sorted(dimensions.items())):
+            combination["inconsistent_evidence"] = True
+            continue
+        combination["sample_count"] += 1
+        combination["observations"].append(entry)
+
+    ordered = tuple(
+        {
+            **item,
+            "observations": tuple(item["observations"]),
+        }
+        for _, item in sorted(combinations.items())
+        if not item.get("inconsistent_evidence")
+    )
+    return {
+        "state": "observed" if ordered else "insufficient_evidence",
+        "sample_count": len(samples),
+        "workload_combination_count": len(ordered),
+        "observed": tuple(observed),
+        "by_workload_key": ordered,
+    }
+
+
 def predict_route_evidence(samples: Any) -> dict[str, Any]:
     """Derive conservative temporal route evidence from observed latency only."""
     import math
@@ -324,6 +414,9 @@ def extract_execution_path_observations(
             workload_key = str(metric.get("workload_key") or "").strip()
             if workload_key:
                 evidence["workload_key"] = workload_key
+            workload_signature = metric.get("workload_signature")
+            if isinstance(workload_signature, Mapping) and workload_signature:
+                evidence["workload_signature"] = dict(workload_signature)
             if observed_path.get("destination_rank") is not None:
                 evidence["destination_rank"] = observed_path.get("destination_rank")
             if observed_path.get("destination_gpu") is not None:
