@@ -2087,9 +2087,46 @@ class ComputeCoordinator:
                     return False
                 if str(verification.get("worker_id") or "").strip() != worker_id:
                     return False
+                artifact_refs = verification.get("artifact_refs", [])
+                if not isinstance(artifact_refs, list):
+                    return False
+                for artifact in artifact_refs:
+                    if not isinstance(artifact, dict):
+                        return False
+                    if artifact.get("immutable") is not True:
+                        return False
+                    if str(artifact.get("attempt_id") or "").strip() != attempt_id:
+                        return False
+                    if int(artifact.get("generation") or 0) != int(generation):
+                        return False
+                    digest = str(artifact.get("sha256") or "").strip().lower()
+                    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                        return False
+                    if int(artifact.get("size_bytes", -1)) < 0:
+                        return False
+                checkpoint_ref = verification.get("checkpoint_ref")
+                if checkpoint_ref is not None:
+                    if not isinstance(checkpoint_ref, dict):
+                        return False
+                    if checkpoint_ref.get("immutable") is not True:
+                        return False
+                    if str(checkpoint_ref.get("attempt_id") or "").strip() != attempt_id:
+                        return False
+                    if int(checkpoint_ref.get("generation") or 0) != int(generation):
+                        return False
+                    digest = str(checkpoint_ref.get("sha256") or "").strip().lower()
+                    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                        return False
+                    if int(checkpoint_ref.get("size_bytes", -1)) < 0:
+                        return False
                 serialized = json.dumps(
                     {**verification, "execution_attempt_id": attempt_id, "generation": int(generation)},
                     ensure_ascii=False, sort_keys=True,
+                )
+                serialized_artifacts = json.dumps(artifact_refs, ensure_ascii=False, sort_keys=True)
+                serialized_checkpoint = (
+                    json.dumps(checkpoint_ref, ensure_ascii=False, sort_keys=True)
+                    if checkpoint_ref is not None else None
                 )
                 cursor = connection.execute(
                     "UPDATE compute_execution_participants "
@@ -2102,9 +2139,10 @@ class ComputeCoordinator:
                     connection.rollback()
                     return False
                 connection.execute(
-                    "UPDATE compute_execution_attempts SET verification=?,heartbeat_at=? "
+                    "UPDATE compute_execution_attempts "
+                    "SET verification=?,artifact_refs=?,checkpoint_ref=?,heartbeat_at=? "
                     "WHERE attempt_id=? AND generation=? AND status='leased'",
-                    (serialized, now, attempt_id, generation),
+                    (serialized, serialized_artifacts, serialized_checkpoint, now, attempt_id, generation),
                 )
                 connection.commit()
                 return True
