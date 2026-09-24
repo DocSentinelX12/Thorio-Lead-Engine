@@ -450,6 +450,7 @@ def test_continuous_self_optimization_preserves_future_single_node_flexibility()
     evaluator.performance_history = {}
     evaluator.route_health = {}
     evaluator.physical_paths = ()
+    evaluator._candidate_performance = lambda _candidate: (1, float("inf"), 0)
 
     records = evaluator._continuous_optimization_records([
         (rows[0],),
