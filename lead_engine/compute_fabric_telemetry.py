@@ -135,7 +135,7 @@ def predict_route_evidence(samples: Any) -> dict[str, Any]:
         "sample_count": len(samples),
         "latency_sample_count": latency_count,
     }
-    if latency_count < 4:
+    if latency_count < 2:
         return result
 
     midpoint = latency_count // 2
@@ -154,7 +154,9 @@ def predict_route_evidence(samples: Any) -> dict[str, Any]:
         for left, right in zip(valid, valid[1:])
     ]
 
-    if all(delta > 0 for delta in deltas) and trend_delta > 0:
+    if latency_count < 4:
+        state = "insufficient_evidence"
+    elif all(delta > 0 for delta in deltas) and trend_delta > 0:
         state = "degrading"
     elif all(delta < 0 for delta in deltas) and trend_delta < 0:
         state = "improving"
