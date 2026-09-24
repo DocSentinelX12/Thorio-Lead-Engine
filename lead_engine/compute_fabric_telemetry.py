@@ -103,6 +103,82 @@ def workload_performance_key(path: Mapping[str, Any], workload: Mapping[str, Any
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def predict_route_evidence(samples: Any) -> dict[str, Any]:
+    """Derive conservative temporal route evidence from observed latency only."""
+    import math
+
+    if not isinstance(samples, (list, tuple)):
+        return {"state": "insufficient_evidence", "sample_count": 0, "latency_sample_count": 0}
+
+    valid = []
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            continue
+        try:
+            observed_at = float(sample.get("observed_at"))
+            latency = float(sample.get("latency_ms"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(observed_at) or not math.isfinite(latency) or latency <= 0:
+            continue
+        evidence = sample.get("evidence")
+        valid.append({
+            "observed_at": observed_at,
+            "latency_ms": latency,
+            "evidence": dict(evidence) if isinstance(evidence, Mapping) else {},
+        })
+
+    valid.sort(key=lambda item: (item["observed_at"], item["latency_ms"]))
+    latency_count = len(valid)
+    result = {
+        "state": "insufficient_evidence",
+        "sample_count": len(samples),
+        "latency_sample_count": latency_count,
+    }
+    if latency_count < 4:
+        return result
+
+    midpoint = latency_count // 2
+    baseline = valid[:midpoint]
+    recent = valid[midpoint:]
+    baseline_latency = sum(item["latency_ms"] for item in baseline) / len(baseline)
+    recent_latency = sum(item["latency_ms"] for item in recent) / len(recent)
+    trend_delta = recent_latency - baseline_latency
+
+    values = [item["latency_ms"] for item in valid]
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / len(values)
+    coefficient_of_variation = math.sqrt(variance) / mean if mean > 0 else float("inf")
+    deltas = [
+        right["latency_ms"] - left["latency_ms"]
+        for left, right in zip(valid, valid[1:])
+    ]
+
+    if all(delta > 0 for delta in deltas) and trend_delta > 0:
+        state = "degrading"
+    elif all(delta < 0 for delta in deltas) and trend_delta < 0:
+        state = "improving"
+    elif coefficient_of_variation <= 0.10:
+        state = "stable"
+    else:
+        state = "insufficient_evidence"
+
+    return {
+        "state": state,
+        "sample_count": len(samples),
+        "latency_sample_count": latency_count,
+        "baseline_latency_ms": baseline_latency,
+        "recent_latency_ms": recent_latency,
+        "trend_delta_ms": trend_delta,
+        "coefficient_of_variation": coefficient_of_variation,
+        "evidence": {
+            "first_observed_at": valid[0]["observed_at"],
+            "last_observed_at": valid[-1]["observed_at"],
+            "observations": tuple(valid),
+        },
+    }
+
+
 def summarize_route_health(samples: Any) -> dict[str, Any]:
     """Summarize observed route outcomes without applying a health threshold."""
     if not isinstance(samples, (list, tuple)):
@@ -153,6 +229,23 @@ def summarize_route_health(samples: Any) -> dict[str, Any]:
         consecutive_successes += 1
     result["consecutive_failures"] = consecutive_failures
     result["consecutive_successes"] = consecutive_successes
+
+    workload_samples: dict[str, list[dict[str, Any]]] = {}
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            continue
+        evidence = sample.get("evidence")
+        if not isinstance(evidence, Mapping):
+            continue
+        workload_key = str(evidence.get("workload_key") or "").strip()
+        if not workload_key:
+            continue
+        workload_samples.setdefault(workload_key, []).append(dict(sample))
+    if workload_samples:
+        result["predictive_by_workload_key"] = {
+            key: predict_route_evidence(items)
+            for key, items in sorted(workload_samples.items())
+        }
     return result
 
 
