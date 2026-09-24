@@ -304,6 +304,7 @@ def extract_execution_path_observations(
                 "rank": int(metric["rank"]),
                 "gpu_uuid": str(metric.get("gpu_uuid") or ""),
                 "network_transport": metric.get("transport"),
+                "workload_key": str(metric.get("workload_key") or "").strip() or None,
             }
             if observed_path.get("destination_rank") is not None:
                 evidence["destination_rank"] = observed_path.get("destination_rank")
