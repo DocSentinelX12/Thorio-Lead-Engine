@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
-from .compute_fabric_telemetry import aggregate_execution_metrics, extract_execution_metrics, extract_execution_path_observations
+from .compute_fabric_telemetry import aggregate_execution_metrics, derive_autonomous_closed_loop_evidence, extract_execution_metrics, extract_execution_path_observations
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
 from .compute_provider import ProviderResourceSnapshot
@@ -105,6 +105,52 @@ class ComputeCoordinator:
         """Run one complete recovery, observation, reconciliation, and scheduling cycle."""
         with self._lock:
             return asdict(self.compute_fabric_controller.cycle(max_allocations_per_cycle=max_allocations_per_cycle))
+
+
+    def fabric_closed_loop_evidence(
+        self,
+        *,
+        scheduled_allocations: int = 0,
+        recovered_expired_tasks: int = 0,
+        reconciled_attempts: int = 0,
+        requeued_tasks: int = 0,
+    ) -> Dict[str, Any]:
+        """Expose durable feedback state used by the next autonomous fabric cycle."""
+        with self._connect() as connection:
+            task_counts = connection.execute(
+                """SELECT
+                     SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) AS queued_tasks,
+                     SUM(CASE WHEN status='leased' THEN 1 ELSE 0 END) AS leased_tasks,
+                     SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed_tasks
+                   FROM compute_tasks"""
+            ).fetchone()
+            feedback = connection.execute(
+                """SELECT COUNT(*) AS sample_count, MAX(observed_at) AS last_observed_at
+                   FROM compute_fabric_execution_metrics"""
+            ).fetchone()
+            path_count = connection.execute(
+                "SELECT COUNT(*) FROM compute_fabric_path_performance"
+            ).fetchone()[0]
+            workload_count = connection.execute(
+                "SELECT COUNT(*) FROM compute_fabric_workload_performance"
+            ).fetchone()[0]
+        evidence = derive_autonomous_closed_loop_evidence({
+            "queued_tasks": int(task_counts["queued_tasks"] or 0),
+            "leased_tasks": int(task_counts["leased_tasks"] or 0),
+            "eligible_resources": len(self.inventory.eligible(now=time.time())),
+            "recovered_expired_tasks": int(recovered_expired_tasks),
+            "requeued_tasks": int(requeued_tasks),
+            "scheduled_allocations": int(scheduled_allocations),
+            "reconciled_attempts": int(reconciled_attempts),
+            "execution_feedback_samples": int(feedback["sample_count"] or 0),
+        })
+        return {
+            **evidence,
+            "completed_tasks": int(task_counts["completed_tasks"] or 0),
+            "last_feedback_observed_at": feedback["last_observed_at"],
+            "observed_path_count": int(path_count),
+            "observed_workload_path_count": int(workload_count),
+        }
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=30)
