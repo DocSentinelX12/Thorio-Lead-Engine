@@ -492,16 +492,16 @@ class ComputeCoordinator:
     def _observe_worker_resources(self, identity: WorkerIdentity) -> None:
         now = time.time()
         node_state = ResourceState.DEGRADED if identity.gpu_discovery_state == "degraded" else ResourceState.AVAILABLE
-        evidence = {
+        evidence = dict(identity.physical_fabric_evidence)
+        evidence.update({
             "source": "authenticated_worker_registration",
             "worker_id": identity.worker_id,
             "gpu_discovery_state": identity.gpu_discovery_state,
             "gpu_discovery_error": identity.gpu_discovery_error,
             "gpu_count": len(identity.gpu_resources),
             "hardware_attestation": "worker-local-nvidia-discovery",
-            "physical_fabric": dict(identity.physical_fabric_evidence),
             "domain_id": identity.domain_id,
-        }
+        })
         snapshot = ProviderResourceSnapshot(
             provider_id="worker_pool",
             domain_id=identity.domain_id,
