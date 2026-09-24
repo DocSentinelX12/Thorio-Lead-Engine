@@ -115,3 +115,74 @@ def test_candidate_route_health_uses_canonical_adaptive_route_evidence_for_cross
     evaluator.scheduler = type("Scheduler", (), {"_verified_gpu_nic_rdma_path": staticmethod(lambda *_args: ())})()
 
     assert evaluator._candidate_route_health(_candidate("u0", "u1", "a", "b")) == (0, -1.0, 0.0, 3.0, -8)
+
+
+
+def test_predictive_route_evidence_is_a_preference_after_existing_route_health():
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+    from lead_engine.compute_fabric_telemetry import workload_performance_key
+
+    paths = (
+        {
+            "path_id": "improving-path",
+            "node_id": "node-a",
+            "gpu_uuid": "gpu:u0",
+            "nic": "nic0",
+            "nic_pci_bus_id": "0000:01:00.0",
+            "rdma_device": "rdma0",
+            "rdma_port": 1,
+            "rdma_pci_bus_id": "0000:02:00.0",
+            "link_layer": "infiniband",
+        },
+        {
+            "path_id": "degrading-path",
+            "node_id": "node-a",
+            "gpu_uuid": "gpu:u0",
+            "nic": "nic1",
+            "nic_pci_bus_id": "0000:03:00.0",
+            "rdma_device": "rdma1",
+            "rdma_port": 1,
+            "rdma_pci_bus_id": "0000:04:00.0",
+            "link_layer": "infiniband",
+        },
+    )
+    requirements = ComputeRequirements(
+        workload_class=WorkloadClass.GPU_REQUIRED,
+        performance_signature=(("message_size_bytes", 1024),),
+    )
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = requirements
+    evaluator.physical_paths = paths
+    evaluator.route_health = {
+        "improving-path": {"sample_count": 4, "failure_rate": 0.0, "latency_delta_from_mean_ms": 1.0, "latest_latency_ms": 4.0},
+        "degrading-path": {"sample_count": 4, "failure_rate": 0.0, "latency_delta_from_mean_ms": 1.0, "latest_latency_ms": 4.0},
+    }
+
+    workload = {"workload_class": "gpu_required", "message_size_bytes": 1024}
+    improving_key = workload_performance_key(paths[0], workload)
+    degrading_key = workload_performance_key(paths[1], workload)
+    evaluator.route_health["improving-path"]["predictive_by_workload_key"] = {
+        improving_key: {"state": "improving"}
+    }
+    evaluator.route_health["degrading-path"]["predictive_by_workload_key"] = {
+        degrading_key: {"state": "degrading"}
+    }
+
+    candidate = (
+        {"node_id": "node-a", "payload_json": json.dumps({"gpu_uuid": "gpu:u0"}), "resource_key": "gpu-a"},
+    )
+    evaluator._adaptive_route_selection = lambda _candidate: (
+        {"source_gpu": "gpu:u0", "destination_gpu": "gpu:u1", "path_id": "improving-path"},
+    )
+    assert evaluator._candidate_predictive_route(candidate) == (0,)
+
+
+def test_predictive_route_without_evidence_remains_neutral():
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = ComputeRequirements(workload_class=WorkloadClass.GPU_REQUIRED)
+    evaluator.physical_paths = ()
+    evaluator.route_health = {}
+    evaluator._adaptive_route_selection = lambda _candidate: ()
+    assert evaluator._candidate_predictive_route(()) == (1,)
