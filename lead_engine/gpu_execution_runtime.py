@@ -26,6 +26,19 @@ class GpuExecutionError(RuntimeError):
     """Raised when an allocated GPU workload cannot be proven to have executed."""
 
 
+def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
+    """Terminate the launched process and its POSIX process group when possible."""
+    if process.poll() is not None:
+        return
+    if os.name == "posix":
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            return
+        except (OSError, ProcessLookupError):
+            pass
+    process.terminate()
+
+
 def _sha256_file(path: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
@@ -177,7 +190,7 @@ def execute_gpu_workload(
                     heartbeat_error.append("coordinator rejected GPU workload heartbeat")
                     stop.set()
                     if process_holder and process_holder[0].poll() is None:
-                        process_holder[0].terminate()
+                        _terminate_process_tree(process_holder[0])
                     return
             except Exception as exc:
                 heartbeat_error.append(str(exc))
@@ -217,7 +230,7 @@ def execute_gpu_workload(
                     stdout, stderr = process.communicate(timeout=timeout_seconds)
                 except subprocess.TimeoutExpired:
                     if process.poll() is None:
-                        process.terminate()
+                        _terminate_process_tree(process)
                     stdout, stderr = process.communicate(timeout=5)
                     raise GpuExecutionError("GPU workload execution timed out")
                 rc = process.returncode
