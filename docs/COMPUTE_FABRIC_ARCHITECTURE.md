@@ -42,6 +42,12 @@ GPU identity consists of stable hardware evidence where available:
 
 Missing optional hardware evidence is represented explicitly, never fabricated.
 
+## Compute infrastructure build model
+
+This architecture builds and operates physical compute infrastructure through legitimate external providers. The initial twelve-supercomputer-class target refers to the physical infrastructure the system provisions/acquires and verifies, not to hardware owned or supplied by the user. External provider capacity must pass authenticated enrollment and physical/runtime evidence before it becomes trusted inventory. The architecture has no fixed fleet-size ceiling.
+
+The human interaction device is outside the compute system. It is not a worker, node, GPU resource, network endpoint, scheduler component, or compute dependency.
+
 ## Physical worker enrollment
 
 Physical GPU workers enroll through the existing authenticated coordinator/worker path. Each worker performs local NVIDIA discovery and publishes the observed GPU identities together with explicit PCI, NUMA, NIC, RDMA device, RDMA port, and GPU-to-NIC locality evidence when available.
