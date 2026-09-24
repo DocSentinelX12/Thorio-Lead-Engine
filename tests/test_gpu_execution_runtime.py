@@ -145,20 +145,3 @@ def test_declared_artifact_and_checkpoint_are_content_addressed(tmp_path):
     assert len(refs["output"]["sha256"]) == 64
     assert len(refs["checkpoint"]["sha256"]) == 64
 
-
-def test_gpu_verification_persists_artifact_refs_on_authoritative_attempt(tmp_path):
-    # Coordinator-backed persistence is covered by the integration test seam.
-    from lead_engine.compute_coordinator import ComputeCoordinator
-    from lead_engine.compute_pool import WorkerIdentity
-
-    db = tmp_path / "coord.sqlite3"
-    coordinator = ComputeCoordinator(str(db), "token", lease_seconds=30)
-    identity = WorkerIdentity("worker-1", "host", "x86_64", 4, 8192)
-    coordinator.register_worker(identity)
-    task_id = coordinator.enqueue({"kind": "gpu_workload", "command": ["python", "-c", "print(1)"], "compute_requirements": {"workload_class": "gpu"}})
-    claimed = coordinator.claim("worker-1")
-    assert claimed and claimed["task_id"] == task_id
-    attempt = coordinator.execution_attempt(claimed["attempt_id"])
-    assert attempt is not None
-    allocation = coordinator.inventory.allocations()
-    assert allocation
