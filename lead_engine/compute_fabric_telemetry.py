@@ -135,8 +135,22 @@ def predict_route_evidence(samples: Any) -> dict[str, Any]:
         "sample_count": len(samples),
         "latency_sample_count": latency_count,
     }
-    if latency_count < 2:
+    if latency_count == 0:
         return result
+
+    if latency_count == 1:
+        only = valid[0]
+        return {
+            **result,
+            "baseline_latency_ms": only["latency_ms"],
+            "recent_latency_ms": only["latency_ms"],
+            "trend_delta_ms": None,
+            "evidence": {
+                "first_observed_at": only["observed_at"],
+                "last_observed_at": only["observed_at"],
+                "observations": tuple(valid),
+            },
+        }
 
     midpoint = latency_count // 2
     baseline = valid[:midpoint]
