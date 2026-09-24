@@ -90,6 +90,23 @@ TOTAL, HEALTHY, AVAILABLE, RESERVED, LEASED, DEGRADED, and QUARANTINED resources
 
 Source I/O scaling remains a separate fabric. GPU availability MUST NOT be required for ordinary source collection.
 
+## Fleet-scale resource intelligence
+
+Fleet capacity is derived read-time from the durable resource inventory and active allocation bindings. The fleet view is hierarchical by provider, domain, node, and resource type and distinguishes:
+- TOTAL
+- HEALTHY
+- AVAILABLE
+- RESERVED
+- LEASED
+- DEGRADED
+- QUARANTINED
+
+GPU capacity additionally exposes exact known VRAM totals, unknown VRAM counts, capability families, available GPUs by node, and maximum observed available GPUs per node. Missing capability evidence remains unknown and is never converted into estimated capacity.
+
+A bound allocation is represented as LEASED in the fleet view only while its exact durable allocation remains bound. A reserved but unbound allocation remains RESERVED. Quarantined and degraded resource state remains visible rather than being hidden behind allocation state.
+
+The fleet view also exposes authenticated, unexpired eligible-resource counts and the latest observed inventory timestamp. Expired resources remain historical inventory but do not contribute to eligible capacity. This is a read-only intelligence surface. It does not reserve, release, quarantine, rebind, or otherwise mutate resources, and it does not create a second scheduler or queue.
+
 ## Change discipline
 
 Foundation changes are additive and independently testable. Existing queue, backlog, research, qualification, routing, Airtable, and revenue tests are regression gates before production participation.
