@@ -129,6 +129,20 @@ The proof verifies exact cardinality after repeated observation, persistence aft
 
 The GitHub validation workflow runs this scale proof as its own gate in addition to the existing GPU fabric regressions. The scale fixture is intentionally finite for CI execution, while the production architecture has no corresponding hard fleet-size ceiling.
 
+## Autonomous closed loop
+
+The compute fabric closes the control loop across durable work, physical observation, recovery, placement, execution, and verified feedback:
+
+`durable queue -> recovery/reconciliation -> provider observation -> eligible inventory -> complete placement -> ComputeAllocation -> execution -> verified execution evidence -> durable path/workload feedback -> next placement`
+
+The loop is continuously driven by `ComputeFabricController.run_forever()`. Its per-cycle allocation value is a batch size only, not a backlog ceiling. A stopped worker, expired lease, provider disappearance, or failed distributed attempt does not imply completion. Recovery returns unfinished work to the authoritative queue and the next placement is constructed from current eligible inventory.
+
+Execution verification is the feedback boundary. Only accepted verification contributes observed execution metrics, path performance, and workload/path performance. The autonomous cycle reads those durable observations on subsequent scheduling decisions. It does not manufacture latency, capacity, failure probabilities, or future outcomes.
+
+The closed-loop evidence surface reports the current phase and next cycle action from explicit durable counts, including recovery, execution, available feedback, capacity waiting, and idle states. It is advisory orchestration evidence only. `ComputeScheduler` remains the placement authority, `ComputeAllocation` remains the reservation authority, physical validation remains authoritative, and the existing durable task/coordinator layer remains the work-state authority.
+
+The loop is restart-safe because its decisions are reconstructed from durable inventory, allocations, execution attempts, execution metrics, route evidence, workload evidence, and task state. No in-memory learning model, second queue, fixed optimization horizon, or fixed fleet-size limit is introduced.
+
 ## Change discipline
 
 Foundation changes are additive and independently testable. Existing queue, backlog, research, qualification, routing, Airtable, and revenue tests are regression gates before production participation.
