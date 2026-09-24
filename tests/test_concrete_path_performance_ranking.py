@@ -318,3 +318,85 @@ def test_multidimensional_workload_evidence_is_subordinate_to_predictive_route_a
     evaluator._adaptive_route_selection = lambda _candidate: ()
 
     assert evaluator._candidate_multidimensional_workload(()) == (1, 0, ())
+
+
+def test_predictive_failure_degradation_prefers_stable_exact_workload_path():
+    from lead_engine.compute_placement import PlacementEvaluator
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+    from lead_engine.compute_fabric_telemetry import workload_performance_key
+
+    paths = (
+        {"path_id": "stable-path", "node_id": "node-a", "gpu_uuid": "u0", "nic": "n0", "nic_pci_bus_id": "1",
+         "rdma_device": "r0", "rdma_port": 1, "rdma_pci_bus_id": "2", "link_layer": "ib"},
+        {"path_id": "degrading-path", "node_id": "node-b", "gpu_uuid": "u1", "nic": "n1", "nic_pci_bus_id": "3",
+         "rdma_device": "r1", "rdma_port": 1, "rdma_pci_bus_id": "4", "link_layer": "ib"},
+    )
+    requirements = ComputeRequirements(
+        workload_class=WorkloadClass.GPU_REQUIRED,
+        performance_signature=(("collective", "all_reduce"), ("world_size", 8), ("message_size_bytes", 4096)),
+    )
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = requirements
+    evaluator.physical_paths = paths
+    evaluator.route_health = {}
+    workload = {"workload_class": "gpu_required", "collective": "all_reduce", "world_size": 8, "message_size_bytes": 4096}
+    stable_key = workload_performance_key(paths[0], workload)
+    degrading_key = workload_performance_key(paths[1], workload)
+    evaluator.route_health = {
+        "stable-path": {
+            "predictive_failure_by_workload_key": {
+                stable_key: {"state": "stable", "sample_count": 8, "failure_count": 0,
+                             "consecutive_failures": 0, "evidence": {"observations": ()}}
+            }
+        },
+        "degrading-path": {
+            "predictive_failure_by_workload_key": {
+                degrading_key: {"state": "degrading", "sample_count": 8, "failure_count": 1,
+                                 "consecutive_failures": 0, "evidence": {"observations": ()}}
+            }
+        },
+    }
+    evaluator._adaptive_route_selection = lambda candidate: (
+        {"path_id": "stable-path"} if candidate[0]["resource_key"] == "stable" else {"path_id": "degrading-path"},
+    )
+
+    stable_candidate = ({"resource_key": "stable"},)
+    degrading_candidate = ({"resource_key": "degrading"},)
+
+    assert evaluator._candidate_predictive_failure(stable_candidate)[0] == 0
+    assert evaluator._candidate_predictive_failure(degrading_candidate)[0] == 2
+
+
+def test_predictive_failure_degradation_does_not_cross_workload_or_path_boundaries():
+    from lead_engine.compute_placement import PlacementEvaluator
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+    from lead_engine.compute_fabric_telemetry import workload_performance_key
+
+    path = {"path_id": "path-a", "node_id": "node-a", "gpu_uuid": "u0", "nic": "n0", "nic_pci_bus_id": "1",
+            "rdma_device": "r0", "rdma_port": 1, "rdma_pci_bus_id": "2", "link_layer": "ib"}
+    other = {"path_id": "path-b", "node_id": "node-b", "gpu_uuid": "u1", "nic": "n1", "nic_pci_bus_id": "3",
+             "rdma_device": "r1", "rdma_port": 1, "rdma_pci_bus_id": "4", "link_layer": "ib"}
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = ComputeRequirements(
+        workload_class=WorkloadClass.GPU_REQUIRED,
+        performance_signature=(("collective", "all_reduce"), ("world_size", 8), ("message_size_bytes", 4096)),
+    )
+    evaluator.physical_paths = (path, other)
+    wrong_workload = workload_performance_key(path, {"workload_class": "gpu_required", "collective": "all_gather", "world_size": 8, "message_size_bytes": 4096})
+    evaluator.route_health = {
+        "path-a": {"predictive_failure_by_workload_key": {wrong_workload: {"state": "failure_pattern", "sample_count": 100}}},
+    }
+    evaluator._adaptive_route_selection = lambda _candidate: ({"path_id": "path-a"},)
+
+    assert evaluator._candidate_predictive_failure(({"resource_key": "gpu-a"},)) == (1, 0, ())
+
+
+def test_predictive_failure_degradation_never_replaces_hard_candidate_validation():
+    from lead_engine.compute_placement import PlacementEvaluator
+
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.requirements = type("Requirements", (), {})()
+    evaluator.physical_paths = ()
+    evaluator.route_health = {}
+    evaluator._adaptive_route_selection = lambda _candidate: ()
+    assert evaluator._candidate_predictive_failure(()) == (1, 0, ())
