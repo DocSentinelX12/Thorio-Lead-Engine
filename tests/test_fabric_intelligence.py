@@ -226,3 +226,144 @@ def test_inventory_route_health_exposes_predictive_failure_degradation_without_n
     assert health["failure_count"] == 2
     assert health["predictive_failure_degradation"]["state"] == "failure_pattern"
     assert health["predictive_failure_by_workload_key"][workload_key]["state"] == "failure_pattern"
+
+
+def test_fleet_resource_intelligence_aggregates_capacity_by_provider_domain_and_state(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+    from lead_engine.compute_provider import ProviderResourceSnapshot
+    from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
+    import time
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+
+    def gpu(node, gpu_id, uuid, state=ResourceState.HEALTHY):
+        return GpuResource(
+            node_id=node,
+            gpu_id=gpu_id,
+            gpu_uuid=uuid,
+            model="Test-A",
+            vram_bytes=24 * 1024**3,
+            compute_capability="8.0",
+            cuda_version="12.4",
+            driver_version="550",
+            health_state=state,
+            availability_state=state,
+        )
+
+    observed = time.time()
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a",
+        domain_id="domain-a",
+        observed_at=observed,
+        nodes=(
+            NodeResource(
+                node_id="node-a",
+                architecture="x86_64",
+                cpu=CpuResource("node-a", 16, 64 * 1024**3),
+                gpus=(gpu("node-a", "0", "uuid-a0"), gpu("node-a", "1", "uuid-a1")),
+                state=ResourceState.HEALTHY,
+            ),
+            NodeResource(
+                node_id="node-b",
+                architecture="x86_64",
+                cpu=CpuResource("node-b", 16, 64 * 1024**3),
+                gpus=(gpu("node-b", "0", "uuid-b0", ResourceState.DEGRADED),),
+                state=ResourceState.DEGRADED,
+            ),
+        ),
+        authentication_state="authenticated",
+    ))
+    inventory.mark_state("provider-a/domain-a/node-a/gpu/uuid-a1", ResourceState.RESERVED)
+    inventory.mark_state("provider-a/domain-a/node-b/gpu/uuid-b0", ResourceState.QUARANTINED)
+
+    summary = inventory.fleet_resource_intelligence(now=observed + 1)
+
+    assert summary["totals"]["gpu"]["TOTAL"] == 3
+    assert summary["totals"]["gpu"]["HEALTHY"] == 1
+    assert summary["totals"]["gpu"]["AVAILABLE"] == 1
+    assert summary["totals"]["gpu"]["RESERVED"] == 1
+    assert summary["totals"]["gpu"]["LEASED"] == 0
+    assert summary["totals"]["gpu"]["DEGRADED"] == 0
+    assert summary["totals"]["gpu"]["QUARANTINED"] == 1
+    assert summary["provider_domains"]["provider-a/domain-a"]["gpu"]["AVAILABLE"] == 1
+    assert summary["provider_domains"]["provider-a/domain-a"]["nodes"]["TOTAL"] == 2
+    assert summary["provider_domains"]["provider-a/domain-a"]["gpu"]["known_vram_bytes"] == 3 * 24 * 1024**3
+
+
+def test_fleet_resource_intelligence_reconciles_bound_allocations_as_leased(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+    from lead_engine.compute_provider import ProviderResourceSnapshot
+    from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
+    import time
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="p",
+        domain_id="d",
+        observed_at=10.0,
+        nodes=(NodeResource(
+            node_id="n",
+            architecture="x86_64",
+            cpu=CpuResource("n", 8, 32 * 1024**3),
+            gpus=(GpuResource(
+                node_id="n", gpu_id="0", gpu_uuid="u0", model="Test",
+                vram_bytes=16 * 1024**3,
+                health_state=ResourceState.HEALTHY,
+                availability_state=ResourceState.AVAILABLE,
+            ),),
+            state=ResourceState.HEALTHY,
+        ),),
+        authentication_state="authenticated",
+    ))
+    key = "p/d/n/gpu/u0"
+    inventory.reserve_allocation("allocation-1", "p", "d", [key])
+    assert inventory.bind_allocation(
+        "allocation-1",
+        task_id="task-1",
+        attempt_id="attempt-1",
+        generation=1,
+        lease_token_digest="digest",
+    )
+
+    summary = inventory.fleet_resource_intelligence(now=20.0)
+
+    assert summary["totals"]["gpu"]["AVAILABLE"] == 0
+    assert summary["totals"]["gpu"]["RESERVED"] == 0
+    assert summary["totals"]["gpu"]["LEASED"] == 1
+    assert summary["provider_domains"]["p/d"]["gpu"]["LEASED"] == 1
+
+
+def test_fleet_resource_intelligence_preserves_capability_unknowns_and_no_synthetic_capacity(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+    from lead_engine.compute_provider import ProviderResourceSnapshot
+    from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="p",
+        domain_id="d",
+        observed_at=10.0,
+        nodes=(NodeResource(
+            node_id="n",
+            architecture="x86_64",
+            cpu=CpuResource("n", 4, 16 * 1024**3),
+            gpus=(GpuResource(
+                node_id="n", gpu_id="0", gpu_uuid="u0", model=None,
+                vram_bytes=None, compute_capability=None, cuda_version=None,
+                driver_version=None, health_state=ResourceState.AVAILABLE,
+                availability_state=ResourceState.AVAILABLE,
+            ),),
+        ),),
+        authentication_state="authenticated",
+    ))
+
+    summary = inventory.fleet_resource_intelligence(now=11.0)
+
+    gpu = summary["totals"]["gpu"]
+    assert gpu["TOTAL"] == 1
+    assert gpu["AVAILABLE"] == 1
+    assert gpu["known_vram_bytes"] == 0
+    assert gpu["unknown_vram_count"] == 1
+    assert gpu["capability_families"]["model"] == {}
+    assert gpu["capability_families"]["compute_capability"] == {}
+    assert summary["provider_domains"]["p/d"]["gpu"]["AVAILABLE"] == 1
