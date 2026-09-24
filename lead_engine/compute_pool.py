@@ -332,7 +332,7 @@ class ComputePool:
         if not row:
             return False
         evidence = json.loads(row["physical_fabric_evidence_json"] or "{}")
-        if row["gpu_discovery_state"] != "ready" or not isinstance(evidence, dict) or not evidence:
+        if row["gpu_discovery_state"] not in {"healthy", "degraded", "no_gpu"} or not isinstance(evidence, dict) or not evidence:
             return False
         if float(row["last_heartbeat"] or 0) <= 0:
             return False
