@@ -260,7 +260,7 @@ def test_fleet_resource_intelligence_aggregates_capacity_by_provider_domain_and_
                 node_id="node-a",
                 architecture="x86_64",
                 cpu=CpuResource("node-a", 16, 64 * 1024**3),
-                gpus=(gpu("node-a", "0", "uuid-a0"), gpu("node-a", "1", "uuid-a1", ResourceState.AVAILABLE)),
+                gpus=(gpu("node-a", "0", "uuid-a0"), gpu("node-a", "1", "uuid-a1", ResourceState.AVAILABLE), gpu("node-a", "2", "uuid-a2")),
                 state=ResourceState.HEALTHY,
             ),
             NodeResource(
@@ -273,12 +273,12 @@ def test_fleet_resource_intelligence_aggregates_capacity_by_provider_domain_and_
         ),
         authentication_state="authenticated",
     ))
-    inventory.mark_state("provider-a/domain-a/node-a/gpu/uuid-a1", ResourceState.RESERVED)
+    inventory.mark_state("provider-a/domain-a/node-a/gpu/uuid-a2", ResourceState.RESERVED)
     inventory.mark_state("provider-a/domain-a/node-b/gpu/uuid-b0", ResourceState.QUARANTINED)
 
     summary = inventory.fleet_resource_intelligence(now=observed + 1)
 
-    assert summary["totals"]["gpu"]["TOTAL"] == 3
+    assert summary["totals"]["gpu"]["TOTAL"] == 4
     assert summary["totals"]["gpu"]["HEALTHY"] == 1
     assert summary["totals"]["gpu"]["AVAILABLE"] == 1
     assert summary["totals"]["gpu"]["RESERVED"] == 1
