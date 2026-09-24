@@ -263,7 +263,7 @@ def test_predict_route_evidence_can_classify_improvement_and_stability():
         {"observed_at": 100.0, "latency_ms": 3.0, "success": True},
         {"observed_at": 200.0, "latency_ms": 3.1, "success": True},
         {"observed_at": 300.0, "latency_ms": 2.9, "success": True},
-        {"observed_at": 400.0, "latency_ms": 3.0, "success": True},
+        {"observed_at": 400.0, "latency_ms": 3.2, "success": True},
     ])
     assert improving["state"] == "improving"
     assert stable["state"] == "stable"
@@ -280,3 +280,33 @@ def test_predict_route_evidence_is_not_false_certainty_for_noisy_observations():
     ])
     assert result["state"] == "insufficient_evidence"
     assert result["trend_delta_ms"] is not None
+
+
+
+def test_summarize_route_health_keeps_predictive_evidence_scoped_to_explicit_workload_keys():
+    summary = summarize_route_health([
+        {"observed_at": 100.0, "latency_ms": 2.0, "success": True, "evidence": {"workload_key": "workload-a"}},
+        {"observed_at": 200.0, "latency_ms": 2.1, "success": True, "evidence": {"workload_key": "workload-a"}},
+        {"observed_at": 300.0, "latency_ms": 3.8, "success": True, "evidence": {"workload_key": "workload-a"}},
+        {"observed_at": 400.0, "latency_ms": 4.0, "success": True, "evidence": {"workload_key": "workload-a"}},
+        {"observed_at": 100.0, "latency_ms": 5.0, "success": True, "evidence": {"workload_key": "workload-b"}},
+        {"observed_at": 200.0, "latency_ms": 4.9, "success": True, "evidence": {"workload_key": "workload-b"}},
+        {"observed_at": 300.0, "latency_ms": 3.1, "success": True, "evidence": {"workload_key": "workload-b"}},
+        {"observed_at": 400.0, "latency_ms": 3.0, "success": True, "evidence": {"workload_key": "workload-b"}},
+    ])
+    assert summary["predictive_by_workload_key"]["workload-a"]["state"] == "degrading"
+    assert summary["predictive_by_workload_key"]["workload-b"]["state"] == "improving"
+    assert set(summary["predictive_by_workload_key"]) == {"workload-a", "workload-b"}
+
+
+def test_predict_route_evidence_does_not_treat_non_latency_failures_as_latency_measurements():
+    from lead_engine.compute_fabric_telemetry import predict_route_evidence
+
+    result = predict_route_evidence([
+        {"observed_at": 100.0, "latency_ms": None, "success": False},
+        {"observed_at": 200.0, "latency_ms": 2.0, "success": True},
+        {"observed_at": 300.0, "latency_ms": None, "success": False},
+        {"observed_at": 400.0, "latency_ms": 2.1, "success": True},
+    ])
+    assert result["state"] == "insufficient_evidence"
+    assert result["latency_sample_count"] == 2
