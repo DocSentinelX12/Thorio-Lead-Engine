@@ -69,6 +69,8 @@ class ComputeWorkerClient:
 
     def heartbeat(self, current_load: int = 0) -> Dict[str, Any]: return self.request("/workers/heartbeat", {"worker_id": self.worker_id, "current_load": current_load})
     def fabric_assignments(self) -> list[Dict[str, Any]]: return list(self.request("/fabric/assignments", {"worker_id": self.worker_id}).get("assignments", []))
+    def fleet_observability(self) -> Dict[str, Any]: return self.request("/fabric/fleet")
+    def free_compute_status(self) -> Dict[str, Any]: return self.request("/fabric/acquisition/status")
     def fabric_heartbeat(self, attempt_id: str, generation: int, lease_token: str) -> Dict[str, Any]: return self.request("/fabric/heartbeat", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token})
     def fabric_state(self, attempt_id: str, generation: int, lease_token: str, status: str, error: str = "") -> Dict[str, Any]: return self.request("/fabric/state", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token, "status": status, "error": error})
     def fabric_launch_plan(self, attempt_id: str, generation: int, lease_token: str, rendezvous_endpoint: str) -> Dict[str, Any]: return self.request("/fabric/launch-plan", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token, "rendezvous_endpoint": rendezvous_endpoint})
