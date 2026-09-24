@@ -1346,45 +1346,54 @@ class ComputeCoordinator:
             }
         source_gpu = str(failed.get("source_gpu") or "").strip()
         destination_gpu = str(failed.get("destination_gpu") or "").strip()
-        route_set = ComputeCoordinator._adaptive_launch_route_set(
-            placement,
-            (source_gpu, destination_gpu),
-        )
-        standby_ids = set(route_set["standby_path_ids"])
-        verified_ids = set(route_set["verified_path_ids"])
-        independent_standbys = tuple(
-            path
-            for path in physical_paths
-            if str(path.get("path_id") or "").strip() in standby_ids
-            and str(path.get("path_id") or "").strip() in verified_ids
-            and AdaptiveFabricRouteSelector.failure_domain_independent(failed, path)
-        )
-        candidates = [
-            {
-                "path_id": str(path.get("path_id") or "").strip(),
-                "health": dict(route_health[str(path.get("path_id") or "").strip()]),
-                "measurement": dict(path.get("measurement") or {}),
-                "state": str(path.get("state") or "").strip(),
-            }
-            for path in independent_standbys
-            if str(path.get("path_id") or "").strip() in route_health
-            and isinstance(path.get("measurement"), dict)
-        ]
-        selected = str(min(candidates, key=AdaptiveFabricRouteSelector._key)["path_id"]).strip() if candidates else ""
-        if selected and (selected not in standby_ids or selected not in verified_ids):
+        evidence = placement.get("evidence") if isinstance(placement, dict) else None
+        route_sets = evidence.get("adaptive_route_sets") if isinstance(evidence, dict) else None
+        route_set = next(
+            (
+                item for item in route_sets
+                if isinstance(item, dict)
+                and str(item.get("source_gpu") or "").strip() == source_gpu
+                and str(item.get("destination_gpu") or "").strip() == destination_gpu
+            ),
+            None,
+        ) if isinstance(route_sets, (list, tuple)) else None
+        if not isinstance(route_set, dict):
             raise ValueError(
-                f"selected rebind path is not a durable verified standby: {selected}"
+                f"durable adaptive route set is missing for failed GPU pair: {source_gpu}->{destination_gpu}"
             )
+        standby_ids = {
+            str(path_id).strip()
+            for path_id in route_set.get("standby_path_ids", ())
+            if str(path_id).strip()
+        }
+        verified_ids = {
+            str(path_id).strip()
+            for path_id in route_set.get("verified_path_ids", ())
+            if str(path_id).strip()
+        }
+        candidates = []
+        for path in physical_paths:
+            path_id = str(path.get("path_id") or "").strip()
+            if path_id not in standby_ids or path_id not in verified_ids:
+                continue
+            if str(path.get("source_gpu") or "").strip() != source_gpu or str(path.get("destination_gpu") or "").strip() != destination_gpu:
+                continue
+            if not AdaptiveFabricRouteSelector.failure_domain_independent(failed, path):
+                continue
+            health = route_health.get(path_id)
+            measurement = path.get("measurement")
+            if not isinstance(health, dict) or not isinstance(measurement, dict) or str(path.get("state") or "").strip() != "MEASURED":
+                continue
+            candidates.append({"path_id": path_id, "health": health, "measurement": measurement, "state": "MEASURED"})
+        selected = str(min(candidates, key=AdaptiveFabricRouteSelector._key)["path_id"]).strip() if candidates else ""
         return {
-            "migrate": bool(selected),
-            "from_path_id": failed_id,
-            "to_path_id": selected or None,
-            "reason": "exact_path_failure_independent_standby" if selected else "no_independently_verified_standby",
             "attempt_id": str(attempt_id),
             "placement_id": str(placement.get("placement_id") or ""),
             "generation": int(generation),
             "source_gpu": source_gpu,
             "destination_gpu": destination_gpu,
+            "from_path_id": failed_id,
+            "to_path_id": selected or None,
             "next_generation": int(generation) + 1,
             "status": "standby_selected" if selected else "no_standby_available",
         }
