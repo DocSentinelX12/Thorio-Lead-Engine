@@ -13,7 +13,7 @@ import socket
 import sqlite3
 import time
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -114,6 +114,9 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
     driver_version = cuda_version = nccl_version = None
     gpu_state = "not_probed"
     gpu_error = ""
+    nic_names: tuple[str, ...] = ()
+    physical_fabric_evidence: Mapping[str, Any] = {}
+    domain_id = (os.environ.get("THORIO_COMPUTE_DOMAIN") or capacity.node_id).strip() or capacity.node_id
     try:
         from .nvidia_provider import NvidiaDiscoveryError, NvidiaProvider
         snapshot = NvidiaProvider(node_id=capacity.node_id).discover()
@@ -123,6 +126,7 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
         cuda_version = node.cuda_version
         gpu_state = "healthy" if gpu_resources else "no_gpu"
         nic_names = node.nic_names
+        physical_fabric_evidence = dict(snapshot.evidence or {})
     except NvidiaDiscoveryError as exc:
         gpu_state = "degraded"
         gpu_error = str(exc)[:2000]
