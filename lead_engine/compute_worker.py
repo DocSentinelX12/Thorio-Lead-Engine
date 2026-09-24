@@ -61,7 +61,8 @@ class ComputeWorkerClient:
         gpu_resources = []
         for gpu in identity.gpu_resources:
             item = asdict(gpu); item["health_state"] = gpu.health_state.value; item["availability_state"] = gpu.availability_state.value; gpu_resources.append(item)
-        result = self.request("/workers/register", {"worker_id": identity.worker_id, "hostname": identity.hostname, "architecture": identity.architecture, "cpu_count": identity.cpu_count, "memory_mb": identity.memory_mb, "capabilities": list(identity.capabilities) + ["lead_prepare"] + executable_agents, "gpu_resources": gpu_resources, "driver_version": identity.driver_version, "cuda_version": identity.cuda_version, "nccl_version": identity.nccl_version, "nic_names": list(identity.nic_names), "gpu_discovery_state": identity.gpu_discovery_state, "gpu_discovery_error": identity.gpu_discovery_error})
+        result = self.request("/workers/register", {"worker_id": identity.worker_id, "hostname": identity.hostname, "architecture": identity.architecture, "cpu_count": identity.cpu_count, "memory_mb": identity.memory_mb, "capabilities": list(identity.capabilities) + ["lead_prepare"] + executable_agents, "gpu_resources": gpu_resources, "driver_version": identity.driver_version, "cuda_version": identity.cuda_version, "nccl_version": identity.nccl_version, "nic_names": list(identity.nic_names), "gpu_discovery_state": identity.gpu_discovery_state, "gpu_discovery_error": identity.gpu_discovery_error,
+            "domain_id": identity.domain_id, "physical_fabric_evidence": dict(identity.physical_fabric_evidence)})
         self._registered = True
         return result
 
