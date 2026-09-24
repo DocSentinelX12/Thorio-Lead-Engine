@@ -145,3 +145,71 @@ def test_declared_artifact_and_checkpoint_are_content_addressed(tmp_path):
     assert len(refs["output"]["sha256"]) == 64
     assert len(refs["checkpoint"]["sha256"]) == 64
 
+def test_gpu_verification_persists_immutable_artifact_and_checkpoint_refs(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+    import hashlib
+    import time
+
+    db_path = str(tmp_path / "coordinator.sqlite3")
+    coordinator = ComputeCoordinator(db_path, "token")
+    now = time.time()
+    lease_token = "lease-1"
+    lease_digest = hashlib.sha256(lease_token.encode()).hexdigest()
+    task_id = "task-1"
+    attempt_id = "attempt-1"
+    generation = 1
+    allocation_id = "alloc-1"
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            "INSERT INTO compute_tasks(task_id,payload,status,worker_id,lease_token,lease_until,attempt_id,generation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (task_id, '{"kind":"gpu_workload"}', "leased", "fabric:"+attempt_id, lease_token, now + 300, attempt_id, generation, now, now),
+        )
+        connection.execute(
+            "INSERT INTO compute_execution_attempts(attempt_id,task_id,generation,worker_id,status,lease_token_digest,started_at,allocation_id,resource_ids) VALUES(?,?,?,?,?,?,?,?,?)",
+            (attempt_id, task_id, generation, "fabric:"+attempt_id, "leased", lease_digest, now, allocation_id, '["node-1/gpu-0"]'),
+        )
+        connection.execute(
+            "INSERT INTO compute_execution_participants(attempt_id,task_id,generation,allocation_id,worker_id,node_id,rank,world_size,rendezvous_ref,status,resource_ids,bound_at,heartbeat_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (attempt_id, task_id, generation, allocation_id, "worker-1", "node-1", 0, 1, "fabric:attempt-1:1", "active", '["node-1/gpu-0"]', now, now),
+        )
+        connection.commit()
+
+    coordinator.inventory.allocation = lambda _allocation_id: {
+        "state": "bound",
+        "attempt_id": attempt_id,
+        "generation": generation,
+        "resource_keys": ["node-1/gpu-0"],
+        "resource_ids": ["node-1/gpu-0"],
+    }
+
+    verification = {
+        "verified": True,
+        "execution_kind": "gpu_workload",
+        "worker_id": "worker-1",
+        "gpu_bindings": [{"resource_id": "node-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-1"}],
+        "artifact_refs": [
+            {"kind": "output", "sha256": "a" * 64, "size_bytes": 12, "immutable": True, "attempt_id": attempt_id, "generation": generation}
+        ],
+        "checkpoint_ref": {
+            "kind": "checkpoint",
+            "sha256": "b" * 64,
+            "size_bytes": 34,
+            "immutable": True,
+            "attempt_id": attempt_id,
+            "generation": generation,
+        },
+    }
+
+    assert coordinator.record_gpu_execution_verification(
+        attempt_id=attempt_id,
+        generation=generation,
+        worker_id="worker-1",
+        lease_token=lease_token,
+        verification=verification,
+    )
+
+    attempt = coordinator.execution_attempt(attempt_id)
+    assert attempt["artifact_refs"] == verification["artifact_refs"]
+    assert json.loads(attempt["checkpoint_ref"]) == verification["checkpoint_ref"]
+\n
