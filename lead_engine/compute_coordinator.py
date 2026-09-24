@@ -1399,6 +1399,35 @@ class ComputeCoordinator:
         }
 
     @staticmethod
+    def _validate_fabric_rebind_placement(rebind: dict[str, Any], placement: dict[str, Any]) -> bool:
+        """Require the fresh placement to activate the exact selected standby."""
+        if not isinstance(rebind, dict) or not isinstance(placement, dict):
+            return False
+        source = str(rebind.get("source_gpu") or "").strip()
+        destination = str(rebind.get("destination_gpu") or "").strip()
+        selected = str(rebind.get("to_path_id") or "").strip()
+        if not source or not destination or not selected:
+            return False
+        evidence = placement.get("evidence")
+        route_sets = evidence.get("adaptive_route_sets") if isinstance(evidence, dict) else None
+        if not isinstance(route_sets, (list, tuple)):
+            return False
+        route = next(
+            (
+                item for item in route_sets
+                if isinstance(item, dict)
+                and str(item.get("source_gpu") or "").strip() == source
+                and str(item.get("destination_gpu") or "").strip() == destination
+            ),
+            None,
+        )
+        return isinstance(route, dict) and str(route.get("active_path_id") or "").strip() == selected and selected in {
+            str(path_id).strip()
+            for path_id in route.get("verified_path_ids", ())
+            if str(path_id).strip()
+        }
+
+    @staticmethod
     def _adaptive_launch_route_set(placement: dict[str, Any], gpu_pair: tuple[str, str]) -> dict[str, Any]:
         """Carry the durable active route and independently verified standbys into launch."""
         evidence = placement.get("evidence") if isinstance(placement, dict) else None
