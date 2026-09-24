@@ -233,4 +233,4 @@ def test_gpu_process_termination_targets_process_group_on_posix(monkeypatch):
 
     assert killed == [(4321, __import__("signal").SIGTERM)]
     assert process.terminated is False
-\n
+
