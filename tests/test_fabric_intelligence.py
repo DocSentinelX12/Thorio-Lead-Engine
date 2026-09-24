@@ -367,3 +367,48 @@ def test_fleet_resource_intelligence_preserves_capability_unknowns_and_no_synthe
     assert gpu["capability_families"]["model"] == {}
     assert gpu["capability_families"]["compute_capability"] == {}
     assert summary["provider_domains"]["p/d"]["gpu"]["AVAILABLE"] == 1
+
+
+def test_scheduler_exposes_the_same_fleet_intelligence_without_owning_capacity_state(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+    from lead_engine.compute_scheduler import ComputeScheduler
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    scheduler = ComputeScheduler(inventory)
+
+    direct = inventory.fleet_resource_intelligence(now=100.0)
+    exposed = scheduler.fleet_resource_intelligence(now=100.0)
+
+    assert exposed == direct
+
+
+def test_fleet_resource_intelligence_keeps_expired_resources_out_of_eligible_capacity(tmp_path):
+    from lead_engine.compute_inventory import ComputeInventory
+    from lead_engine.compute_provider import ProviderResourceSnapshot
+    from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="p",
+        domain_id="d",
+        observed_at=10.0,
+        expires_at=20.0,
+        ephemeral=True,
+        nodes=(NodeResource(
+            node_id="n",
+            architecture="x86_64",
+            cpu=CpuResource("n", 4, 16 * 1024**3),
+            gpus=(GpuResource(
+                node_id="n", gpu_id="0", gpu_uuid="u0",
+                vram_bytes=8 * 1024**3,
+                availability_state=ResourceState.AVAILABLE,
+            ),),
+        ),),
+        authentication_state="authenticated",
+    ))
+
+    summary = inventory.fleet_resource_intelligence(now=20.0)
+
+    assert summary["totals"]["gpu"]["AVAILABLE"] == 1
+    assert summary["totals"]["eligible"] == 0
+    assert summary["totals"]["gpu"]["available_known_vram_bytes"] == 0
