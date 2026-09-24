@@ -2140,9 +2140,9 @@ class ComputeCoordinator:
                     return False
                 connection.execute(
                     "UPDATE compute_execution_attempts "
-                    "SET verification=?,artifact_refs=?,checkpoint_ref=?,heartbeat_at=? "
+                    "SET verification=?,artifact_refs=?,checkpoint_ref=? "
                     "WHERE attempt_id=? AND generation=? AND status='leased'",
-                    (serialized, serialized_artifacts, serialized_checkpoint, now, attempt_id, generation),
+                    (serialized, serialized_artifacts, serialized_checkpoint, attempt_id, generation),
                 )
                 connection.commit()
                 return True
