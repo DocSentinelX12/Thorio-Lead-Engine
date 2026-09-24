@@ -121,6 +121,14 @@ Self-optimization is bounded by existing authority:
 
 The optimization loop is restart-safe because it derives from durable inventory, allocation, route, placement, and execution evidence rather than an in-memory learning model. New observations automatically participate in the next placement evaluation without a separate retraining job or fixed optimization horizon.
 
+## Massive-scale stress and production proof
+
+The fabric control plane is validated separately at fleet scale using the real durable inventory, fleet aggregation, resource-state transitions, provider/domain boundaries, and restart/reobservation paths. The scale proof models twelve independent supercomputer domains with 64 nodes and 8 GPUs per node, exercising 6,144 GPUs and 6,912 total inventory resources without imposing that number as a product limit.
+
+The proof verifies exact cardinality after repeated observation, persistence after database reopen, exact capacity changes after resource-state transitions, known VRAM accounting, and strict provider/domain isolation. It does not claim that CI possesses physical GPUs. Physical execution remains dependent on authenticated provider discovery and the existing physical verification gates.
+
+The GitHub validation workflow runs this scale proof as its own gate in addition to the existing GPU fabric regressions. The scale fixture is intentionally finite for CI execution, while the production architecture has no corresponding hard fleet-size ceiling.
+
 ## Change discipline
 
 Foundation changes are additive and independently testable. Existing queue, backlog, research, qualification, routing, Airtable, and revenue tests are regression gates before production participation.
