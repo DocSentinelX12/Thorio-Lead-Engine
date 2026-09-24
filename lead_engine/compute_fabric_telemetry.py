@@ -65,7 +65,11 @@ def extract_execution_metrics(verification: Mapping[str, Any]) -> tuple[dict[str
         gpu_binding = item.get("gpu_binding")
         physical_path = gpu_binding.get("planned_physical_path") if isinstance(gpu_binding, Mapping) else None
         path = physical_path if isinstance(physical_path, Mapping) else {}
-        metrics.append({"rank": int(item.get("rank", probe.get("rank", -1))), "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(), "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "", "transport": str(probe.get("network_transport") or "").strip() or None, "all_reduce_elapsed_ms": elapsed_ms, "physical_path": dict(path), "path_key": physical_path_key(path), "fabric_path_id": str(gpu_binding.get("observed_fabric_path_id") or "").strip(), "placement_id": str(verification.get("placement_id") or "").strip(), "execution_attempt_id": str(verification.get("execution_attempt_id") or verification.get("attempt_id") or "").strip(), "generation": verification.get("generation"), "workload_signature": dict(workload_signature), "workload_key": workload_performance_key(path, workload_signature)})
+        observed_paths = gpu_binding.get("observed_fabric_paths") if isinstance(gpu_binding, Mapping) else None
+        if not isinstance(observed_paths, (list, tuple)):
+            observed_paths = ()
+        observed_path_id = str(gpu_binding.get("observed_fabric_path_id") or "").strip() if isinstance(gpu_binding, Mapping) else ""
+        metrics.append({"rank": int(item.get("rank", probe.get("rank", -1))), "gpu_uuid": str(probe.get("gpu_uuid") or "").strip(), "node_id": str(gpu_binding.get("node_id") or "").strip() if isinstance(gpu_binding, Mapping) else "", "transport": str(probe.get("network_transport") or "").strip() or None, "all_reduce_elapsed_ms": elapsed_ms, "physical_path": dict(path), "path_key": physical_path_key(path), "fabric_path_id": observed_path_id, "observed_fabric_paths": tuple(dict(item) for item in observed_paths if isinstance(item, Mapping)), "placement_id": str(verification.get("placement_id") or "").strip(), "execution_attempt_id": str(verification.get("execution_attempt_id") or verification.get("attempt_id") or "").strip(), "generation": verification.get("generation"), "workload_signature": dict(workload_signature), "workload_key": workload_performance_key(path, workload_signature)})
     return tuple(sorted(metrics, key=lambda item: (int(item["rank"]), str(item["gpu_uuid"]))))
 
 
@@ -152,6 +156,31 @@ def summarize_route_health(samples: Any) -> dict[str, Any]:
     return result
 
 
+def reconcile_post_rebind_runtime(
+    rebind: Mapping[str, Any] | None,
+    observations: Any,
+) -> dict[str, Any]:
+    """Prove that a recovered generation actually used its selected standby."""
+    if not isinstance(rebind, Mapping) or not str(rebind.get("to_path_id") or "").strip():
+        return {"required": False, "converged": True, "reason": "no_pending_rebind"}
+    expected = str(rebind.get("to_path_id") or "").strip()
+    observed = []
+    for item in observations if isinstance(observations, (list, tuple)) else ():
+        if not isinstance(item, Mapping):
+            continue
+        path_id = str(item.get("fabric_path_id") or "").strip()
+        if path_id:
+            observed.append(path_id)
+    unique = tuple(dict.fromkeys(observed))
+    return {
+        "required": True,
+        "converged": expected in unique,
+        "expected_path_id": expected,
+        "observed_path_ids": unique,
+        "reason": "selected_standby_observed" if expected in unique else "selected_standby_not_observed",
+    }
+
+
 def extract_execution_path_observations(
     verification: Mapping[str, Any],
     *,
@@ -175,14 +204,14 @@ def extract_execution_path_observations(
             if not fabric_path_id:
                 continue
             evidence = {
-            "source": "observed_all_reduce",
-            "placement_id": str(metric.get("placement_id") or ""),
-            "execution_attempt_id": str(metric.get("execution_attempt_id") or ""),
-            "generation": metric.get("generation"),
-            "rank": int(metric["rank"]),
-            "gpu_uuid": str(metric.get("gpu_uuid") or ""),
-            "network_transport": metric.get("transport"),
-        }
+                "source": "observed_all_reduce",
+                "placement_id": str(metric.get("placement_id") or ""),
+                "execution_attempt_id": str(metric.get("execution_attempt_id") or ""),
+                "generation": metric.get("generation"),
+                "rank": int(metric["rank"]),
+                "gpu_uuid": str(metric.get("gpu_uuid") or ""),
+                "network_transport": metric.get("transport"),
+            }
             if observed_path.get("destination_rank") is not None:
                 evidence["destination_rank"] = observed_path.get("destination_rank")
             if observed_path.get("destination_gpu") is not None:
