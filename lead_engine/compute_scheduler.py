@@ -66,6 +66,10 @@ class ComputeScheduler:
         self.route_health_provider = route_health_provider or getattr(inventory, "fabric_route_health_index", None)
         self.physical_path_provider = physical_path_provider or getattr(inventory, "physical_paths", None)
 
+    def fleet_resource_intelligence(self, *, now: float | None = None) -> dict[str, Any]:
+        """Expose the durable fleet capacity view without changing scheduling authority."""
+        return self.inventory.fleet_resource_intelligence(now=now)
+
     def placement(self, requirements: ComputeRequirements) -> PlacementDecision:
         """Construct a complete verified placement without reserving resources."""
         if not isinstance(requirements, ComputeRequirements):
