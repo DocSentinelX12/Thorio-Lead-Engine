@@ -133,7 +133,7 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
         cuda_version = node.cuda_version
         gpu_state = "healthy" if gpu_resources else "no_gpu"
         nic_names = node.nic_names
-        physical_fabric_evidence = dict(snapshot.evidence or {})
+        physical_fabric_evidence = dict(getattr(snapshot, "evidence", None) or {})
     except NvidiaDiscoveryError as exc:
         gpu_state = "degraded"
         gpu_error = str(exc)[:2000]
