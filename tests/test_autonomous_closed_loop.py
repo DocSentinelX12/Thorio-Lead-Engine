@@ -60,3 +60,29 @@ def test_controller_exposes_closed_loop_evidence_without_replacing_authorities()
     assert report.closed_loop["state"] == "feedback_available"
     assert report.closed_loop["next_cycle_action"] == "reuse_observed_feedback"
     assert report.closed_loop["synthetic_values"] is False
+
+
+def test_coordinator_closed_loop_reads_durable_execution_feedback(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "token")
+    task_id = coordinator.enqueue({"compute_requirements": {"workload_class": "gpu_required"}})
+    now = 1000.0
+    with coordinator._connect() as connection:
+        connection.execute(
+            """INSERT INTO compute_fabric_execution_metrics(
+                   metric_id,task_id,attempt_id,generation,worker_id,rank,gpu_uuid,node_id,
+                   transport,all_reduce_elapsed_ms,observed_at,path_key,workload_key,placement_id,fabric_path_id
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("metric-1", task_id, "attempt-1", 1, "worker-1", 0, "GPU-1", "node-1",
+             "IB", 2.5, now, "path-1", "workload-1", "placement-1", "fabric-path-1"),
+        )
+        connection.commit()
+
+    evidence = coordinator.fabric_closed_loop_evidence()
+    assert evidence["state"] == "feedback_available"
+    assert evidence["execution_feedback_samples"] == 1
+    assert evidence["last_feedback_observed_at"] == now
+    assert evidence["feedback_is_durable"] is True
+    assert evidence["queued_tasks"] == 1
+    assert evidence["synthetic_values"] is False
