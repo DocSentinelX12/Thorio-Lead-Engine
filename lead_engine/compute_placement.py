@@ -500,6 +500,122 @@ class PlacementEvaluator:
             return (1, float("inf"), float("inf"), float("inf"), 0)
         return min((0, float(item.get("latency_delta_from_mean_ms", float("inf"))), float(item.get("failure_rate", float("inf"))), float(item.get("latest_latency_ms", float("inf"))), -int(item.get("sample_count", 0))) for item in observations)
 
+    def _candidate_continuous_optimization(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Prefer candidates that preserve exact future placement flexibility.
+
+        This is deliberately the final adaptive preference. Every candidate has
+        already passed hard physical validation and all existing observed
+        performance/health intelligence, so capacity preservation cannot override
+        stronger evidence.
+        """
+        from .compute_fabric_telemetry import derive_continuous_optimization_evidence
+
+        selected_keys = {str(row.get("resource_key") or "") for row in candidate}
+        required = int(self.requirements.gpu.gpu_count)
+        compatible = self._compatible_gpu_rows(self.rows)
+
+        by_scope: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for gpu in compatible:
+            key = (str(gpu.get("provider_id") or ""), str(gpu.get("domain_id") or ""))
+            by_scope.setdefault(key, []).append(gpu)
+
+        future_single_node_count = 0
+        future_feasible_domain_count = 0
+        for scope_rows in by_scope.values():
+            remaining = [
+                gpu for gpu in scope_rows
+                if str(gpu.get("resource_key") or "") not in selected_keys
+            ]
+            by_node: dict[str, list[dict[str, Any]]] = {}
+            for gpu in remaining:
+                by_node.setdefault(str(gpu.get("node_id") or ""), []).append(gpu)
+
+            future_single_node_count += sum(
+                1 for gpu_rows in by_node.values()
+                if len(gpu_rows) >= required
+            )
+
+            if self.requirements.workload_class.value == "multi_node_gpu":
+                node_domain_members: dict[str, set[str]] = {}
+                for node_id, gpu_rows in by_node.items():
+                    node_row_group = self._node_rows().get(node_id, [])
+                    node = self._node_candidate(node_id, node_row_group)
+                    if node is None:
+                        continue
+                    domains = self._network_domains(node)
+                    for domain in domains:
+                        node_domain_members.setdefault(str(domain), set()).add(node_id)
+                for domain, node_ids in node_domain_members.items():
+                    total = sum(len(by_node.get(node_id, ())) for node_id in node_ids)
+                    if len(node_ids) >= 2 and total >= required:
+                        future_feasible_domain_count += 1
+
+        current_performance = self._candidate_performance(candidate)
+        observed_latency = None
+        if current_performance and int(current_performance[0]) == 0:
+            try:
+                value = float(current_performance[1])
+                if value != float("inf"):
+                    observed_latency = value
+            except (TypeError, ValueError):
+                observed_latency = None
+
+        candidate_key = "|".join(self._stable_key(candidate))
+        optimization = derive_continuous_optimization_evidence((
+            {
+                "candidate_key": candidate_key,
+                "observed_latency_ms": observed_latency,
+                "future_feasible_domain_count": future_feasible_domain_count,
+                "future_single_node_count": future_single_node_count,
+                "sample_count": int(-current_performance[2]) if current_performance and len(current_performance) > 2 and current_performance[0] == 0 else 0,
+            },
+        ))
+        state = str(optimization.get("state") or "insufficient_evidence")
+        capacity_rank = (
+            0 if state in {"balanced", "capacity_preservation"} else
+            1 if state == "performance_preference" else 2
+        )
+        return (
+            capacity_rank,
+            -future_feasible_domain_count,
+            -future_single_node_count,
+            candidate_key,
+        )
+
+    def _candidate_continuous_optimization_details(self, candidates: list[tuple[dict[str, Any], ...]]) -> dict[str, Any]:
+        """Return the exact optimization evidence for all already-valid candidates."""
+        records = []
+        for candidate in candidates:
+            key = "|".join(self._stable_key(candidate))
+            rank = self._candidate_performance(candidate)
+            latency = None
+            samples = 0
+            if rank and int(rank[0]) == 0:
+                try:
+                    latency = float(rank[1])
+                    if latency == float("inf"):
+                        latency = None
+                except (TypeError, ValueError):
+                    latency = None
+                try:
+                    samples = int(-rank[2])
+                except (TypeError, ValueError):
+                    samples = 0
+            optimization_key = self._candidate_continuous_optimization(candidate)
+            records.append({
+                "candidate_key": key,
+                "observed_latency_ms": latency,
+                "sample_count": samples,
+                "optimization_key": optimization_key,
+                "capacity_rank": optimization_key[0],
+                "future_feasible_domain_count": -optimization_key[1],
+                "future_single_node_count": -optimization_key[2],
+            })
+        return {
+            "candidate_count": len(records),
+            "candidates": tuple(sorted(records, key=lambda item: item["candidate_key"])),
+        }
+
     def _stable_key(self, candidate: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
         return tuple(sorted(str(row["resource_key"]) for row in candidate))
 
