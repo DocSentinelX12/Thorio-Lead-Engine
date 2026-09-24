@@ -18,6 +18,7 @@ from .fabric_topology_runtime import FabricTopologyRuntimeError, verify_provider
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .nvidia_provider import CommandResult, NvidiaProvider
 from .lead_pipeline import process_leads
+from .gpu_execution_runtime import execute_gpu_workload
 from .lead_sort import sort_by_score
 
 
@@ -298,8 +299,13 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
         client._active_task=task["task_id"]
         try:
             payload=task["payload"]
-            if "compute_requirements" in payload and not isinstance(task.get("physical_allocation"),Mapping): raise ComputeWorkerError("coordinator did not assign a physical execution allocation")
-            result=execute_checkpointed_lead_prepare(client,task["task_id"],task["lease_token"],payload) if str(payload.get("kind") or "").strip()=="lead_prepare" else execute_compute_task(payload)
+            kind=str(payload.get("kind") or "").strip()
+            if ("compute_requirements" in payload or kind == "gpu_workload") and not isinstance(task.get("physical_allocation"),Mapping):
+                raise ComputeWorkerError("coordinator did not assign a physical execution allocation")
+            if kind == "gpu_workload":
+                result=execute_gpu_workload(client,task,heartbeat_seconds=heartbeat_seconds)
+            else:
+                result=execute_checkpointed_lead_prepare(client,task["task_id"],task["lease_token"],payload) if kind=="lead_prepare" else execute_compute_task(payload)
             client.complete(task["task_id"],task["lease_token"],result)
         except Exception as error:
             try: client.release(task["task_id"],task["lease_token"],str(error))
