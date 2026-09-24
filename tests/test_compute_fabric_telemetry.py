@@ -310,3 +310,166 @@ def test_predict_route_evidence_does_not_treat_non_latency_failures_as_latency_m
     ])
     assert result["state"] == "insufficient_evidence"
     assert result["latency_sample_count"] == 2
+
+
+def test_derive_multidimensional_workload_evidence_preserves_explicit_dimensions_only():
+    from lead_engine.compute_fabric_telemetry import derive_multidimensional_workload_evidence
+
+    samples = [
+        {
+            "observed_at": 100.0,
+            "latency_ms": 2.0,
+            "success": True,
+            "evidence": {
+                "workload_key": "workload-a",
+                "workload_signature": {
+                    "workload_class": "gpu_required",
+                    "collective": "all_reduce",
+                    "world_size": 8,
+                    "message_size_bytes": 4096,
+                    "dtype": "fp16",
+                    "reduce_op": "sum",
+                    "algorithm": "ring",
+                    "protocol": "simple",
+                },
+            },
+        },
+        {
+            "observed_at": 200.0,
+            "latency_ms": 2.2,
+            "success": True,
+            "evidence": {
+                "workload_key": "workload-b",
+                "workload_signature": {
+                    "workload_class": "gpu_required",
+                    "collective": "all_reduce",
+                    "world_size": 64,
+                    "message_size_bytes": 4096,
+                    "dtype": "bf16",
+                },
+            },
+        },
+    ]
+    result = derive_multidimensional_workload_evidence(samples)
+
+    assert result["state"] == "observed"
+    assert result["workload_combination_count"] == 2
+    by_key = {item["workload_key"]: item for item in result["by_workload_key"]}
+    assert by_key["workload-a"]["dimensions"]["world_size"] == 8
+    assert by_key["workload-a"]["dimensions"]["protocol"] == "simple"
+    assert by_key["workload-b"]["dimensions"]["world_size"] == 64
+    assert by_key["workload-b"]["dimensions"]["dtype"] == "bf16"
+    assert "protocol" not in by_key["workload-b"]["dimensions"]
+    assert "algorithm" not in by_key["workload-b"]["dimensions"]
+
+
+def test_derive_multidimensional_workload_evidence_keeps_sparse_and_unidentified_samples_neutral():
+    from lead_engine.compute_fabric_telemetry import derive_multidimensional_workload_evidence
+
+    result = derive_multidimensional_workload_evidence([
+        {
+            "observed_at": 100.0,
+            "latency_ms": 2.0,
+            "success": True,
+            "evidence": {
+                "workload_key": "workload-a",
+                "workload_signature": {"collective": "all_reduce"},
+            },
+        },
+        {
+            "observed_at": 200.0,
+            "latency_ms": 3.0,
+            "success": True,
+            "evidence": {"workload_key": "workload-a"},
+        },
+    ])
+
+    assert result["workload_combination_count"] == 1
+    assert result["by_workload_key"][0]["sample_count"] == 1
+    assert result["by_workload_key"][0]["dimensions"] == {"collective": "all_reduce"}
+
+
+def test_summarize_route_health_exposes_multidimensional_workload_evidence_without_cross_contamination():
+    summary = summarize_route_health([
+        {
+            "observed_at": 100.0,
+            "latency_ms": 2.0,
+            "success": True,
+            "evidence": {
+                "workload_key": "workload-a",
+                "workload_signature": {
+                    "collective": "all_reduce",
+                    "world_size": 8,
+                    "message_size_bytes": 1024,
+                },
+            },
+        },
+        {
+            "observed_at": 200.0,
+            "latency_ms": 3.0,
+            "success": True,
+            "evidence": {
+                "workload_key": "workload-b",
+                "workload_signature": {
+                    "collective": "all_gather",
+                    "world_size": 8,
+                    "message_size_bytes": 1024,
+                },
+            },
+        },
+    ])
+
+    assert summary["multidimensional_by_workload_key"]["workload-a"]["dimensions"] == {
+        "collective": "all_reduce",
+        "world_size": 8,
+        "message_size_bytes": 1024,
+    }
+    assert summary["multidimensional_by_workload_key"]["workload-b"]["dimensions"] == {
+        "collective": "all_gather",
+        "world_size": 8,
+        "message_size_bytes": 1024,
+    }
+
+
+def test_execution_path_observations_persist_explicit_workload_signature():
+    from lead_engine.compute_fabric_telemetry import extract_execution_path_observations
+
+    verification = {
+        "placement_id": "placement-1",
+        "execution_attempt_id": "attempt-1",
+        "generation": 2,
+        "workload_signature": {
+            "collective": "all_reduce",
+            "world_size": 8,
+            "message_size_bytes": 4096,
+            "dtype": "fp16",
+            "algorithm": "ring",
+            "protocol": "simple",
+        },
+        "process_evidence": [{
+            "rank": 0,
+            "gpu_binding": {
+                "planned_physical_path": {
+                    "node_id": "node-0",
+                    "gpu_uuid": "GPU-0",
+                    "nic": "nic0",
+                    "nic_pci_bus_id": "0000:01:00.0",
+                    "rdma_device": "rdma0",
+                    "rdma_port": 1,
+                    "rdma_pci_bus_id": "0000:02:00.0",
+                    "link_layer": "infiniband",
+                    "path_id": "fabric-path-1",
+                },
+                "observed_fabric_path_id": "fabric-path-1",
+            },
+            "probe": {
+                "rank": 0,
+                "gpu_uuid": "GPU-0",
+                "all_reduce_elapsed_ms": 2.5,
+                "network_transport": "IB",
+            },
+        }],
+    }
+
+    evidence = extract_execution_path_observations(verification, observed_at=300.0)[0]["evidence"]
+    assert evidence["workload_signature"] == verification["workload_signature"]
