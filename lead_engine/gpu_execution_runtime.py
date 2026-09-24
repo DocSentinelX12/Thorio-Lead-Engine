@@ -154,6 +154,12 @@ def execute_gpu_workload(
             raise GpuExecutionError(f"GPU workload process failed to start or timed out: {exc}") from exc
         return completed.returncode, completed.stdout, completed.stderr
 
+    checkpoint_path = payload.get("checkpoint_path")
+    expected_checkpoint_sha = str(payload.get("checkpoint_sha256") or "").strip()
+    if checkpoint_path and expected_checkpoint_sha:
+        checkpoint_ref = _artifact_ref(str(checkpoint_path), attempt_id=attempt_id, generation=generation, kind="checkpoint_input")
+        if checkpoint_ref["sha256"] != expected_checkpoint_sha:
+            raise GpuExecutionError("checkpoint content does not match the authorized checkpoint hash")
     identity = verify_allocated_nvidia_gpus(
         bindings,
         runner=lambda args: run_command(args, None, 15.0),
