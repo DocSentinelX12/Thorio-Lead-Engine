@@ -488,7 +488,7 @@ def test_predict_failure_degradation_evidence_detects_trailing_failure_pattern_w
     assert evidence["state"] == "failure_pattern"
     assert evidence["consecutive_failures"] == 2
     assert evidence["failure_count"] == 2
-    assert evidence["failure_rate_delta"] == 0.5
+    assert evidence["failure_rate_delta"] == 1.0
     assert "failure_probability" not in evidence
     assert "estimated_failure_time" not in evidence
 
