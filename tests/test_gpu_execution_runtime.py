@@ -212,4 +212,4 @@ def test_gpu_verification_persists_immutable_artifact_and_checkpoint_refs(tmp_pa
     attempt = coordinator.execution_attempt(attempt_id)
     assert attempt["artifact_refs"] == verification["artifact_refs"]
     assert json.loads(attempt["checkpoint_ref"]) == verification["checkpoint_ref"]
-\n
+
