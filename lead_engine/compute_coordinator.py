@@ -93,6 +93,22 @@ class ComputeCoordinator:
     def fabric_recovery_history(self, attempt_id: str) -> list[Dict[str, Any]]:
         return self.compute_fabric_recovery.coordinator.fabric_recovery_history(attempt_id)
 
+    def drain_worker(self, worker_id: str, reason: str = "") -> bool:
+        with self._lock:
+            return self.pool.drain_worker(worker_id, reason)
+
+    def quarantine_worker(self, worker_id: str, reason: str = "") -> bool:
+        with self._lock:
+            return self.pool.quarantine_worker(worker_id, reason)
+
+    def revoke_worker(self, worker_id: str, reason: str = "") -> bool:
+        with self._lock:
+            return self.pool.revoke_worker(worker_id, reason)
+
+    def readmit_worker(self, worker_id: str, reason: str = "") -> bool:
+        with self._lock:
+            return self.pool.readmit_worker(worker_id, reason)
+
     def register_compute_provider(self, provider: Any, *, domain_id: str) -> None:
         """Register an authorized physical compute provider with the fabric control plane."""
         with self._lock:
@@ -3007,6 +3023,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, self.server.coordinator.register_worker(identity))
             elif self.path == "/workers/heartbeat":
                 self._send(200, {"ok": self.server.coordinator.heartbeat(str(body["worker_id"]), int(body.get("current_load", 0)))})
+            elif self.path == "/workers/lifecycle":
+                action = str(body["action"]).strip().lower()
+                worker_id = str(body["worker_id"])
+                reason = str(body.get("reason", ""))
+                actions = {"drain": self.server.coordinator.drain_worker, "quarantine": self.server.coordinator.quarantine_worker, "revoke": self.server.coordinator.revoke_worker, "readmit": self.server.coordinator.readmit_worker}
+                if action not in actions: raise ValueError("unsupported worker lifecycle action")
+                ok = actions[action](worker_id, reason)
+                self._send(200 if ok else 404, {"ok": ok, "worker_id": worker_id, "action": action})
             elif self.path == "/fabric/assignments":
                 self._send(200, {"assignments": self.server.coordinator.fabric_assignments(str(body["worker_id"]))})
             elif self.path == "/fabric/fleet":
