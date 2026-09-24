@@ -4,7 +4,7 @@
 
 **Goal:** Build a continuously operating, provider-neutral software control plane that discovers, provisions, verifies, coordinates, executes, monitors, and recovers an externally sourced fleet of GPU compute infrastructure, using the initial 12-supercomputer-class construction target as the physical foundation without imposing a permanent fleet-size ceiling.
 
-**Architecture:** The system builds the compute fabric itself through legitimate external compute infrastructure. It does not depend on user-owned hardware, user-supplied machines, or a phone as a compute component. External capacity may come from NVIDIA and other legitimate providers, cloud GPU infrastructure, compute marketplaces, distributed compute providers, and eligible free/no-cost capacity where legitimately available; paid external capacity may be used when necessary and authorized. Provider acquisition is an infrastructure boundary, while physical discovery, authenticated enrollment, topology, placement, execution, durability, recovery, and feedback remain under the existing compute-fabric architecture.
+**Architecture:** The system builds the compute fabric itself through legitimate external compute infrastructure. It does not depend on user-owned hardware, user-supplied machines, or a phone as a compute component. External capacity may come from NVIDIA and other legitimate providers, cloud GPU infrastructure, compute marketplaces, distributed compute providers, and eligible free/no-cost capacity where legitimately available. **Paid capacity is permanently out of scope.** Provider acquisition is an infrastructure boundary, while physical discovery, authenticated enrollment, topology, placement, execution, durability, recovery, and feedback remain under the existing compute-fabric architecture.
 
 The existing durable Thorio control plane remains authoritative for business work. The compute fabric remains an execution substrate beneath it. No second scheduler, queue, allocator, worker system, telemetry authority, or business-truth system is introduced.
 
@@ -26,9 +26,8 @@ The acquisition layer MUST:
 
 - discover legitimate external GPU-capable infrastructure through supported provider interfaces and APIs;
 - support NVIDIA infrastructure while retaining the provider abstraction needed for additional legitimate providers;
-- prefer eligible free/no-cost capacity when available and permitted;
-- fall back to paid external capacity when required and authorized by the applicable acquisition policy;
-- represent provider quotas, availability, pricing, lifetime, and other external constraints as observed provider facts rather than pretending capacity is unlimited;
+- use only eligible free/no-cost capacity when legitimately available and permitted;
+- represent provider quotas, availability, lifetime, and other external constraints as observed provider facts rather than pretending capacity is unlimited;
 - never advertise capacity merely because a provider API or configuration claims it exists;
 - pass acquired workers through authenticated enrollment and physical discovery before they become trusted GPU inventory;
 - preserve work durably when suitable external capacity is unavailable instead of deleting, fabricating completion, or creating a second business result;
@@ -132,7 +131,7 @@ The following sequence is authoritative. A later stage cannot promote an unverif
 - A cycle/batch size is not a backlog ceiling.
 - Preserve unfinished work durably when capacity disappears.
 - Retries must retain task, generation, attempt, allocation, and business-authority boundaries so compute retries cannot silently create duplicate business results.
-- Provider constraints are external facts. "No ceiling" means no arbitrary architectural ceiling, not a claim that external providers have unlimited free capacity.
+- Provider constraints are external facts. "No ceiling" means no arbitrary architectural ceiling, not a claim that external providers have unlimited free capacity. No paid fallback exists.
 - Every production claim requires fresh test or workflow evidence.
 - Use surgical changes and inspect existing capability before adding anything.
 
@@ -154,7 +153,7 @@ No stage is considered complete because simulated code merely looks correct. A p
 
 1. **Provider strategy:** provider-neutral architecture, NVIDIA-capable first, extensible to other legitimate providers.
 2. **External compute:** the system acquires/provisions external infrastructure. User-owned hardware is not a prerequisite.
-3. **Capacity preference:** eligible free/no-cost capacity is preferred; paid external capacity is an authorized fallback when necessary.
+3. **Cost policy:** **zero paid spend, permanently.** The system must use only legitimately available free/no-cost external compute and free/no-cost infrastructure. No paid provider, paid API, paid compute reservation, paid authorization, paid subscription, paid fallback, or payment-dependent capability may be introduced anywhere in this architecture.
 4. **Distributed transport:** NCCL is the verified NVIDIA distributed-communication foundation where applicable.
 5. **12-node target:** twelve supercomputer-class compute domains are the initial physical construction/proof target, not a permanent limit.
 6. **Fleet growth:** no arbitrary fleet-size ceiling.
