@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
+from .free_compute_acquisition import FreeComputeAcquisitionManager, FreeComputeAcquisitionStore, FreeComputeProvider
 from .compute_fabric_telemetry import aggregate_execution_metrics, derive_autonomous_closed_loop_evidence, extract_execution_metrics, extract_execution_path_observations
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
@@ -47,6 +48,7 @@ class ComputeCoordinator:
         self.compute_fabric = ComputeFabricOrchestrator(self.inventory, scheduler=self.compute_scheduler)
         self.compute_fabric_recovery = ComputeFabricRecoverySupervisor(self, fabric=self.compute_fabric)
         self.compute_fabric_controller = ComputeFabricController(self, fabric=self.compute_fabric)
+        self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path))
         self._lock = threading.RLock()
         self._initialize_tasks()
 
@@ -95,6 +97,26 @@ class ComputeCoordinator:
         """Register an authorized physical compute provider with the fabric control plane."""
         with self._lock:
             self.compute_fabric.registry.register(provider, domain_id=domain_id)
+
+    def register_free_compute_provider(self, provider: FreeComputeProvider) -> None:
+        """Register one authorized provider adapter for zero-cost capacity acquisition."""
+        with self._lock:
+            self.free_compute_acquisition.register(provider)
+
+    def discover_free_compute(self) -> Dict[str, Any]:
+        """Discover legitimate no-cost external capacity without changing inventory."""
+        with self._lock:
+            return self.free_compute_acquisition.discover()
+
+    def acquire_free_compute(self, offer: Any) -> Any:
+        """Acquire one observed no-cost offer and return its enrollment handoff."""
+        with self._lock:
+            return self.free_compute_acquisition.acquire(offer)
+
+    def free_compute_status(self) -> Dict[str, Any]:
+        """Return durable acquisition evidence without inventing capacity."""
+        with self._lock:
+            return self.free_compute_acquisition.status()
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
