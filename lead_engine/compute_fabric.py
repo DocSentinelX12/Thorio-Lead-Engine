@@ -7,7 +7,7 @@ the durable physical resource record; ComputeScheduler remains the placement pol
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import time
 from typing import Any, Mapping
 
@@ -37,6 +37,7 @@ class FabricCycleReport:
     scheduled_allocations: int
     reconciled_attempts: int = 0
     requeued_tasks: int = 0
+    continuous_optimization: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,7 @@ class ComputeFabricOrchestrator:
             observed=tuple(observations),
             eligible_resources=len(self.inventory.eligible(now=self._clock())),
             scheduled_allocations=0,
+            continuous_optimization=self.continuous_optimization(),
         )
 
     def allocate(self, requirements: ComputeRequirements, *, allocation_id: str) -> ComputeAllocation:
@@ -169,6 +171,22 @@ class ComputeFabricOrchestrator:
     def release(self, resource_keys: list[str] | tuple[str, ...]) -> int:
         """Return physical resources through the existing inventory-backed scheduler."""
         return self.scheduler.release(resource_keys)
+
+    def continuous_optimization(self) -> dict[str, Any]:
+        """Expose the current closed-loop optimization evidence without mutation."""
+        fleet = self.inventory.fleet_resource_intelligence(now=self._clock())
+        return {
+            "state": "observed" if fleet["totals"]["eligible"] > 0 else "insufficient_evidence",
+            "fleet": fleet,
+            "policy": {
+                "placement_recomputed_from_current_inventory": True,
+                "observed_execution_feedback_is_reused": True,
+                "hard_validation_remains_authoritative": True,
+                "compute_allocation_remains_authoritative": True,
+                "synthetic_performance_values": False,
+                "synthetic_capacity_values": False,
+            },
+        }
 
     def health(self) -> Mapping[str, Any]:
         """Expose control-plane fabric state without inventing capacity."""
