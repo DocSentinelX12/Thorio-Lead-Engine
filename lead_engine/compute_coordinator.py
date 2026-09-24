@@ -70,6 +70,24 @@ class ComputeCoordinator:
             )
             return asdict(action)
 
+    def _pending_fabric_rebind(self, task_id: str) -> Dict[str, Any] | None:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT evidence FROM compute_fabric_recovery_events
+                   WHERE task_id=? AND phase='standby_rebind_selected'
+                   ORDER BY created_at DESC, recovery_id DESC""",
+                (str(task_id),),
+            ).fetchall()
+        for row in rows:
+            try:
+                evidence = json.loads(row["evidence"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            rebind = evidence.get("fabric_rebind") if isinstance(evidence, dict) else None
+            if isinstance(rebind, dict) and str(rebind.get("to_path_id") or "").strip():
+                return dict(rebind)
+        return None
+
     def fabric_recovery_history(self, attempt_id: str) -> list[Dict[str, Any]]:
         return self.compute_fabric_recovery.coordinator.fabric_recovery_history(attempt_id)
 
@@ -1054,6 +1072,42 @@ class ComputeCoordinator:
                         observed_at=now,
                         evidence=path_failure_evidence,
                     )
+                    placement_id = str(attempt_to_release.get("placement_id") or "").strip() if attempt_to_release else ""
+                    placement = self.inventory.placement(placement_id) if placement_id else None
+                    if placement is not None:
+                        rebind = self._fabric_rebind_contract(
+                            placement,
+                            tuple(self.inventory.physical_paths()),
+                            self.inventory.fabric_route_health_index(),
+                            failed_path_id=fabric_path_id,
+                            attempt_id=attempt_id,
+                            generation=int(generation),
+                        )
+                        rebind_evidence = {
+                            "source": "exact_path_failover",
+                            "failed_path_id": fabric_path_id,
+                            "fabric_rebind": rebind,
+                            "attempt_id": attempt_id,
+                            "generation": int(generation),
+                            "placement_id": placement_id,
+                        }
+                        with self._connect() as connection:
+                            self._record_fabric_recovery_event(
+                                connection,
+                                task_id=str(attempt_to_release["task_id"]),
+                                attempt_id=attempt_id,
+                                generation=int(generation),
+                                failure_class=failure_class,
+                                phase="standby_rebind_selected",
+                                reason=(
+                                    f"selected standby {rebind['to_path_id']} for next generation"
+                                    if rebind.get("to_path_id") else
+                                    "no independently verified standby available for next generation"
+                                ),
+                                evidence=rebind_evidence,
+                                created_at=now,
+                            )
+                            connection.commit()
             self._release_physical_allocation(attempt_to_release, f"fabric recovery: {failure_class}")
             if worker_to_release and not worker_to_release.startswith("fabric:"):
                 self.pool.release_task_slot(worker_to_release)
