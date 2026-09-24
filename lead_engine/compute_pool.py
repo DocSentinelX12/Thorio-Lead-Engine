@@ -332,9 +332,16 @@ class ComputePool:
         if not row:
             return False
         evidence = json.loads(row["physical_fabric_evidence_json"] or "{}")
-        if row["gpu_discovery_state"] not in {"healthy", "degraded", "no_gpu"} or not isinstance(evidence, dict) or not evidence:
-            return False
         if float(row["last_heartbeat"] or 0) <= 0:
+            return False
+        # CPU-only workers have no physical GPU fabric to attest. GPU workers
+        # require persisted physical evidence and a successful discovery state.
+        gpu_resources = json.loads(row["gpu_resources_json"] or "[]")
+        if gpu_resources and (
+            row["gpu_discovery_state"] not in {"healthy", "degraded", "no_gpu"}
+            or not isinstance(evidence, dict)
+            or not evidence
+        ):
             return False
         return self.set_worker_status(worker_id, "ready", reason)
 
