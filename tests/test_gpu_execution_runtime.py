@@ -213,3 +213,24 @@ def test_gpu_verification_persists_immutable_artifact_and_checkpoint_refs(tmp_pa
     assert attempt["artifact_refs"] == verification["artifact_refs"]
     assert json.loads(attempt["checkpoint_ref"]) == verification["checkpoint_ref"]
 
+def test_gpu_process_termination_targets_process_group_on_posix(monkeypatch):
+    from lead_engine.gpu_execution_runtime import _terminate_process_tree
+
+    class Process:
+        pid = 4321
+        terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+    process = Process()
+    killed = []
+    monkeypatch.setattr("lead_engine.gpu_execution_runtime.os.name", "posix")
+    monkeypatch.setattr("lead_engine.gpu_execution_runtime.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr("lead_engine.gpu_execution_runtime.os.killpg", lambda pgid, sig: killed.append((pgid, sig)))
+
+    _terminate_process_tree(process)
+
+    assert killed == [(4321, __import__("signal").SIGTERM)]
+    assert process.terminated is False
+\n
