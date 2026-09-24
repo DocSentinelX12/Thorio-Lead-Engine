@@ -179,6 +179,8 @@ class ComputePool:
                 status TEXT NOT NULL DEFAULT 'ready', last_heartbeat REAL NOT NULL,
                 current_load INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL)""")
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(compute_workers)").fetchall()}
+            if "status_reason" not in columns:
+                connection.execute("ALTER TABLE compute_workers ADD COLUMN status_reason TEXT NOT NULL DEFAULT ''")
             migrations = {
                 "gpu_resources_json": "ALTER TABLE compute_workers ADD COLUMN gpu_resources_json TEXT NOT NULL DEFAULT '[]'",
                 "driver_version": "ALTER TABLE compute_workers ADD COLUMN driver_version TEXT",
@@ -241,7 +243,8 @@ class ComputePool:
                 nccl_version=excluded.nccl_version,nic_names_json=excluded.nic_names_json,
                 gpu_discovery_state=excluded.gpu_discovery_state,gpu_discovery_error=excluded.gpu_discovery_error,
                 domain_id=excluded.domain_id,physical_fabric_evidence_json=excluded.physical_fabric_evidence_json,
-                status='ready',last_heartbeat=excluded.last_heartbeat,updated_at=excluded.updated_at""",
+                status=CASE WHEN compute_workers.status IN ('quarantined','revoked') THEN compute_workers.status ELSE 'ready' END,
+                last_heartbeat=excluded.last_heartbeat,updated_at=excluded.updated_at""",
                 (identity.worker_id, identity.hostname, identity.architecture, identity.cpu_count, identity.memory_mb,
                  json.dumps(identity.capabilities), self._gpu_json(identity.gpu_resources), identity.driver_version,
                  identity.cuda_version, identity.nccl_version, json.dumps(identity.nic_names), identity.gpu_discovery_state,
@@ -258,7 +261,7 @@ class ComputePool:
             if current_load is None:
                 cursor = connection.execute("UPDATE compute_workers SET last_heartbeat=?,updated_at=? WHERE worker_id=?", (now, now, worker_id))
             else:
-                cursor = connection.execute("UPDATE compute_workers SET last_heartbeat=?,current_load=?,status='ready',updated_at=? WHERE worker_id=?", (now, current_load, now, worker_id))
+                cursor = connection.execute("UPDATE compute_workers SET last_heartbeat=?,current_load=?,status=CASE WHEN status IN ('ready','stale') THEN 'ready' ELSE status END,updated_at=? WHERE worker_id=?", (now, current_load, now, worker_id))
             connection.commit()
             return cursor.rowcount == 1
 
@@ -297,6 +300,29 @@ class ComputePool:
             item["domain_id"] = str(item.get("domain_id") or item["worker_id"])
             result.append(item)
         return result
+
+    def set_worker_status(self, worker_id: str, status: str, reason: str = "") -> bool:
+        """Durably drain, quarantine, revoke, or readmit one worker."""
+        allowed = {"ready", "draining", "quarantined", "revoked"}
+        normalized = str(status).strip().lower()
+        if normalized not in allowed:
+            raise ValueError(f"unsupported worker status: {status}")
+        with self._connect() as connection:
+            cursor = connection.execute("UPDATE compute_workers SET status=?,status_reason=?,updated_at=? WHERE worker_id=?", (normalized, str(reason)[:4000], time.time(), worker_id))
+            connection.commit()
+            return cursor.rowcount == 1
+
+    def drain_worker(self, worker_id: str, reason: str = "") -> bool:
+        return self.set_worker_status(worker_id, "draining", reason)
+
+    def quarantine_worker(self, worker_id: str, reason: str = "") -> bool:
+        return self.set_worker_status(worker_id, "quarantined", reason)
+
+    def revoke_worker(self, worker_id: str, reason: str = "") -> bool:
+        return self.set_worker_status(worker_id, "revoked", reason)
+
+    def readmit_worker(self, worker_id: str, reason: str = "") -> bool:
+        return self.set_worker_status(worker_id, "ready", reason)
 
     def reserve_task_slot(self, worker_id: str) -> bool:
         now = time.time()
