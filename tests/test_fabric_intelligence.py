@@ -412,3 +412,89 @@ def test_fleet_resource_intelligence_keeps_expired_resources_out_of_eligible_cap
     assert summary["totals"]["gpu"]["AVAILABLE"] == 1
     assert summary["totals"]["eligible"] == 0
     assert summary["totals"]["gpu"]["available_known_vram_bytes"] == 0
+
+
+def test_continuous_self_optimization_preserves_future_single_node_flexibility():
+    from lead_engine.compute_placement import PlacementEvaluator
+    from lead_engine.compute_resources import ComputeRequirements, WorkloadClass
+
+    requirements = ComputeRequirements(
+        workload_class=WorkloadClass.GPU_REQUIRED,
+        performance_signature=(),
+        gpu={"gpu_count": 1},
+    )
+    def gpu(key, node):
+        return {
+            "resource_key": key,
+            "provider_id": "p",
+            "domain_id": "d",
+            "node_id": node,
+            "resource_type": "gpu",
+            "payload_json": json.dumps({"gpu_uuid": key, "gpu_id": key}),
+            "evidence_json": "{}",
+            "state": "available",
+            "expires_at": None,
+        }
+
+    rows = [
+        gpu("a0", "node-a"),
+        gpu("a1", "node-a"),
+        gpu("b0", "node-b"),
+    ]
+    evaluator = object.__new__(PlacementEvaluator)
+    evaluator.scheduler = type("Scheduler", (), {"_gpu_matches": staticmethod(lambda row, _req: True)})()
+    evaluator.requirements = requirements
+    evaluator.rows = rows
+    evaluator.performance_history = {}
+    evaluator.route_health = {}
+    evaluator.physical_paths = ()
+
+    records = evaluator._continuous_optimization_records([
+        (rows[0],),
+        (rows[2],),
+    ])
+
+    first = next(item for item in records if item["candidate_key"] == "a0")
+    second = next(item for item in records if item["candidate_key"] == "b0")
+
+    assert first["future_single_node_count"] == 2
+    assert second["future_single_node_count"] == 1
+    assert first["preferred"] is True
+    assert second["preferred"] is False
+
+
+def test_continuous_self_optimization_is_final_and_cannot_override_observed_performance():
+    from lead_engine.compute_placement import PlacementEvaluator
+
+    evaluator = object.__new__(PlacementEvaluator)
+    candidate_a = ({"resource_key": "a"},)
+    candidate_b = ({"resource_key": "b"},)
+    evaluator._candidate_performance = lambda candidate: (
+        (0, 2.0, -8) if candidate == candidate_a else (0, 1.0, -8)
+    )
+
+    records = (
+        {
+            "candidate_key": "a",
+            "preferred": True,
+            "future_feasible_domain_count": 10,
+            "future_single_node_count": 10,
+        },
+        {
+            "candidate_key": "b",
+            "preferred": False,
+            "future_feasible_domain_count": 1,
+            "future_single_node_count": 1,
+        },
+    )
+
+    ranked = sorted(
+        (candidate_a, candidate_b),
+        key=lambda candidate: (
+            evaluator._candidate_performance(candidate),
+            evaluator._candidate_continuous_optimization(candidate, records),
+            tuple(row["resource_key"] for row in candidate),
+        ),
+    )
+
+    assert ranked[0] == candidate_b
