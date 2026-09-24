@@ -473,3 +473,118 @@ def test_execution_path_observations_persist_explicit_workload_signature():
 
     evidence = extract_execution_path_observations(verification, observed_at=300.0)[0]["evidence"]
     assert evidence["workload_signature"] == verification["workload_signature"]
+
+
+def test_predict_failure_degradation_evidence_detects_trailing_failure_pattern_without_prediction_score():
+    from lead_engine.compute_fabric_telemetry import predict_failure_degradation_evidence
+
+    evidence = predict_failure_degradation_evidence([
+        {"observed_at": 1.0, "latency_ms": 2.0, "success": True},
+        {"observed_at": 2.0, "latency_ms": 2.1, "success": True},
+        {"observed_at": 3.0, "latency_ms": 2.2, "success": False},
+        {"observed_at": 4.0, "latency_ms": None, "success": False},
+    ])
+
+    assert evidence["state"] == "failure_pattern"
+    assert evidence["consecutive_failures"] == 2
+    assert evidence["failure_count"] == 2
+    assert evidence["failure_rate_delta"] == 0.5
+    assert "failure_probability" not in evidence
+    assert "estimated_failure_time" not in evidence
+
+
+def test_predict_failure_degradation_evidence_detects_latency_degradation_without_failures():
+    from lead_engine.compute_fabric_telemetry import predict_failure_degradation_evidence
+
+    evidence = predict_failure_degradation_evidence([
+        {"observed_at": 1.0, "latency_ms": 2.0, "success": True},
+        {"observed_at": 2.0, "latency_ms": 3.0, "success": True},
+        {"observed_at": 3.0, "latency_ms": 4.0, "success": True},
+        {"observed_at": 4.0, "latency_ms": 5.0, "success": True},
+    ])
+
+    assert evidence["state"] == "degrading"
+    assert evidence["latency_degrading"] is True
+    assert evidence["failure_count"] == 0
+
+
+def test_predict_failure_degradation_evidence_marks_consistent_success_as_stable():
+    from lead_engine.compute_fabric_telemetry import predict_failure_degradation_evidence
+
+    evidence = predict_failure_degradation_evidence([
+        {"observed_at": 1.0, "latency_ms": 3.0, "success": True},
+        {"observed_at": 2.0, "latency_ms": 3.1, "success": True},
+        {"observed_at": 3.0, "latency_ms": 2.9, "success": True},
+        {"observed_at": 4.0, "latency_ms": 3.0, "success": True},
+    ])
+
+    assert evidence["state"] == "stable"
+    assert evidence["failure_count"] == 0
+    assert evidence["consecutive_successes"] == 4
+
+
+def test_predict_failure_degradation_evidence_keeps_sparse_and_noisy_history_insufficient():
+    from lead_engine.compute_fabric_telemetry import predict_failure_degradation_evidence
+
+    sparse = predict_failure_degradation_evidence([
+        {"observed_at": 1.0, "latency_ms": 3.0, "success": True},
+        {"observed_at": 2.0, "latency_ms": None, "success": False},
+    ])
+    noisy = predict_failure_degradation_evidence([
+        {"observed_at": 1.0, "latency_ms": 2.0, "success": True},
+        {"observed_at": 2.0, "latency_ms": 8.0, "success": True},
+        {"observed_at": 3.0, "latency_ms": 3.0, "success": True},
+        {"observed_at": 4.0, "latency_ms": 7.0, "success": True},
+    ])
+
+    assert sparse["state"] == "insufficient_evidence"
+    assert noisy["state"] == "insufficient_evidence"
+    assert "failure_probability" not in noisy
+
+
+def test_predict_failure_degradation_evidence_preserves_exact_path_workload_and_explicit_failure_domain():
+    from lead_engine.compute_fabric_telemetry import predict_failure_degradation_evidence
+
+    samples = [
+        {"observed_at": 1.0, "latency_ms": 2.0, "success": True,
+         "evidence": {"fabric_path_id": "path-a", "workload_key": "work-a", "failure_domain": "fabric:ib0"}},
+        {"observed_at": 2.0, "latency_ms": 3.0, "success": True,
+         "evidence": {"fabric_path_id": "path-a", "workload_key": "work-a", "failure_domain": "fabric:ib0"}},
+        {"observed_at": 3.0, "latency_ms": 4.0, "success": True,
+         "evidence": {"fabric_path_id": "path-a", "workload_key": "work-a", "failure_domain": "fabric:ib0"}},
+        {"observed_at": 4.0, "latency_ms": 5.0, "success": True,
+         "evidence": {"fabric_path_id": "path-a", "workload_key": "work-a", "failure_domain": "fabric:ib0"}},
+    ]
+
+    evidence = predict_failure_degradation_evidence(samples)
+
+    assert evidence["state"] == "degrading"
+    assert evidence["failure_domains"] == ("fabric:ib0",)
+    assert all(item["evidence"]["fabric_path_id"] == "path-a" for item in evidence["evidence"]["observations"])
+    assert all(item["evidence"]["workload_key"] == "work-a" for item in evidence["evidence"]["observations"])
+
+
+def test_summarize_route_health_exposes_predictive_failure_by_workload_key_without_cross_contamination():
+    from lead_engine.compute_fabric_telemetry import summarize_route_health
+
+    summary = summarize_route_health([
+        {"observed_at": 1.0, "latency_ms": 2.0, "success": True,
+         "evidence": {"workload_key": "a", "fabric_path_id": "path-a"}},
+        {"observed_at": 2.0, "latency_ms": 2.0, "success": True,
+         "evidence": {"workload_key": "a", "fabric_path_id": "path-a"}},
+        {"observed_at": 3.0, "latency_ms": 2.0, "success": False,
+         "evidence": {"workload_key": "a", "fabric_path_id": "path-a"}},
+        {"observed_at": 4.0, "latency_ms": 2.0, "success": False,
+         "evidence": {"workload_key": "a", "fabric_path_id": "path-a"}},
+        {"observed_at": 1.0, "latency_ms": 3.0, "success": True,
+         "evidence": {"workload_key": "b", "fabric_path_id": "path-a"}},
+        {"observed_at": 2.0, "latency_ms": 3.0, "success": True,
+         "evidence": {"workload_key": "b", "fabric_path_id": "path-a"}},
+        {"observed_at": 3.0, "latency_ms": 3.0, "success": True,
+         "evidence": {"workload_key": "b", "fabric_path_id": "path-a"}},
+        {"observed_at": 4.0, "latency_ms": 3.0, "success": True,
+         "evidence": {"workload_key": "b", "fabric_path_id": "path-a"}},
+    ])
+
+    assert summary["predictive_failure_by_workload_key"]["a"]["state"] == "failure_pattern"
+    assert summary["predictive_failure_by_workload_key"]["b"]["state"] == "stable"
