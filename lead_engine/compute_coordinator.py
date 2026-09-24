@@ -2707,7 +2707,7 @@ class ComputeCoordinator:
                          ON a.attempt_id=p.attempt_id
                         AND a.generation=p.generation
                        WHERE p.attempt_id=? AND p.generation=? AND p.worker_id=?
-                         AND p.status IN ('bound','active','running')
+                         AND p.status IN ('bound','active','launching','running')
                          AND p.heartbeat_at > ?
                          AND a.status='leased'
                          AND a.lease_token_digest=?
@@ -2734,7 +2734,7 @@ class ComputeCoordinator:
                            status=CASE WHEN status='running' THEN 'running' ELSE 'active' END,
                            last_error=''
                        WHERE attempt_id=? AND generation=? AND worker_id=?
-                       AND status IN ('bound','active','running')
+                       AND status IN ('bound','active','launching','running')
                        AND EXISTS (
                            SELECT 1 FROM compute_execution_attempts a
                            WHERE a.attempt_id=compute_execution_participants.attempt_id
