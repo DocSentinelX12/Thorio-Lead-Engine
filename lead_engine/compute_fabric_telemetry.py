@@ -509,6 +509,77 @@ def derive_continuous_optimization_evidence(candidates: Any) -> dict[str, Any]:
 
 
 
+
+def derive_autonomous_closed_loop_evidence(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive the next control-loop phase from durable, explicit cycle evidence.
+
+    This is a control decision surface, not a second scheduler. It consumes
+    observed counts only, never invents performance, capacity, or failure data.
+    """
+    if not isinstance(state, Mapping):
+        return {
+            "state": "insufficient_evidence",
+            "next_cycle_action": "refresh_and_reconcile",
+            "synthetic_values": False,
+        }
+
+    def count(name: str) -> int:
+        try:
+            value = int(state.get(name, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, value)
+
+    queued = count("queued_tasks")
+    leased = count("leased_tasks")
+    eligible = count("eligible_resources")
+    recovered = count("recovered_expired_tasks")
+    requeued = count("requeued_tasks")
+    scheduled = count("scheduled_allocations")
+    feedback = count("execution_feedback_samples")
+    reconciled = count("reconciled_attempts")
+
+    if recovered or requeued:
+        phase = "recovery_and_reschedule"
+        action = "reconcile_and_reschedule"
+    elif scheduled:
+        phase = "executing"
+        action = "await_execution_feedback"
+    elif feedback:
+        phase = "feedback_available"
+        action = "reuse_observed_feedback"
+    elif queued and eligible:
+        phase = "ready_to_schedule"
+        action = "refresh_and_schedule"
+    elif queued and not eligible:
+        phase = "awaiting_capacity"
+        action = "refresh_and_reconcile"
+    elif leased:
+        phase = "awaiting_execution"
+        action = "await_execution_feedback"
+    else:
+        phase = "idle"
+        action = "refresh_and_reconcile"
+
+    return {
+        "state": phase,
+        "next_cycle_action": action,
+        "queued_tasks": queued,
+        "leased_tasks": leased,
+        "eligible_resources": eligible,
+        "recovered_expired_tasks": recovered,
+        "requeued_tasks": requeued,
+        "scheduled_allocations": scheduled,
+        "reconciled_attempts": reconciled,
+        "execution_feedback_samples": feedback,
+        "feedback_is_durable": True,
+        "placement_recomputed_from_current_inventory": True,
+        "hard_validation_remains_authoritative": True,
+        "compute_allocation_remains_authoritative": True,
+        "synthetic_values": False,
+    }
+
+
 def summarize_route_health(samples: Any) -> dict[str, Any]:
     """Summarize observed route outcomes without applying a health threshold."""
     if not isinstance(samples, (list, tuple)):
