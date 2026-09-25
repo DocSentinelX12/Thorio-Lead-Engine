@@ -496,3 +496,77 @@ def test_physical_fabric_evidence_records_provenance_and_conflicts_without_overw
             {"source": "sysfs", "value": 1},
         ],
     }]
+
+
+def test_physical_fabric_graph_exposes_explicit_gpu_peer_nvlink_relationship():
+    gpu_a = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    gpu_b = GpuResource(
+        node_id="node-01", gpu_id="1", gpu_uuid="GPU-bbb",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:18:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    topology = {
+        "links": {
+            "0": {"0": "X", "1": "NV18"},
+            "1": {"0": "NV18", "1": "X"},
+        }
+    }
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu_a, gpu_b),
+        network={},
+        observed_at=1234.5,
+        topology=topology,
+    )
+    peer_edges = [
+        item for item in evidence["relationships"]
+        if item["relationship_type"] == "gpu_to_gpu_nvlink"
+    ]
+    assert peer_edges == [{
+        "relationship_type": "gpu_to_gpu_nvlink",
+        "source": "gpu:GPU-aaa",
+        "target": "gpu:GPU-bbb",
+        "evidence": {
+            "source": "nvidia-smi topo -m",
+            "topology_path": "NV18",
+            "symmetric": True,
+            "confidence": "direct_observation",
+            "observed_at": 1234.5,
+        },
+    }]
+
+
+def test_physical_fabric_graph_does_not_invent_unknown_nvlink_peer_or_remote_path():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network={
+            "gpu_nic_locality": [],
+            "rdma": {
+                "devices": [{"device": "mlx5_0", "pci_bus_id": "0000:41:00.0"}],
+                "links": [{
+                    "rdma_device": "mlx5_0", "port": 1, "netdev": "eth0",
+                    "pci_bus_id": "0000:41:00.0", "state": "ACTIVE",
+                }],
+            },
+        },
+        observed_at=1234.5,
+        topology={"links": {"0": {"0": "X"}}},
+    )
+    assert not any(
+        item["relationship_type"] == "gpu_to_gpu_nvlink"
+        for item in evidence["relationships"]
+    )
+    assert not any(
+        item["relationship_type"] == "inter_node_path"
+        for item in evidence["relationships"]
+    )
