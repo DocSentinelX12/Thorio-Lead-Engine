@@ -60,6 +60,7 @@ def test_active_gdrdma_measurement_is_durable_and_tied_to_exact_fabric_path(tmp_
         "rdma_port": 1,
         "remote_worker_id": "worker-b",
         "remote_endpoint": "198.51.100.10",
+        "remote_test_server_verified": True,
         "mode": "cuda_dmabuf",
         "bandwidth_gbps": 187.5,
         "latency_us": 4.25,
