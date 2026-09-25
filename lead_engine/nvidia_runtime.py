@@ -127,6 +127,55 @@ class NvidiaRuntime:
         command.extend(["-m", "lead_engine.nccl_all_reduce_probe"])
         return tuple(command)
 
+    def verify_active_gpu_direct_rdma(
+        self,
+        *,
+        gpu_index: int,
+        rdma_device: str,
+        trusted_remote: str | None,
+        mode: str = "cuda_dmabuf",
+    ) -> dict[str, object]:
+        if gpu_index < 0:
+            raise ValueError("gpu_index must be non-negative")
+        device = str(rdma_device or "").strip()
+        if not device:
+            raise ValueError("rdma_device is required")
+        remote = str(trusted_remote or "").strip()
+        if not remote:
+            raise NvidiaRuntimeError("active GPU Direct RDMA verification requires a trusted remote endpoint")
+        if mode != "cuda_dmabuf":
+            raise NvidiaRuntimeError("active GPU Direct RDMA verification currently requires explicit cuda_dmabuf mode")
+        perftest = self._required_command("ib_write_bw")
+        command = (
+            perftest,
+            f"--use_cuda={gpu_index}",
+            "--use_cuda_dmabuf",
+            "-d", device,
+            "-a", "-F",
+            "--report_gbits",
+            "-q", "1",
+            remote,
+        )
+        rc, stdout, stderr = self._run(command)
+        observed_output = (stdout + ("\n" + stderr if stderr else "")).strip()
+        if rc != 0:
+            raise NvidiaRuntimeError(
+                f"active GPU Direct RDMA verification failed: {observed_output[:2000]}"
+            )
+        if "RDMA_Write BW Test" not in stdout:
+            raise NvidiaRuntimeError(
+                "active GPU Direct RDMA verification completed without recognized ib_write_bw evidence"
+            )
+        return {
+            "verified": True,
+            "test": "ib_write_bw",
+            "gpu_index": gpu_index,
+            "rdma_device": device,
+            "mode": mode,
+            "remote_endpoint": remote,
+            "observed_output": observed_output[-4000:],
+        }
+
     @staticmethod
     def parse_nccl_network_evidence(log_output: str) -> dict[str, object]:
         if not isinstance(log_output, str):
