@@ -138,6 +138,11 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
         gpu_state = "degraded"
         gpu_error = str(exc)[:2000]
 
+    acquisition_id = str(os.environ.get("THORIO_COMPUTE_ACQUISITION_ID") or "").strip()
+    if acquisition_id:
+        physical_fabric_evidence = dict(physical_fabric_evidence)
+        physical_fabric_evidence["acquisition_id"] = acquisition_id
+
     return WorkerIdentity(
         capacity.node_id, socket.gethostname(), capacity.architecture,
         capacity.cpu_count, capacity.memory_mb, ("lead-processing",),
