@@ -358,26 +358,26 @@ class AdaptiveFabricRouteSelector:
         }
 
     @classmethod
-    def select_resilient_route_set(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]], gpu_pair: tuple[str, str], *, current_path_id: str | None = None) -> dict[str, object]:
+    def select_resilient_route_set(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]], gpu_pair: tuple[str, str], *, current_path_id: str | None = None, active_path_intelligence: Mapping[str, Mapping[str, object]] | None = None) -> dict[str, object]:
         source_gpu, destination_gpu = gpu_pair
         pair_paths = tuple(path for path in paths if str(path.get("source_gpu") or "") == str(source_gpu) and str(path.get("destination_gpu") or "") == str(destination_gpu))
-        selection = cls.select(pair_paths, route_health)
+        selection = cls.select(pair_paths, route_health, active_path_intelligence=active_path_intelligence)
         active_path_id = str(selection["path_id"]) if selection["path_id"] is not None else None
         if active_path_id is None:
             return {"source_gpu": str(source_gpu), "destination_gpu": str(destination_gpu), "active_path_id": None, "standby_path_ids": (), "verified_path_ids": (), "selection_reason": str(selection["selection_reason"]), "evidence": ()}
         active_path = next((path for path in pair_paths if str(path.get("path_id") or "") == active_path_id), None)
         if not isinstance(active_path, Mapping):
             return {"source_gpu": str(source_gpu), "destination_gpu": str(destination_gpu), "active_path_id": active_path_id, "standby_path_ids": (), "verified_path_ids": (active_path_id,), "selection_reason": str(selection["selection_reason"]), "evidence": tuple(selection["evidence"])}
-        candidates = cls._candidates(pair_paths, route_health)
+        candidates = cls._candidates(pair_paths, route_health, active_path_intelligence)
         path_by_id = {str(path.get("path_id") or ""): path for path in pair_paths if str(path.get("path_id") or "")}
         standby_ids = tuple(str(candidate["path_id"]) for candidate in candidates if str(candidate["path_id"]) != active_path_id and cls.failure_domain_independent(active_path, path_by_id[str(candidate["path_id"])]))
         return {"source_gpu": str(source_gpu), "destination_gpu": str(destination_gpu), "active_path_id": active_path_id, "standby_path_ids": standby_ids, "verified_path_ids": (active_path_id, *standby_ids), "selection_reason": str(selection["selection_reason"]), "current_path_id": str(current_path_id) if current_path_id is not None else None, "evidence": tuple(selection["evidence"])}
 
     @classmethod
-    def select_for_gpu_pairs(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]], gpu_pairs: Sequence[tuple[str, str]]) -> tuple[dict[str, str], ...]:
+    def select_for_gpu_pairs(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]], gpu_pairs: Sequence[tuple[str, str]], *, active_path_intelligence: Mapping[str, Mapping[str, object]] | None = None) -> tuple[dict[str, str], ...]:
         selected = []
         for source_gpu, destination_gpu in gpu_pairs:
-            decision = cls.select(tuple(path for path in paths if str(path.get("source_gpu") or "") == str(source_gpu) and str(path.get("destination_gpu") or "") == str(destination_gpu)), route_health)
+            decision = cls.select(tuple(path for path in paths if str(path.get("source_gpu") or "") == str(source_gpu) and str(path.get("destination_gpu") or "") == str(destination_gpu)), route_health, active_path_intelligence=active_path_intelligence)
             path_id = decision.get("path_id")
             if path_id is not None:
                 selected.append({"source_gpu": str(source_gpu), "destination_gpu": str(destination_gpu), "path_id": str(path_id)})
