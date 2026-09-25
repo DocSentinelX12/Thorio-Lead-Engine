@@ -250,7 +250,13 @@ def run_fabric_verification(client: ComputeWorkerClient, assignment: Mapping[str
                     physical_topology=verify_provider_snapshot(network_snapshot,runner=provider_runner)
                 except FabricTopologyRuntimeError as exc:
                     raise NvidiaRuntimeError(f"physical GPU/NIC/RDMA topology verification failed: {exc}") from exc
-            path_evidence=runtime.validate_nccl_transport_against_rdma(stdout+"\n"+stderr,rdma_evidence or {},gpu_uuid=str(binding["gpu_uuid"]),gpu_nic_locality=gpu_nic_locality) if int(plan["nnodes"])>1 else {"rdma_devices":(),"verified_rdma_devices":()}
+            path_evidence=runtime.validate_nccl_transport_against_rdma(
+                stdout+"\n"+stderr,
+                rdma_evidence or {},
+                gpu_uuid=str(binding["gpu_uuid"]),
+                gpu_nic_locality=gpu_nic_locality,
+                require_gpu_direct_rdma=int(plan["nnodes"]) > 1 and str(probe.get("network_transport") or "").strip().upper() == "IB",
+            ) if int(plan["nnodes"])>1 else {"rdma_devices":(),"verified_rdma_devices":()}
             process_evidence.append({"rank":int(binding["rank"]),"local_rank":int(binding["local_rank"]),"gpu_binding":dict(binding),"probe":probe,"network_transport":probe.get("network_transport"),"gpu_direct_rdma":probe.get("gpu_direct_rdma"),"network_evidence_lines":list(probe.get("network_evidence_lines") or ()),"peer_connections":list(probe.get("peer_connections") or ()),"rdma_devices":list(path_evidence.get("rdma_devices") or ()),"verified_rdma_devices":list(path_evidence.get("verified_rdma_devices") or ()),"hca_selections":list(path_evidence.get("hca_selections") or ()),"verified_hca_selections":list(path_evidence.get("verified_hca_selections") or ()),"verified_rdma_links":list(path_evidence.get("verified_rdma_links") or ()),"gpu_nic_locality":path_evidence.get("gpu_nic_locality"),"physical_fabric_topology":physical_topology,"stdout":stdout[-4000:]})
         if failures: raise NvidiaRuntimeError("distributed NCCL launch failed: "+"; ".join(failures))
         if len(process_evidence)!=len(normalized_bindings): raise NvidiaRuntimeError(f"distributed NCCL execution produced {len(process_evidence)} verified local ranks; expected {len(normalized_bindings)}")
