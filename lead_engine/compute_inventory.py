@@ -1174,7 +1174,12 @@ class ComputeInventory:
                 "success": bool(row["success"]),
                 "evidence": evidence if isinstance(evidence, dict) else {},
             })
-        return {path_key: summarize_route_health(samples) for path_key, samples in grouped.items()}
+        result = {path_key: summarize_route_health(samples) for path_key, samples in grouped.items()}
+        physical_path_ids = {str(row.get("path_id") or "").strip() for row in self.physical_paths() if str(row.get("path_id") or "").strip()}
+        for path_key in tuple(result):
+            if path_key in physical_path_ids:
+                result[path_key]["active_path_intelligence"] = self.active_path_intelligence(path_id=path_key)
+        return result
 
     def record_execution_path_observations(
         self,
