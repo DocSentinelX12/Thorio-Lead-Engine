@@ -426,6 +426,56 @@ class NvidiaProvider(ComputeProvider):
         return value
 
     @staticmethod
+    def _parse_nvlink_status(text: str, gpus: Sequence[GpuResource]) -> dict[str, object]:
+        """Parse current per-GPU NVLink state without inferring missing links."""
+        gpu_by_id = {gpu.gpu_id: gpu for gpu in gpus}
+        gpu_by_uuid = {gpu.gpu_uuid: gpu for gpu in gpus}
+        current_gpu: GpuResource | None = None
+        links: list[dict[str, object]] = []
+        header_re = re.compile(r"^GPU\\s+(\\d+):.*?(?:\\(UUID:\\s*(GPU-[^)]+)\\))?\\s*$", re.IGNORECASE)
+        link_re = re.compile(r"^\\s*Link\\s+(\\d+):\\s*(.*?)\\s*$", re.IGNORECASE)
+        bandwidth_re = re.compile(r"([0-9]+(?:\\.[0-9]+)?)\\s*GB/s", re.IGNORECASE)
+        for raw_line in text.splitlines():
+            line = raw_line.rstrip()
+            header = header_re.match(line.strip())
+            if header:
+                gpu_id = header.group(1)
+                gpu_uuid = header.group(2)
+                current_gpu = gpu_by_id.get(gpu_id) or gpu_by_uuid.get(gpu_uuid or "")
+                if current_gpu is None:
+                    raise NvidiaDiscoveryError(f"NVLink status references undiscovered GPU {gpu_id}")
+                continue
+            match = link_re.match(line)
+            if not match:
+                continue
+            if current_gpu is None:
+                raise NvidiaDiscoveryError("NVLink link row appeared before a GPU header")
+            link_id = int(match.group(1))
+            value = match.group(2).strip()
+            lowered = value.lower()
+            bandwidth_match = bandwidth_re.search(value)
+            bandwidth = float(bandwidth_match.group(1)) if bandwidth_match else None
+            if "inactive" in lowered:
+                state = "inactive"
+                bandwidth = None
+            elif "sleep" in lowered:
+                state = "sleep"
+                bandwidth = None
+            elif "active" in lowered or bandwidth_match:
+                state = "active"
+            else:
+                state = "unknown"
+            links.append({
+                "gpu_id": current_gpu.gpu_id,
+                "gpu_uuid": current_gpu.gpu_uuid,
+                "link_id": link_id,
+                "state": state,
+                "bandwidth_gbps": bandwidth,
+            })
+        links.sort(key=lambda item: (str(item["gpu_id"]), int(item["link_id"])))
+        return {"source": "nvidia-smi nvlink --status", "available": bool(links), "links": links}
+
+    @staticmethod
     def _parse_topology_matrix(text: str, gpus: Sequence[GpuResource]) -> dict[str, object]:
         """Parse nvidia-smi's physical GPU matrix without inventing topology.
 
@@ -616,15 +666,27 @@ class NvidiaProvider(ComputeProvider):
             except NvidiaDiscoveryError as exc:
                 topology_parse_error = str(exc)
 
+        nvlink_status = None
+        nvlink_status_error = None
+        try:
+            nvlink_status = self._parse_nvlink_status(self._run("nvlink", "-s").stdout, gpus)
+        except NvidiaDiscoveryError as exc:
+            nvlink_status_error = str(exc)
+
         host_physical = self._physical_host_discovery.discover(node_id=self.node_id)
         network_evidence = self._discover_network()
         if isinstance(network_evidence, dict):
             network_evidence["rdma"] = self._discover_rdma()
             network_evidence["gpu_nic_locality"] = self._correlate_gpu_nic_locality(gpus, network_evidence)
+            network_evidence["nvlink_status"] = nvlink_status
+            network_evidence["nvlink_status_error"] = nvlink_status_error
             network_evidence["physical_fabric"] = self._physical_fabric_evidence(
                 node_id=self.node_id,
                 gpus=gpus,
                 network=network_evidence,
+                observed_at=observed_at,
+                host_physical=host_physical,
+                nvlink_status=nvlink_status,
             )
 
         toolkit_version = None
@@ -673,46 +735,65 @@ class NvidiaProvider(ComputeProvider):
         node_id: str,
         gpus: Sequence[GpuResource],
         network: Mapping[str, object],
+        observed_at: float | None = None,
+        host_physical: Mapping[str, object] | None = None,
+        nvlink_status: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
-        """Build canonical physical identities only from explicitly observed host evidence."""
+        """Build the canonical physical graph from observed evidence only."""
         components: dict[str, dict[str, object]] = {}
         relationships: list[dict[str, object]] = []
+        contradictions: list[dict[str, object]] = []
 
-        def add_component(component_type: str, identity: str, attributes: Mapping[str, object] | None = None) -> None:
+        def evidence_record(source: str, confidence: str = "direct_observation") -> dict[str, object]:
+            record: dict[str, object] = {"source": source, "confidence": confidence}
+            if observed_at is not None:
+                record["observed_at"] = observed_at
+            return record
+
+        def add_component(component_type: str, identity: str, attributes: Mapping[str, object] | None = None, *, source: str = "worker-local-physical-discovery") -> None:
             identity = str(identity).strip()
             if not identity:
                 return
             item = components.setdefault(
                 identity,
-                {"component_type": component_type, "identity": identity, "node_id": node_id, "attributes": {}},
+                {
+                    "component_type": component_type,
+                    "identity": identity,
+                    "node_id": node_id,
+                    "attributes": {},
+                    "evidence": evidence_record(source),
+                },
             )
             if isinstance(attributes, Mapping):
                 item["attributes"] = {**dict(item.get("attributes") or {}), **dict(attributes)}
 
-        def add_relationship(
-            relationship_type: str,
-            source: str,
-            target: str,
-            evidence: Mapping[str, object],
-        ) -> None:
+        def add_relationship(relationship_type: str, source: str, target: str, evidence: Mapping[str, object]) -> None:
             if source and target:
+                relationship_evidence = dict(evidence)
+                relationship_evidence.setdefault("confidence", "direct_observation")
+                if observed_at is not None:
+                    relationship_evidence.setdefault("observed_at", observed_at)
                 relationships.append({
                     "relationship_type": relationship_type,
                     "source": source,
                     "target": target,
-                    "evidence": dict(evidence),
+                    "evidence": relationship_evidence,
                 })
 
         for gpu in gpus:
             gpu_identity = f"gpu:{gpu.gpu_uuid}"
-            add_component("gpu", gpu_identity, {"gpu_id": gpu.gpu_id, "pci_bus_id": gpu.pci_bus_id, "numa_node": gpu.numa_node})
+            add_component("gpu", gpu_identity, {
+                "gpu_id": gpu.gpu_id,
+                "pci_bus_id": gpu.pci_bus_id,
+                "numa_node": gpu.numa_node,
+            }, source="nvidia-smi")
             if gpu.pci_bus_id:
                 pci_identity = f"pci:{gpu.pci_bus_id}"
-                add_component("pci", pci_identity)
+                add_component("pci", pci_identity, source="sysfs")
                 add_relationship("gpu_to_pci", gpu_identity, pci_identity, {"source": "nvidia-smi", "field": "pci.bus_id"})
             if gpu.numa_node is not None:
                 numa_identity = f"numa:{gpu.numa_node}"
-                add_component("numa", numa_identity, {"node": gpu.numa_node})
+                add_component("numa", numa_identity, {"node": gpu.numa_node}, source="sysfs")
                 add_relationship("gpu_to_numa", gpu_identity, numa_identity, {"source": "sysfs", "field": "pci.numa_node"})
 
         link_capabilities = network.get("link_capabilities")
@@ -725,10 +806,10 @@ class NvidiaProvider(ComputeProvider):
                 if not netdev:
                     continue
                 nic_identity = f"nic:{netdev}"
-                add_component("nic", nic_identity, dict(raw))
+                add_component("nic", nic_identity, dict(raw), source="ethtool")
                 if pci_bus_id:
                     pci_identity = f"pci:{pci_bus_id}"
-                    add_component("pci", pci_identity)
+                    add_component("pci", pci_identity, source="sysfs")
                     add_relationship("nic_to_pci", nic_identity, pci_identity, {"source": "ethtool", "field": "bus_info"})
 
         locality_rows = network.get("gpu_nic_locality")
@@ -740,10 +821,8 @@ class NvidiaProvider(ComputeProvider):
                 nic = str(row.get("nic") or "").strip()
                 if not gpu_uuid or not nic:
                     continue
-                gpu_identity = f"gpu:{gpu_uuid}"
-                nic_identity = f"nic:{nic}"
                 if row.get("shared_pci_ancestor") is not None or row.get("same_numa_node") is True:
-                    add_relationship("gpu_to_nic", gpu_identity, nic_identity, {
+                    add_relationship("gpu_to_nic", f"gpu:{gpu_uuid}", f"nic:{nic}", {
                         "source": row.get("source") or "sysfs",
                         "shared_pci_ancestor": row.get("shared_pci_ancestor"),
                         "same_numa_node": row.get("same_numa_node"),
@@ -763,12 +842,12 @@ class NvidiaProvider(ComputeProvider):
                     if not device:
                         continue
                     rdma_identity = f"rdma:{device}"
-                    add_component("rdma_device", rdma_identity, dict(raw))
+                    add_component("rdma_device", rdma_identity, dict(raw), source="rdma-core")
                     pci_bus_id = str(raw.get("pci_bus_id") or "").strip()
                     if pci_bus_id:
                         pci_identity = f"pci:{pci_bus_id}"
-                        add_component("pci", pci_identity)
-                        add_relationship("rdma_device_to_pci", rdma_identity, pci_identity, {"source": "rdma", "field": "pci_bus_id"})
+                        add_component("pci", pci_identity, source="sysfs")
+                        add_relationship("rdma_device_to_pci", rdma_identity, pci_identity, {"source": "rdma-core", "field": "pci_bus_id"})
             if isinstance(links, list):
                 for raw in links:
                     if not isinstance(raw, Mapping):
@@ -779,16 +858,80 @@ class NvidiaProvider(ComputeProvider):
                         continue
                     rdma_identity = f"rdma:{device}"
                     port_identity = f"rdma:{device}:{port}"
-                    add_component("rdma_port", port_identity, dict(raw))
-                    add_relationship("rdma_device_to_port", rdma_identity, port_identity, {"source": "rdma", "link_layer": raw.get("link_layer")})
+                    add_component("rdma_port", port_identity, dict(raw), source="rdma-core")
+                    add_relationship("rdma_device_to_port", rdma_identity, port_identity, {
+                        "source": "rdma-core",
+                        "link_layer": raw.get("link_layer"),
+                        "state": raw.get("state"),
+                        "physical_state": raw.get("physical_state"),
+                        "gids": raw.get("gids") or [],
+                    })
                     netdev = str(raw.get("netdev") or "").strip()
                     if netdev:
-                        add_relationship("nic_to_rdma_device", f"nic:{netdev}", rdma_identity, {"source": "rdma", "netdev": netdev, "port": port})
+                        add_relationship("nic_to_rdma_device", f"nic:{netdev}", rdma_identity, {
+                            "source": "rdma-core",
+                            "netdev": netdev,
+                            "port": port,
+                            "state": raw.get("state"),
+                            "physical_state": raw.get("physical_state"),
+                            "link_layer": raw.get("link_layer"),
+                        })
 
+        if isinstance(nvlink_status, Mapping):
+            links = nvlink_status.get("links")
+            if isinstance(links, list):
+                for raw in links:
+                    if not isinstance(raw, Mapping):
+                        continue
+                    gpu_uuid = str(raw.get("gpu_uuid") or "").strip()
+                    link_id = raw.get("link_id")
+                    if not gpu_uuid or not isinstance(link_id, int):
+                        continue
+                    link_identity = f"nvlink:{gpu_uuid}:{link_id}"
+                    add_component("nvlink_link", link_identity, {
+                        "gpu_uuid": gpu_uuid,
+                        "link_id": link_id,
+                        "state": raw.get("state"),
+                        "bandwidth_gbps": raw.get("bandwidth_gbps"),
+                    }, source="nvidia-smi nvlink --status")
+                    add_relationship("gpu_nvlink", f"gpu:{gpu_uuid}", link_identity, {
+                        "source": "nvidia-smi nvlink --status",
+                        "state": raw.get("state"),
+                        "bandwidth_gbps": raw.get("bandwidth_gbps"),
+                    })
+
+        if isinstance(host_physical, Mapping):
+            pci_section = host_physical.get("pci")
+            host_devices = pci_section.get("devices") if isinstance(pci_section, Mapping) else None
+            host_by_bus = {
+                str(raw.get("bus_id") or "").lower(): raw
+                for raw in host_devices or ()
+                if isinstance(raw, Mapping) and str(raw.get("bus_id") or "").strip()
+            }
+            for gpu in gpus:
+                if not gpu.pci_bus_id:
+                    continue
+                host = host_by_bus.get(gpu.pci_bus_id.lower())
+                if not isinstance(host, Mapping):
+                    continue
+                host_numa = host.get("numa_node")
+                if host_numa is not None and gpu.numa_node is not None and host_numa != gpu.numa_node:
+                    contradictions.append({
+                        "identity": f"gpu:{gpu.gpu_uuid}",
+                        "field": "numa_node",
+                        "values": [
+                            {"source": "nvidia-smi", "value": gpu.numa_node},
+                            {"source": "sysfs", "value": host_numa},
+                        ],
+                    })
+
+        contradictions.sort(key=lambda item: (str(item["identity"]), str(item["field"])))
         return {
             "components": tuple(components[key] for key in sorted(components)),
             "relationships": tuple(relationships),
+            "contradictions": tuple(contradictions),
             "evidence_source": "worker-local-physical-discovery",
+            "observed_at": observed_at,
         }
 
     @staticmethod
