@@ -408,3 +408,30 @@ def test_active_path_reverification_reactivates_only_exact_failed_path_with_comp
     history = inventory.physical_verification_history()
     assert history[-1]["state"] == FabricPathState.REVERIFIED.value
     assert history[-1]["observed_at"] == 11.0
+
+
+
+def test_closed_loop_recovery_stops_after_physical_reverification_and_requires_active_measurement(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(path_id="cycle", source_gpu="gpu:a", destination_gpu="gpu:b", segments=("gpu:a", "rdma:mlx5_0:1"), fabric_domains=("d",), state=FabricPathState.VERIFIED)
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="failure", observed_at=10.0)
+    result = inventory.execute_active_path_recovery_cycle(path_id=path.path_id, physical_evidence=tuple({"segment": s, "result": "pass"} for s in path.segments), observed_at=11.0)
+    assert result["stage"] == "physical_reverification"
+    assert result["allow_routing"] is False
+    assert inventory.physical_paths()[0]["state"] == FabricPathState.REVERIFIED.value
+
+
+def test_closed_loop_recovery_requires_verified_active_measurement_before_routing(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(path_id="cycle-active", source_gpu="gpu:a", destination_gpu="gpu:b", segments=("gpu:a", "rdma:mlx5_0:1"), fabric_domains=("d",), state=FabricPathState.VERIFIED)
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="failure", observed_at=10.0)
+    physical = tuple({"segment": s, "result": "pass"} for s in path.segments)
+    measurement = {"fabric_path_id": path.path_id, "measurement_status": "measured", "verified": True, "remote_test_server_verified": True, "worker_id": "w", "remote_worker_id": "rw", "remote_endpoint": "ep", "gpu_uuid": "a", "rdma_device": "mlx5_0", "rdma_port": 1, "bandwidth_gbps": 100.0}
+    result = inventory.execute_active_path_recovery_cycle(path_id=path.path_id, physical_evidence=physical, active_measurement=measurement, observed_at=11.0)
+    assert result["stage"] == "active_measurement"
+    assert result["test_id"]
+    assert inventory.physical_paths()[0]["state"] == FabricPathState.MEASURED.value
