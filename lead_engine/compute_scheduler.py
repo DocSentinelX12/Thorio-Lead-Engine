@@ -144,8 +144,18 @@ class ComputeScheduler:
     def _physical_paths(self) -> tuple[dict[str, Any], ...]:
         if self.physical_path_provider is None:
             return ()
-        value = self.physical_path_provider()
-        return tuple(item for item in value if isinstance(item, dict) and str(item.get("path_id") or "").strip())
+        value = tuple(item for item in self.physical_path_provider() if isinstance(item, dict) and str(item.get("path_id") or "").strip())
+        intelligence_provider = getattr(self.inventory, "active_path_intelligence_for_paths", None)
+        if not callable(intelligence_provider) or not value:
+            return value
+        intelligence = intelligence_provider(path_ids=[str(item["path_id"]) for item in value])
+        return tuple(
+            {
+                **item,
+                "active_path_intelligence": intelligence.get(str(item["path_id"])) if isinstance(intelligence, dict) else None,
+            }
+            for item in value
+        )
 
     def _route_health(self) -> dict[str, dict[str, Any]]:
         if self.route_health_provider is None:
