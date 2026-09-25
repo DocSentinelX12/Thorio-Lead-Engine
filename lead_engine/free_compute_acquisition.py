@@ -132,7 +132,7 @@ class FreeComputeAcquisitionStore:
             )
             columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_free_acquisitions)")}
             if "verification_json" not in columns:
-                connection.execute("ALTER TABLE compute_free_acquisitions ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}')
+                connection.execute("ALTER TABLE compute_free_acquisitions ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}'")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_free_acquisition_status "
                 "ON compute_free_acquisitions(status,updated_at)"
