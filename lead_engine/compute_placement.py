@@ -193,10 +193,16 @@ class PlacementEvaluator:
         gpu_pairs = self._cross_node_gpu_pairs(candidate)
         if not gpu_pairs:
             return ()
+        active_path_intelligence = {
+            str(path.get("path_id")): path.get("active_path_intelligence")
+            for path in self.physical_paths
+            if isinstance(path.get("active_path_intelligence"), dict)
+        }
         return AdaptiveFabricRouteSelector.select_for_gpu_pairs(
             self.physical_paths,
             self.route_health,
             gpu_pairs,
+            active_path_intelligence=active_path_intelligence,
         )
 
     def _adaptive_route_sets(self, candidate: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
@@ -209,6 +215,11 @@ class PlacementEvaluator:
                 self.physical_paths,
                 self.route_health,
                 pair,
+                active_path_intelligence={
+                    str(path.get("path_id")): path.get("active_path_intelligence")
+                    for path in self.physical_paths
+                    if isinstance(path.get("active_path_intelligence"), dict)
+                },
             )
             for pair in gpu_pairs
         )
