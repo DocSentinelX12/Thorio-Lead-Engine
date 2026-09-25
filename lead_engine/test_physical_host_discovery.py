@@ -95,3 +95,37 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
     assert evidence["numa"]["nodes"][0]["cpu_count"] == 2
     assert evidence["numa"]["nodes"][0]["mem_total_bytes"] == 131072 * 1024
     assert evidence["numa"]["distance_matrix"] == {}
+
+
+def test_physical_host_discovery_records_iommu_kernel_evidence_without_inference():
+    files = {
+        "/proc/meminfo": "MemTotal:       1024 kB\n",
+        "/proc/cmdline": "BOOT_IMAGE=/vmlinuz iommu=pt quiet\n",
+        "/sys/devices/system/cpu/online": "0\n",
+        "/sys/devices/system/cpu/cpu0/topology/core_id": "0\n",
+        "/sys/devices/system/cpu/cpu0/topology/thread_siblings_list": "0\n",
+        "/sys/devices/system/cpu/cpu0/topology/physical_package_id": "0\n",
+        "/sys/devices/system/node/online": "0\n",
+        "/sys/devices/system/node/node0/cpulist": "0\n",
+        "/sys/devices/system/node/node0/meminfo": "Node 0 MemTotal: 1024 kB\nNode 0 MemFree: 512 kB\n",
+    }
+
+    def read(path):
+        key = str(path)
+        if key not in files:
+            raise OSError(key)
+        return files[key]
+
+    def glob(pattern):
+        if pattern == "/sys/devices/system/cpu/cpu[0-9]*":
+            return [Path("/sys/devices/system/cpu/cpu0")]
+        return []
+
+    evidence = PhysicalHostDiscovery(file_reader=read, globber=glob).discover(node_id="node-01")
+
+    assert evidence["iommu"] == {
+        "source": "worker-local-linux-kernel",
+        "kernel_cmdline": "BOOT_IMAGE=/vmlinuz iommu=pt quiet",
+        "configured_mode": "passthrough",
+        "configured_by": "iommu=pt",
+    }
