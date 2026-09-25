@@ -676,6 +676,121 @@ def test_physical_fabric_graph_exposes_rdma_port_pci_attachment_and_precise_nic_
     )
 
 
+def test_physical_fabric_graph_records_pci_root_complex_and_gdrdma_topology_assessment():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        driver_version="580.95.05",
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network={
+            "link_capabilities": {
+                "ib0": {"bus_info": "0000:41:00.0", "driver": "mlx5_core", "link_detected": True},
+            },
+            "gpu_nic_locality": [{
+                "gpu_uuid": "GPU-aaa", "gpu_pci_bus_id": "0000:17:00.0",
+                "nic": "ib0", "nic_pci_bus_id": "0000:41:00.0",
+                "same_numa_node": True, "shared_pci_ancestor": "0000:10:00.0",
+                "source": "sysfs",
+            }],
+            "rdma": {
+                "links": [{
+                    "rdma_device": "mlx5_0", "port": 1, "netdev": "ib0",
+                    "pci_bus_id": "0000:41:00.0", "state": "ACTIVE",
+                    "physical_state": "LINK_UP", "link_layer": "InfiniBand",
+                }],
+            },
+        },
+        host_physical={
+            "pci": {"devices": [
+                {"bus_id": "0000:17:00.0", "numa_node": 0, "iommu_group": 7,
+                 "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:17:00.0"]},
+                {"bus_id": "0000:41:00.0", "numa_node": 0, "iommu_group": 8,
+                 "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:41:00.0"]},
+            ]}
+        },
+        observed_at=1234.5,
+    )
+    root_edges = [item for item in evidence["relationships"] if item["relationship_type"] == "pci_to_root_complex"]
+    assert {item["target"] for item in root_edges} == {"pci_root_complex:0000:00:00.0"}
+    assessment = next(item for item in evidence["relationships"] if item["relationship_type"] == "gpu_to_nic_gdrdma_assessment")
+    assert assessment["evidence"]["pci_root_complex_match"] is True
+    assert assessment["evidence"]["topology_distance"] == "PXB"
+    assert assessment["evidence"]["rdma_link_active"] is True
+    assert assessment["evidence"]["same_iommu_group"] is False
+    assert assessment["evidence"]["eligibility"] == "topology_eligible"
+    assert assessment["evidence"]["data_path_verified"] is False
+
+
+def test_physical_fabric_graph_does_not_claim_gdrdma_eligible_across_different_root_complexes():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network={
+            "link_capabilities": {"eth0": {"bus_info": "0000:41:00.0"}},
+            "gpu_nic_locality": [{
+                "gpu_uuid": "GPU-aaa", "gpu_pci_bus_id": "0000:17:00.0",
+                "nic": "eth0", "nic_pci_bus_id": "0000:41:00.0",
+                "same_numa_node": True, "shared_pci_ancestor": None,
+                "source": "sysfs",
+            }],
+            "rdma": {"links": [{
+                "rdma_device": "mlx5_0", "port": 1, "netdev": "eth0",
+                "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP",
+            }]},
+        },
+        host_physical={"pci": {"devices": [
+            {"bus_id": "0000:17:00.0", "numa_node": 0, "iommu_group": 7,
+             "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:17:00.0"]},
+            {"bus_id": "0000:41:00.0", "numa_node": 0, "iommu_group": 8,
+             "pci_path": ["0000:00:00.0", "0000:40:00.0", "0000:41:00.0"]},
+        ]}},
+        observed_at=1234.5,
+    )
+    assessments = [item for item in evidence["relationships"] if item["relationship_type"] == "gpu_to_nic_gdrdma_assessment"]
+    assert assessments == []
+
+
+def test_physical_fabric_graph_marks_gdrdma_unknown_when_rdma_link_state_is_not_verified():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network={
+            "gpu_nic_locality": [{
+                "gpu_uuid": "GPU-aaa", "gpu_pci_bus_id": "0000:17:00.0",
+                "nic": "eth0", "nic_pci_bus_id": "0000:41:00.0",
+                "same_numa_node": True, "shared_pci_ancestor": "0000:10:00.0",
+                "source": "sysfs",
+            }],
+            "rdma": {"links": [{
+                "rdma_device": "mlx5_0", "port": 1, "netdev": "eth0",
+                "pci_bus_id": "0000:41:00.0", "state": "UNKNOWN", "physical_state": "UNKNOWN",
+            }]},
+        },
+        host_physical={"pci": {"devices": [
+            {"bus_id": "0000:17:00.0", "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:17:00.0"]},
+            {"bus_id": "0000:41:00.0", "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:41:00.0"]},
+        ]}},
+        observed_at=1234.5,
+    )
+    assessment = next(item for item in evidence["relationships"] if item["relationship_type"] == "gpu_to_nic_gdrdma_assessment")
+    assert assessment["evidence"]["eligibility"] == "unknown"
+    assert assessment["evidence"]["data_path_verified"] is False
+
+
 def test_physical_fabric_graph_exposes_only_evidence_backed_gpu_to_nic_traversal():
     gpu = GpuResource(
         node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
