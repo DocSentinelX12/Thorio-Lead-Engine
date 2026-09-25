@@ -180,6 +180,15 @@ class ActivePathIntelligence:
                 "latest_measurement_verified": bool(latest is not None),
                 "failure_observed_at": failed_observations[-1]["observed_at"] if failed_observations else None,
             },
+            "reverification": {
+                "required": state in {"failed", "degrading", "unstable", "recovered"},
+                "reason": {
+                    "failed": "exact path failed or became unavailable",
+                    "degrading": "measured bandwidth declined against this path's observed history",
+                    "unstable": "repeated measured bandwidth is materially variable",
+                    "recovered": "path produced verified measurements after a prior failure",
+                }.get(state, "no active-path reverification trigger"),
+            },
             "synthetic_baseline": False,
             "evidence": {
                 "measured_observations": tuple({"observed_at": row["observed_at"], "bandwidth_gbps": row["bandwidth_gbps"], "identity": dict(row["identity"])} for row in comparable),
