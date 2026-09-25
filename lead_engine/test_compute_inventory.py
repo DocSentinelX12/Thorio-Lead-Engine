@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_provider import ProviderResourceSnapshot
 from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
@@ -53,8 +55,8 @@ def test_active_gdrdma_measurement_is_durable_and_tied_to_exact_fabric_path(tmp_
         "verified": True,
         "test": "ib_write_bw",
         "fabric_path_id": "fabric-path-1",
+        "worker_id": "worker-a",
         "gpu_uuid": "GPU-a",
-        "rdma_device": "mlx5_0",
         "rdma_port": 1,
         "remote_worker_id": "worker-b",
         "remote_endpoint": "198.51.100.10",
