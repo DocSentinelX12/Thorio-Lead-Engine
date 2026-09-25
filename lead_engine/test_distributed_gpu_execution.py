@@ -109,6 +109,36 @@ class FakeClient:
         return {"converged": True, "status": "completed"}
 
 
+def test_ib_gpu_direct_execution_requires_explicit_gdrdma_evidence():
+    rdma = {
+        "devices": [{"device": "mlx5_0"}],
+        "links": [{"rdma_device": "mlx5_0", "port": 1, "netdev": "ib0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP", "link_layer": "InfiniBand"}],
+    }
+    log = "NCCL INFO NET/IB : Using [0]mlx5_0:1/IB\n"
+    with pytest.raises(NvidiaRuntimeError, match="GPU Direct RDMA"):
+        NvidiaRuntime.validate_nccl_transport_against_rdma(
+            log, rdma, gpu_uuid="GPU-a",
+            gpu_nic_locality=({"gpu_uuid": "GPU-a", "nic": "ib0", "nic_pci_bus_id": "0000:41:00.0"},),
+            require_gpu_direct_rdma=True,
+        )
+
+
+def test_ib_gpu_direct_execution_records_verified_gdrdma_evidence():
+    rdma = {
+        "devices": [{"device": "mlx5_0"}],
+        "links": [{"rdma_device": "mlx5_0", "port": 1, "netdev": "ib0", "pci_bus_id": "0000:41:00.0", "state": "ACTIVE", "physical_state": "LINK_UP", "link_layer": "InfiniBand"}],
+    }
+    log = "NCCL INFO NET/IB : Using [0]mlx5_0:1/IB\nNCCL INFO GPU Direct RDMA Enabled\n"
+    result = NvidiaRuntime.validate_nccl_transport_against_rdma(
+        log, rdma, gpu_uuid="GPU-a",
+        gpu_nic_locality=({"gpu_uuid": "GPU-a", "nic": "ib0", "nic_pci_bus_id": "0000:41:00.0"},),
+        require_gpu_direct_rdma=True,
+    )
+    assert result["gpu_direct_rdma"] is True
+    assert result["data_path_verified"] is True
+    assert result["verified_rdma_links"][0]["rdma_device"] == "mlx5_0"
+
+
 def test_probe_evidence_contains_only_observed_execution_identity():
     evidence = build_probe_evidence(
         rank=1,
