@@ -58,6 +58,8 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
             return [Path("/sys/block/nvme0n1")]
         if pattern == "/sys/bus/pci/devices/*":
             return [Path("/sys/bus/pci/devices/0000:17:00.0")]
+        if pattern == "/sys/class/net/*":
+            return [Path("/sys/class/net/eth0")]
         return []
 
     def resolve(path):
