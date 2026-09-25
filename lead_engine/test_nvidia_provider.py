@@ -50,6 +50,38 @@ def test_nvidia_discovery_records_stable_gpu_truth_and_topology():
     assert snapshot.evidence["cuda_toolkit_version"] is None
 
 
+def test_nvidia_discovery_parses_explicit_pci_acs_and_ats_state():
+    output = """
+0000:10:00.0 PCI bridge: Example
+    ACSCtl: SrcValid+ ReqRedir+ CmpltRedir+
+0000:41:00.0 Ethernet controller: Example
+    ATSCtl: Enable+
+"""
+    parsed = NvidiaProvider._parse_pci_direct_features(output)
+    assert parsed["0000:10:00.0"]["acs_enabled"] is True
+    assert parsed["0000:10:00.0"]["acsctl"] == "SrcValid+ ReqRedir+ CmpltRedir+"
+    assert parsed["0000:41:00.0"]["ats_enabled"] is True
+    assert parsed["0000:41:00.0"]["atsctl"] == "Enable+"
+
+
+def test_nvidia_discovery_preserves_unavailable_pci_direct_feature_probe():
+    class StubHostDiscovery:
+        def discover(self, *, node_id):
+            return {"source": "worker-local-linux-sysfs", "node_id": node_id, "pci": {"devices": []}}
+
+    def runner(args, timeout):
+        if tuple(args) == ("lspci", "-D", "-vvv"):
+            return CommandResult(1, "", "lspci unavailable")
+        return fake_runner(args, timeout)
+
+    snapshot = NvidiaProvider(
+        node_id="node-01", domain_id="cell-01", runner=runner,
+        physical_host_discovery=StubHostDiscovery(), now=lambda: 1234.5,
+    ).discover()
+    features = snapshot.evidence["host_physical"]["pci_direct_features"]
+    assert features["available"] is False
+    assert "lspci unavailable" in features["error"]
+
 def test_nvidia_discovery_records_verified_network_topology_evidence():
     network_addresses = """[
       {
