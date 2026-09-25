@@ -486,3 +486,111 @@ def test_recovery_action_claim_is_single_owner_and_expiry_allows_reclaim(tmp_pat
     assert blocked is None
     assert reclaimed["owner"] == "worker-2"
     assert reclaimed["attempt_count"] == 2
+
+
+def test_recovery_action_closes_only_after_physical_and_stable_active_gates(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="recovery-controller-path",
+        source_gpu="gpu:a",
+        destination_gpu="gpu:b",
+        segments=("gpu:a", "rdma:mlx5_0:1"),
+        fabric_domains=("d",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="active failure", observed_at=10.0)
+    action = inventory.ensure_active_path_recovery_action(path_id=path.path_id, now=20.0)
+
+    physical = tuple({"segment": s, "result": "pass"} for s in path.segments)
+    measurement = {
+        "fabric_path_id": path.path_id,
+        "measurement_status": "measured",
+        "verified": True,
+        "remote_test_server_verified": True,
+        "worker_id": "w",
+        "remote_worker_id": "rw",
+        "remote_endpoint": "ep",
+        "gpu_uuid": "a",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "bandwidth_gbps": 100.0,
+    }
+    result = inventory.execute_active_path_recovery_action(
+        action_id=action["action_id"],
+        owner="worker-1",
+        physical_evidence=physical,
+        active_measurement=measurement,
+        observed_at=21.0,
+    )
+
+    assert result["state"] == "SUCCEEDED"
+    assert result["allow_routing"] is True
+    assert inventory.active_path_recovery_actions(path_id=path.path_id)[0]["state"] == "SUCCEEDED"
+    assert inventory.physical_paths()[0]["state"] == FabricPathState.MEASURED.value
+
+
+def test_recovery_action_retries_without_closing_when_active_evidence_is_not_stable(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="recovery-retry-path",
+        source_gpu="gpu:a",
+        destination_gpu="gpu:b",
+        segments=("gpu:a", "rdma:mlx5_0:1"),
+        fabric_domains=("d",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="active failure", observed_at=10.0)
+    action = inventory.ensure_active_path_recovery_action(path_id=path.path_id, now=20.0)
+    physical = tuple({"segment": s, "result": "pass"} for s in path.segments)
+    measurement = {
+        "fabric_path_id": path.path_id, "measurement_status": "measured",
+        "verified": True, "remote_test_server_verified": True,
+        "worker_id": "w", "remote_worker_id": "rw", "remote_endpoint": "ep",
+        "gpu_uuid": "a", "rdma_device": "mlx5_0", "rdma_port": 1,
+        "bandwidth_gbps": 100.0,
+    }
+    result = inventory.execute_active_path_recovery_action(
+        action_id=action["action_id"], owner="worker-1",
+        physical_evidence=physical, active_measurement=measurement, observed_at=21.0,
+    )
+
+    assert result["state"] == "RETRY_WAIT"
+    assert result["allow_routing"] is False
+    assert result["retry_in_seconds"] > 0
+    assert inventory.active_path_recovery_actions(path_id=path.path_id)[0]["state"] == "RETRY_WAIT"
+
+
+def test_stale_recovery_action_cannot_reactivate_a_newer_exact_path_generation(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="recovery-stale-path",
+        source_gpu="gpu:a",
+        destination_gpu="gpu:b",
+        segments=("gpu:a", "rdma:mlx5_0:1"),
+        fabric_domains=("d",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="failure-one", observed_at=10.0)
+    first = inventory.ensure_active_path_recovery_action(path_id=path.path_id, now=20.0)
+
+    inventory.fail_physical_path(path.path_id, reason="failure-two", observed_at=30.0)
+    second = inventory.ensure_active_path_recovery_action(path_id=path.path_id, now=31.0)
+    assert second["generation"] == first["generation"] + 1
+
+    result = inventory.execute_active_path_recovery_action(
+        action_id=first["action_id"], owner="worker-1",
+        physical_evidence=tuple({"segment": s, "result": "pass"} for s in path.segments),
+        observed_at=32.0,
+    )
+
+    assert result["state"] == "CANCELLED"
+    assert inventory.physical_paths()[0]["state"] == FabricPathState.FAILED.value
