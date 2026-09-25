@@ -2579,6 +2579,59 @@ class ComputeCoordinator:
         return True
 
 
+    def record_active_gdrdma_measurement(
+        self,
+        *,
+        attempt_id: str,
+        generation: int,
+        worker_id: str,
+        lease_token: str,
+        path_id: str,
+        measurement: Dict[str, Any],
+        evidence: Dict[str, Any] | None = None,
+        observed_at: float | None = None,
+    ) -> Dict[str, Any]:
+        """Accept one active GDRDMA observation only from the current execution participant."""
+        lease_digest = hashlib.sha256(str(lease_token).encode("utf-8")).hexdigest()
+        with self._lock:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """SELECT a.task_id,a.status,a.generation,a.lease_token_digest,
+                              p.status AS participant_status,p.worker_id AS participant_worker_id
+                       FROM compute_execution_attempts a
+                       JOIN compute_execution_participants p
+                         ON p.attempt_id=a.attempt_id AND p.generation=a.generation
+                       JOIN compute_tasks t ON t.task_id=a.task_id
+                       WHERE a.attempt_id=? AND a.generation=? AND p.worker_id=?
+                         AND t.status='leased' AND t.lease_until > ?""",
+                    (str(attempt_id), int(generation), str(worker_id), time.time()),
+                ).fetchone()
+            if (
+                row is None
+                or row["status"] != "leased"
+                or row["lease_token_digest"] != lease_digest
+                or row["participant_status"] not in {"bound", "launching", "active", "running"}
+                or row["participant_worker_id"] != str(worker_id)
+            ):
+                raise ValueError("execution participant lease is not valid")
+        if not isinstance(measurement, dict):
+            raise ValueError("active GDRDMA measurement must be an object")
+        if str(measurement.get("attempt_id") or "").strip() != str(attempt_id):
+            raise ValueError("active measurement attempt identity does not match")
+        if int(measurement.get("generation", -1)) != int(generation):
+            raise ValueError("active measurement generation does not match")
+        if str(measurement.get("worker_id") or "").strip() != str(worker_id):
+            raise ValueError("active measurement worker identity does not match")
+        if str(measurement.get("fabric_path_id") or "").strip() != str(path_id).strip():
+            raise ValueError("active measurement fabric path identity does not match")
+        test_id = self.inventory.record_active_gdrdma_measurement(
+            path_id=str(path_id).strip(),
+            measurement=dict(measurement),
+            evidence=dict(evidence or {}),
+            observed_at=observed_at,
+        )
+        return {"ok": True, "test_id": test_id, "fabric_path_id": str(path_id).strip()}
+
     def fabric_path_performance(self, requirements: Any | None = None) -> Dict[str, Dict[str, Any]]:
         """Return durable path and workload-specific observed performance evidence."""
         with self._connect() as connection:
