@@ -13,6 +13,7 @@ import time
 from dataclasses import asdict
 from typing import Any
 
+from .active_path_intelligence import ActivePathIntelligence
 from .compute_provider import ProviderResourceSnapshot
 from .compute_fabric_telemetry import summarize_route_health
 from .compute_resources import GpuResource, NodeResource, ResourceState
@@ -823,6 +824,25 @@ class ComputeInventory:
             }
             for row in rows
         ]
+
+    def active_path_intelligence(self, *, path_id: str) -> dict[str, Any]:
+        """Analyze immutable active-test history for one exact physical path."""
+        exact_path_id = str(path_id or "").strip()
+        if not exact_path_id:
+            raise ValueError("fabric path id is required")
+        samples = self.active_gdrdma_tests(path_id=exact_path_id)
+        return ActivePathIntelligence.analyze(
+            tuple({"path_id": row["path_id"], "observed_at": row["observed_at"], "measurement": row["measurement"]} for row in samples),
+            path_id=exact_path_id,
+        )
+
+    def active_path_intelligence_for_paths(self, *, path_ids: list[str] | tuple[str, ...] | None = None) -> dict[str, dict[str, Any]]:
+        """Return evidence-only active-path intelligence keyed by exact path identity."""
+        if path_ids is None:
+            selected = tuple(str(row["path_id"]) for row in self.physical_paths() if str(row.get("path_id") or "").strip())
+        else:
+            selected = tuple(dict.fromkeys(str(path_id).strip() for path_id in path_ids if str(path_id).strip()))
+        return {path_id: self.active_path_intelligence(path_id=path_id) for path_id in selected}
 
     def physical_paths(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
