@@ -11,7 +11,7 @@ import os
 import sqlite3
 import time
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from .active_path_intelligence import ActivePathIntelligence
 from .compute_provider import ProviderResourceSnapshot
