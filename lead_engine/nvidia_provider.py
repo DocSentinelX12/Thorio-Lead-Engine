@@ -105,6 +105,28 @@ class NvidiaProvider(ComputeProvider):
             return {"source": "lspci -D -vvv", "available": False, "error": (result.stderr or result.stdout).strip()[:1000], "devices": {}}
         devices = self._parse_pci_direct_features(result.stdout)
         return {"source": "lspci -D -vvv", "available": True, "devices": devices}
+    def _probe_rdma_topology(self) -> dict[str, object]:
+        evidence: dict[str, object] = {"source": "rdma_topo"}
+        for operation in ("check", "topo"):
+            try:
+                result = self._runner(("rdma_topo", operation), self.timeout_seconds)
+            except (NvidiaDiscoveryError, OSError) as exc:
+                evidence[operation] = {
+                    "available": False,
+                    "error": str(exc),
+                }
+                continue
+            payload: dict[str, object] = {
+                "available": result.returncode == 0,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+            if result.returncode != 0:
+                payload["error"] = (result.stderr or result.stdout).strip()[:1000]
+            evidence[operation] = payload
+        return evidence
+
     @staticmethod
     def _rdma_pci_bus_id(device: str) -> str | None:
         try:
@@ -703,6 +725,7 @@ class NvidiaProvider(ComputeProvider):
 
         host_physical = self._physical_host_discovery.discover(node_id=self.node_id)
         host_physical["pci_direct_features"] = self._probe_pci_direct_features()
+        host_physical["rdma_topology"] = self._probe_rdma_topology()
         network_evidence = self._discover_network()
         if isinstance(network_evidence, dict):
             network_evidence["rdma"] = self._discover_rdma()
