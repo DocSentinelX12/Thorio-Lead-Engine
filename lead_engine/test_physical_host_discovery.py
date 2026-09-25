@@ -63,7 +63,8 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
     assert evidence["memory"]["mem_total_bytes"] == 262144 * 1024
     assert evidence["cpu"]["logical_cpu_count"] == 4
     assert evidence["cpu"]["socket_count"] == 2
-    assert evidence["cpu"]["core_count"] == 2\n    assert evidence["cpu"]["thread_siblings"] == [[0, 1], [2, 3]]
+    assert evidence["cpu"]["core_count"] == 2
+    assert evidence["cpu"]["thread_siblings"] == [[0, 1], [2, 3]]
     assert evidence["storage"]["devices"][0]["name"] == "nvme0n1"
     assert evidence["storage"]["devices"][0]["capacity_bytes"] == 2097152 * 512\n    assert evidence["storage"]["devices"][0]["physical_block_size"] == 4096
     assert evidence["pci"]["devices"][0]["bus_id"] == "0000:17:00.0"
