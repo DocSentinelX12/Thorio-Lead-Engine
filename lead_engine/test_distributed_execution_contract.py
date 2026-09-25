@@ -117,9 +117,7 @@ def test_coordinator_launch_boundary_persists_verified_contract(tmp_path):
 
     assert evidence["verified"] is True
     attempt = coordinator.execution_attempt(attempt_id)
-    assert attempt["launch_plan_verification"] == __import__("json").dumps(
-        evidence, ensure_ascii=False, sort_keys=True
-    )
+    assert attempt["launch_plan_verification"] == evidence
 
 
 def test_coordinator_launch_boundary_rejects_invalid_contract_before_persistence(tmp_path):
