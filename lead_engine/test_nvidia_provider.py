@@ -635,7 +635,7 @@ def test_physical_fabric_graph_exposes_observed_pci_ancestry_for_gpu_and_nic():
 
 
 
-def test_physical_fabric_graph_exposes_rdmа_port_pci_attachment_and_precise_nic_port_edge():
+def test_physical_fabric_graph_exposes_rdma_port_pci_attachment_and_precise_nic_port_edge():
     gpu = GpuResource(
         node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
         vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
