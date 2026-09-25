@@ -36,8 +36,8 @@ class FakeRuntime(NvidiaRuntime):
             "gpu_direct_rdma": False,
         }
 
-    def validate_nccl_transport_against_rdma(self, log_output, rdma_evidence, *, gpu_uuid=None, gpu_nic_locality=None):
-        return {"rdma_devices": (), "verified_rdma_devices": (), "verified_hca_selections": (), "verified_rdma_links": ()}
+    def validate_nccl_transport_against_rdma(self, log_output, rdma_evidence, *, gpu_uuid=None, gpu_nic_locality=None, require_gpu_direct_rdma=False):
+        return {"rdma_devices": (), "verified_rdma_devices": (), "verified_hca_selections": (), "verified_rdma_links": (), "gpu_direct_rdma": False, "data_path_verified": False}
 
 
 class FakeClient:
