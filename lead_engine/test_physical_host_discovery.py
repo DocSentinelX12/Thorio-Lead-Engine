@@ -66,7 +66,12 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
     assert evidence["cpu"]["core_count"] == 2
     assert evidence["cpu"]["thread_siblings"] == [[0, 1], [2, 3]]
     assert evidence["storage"]["devices"][0]["name"] == "nvme0n1"
-    assert evidence["storage"]["devices"][0]["capacity_bytes"] == 2097152 * 512\n    assert evidence["storage"]["devices"][0]["physical_block_size"] == 4096
+    assert evidence["storage"]["devices"][0]["capacity_bytes"] == 2097152 * 512
+    assert evidence["storage"]["devices"][0]["physical_block_size"] == 4096
     assert evidence["pci"]["devices"][0]["bus_id"] == "0000:17:00.0"
     assert evidence["pci"]["devices"][0]["vendor_id"] == "0x10de"
-    assert evidence["pci"]["devices"][0]["numa_node"] == 0\n    assert evidence["numa"]["nodes"][0]["node_id"] == 0\n    assert evidence["numa"]["nodes"][0]["cpu_count"] == 2\n    assert evidence["numa"]["nodes"][0]["mem_total_bytes"] == 131072 * 1024\n    assert evidence["numa"]["distance_matrix"] == {}
+    assert evidence["pci"]["devices"][0]["numa_node"] == 0
+    assert evidence["numa"]["nodes"][0]["node_id"] == 0
+    assert evidence["numa"]["nodes"][0]["cpu_count"] == 2
+    assert evidence["numa"]["nodes"][0]["mem_total_bytes"] == 131072 * 1024
+    assert evidence["numa"]["distance_matrix"] == {}
