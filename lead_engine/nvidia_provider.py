@@ -432,9 +432,9 @@ class NvidiaProvider(ComputeProvider):
         gpu_by_uuid = {gpu.gpu_uuid: gpu for gpu in gpus}
         current_gpu: GpuResource | None = None
         links: list[dict[str, object]] = []
-        header_re = re.compile(r"^GPU\\s+(\\d+):.*?(?:\\(UUID:\\s*(GPU-[^)]+)\\))?\\s*$", re.IGNORECASE)
-        link_re = re.compile(r"^\\s*Link\\s+(\\d+):\\s*(.*?)\\s*$", re.IGNORECASE)
-        bandwidth_re = re.compile(r"([0-9]+(?:\\.[0-9]+)?)\\s*GB/s", re.IGNORECASE)
+        header_re = re.compile(r"^GPU\s+(\d+):.*?(?:\(UUID:\s*(GPU-[^)]+)\))?\s*$", re.IGNORECASE)
+        link_re = re.compile(r"^\s*Link\s+(\d+):\s*(.*?)\s*$", re.IGNORECASE)
+        bandwidth_re = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*GB/s", re.IGNORECASE)
         for raw_line in text.splitlines():
             line = raw_line.rstrip()
             header = header_re.match(line.strip())
@@ -929,7 +929,7 @@ class NvidiaProvider(ComputeProvider):
         return {
             "components": tuple(components[key] for key in sorted(components)),
             "relationships": tuple(relationships),
-            "contradictions": tuple(contradictions),
+            "contradictions": contradictions,
             "evidence_source": "worker-local-physical-discovery",
             "observed_at": observed_at,
         }
