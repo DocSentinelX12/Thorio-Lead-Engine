@@ -139,6 +139,68 @@ def test_ib_gpu_direct_execution_records_verified_gdrdma_evidence():
     assert result["verified_rdma_links"][0]["rdma_device"] == "mlx5_0"
 
 
+
+def test_active_gdrdma_client_requires_explicit_trusted_remote_and_cuda_mode():
+    runtime = NvidiaRuntime(
+        runner=lambda args, timeout: (0, "RDMA_Write BW Test\\nDevice : mlx5_0\\n", ""),
+        which=lambda name: "/usr/bin/" + name,
+    )
+    with pytest.raises(NvidiaRuntimeError, match="trusted remote"):
+        runtime.verify_active_gpu_direct_rdma(
+            gpu_index=0,
+            rdma_device="mlx5_0",
+            trusted_remote=None,
+        )
+
+
+def test_active_gdrdma_client_uses_cuda_dmabuf_and_records_only_observed_result():
+    captured = []
+
+    def runner(args, timeout):
+        captured.append(tuple(args))
+        return 0, "RDMA_Write BW Test\\nDevice : mlx5_0\\nBandwidth: 123.4 Gbps\\n", ""
+
+    runtime = NvidiaRuntime(
+        runner=runner,
+        which=lambda name: "/usr/bin/" + name,
+    )
+    result = runtime.verify_active_gpu_direct_rdma(
+        gpu_index=0,
+        rdma_device="mlx5_0",
+        trusted_remote="198.51.100.10",
+        mode="cuda_dmabuf",
+    )
+
+    assert result["verified"] is True
+    assert result["gpu_index"] == 0
+    assert result["rdma_device"] == "mlx5_0"
+    assert result["mode"] == "cuda_dmabuf"
+    assert result["remote_endpoint"] == "198.51.100.10"
+    assert result["observed_output"].startswith("RDMA_Write BW Test")
+    assert captured == [(
+        "/usr/bin/ib_write_bw",
+        "--use_cuda=0",
+        "--use_cuda_dmabuf",
+        "-d", "mlx5_0",
+        "-a", "-F",
+        "--report_gbits",
+        "-q", "1",
+        "198.51.100.10",
+    )]
+
+
+def test_active_gdrdma_client_rejects_nonzero_perftest_result():
+    runtime = NvidiaRuntime(
+        runner=lambda args, timeout: (1, "", "GPU memory registration failed"),
+        which=lambda name: "/usr/bin/" + name,
+    )
+    with pytest.raises(NvidiaRuntimeError, match="active GPU Direct RDMA"):
+        runtime.verify_active_gpu_direct_rdma(
+            gpu_index=0,
+            rdma_device="mlx5_0",
+            trusted_remote="198.51.100.10",
+        )
+
 def test_probe_evidence_contains_only_observed_execution_identity():
     evidence = build_probe_evidence(
         rank=1,
