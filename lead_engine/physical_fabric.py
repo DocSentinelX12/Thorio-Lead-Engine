@@ -322,7 +322,7 @@ class AdaptiveFabricRouteSelector:
             measurement = raw.get("measurement")
             if not path_id or state not in cls._ELIGIBLE_STATES or state != FabricPathState.MEASURED.value or not isinstance(health, Mapping) or not isinstance(measurement, Mapping):
                 continue
-            active = active_path_intelligence.get(path_id) if isinstance(active_path_intelligence, Mapping) else None
+            active = active_path_intelligence.get(path_id) if isinstance(active_path_intelligence, Mapping) else health.get("active_path_intelligence")
             candidates.append({"path_id": path_id, "health": dict(health), "measurement": dict(measurement), "state": state, "active_path_intelligence": dict(active) if isinstance(active, Mapping) else None})
         return candidates
 
@@ -352,7 +352,7 @@ class AdaptiveFabricRouteSelector:
         selected = candidates[0]
         return {
             "path_id": selected["path_id"],
-            "selection_reason": "observed_route_health_and_active_path_evidence" if isinstance(active_path_intelligence, Mapping) else "observed_route_health",
+            "selection_reason": "observed_route_health_and_active_path_evidence" if any(isinstance(item.get("active_path_intelligence"), Mapping) for item in candidates) else "observed_route_health",
             "alternatives": tuple(str(item["path_id"]) for item in candidates[1:]),
             "evidence": tuple({"path_id": str(item["path_id"]), "health": dict(item["health"]), "measurement": dict(item["measurement"]), "active_path_intelligence": dict(item["active_path_intelligence"]) if isinstance(item.get("active_path_intelligence"), Mapping) else None} for item in candidates),
         }
