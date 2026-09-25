@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .compute_provider import ComputeProvider, ProviderResourceSnapshot
+from .physical_host_discovery import PhysicalHostDiscovery
 from .compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
 
 
@@ -42,7 +43,7 @@ class NvidiaProvider(ComputeProvider):
 
     provider_id = "nvidia"
 
-    def __init__(self, *, node_id: str | None = None, domain_id: str | None = None, command: str | None = None, timeout_seconds: float = 10.0, runner: Runner | None = None, now: Callable[[], float] | None = None) -> None:
+    def __init__(self, *, node_id: str | None = None, domain_id: str | None = None, command: str | None = None, timeout_seconds: float = 10.0, runner: Runner | None = None, now: Callable[[], float] | None = None, physical_host_discovery: PhysicalHostDiscovery | None = None) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.node_id = (node_id or os.environ.get("THORIO_NODE_ID") or "local").strip() or "local"
@@ -51,6 +52,7 @@ class NvidiaProvider(ComputeProvider):
         self.timeout_seconds = timeout_seconds
         self._runner = runner or self._run_command
         self._now = now or time.time
+        self._physical_host_discovery = physical_host_discovery or PhysicalHostDiscovery()
 
     @staticmethod
     def _run_command(args: Sequence[str], timeout_seconds: float) -> CommandResult:
@@ -614,6 +616,7 @@ class NvidiaProvider(ComputeProvider):
             except NvidiaDiscoveryError as exc:
                 topology_parse_error = str(exc)
 
+        host_physical = self._physical_host_discovery.discover(node_id=self.node_id)
         network_evidence = self._discover_network()
         if isinstance(network_evidence, dict):
             network_evidence["rdma"] = self._discover_rdma()
@@ -653,6 +656,7 @@ class NvidiaProvider(ComputeProvider):
             "topology_matrix": topology, "topology_error": topology_error,
             "topology": structured_topology, "topology_parse_error": topology_parse_error,
             "network": network_evidence,
+            "host_physical": host_physical,
         }
         node = NodeResource(
             node_id=self.node_id, architecture=os.uname().machine if hasattr(os, "uname") else "unknown",
