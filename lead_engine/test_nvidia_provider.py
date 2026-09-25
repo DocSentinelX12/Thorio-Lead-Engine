@@ -718,7 +718,7 @@ def test_physical_fabric_graph_records_pci_root_complex_and_gdrdma_topology_asse
     assert {item["target"] for item in root_edges} == {"pci_root_complex:0000:00:00.0"}
     assessment = next(item for item in evidence["relationships"] if item["relationship_type"] == "gpu_to_nic_gdrdma_assessment")
     assert assessment["evidence"]["pci_root_complex_match"] is True
-    assert assessment["evidence"]["topology_distance"] == "PXB"
+    assert assessment["evidence"]["topology_distance"] == "PIX"
     assert assessment["evidence"]["rdma_link_active"] is True
     assert assessment["evidence"]["same_iommu_group"] is False
     assert assessment["evidence"]["eligibility"] == "topology_eligible"
@@ -739,7 +739,7 @@ def test_physical_fabric_graph_does_not_claim_gdrdma_eligible_across_different_r
             "gpu_nic_locality": [{
                 "gpu_uuid": "GPU-aaa", "gpu_pci_bus_id": "0000:17:00.0",
                 "nic": "eth0", "nic_pci_bus_id": "0000:41:00.0",
-                "same_numa_node": True, "shared_pci_ancestor": None,
+                "same_numa_node": True, "shared_pci_ancestor": "0000:10:00.0",
                 "source": "sysfs",
             }],
             "rdma": {"links": [{
