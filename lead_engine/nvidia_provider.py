@@ -79,18 +79,18 @@ class NvidiaProvider(ComputeProvider):
         features: dict[str, dict[str, object]] = {}
         current: str | None = None
         for line in text.splitlines():
-            header = re.match(r"^([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7])\\s+", line)
+            header = re.match(r"^([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7])\s+", line)
             if header:
                 current = header.group(1).lower()
                 features.setdefault(current, {})
                 continue
             if current is None:
                 continue
-            acs = re.search(r"ACSCtl:\\s*(.*?)(?:\\s+ACSCap:|$)", line)
+            acs = re.search(r"ACSCtl:\s*(.*?)(?:\s+ACSCap:|$)", line)
             if acs:
                 features[current]["acsctl"] = acs.group(1).strip()
                 features[current]["acs_enabled"] = any(flag in acs.group(1) for flag in ("SrcValid+", "ReqRedir+", "CmpltRedir+"))
-            ats = re.search(r"ATSCtl:\\s*(.*?)(?:\\s+ATSCap:|$)", line)
+            ats = re.search(r"ATSCtl:\s*(.*?)(?:\s+ATSCap:|$)", line)
             if ats:
                 features[current]["atsctl"] = ats.group(1).strip()
                 features[current]["ats_enabled"] = "Enable+" in ats.group(1)
