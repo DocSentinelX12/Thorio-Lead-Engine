@@ -191,6 +191,35 @@ class PhysicalHostDiscovery:
         devices.sort(key=lambda item: str(item["bus_id"]))
         return {"devices": devices}
 
+    def _network(self) -> dict[str, object]:
+        interfaces: list[dict[str, object]] = []
+        for path in self._glob("/sys/class/net/*"):
+            name = path.name
+            if not name or name == "lo":
+                continue
+            item: dict[str, object] = {"name": name}
+            for field in ("address", "operstate"):
+                try:
+                    value = self._read(path / field).strip()
+                except OSError:
+                    value = ""
+                if value:
+                    item[field] = value
+            try:
+                resolved_device = self._resolve(path / "device")
+                if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", resolved_device.name.lower()):
+                    item["pci_bus_id"] = resolved_device.name.lower()
+                else:
+                    for part in resolved_device.parents:
+                        if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", part.name.lower()):
+                            item["pci_bus_id"] = part.name.lower()
+                            break
+            except (OSError, RuntimeError):
+                pass
+            interfaces.append(item)
+        interfaces.sort(key=lambda item: str(item["name"]))
+        return {"source": "worker-local-linux-sysfs", "interfaces": interfaces}
+
     def _numa(self) -> dict[str, object]:
         nodes: list[dict[str, object]] = []
         try:
@@ -250,5 +279,6 @@ class PhysicalHostDiscovery:
             "memory": self._memory(),
             "storage": self._storage(),
             "pci": self._pci(),
+            "network": self._network(),
             "numa": self._numa(),
         }
