@@ -121,6 +121,7 @@ class FreeComputeAcquisitionStore:
                     no_cost INTEGER NOT NULL,
                     evidence_json TEXT NOT NULL,
                     enrollment_json TEXT,
+                    verification_json TEXT NOT NULL DEFAULT '{}',
                     last_error TEXT NOT NULL DEFAULT '',
                     updated_at REAL NOT NULL
                 )"""
@@ -129,6 +130,9 @@ class FreeComputeAcquisitionStore:
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_free_acquisition_offer "
                 "ON compute_free_acquisitions(provider_id,domain_id,offer_id)"
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_free_acquisitions)")}
+            if "verification_json" not in columns:
+                connection.execute("ALTER TABLE compute_free_acquisitions ADD COLUMN verification_json TEXT NOT NULL DEFAULT '{}')
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_free_acquisition_status "
                 "ON compute_free_acquisitions(status,updated_at)"
@@ -198,6 +202,61 @@ class FreeComputeAcquisitionStore:
             )
             connection.commit()
 
+    def mark_worker_verified(
+        self,
+        acquisition_id: str,
+        *,
+        worker_id: str,
+        verification: Mapping[str, Any],
+    ) -> bool:
+        """Promote an acquired offer only after authenticated worker physical evidence."""
+        key = str(acquisition_id).strip()
+        worker = str(worker_id).strip()
+        if not key or not worker:
+            raise FreeComputeAcquisitionError("acquisition_id and worker_id are required")
+        if not isinstance(verification, Mapping) or not verification:
+            raise FreeComputeAcquisitionError("worker verification evidence is required")
+        gpu_capable = bool(verification.get("gpu_capable"))
+        discovery_state = str(verification.get("gpu_discovery_state") or "").strip()
+        physical = verification.get("physical_fabric_evidence")
+        gpu_resources = verification.get("gpu_resources")
+        if not isinstance(physical, Mapping) or not physical:
+            raise FreeComputeAcquisitionError("physical hardware evidence is required before trust")
+        if gpu_capable:
+            if discovery_state != "healthy":
+                raise FreeComputeAcquisitionError("GPU acquisition requires healthy worker-local GPU discovery")
+            if not isinstance(gpu_resources, (list, tuple)) or not gpu_resources:
+                raise FreeComputeAcquisitionError("GPU acquisition requires observed GPU resources")
+            for gpu in gpu_resources:
+                if not isinstance(gpu, Mapping) or not str(gpu.get("gpu_uuid") or "").strip():
+                    raise FreeComputeAcquisitionError("GPU acquisition requires stable observed GPU UUIDs")
+        verification_payload = dict(verification)
+        verification_payload["worker_id"] = worker
+        payload = json.dumps(verification_payload, sort_keys=True, ensure_ascii=False)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT status,no_cost,gpu_capable FROM compute_free_acquisitions WHERE acquisition_id=?",
+                (key,),
+            ).fetchone()
+            if row is None:
+                raise FreeComputeAcquisitionError("acquisition must be durably recorded before enrollment")
+            if int(row["no_cost"]) != 1:
+                raise FreeComputeAcquisitionError("paid acquisition is permanently forbidden")
+            if int(row["gpu_capable"]) == 1 and not gpu_capable:
+                raise FreeComputeAcquisitionError("GPU acquisition cannot be verified as CPU-only")
+            if row["status"] == "verified":
+                return True
+            if row["status"] != "acquired":
+                raise FreeComputeAcquisitionError(f"acquisition is not awaiting physical enrollment: {row['status']}")
+            connection.execute(
+                """UPDATE compute_free_acquisitions
+                   SET status='verified',verification_json=?,last_error='',updated_at=?
+                   WHERE acquisition_id=? AND status='acquired'""",
+                (payload, time.time(), key),
+            )
+            connection.commit()
+        return True
+
     def mark_retry(self, acquisition_id: str, error: str) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -228,6 +287,8 @@ class FreeComputeAcquisitionStore:
             item = dict(row)
             item["evidence"] = json.loads(item.pop("evidence_json"))
             item["enrollment"] = json.loads(item.pop("enrollment_json")) if item.get("enrollment_json") else None
+            item["verification"] = json.loads(item.pop("verification_json") or "{}")
+            item["worker_id"] = item["verification"].get("worker_id") if isinstance(item["verification"], dict) else None
             item["no_cost"] = bool(item["no_cost"])
             item["gpu_capable"] = bool(item["gpu_capable"])
             item.pop("enrollment_json", None)
@@ -292,6 +353,20 @@ class FreeComputeAcquisitionManager:
             self.store.mark_retry(acquisition_id, f"{type(exc).__name__}: {exc}")
             raise
 
+    def confirm_worker_enrollment(
+        self,
+        *,
+        acquisition_id: str,
+        worker_id: str,
+        verification: Mapping[str, Any],
+    ) -> bool:
+        """Bind an acquired offer to authenticated worker and physical evidence."""
+        return self.store.mark_worker_verified(
+            acquisition_id,
+            worker_id=worker_id,
+            verification=verification,
+        )
+
     def release(self, acquisition: AcquiredCompute) -> None:
         provider = self._providers.get(acquisition.provider_id)
         if provider is None:
@@ -306,5 +381,7 @@ class FreeComputeAcquisitionManager:
             "records": tuple(records),
             "free_only": True,
             "paid_capacity_allowed": False,
-            "eligible_acquired_count": sum(1 for item in records if item["status"] == "acquired"),
+            "acquired_unverified_count": sum(1 for item in records if item["status"] == "acquired"),
+            "eligible_acquired_count": sum(1 for item in records if item["status"] == "verified"),
+            "eligible_verified_count": sum(1 for item in records if item["status"] == "verified"),
         }
