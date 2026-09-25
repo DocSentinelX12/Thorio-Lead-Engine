@@ -98,6 +98,51 @@ def test_active_gdrdma_measurement_rejects_unknown_path_without_persistence(tmp_
             observed_at=1000.0,
         )
 
+def test_inventory_derives_active_path_intelligence_from_immutable_test_history(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="fabric-path-intel",
+        source_gpu="gpu:GPU-a",
+        destination_gpu="gpu:GPU-b",
+        segments=("gpu:GPU-a", "pci:0000:17:00.0", "nic:ib0", "rdma:mlx5_0:1", "fabric:domain-1", "rdma:mlx5_1:1", "nic:ib1", "gpu:GPU-b"),
+        fabric_domains=("fabric:domain-1",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    for observed_at, bandwidth in ((1.0, 200.0), (2.0, 198.0), (3.0, 140.0)):
+        inventory.record_active_gdrdma_measurement(
+            path_id=path.path_id,
+            measurement={
+                "measurement_status": "measured",
+                "verified": True,
+                "test": "ib_write_bw",
+                "fabric_path_id": path.path_id,
+                "worker_id": "worker-a",
+                "gpu_uuid": "GPU-a",
+                "rdma_device": "mlx5_0",
+                "rdma_port": 1,
+                "remote_worker_id": "worker-b",
+                "remote_endpoint": "198.51.100.10",
+                "remote_test_server_verified": True,
+                "direction": "client_to_server",
+                "mode": "cuda_dmabuf",
+                "bandwidth_gbps": bandwidth,
+            },
+            evidence={"raw_output": "RDMA_Write BW Test"},
+            observed_at=observed_at,
+        )
+
+    intelligence = inventory.active_path_intelligence(path_id=path.path_id)
+
+    assert intelligence["state"] == "degrading"
+    assert intelligence["comparable_sample_count"] == 3
+    assert intelligence["baseline"]["bandwidth_gbps"] == 199.0
+    assert intelligence["latest"]["bandwidth_gbps"] == 140.0
+    assert intelligence["synthetic_baseline"] is False
+
+
 def test_multiple_gpus_are_independently_addressable(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     result = inventory.observe(_snapshot(gpus=(_gpu("0", "uuid-0"), _gpu("1", "uuid-1"))))
