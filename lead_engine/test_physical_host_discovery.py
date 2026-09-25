@@ -30,6 +30,9 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
         "/sys/bus/pci/devices/0000:17:00.0/device": "0x2330\n",
         "/sys/bus/pci/devices/0000:17:00.0/class": "0x030200\n",
         "/sys/bus/pci/devices/0000:17:00.0/numa_node": "0\n",
+        "/sys/bus/pci/devices/0000:17:00.0/iommu_group": "7\n",
+        "/sys/class/net/eth0/address": "aa:bb:cc:dd:ee:ff\n",
+        "/sys/class/net/eth0/operstate": "up\n",
         "/sys/devices/system/node/node0/cpulist": "0-1\n",
         "/sys/devices/system/node/node0/meminfo": "Node 0 MemTotal:       131072 kB\nNode 0 MemFree:         65536 kB\n",
         "/sys/devices/system/node/node1/cpulist": "2-3\n",
@@ -39,6 +42,7 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
     directories = {
         "/sys/block": ["nvme0n1"],
         "/sys/bus/pci/devices": ["0000:17:00.0"],
+        "/sys/class/net": ["eth0"],
     }
 
     def read(path):
@@ -56,7 +60,16 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
             return [Path("/sys/bus/pci/devices/0000:17:00.0")]
         return []
 
-    discovery = PhysicalHostDiscovery(file_reader=read, globber=glob)
+    def resolve(path):
+        if str(path) == "/sys/bus/pci/devices/0000:17:00.0":
+            return Path("/sys/devices/pci0000:00/0000:00:01.0/0000:17:00.0")
+        if str(path) == "/sys/class/net/eth0/device":
+            return Path("/sys/devices/pci0000:00/0000:00:01.0/0000:17:00.0")
+        if str(path) == "/sys/bus/pci/devices/0000:17:00.0/iommu_group":
+            return Path("/sys/kernel/iommu_groups/7")
+        return path
+
+    discovery = PhysicalHostDiscovery(file_reader=read, globber=glob, path_resolver=resolve)
     evidence = discovery.discover(node_id="node-01")
 
     assert evidence["source"] == "worker-local-linux-sysfs"
@@ -71,6 +84,11 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
     assert evidence["pci"]["devices"][0]["bus_id"] == "0000:17:00.0"
     assert evidence["pci"]["devices"][0]["vendor_id"] == "0x10de"
     assert evidence["pci"]["devices"][0]["numa_node"] == 0
+    assert evidence["pci"]["devices"][0]["parent_bus_id"] == "0000:00:01.0"
+    assert evidence["pci"]["devices"][0]["iommu_group"] == 7
+    assert evidence["network"]["interfaces"][0]["name"] == "eth0"
+    assert evidence["network"]["interfaces"][0]["pci_bus_id"] == "0000:17:00.0"
+    assert evidence["network"]["interfaces"][0]["operstate"] == "up"
     assert evidence["numa"]["nodes"][0]["node_id"] == 0
     assert evidence["numa"]["nodes"][0]["cpu_count"] == 2
     assert evidence["numa"]["nodes"][0]["mem_total_bytes"] == 131072 * 1024
