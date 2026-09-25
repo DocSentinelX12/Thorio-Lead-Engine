@@ -376,12 +376,29 @@ class FreeComputeAcquisitionManager:
 
     def status(self) -> dict[str, Any]:
         records = self.store.records()
+        now = self._clock()
+
+        def active(item: Mapping[str, Any]) -> bool:
+            expires_at = item.get("expires_at")
+            return expires_at is None or float(expires_at) > now
+
+        verified = [item for item in records if item["status"] == "verified"]
+        eligible = [item for item in verified if active(item)]
+        expired_verified = [item for item in verified if not active(item)]
         return {
             "provider_count": len(self._providers),
             "records": tuple(records),
             "free_only": True,
             "paid_capacity_allowed": False,
-            "acquired_unverified_count": sum(1 for item in records if item["status"] == "acquired"),
-            "eligible_acquired_count": sum(1 for item in records if item["status"] == "verified"),
-            "eligible_verified_count": sum(1 for item in records if item["status"] == "verified"),
+            "acquired_unverified_count": sum(
+                1 for item in records
+                if item["status"] == "acquired" and active(item)
+            ),
+            "expired_acquired_count": sum(
+                1 for item in records
+                if item["status"] == "acquired" and not active(item)
+            ),
+            "eligible_acquired_count": len(eligible),
+            "eligible_verified_count": len(eligible),
+            "expired_verified_count": len(expired_verified),
         }
