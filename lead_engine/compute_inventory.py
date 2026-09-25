@@ -675,7 +675,7 @@ class ComputeInventory:
         status = str(measurement.get("measurement_status") or "").strip().lower()
         if status not in {"executed", "measured", "degraded", "failed", "unavailable"}:
             raise ValueError("active measurement status is invalid")
-        required = ("remote_worker_id", "remote_endpoint", "gpu_uuid", "rdma_device", "rdma_port")
+        required = ("worker_id", "remote_worker_id", "remote_endpoint", "gpu_uuid", "rdma_device", "rdma_port")
         if any(not str(measurement.get(field) or "").strip() for field in required):
             raise ValueError("active measurement is missing required endpoint or device identity")
         try:
@@ -686,6 +686,8 @@ class ComputeInventory:
             raise ValueError("active measurement rdma_port must be positive")
         if measurement.get("verified") is not True and status == "measured":
             raise ValueError("measured active GPU Direct RDMA evidence must be verified")
+        if status == "measured" and measurement.get("remote_test_server_verified") is not True:
+            raise ValueError("measured active GPU Direct RDMA evidence requires verified remote endpoint")
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT path_id,source_gpu,destination_gpu,segments_json,state,measurement_json,
