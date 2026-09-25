@@ -4,6 +4,8 @@ import threading
 import urllib.error
 import urllib.request
 
+import pytest
+
 from lead_engine.compute_coordinator import ComputeCoordinator, ComputeCoordinatorServer
 
 
@@ -43,6 +45,75 @@ def _register(base_url, worker_id="worker-1"):
     })
     assert status == 200
     assert registered["worker_id"] == worker_id
+
+
+def test_active_gdrdma_measurement_requires_current_execution_participant_and_persists_exact_path(tmp_path, monkeypatch):
+    from lead_engine.compute_pool import WorkerIdentity
+
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    coordinator.register_worker(WorkerIdentity(
+        "worker-a", "host", "x86_64", 2, 4096, ("lead-processing",)
+    ))
+    task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
+    claimed = coordinator.claim("worker-a")
+    captured = {}
+
+    with coordinator._connect() as connection:
+        connection.execute(
+            """UPDATE compute_execution_participants
+               SET status='running'
+               WHERE attempt_id=? AND worker_id=?""",
+            (claimed["attempt_id"], "worker-a"),
+        )
+        connection.commit()
+
+    def record(**kwargs):
+        captured.update(kwargs)
+        return "active-test-1"
+
+    monkeypatch.setattr(coordinator.inventory, "record_active_gdrdma_measurement", record)
+    result = coordinator.record_active_gdrdma_measurement(
+        attempt_id=claimed["attempt_id"],
+        generation=claimed["generation"],
+        worker_id="worker-a",
+        lease_token=claimed["lease_token"],
+        path_id="fabric-path-1",
+        measurement={
+            "attempt_id": claimed["attempt_id"],
+            "generation": claimed["generation"],
+            "worker_id": "worker-a",
+            "fabric_path_id": "fabric-path-1",
+            "verified": True,
+            "measurement_status": "measured",
+            "remote_worker_id": "worker-b",
+            "remote_endpoint": "198.51.100.10",
+            "gpu_uuid": "GPU-a",
+            "rdma_device": "mlx5_0",
+            "rdma_port": 1,
+        },
+        evidence={"test": "ib_write_bw"},
+        observed_at=1000.0,
+    )
+
+    assert result == {"ok": True, "test_id": "active-test-1", "fabric_path_id": "fabric-path-1"}
+    assert captured["path_id"] == "fabric-path-1"
+    assert captured["measurement"]["worker_id"] == "worker-a"
+    assert captured["measurement"]["attempt_id"] == claimed["attempt_id"]
+    assert captured["measurement"]["generation"] == claimed["generation"]
+
+
+def test_active_gdrdma_measurement_rejects_stale_execution_lease(tmp_path, monkeypatch):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
+    with pytest.raises(ValueError, match="execution participant lease is not valid"):
+        coordinator.record_active_gdrdma_measurement(
+            attempt_id="missing-attempt",
+            generation=1,
+            worker_id="worker-a",
+            lease_token="stale",
+            path_id="fabric-path-1",
+            measurement={},
+            evidence={},
+        )
 
 
 def test_coordinator_register_claim_complete_round_trip(tmp_path):
