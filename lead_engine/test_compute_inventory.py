@@ -328,3 +328,82 @@ def test_fabric_path_quarantine_is_durable_and_revalidation_is_explicit(tmp_path
     assert inventory.revalidate_fabric_path(path, verification={"verified": True, **path}) is True
     assert inventory.is_fabric_path_quarantined(path) is False
     assert inventory.quarantined_fabric_paths() == []
+
+
+
+def test_active_path_recovery_plan_turns_failed_exact_path_into_required_fresh_verification(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="fabric-path-recovery",
+        source_gpu="gpu:GPU-a",
+        destination_gpu="gpu:GPU-b",
+        segments=("gpu:GPU-a", "pci:0000:17:00.0", "nic:ib0", "rdma:mlx5_0:1", "fabric:domain-1", "rdma:mlx5_1:1", "nic:ib1", "gpu:GPU-b"),
+        fabric_domains=("fabric:domain-1",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="active path test failed", observed_at=10.0)
+
+    plan = inventory.active_path_recovery_plan(path_id=path.path_id)
+
+    assert plan["path_id"] == path.path_id
+    assert plan["action"] == "fresh_physical_reverification_required"
+    assert plan["required_segments"] == path.segments
+    assert plan["allow_routing"] is False
+
+
+def test_active_path_recovery_requires_complete_fresh_evidence_before_reactivation(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="fabric-path-recovery-apply",
+        source_gpu="gpu:GPU-a",
+        destination_gpu="gpu:GPU-b",
+        segments=("gpu:GPU-a", "pci:0000:17:00.0", "nic:ib0"),
+        fabric_domains=("fabric:domain-1",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="active path test failed", observed_at=10.0)
+
+    with pytest.raises(ValueError, match="fresh path-segment evidence is incomplete"):
+        inventory.apply_active_path_reverification(
+            path_id=path.path_id,
+            evidence=({"segment": "gpu:GPU-a", "result": "pass"},),
+            observed_at=11.0,
+        )
+
+    assert inventory.physical_paths()[0]["state"] == FabricPathState.FAILED.value
+
+
+def test_active_path_reverification_reactivates_only_exact_failed_path_with_complete_new_evidence(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="fabric-path-recovery-success",
+        source_gpu="gpu:GPU-a",
+        destination_gpu="gpu:GPU-b",
+        segments=("gpu:GPU-a", "pci:0000:17:00.0", "nic:ib0"),
+        fabric_domains=("fabric:domain-1",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="active path test failed", observed_at=10.0)
+
+    result = inventory.apply_active_path_reverification(
+        path_id=path.path_id,
+        evidence=tuple({"segment": segment, "result": "pass"} for segment in path.segments),
+        observed_at=11.0,
+    )
+
+    assert result["state"] == FabricPathState.REVERIFIED.value
+    assert result["allow_routing"] is True
+    assert result["path_id"] == path.path_id
+    assert inventory.physical_paths()[0]["state"] == FabricPathState.REVERIFIED.value
+    history = inventory.physical_verification_history()
+    assert history[-1]["state"] == FabricPathState.REVERIFIED.value
+    assert history[-1]["observed_at"] == 11.0
