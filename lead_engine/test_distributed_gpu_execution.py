@@ -167,7 +167,7 @@ def test_active_gdrdma_client_uses_cuda_dmabuf_and_records_only_observed_result(
     result = runtime.verify_active_gpu_direct_rdma(
         gpu_index=0,
         rdma_device="mlx5_0",
-        trusted_remote="198.51.100.10",
+        trusted_remote={"endpoint": "198.51.100.10", "verified": True, "remote_test_server_verified": True, "fabric_path_id": "path-1"},
         mode="cuda_dmabuf",
     )
 
@@ -198,7 +198,7 @@ def test_active_gdrdma_client_rejects_nonzero_perftest_result():
         runtime.verify_active_gpu_direct_rdma(
             gpu_index=0,
             rdma_device="mlx5_0",
-            trusted_remote="198.51.100.10",
+            trusted_remote={"endpoint": "198.51.100.10", "verified": True, "remote_test_server_verified": True, "fabric_path_id": "path-1"},
         )
 
 def test_probe_evidence_contains_only_observed_execution_identity():
