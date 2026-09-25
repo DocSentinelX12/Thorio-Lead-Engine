@@ -169,6 +169,24 @@ class PhysicalHostDiscovery:
                 item["numa_node"] = numa
             except (OSError, PhysicalHostDiscoveryError):
                 pass
+            try:
+                resolved = self._resolve(path)
+                ancestors = [
+                    part.name.lower()
+                    for part in resolved.parents
+                    if re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", part.name.lower())
+                ]
+                if ancestors:
+                    item["parent_bus_id"] = ancestors[0]
+                    item["pci_path"] = list(reversed(ancestors)) + [bus_id]
+            except (OSError, RuntimeError):
+                pass
+            try:
+                group = self._resolve(path / "iommu_group").name
+                if group.isdigit():
+                    item["iommu_group"] = int(group)
+            except (OSError, RuntimeError):
+                pass
             devices.append(item)
         devices.sort(key=lambda item: str(item["bus_id"]))
         return {"devices": devices}
