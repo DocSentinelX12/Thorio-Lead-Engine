@@ -895,7 +895,8 @@ class NvidiaProvider(ComputeProvider):
                         right_uuid = gpu_uuid_by_id.get(str(right_gpu_id))
                         normalized_path = str(path_type).strip()
                         if not right_uuid or not normalized_path or normalized_path.upper() == "X":
-                            continue                        if not re.fullmatch(r"NV(?:L|\d+)", normalized_path, re.IGNORECASE):
+                            continue
+                        if not re.fullmatch(r"NV(?:L|\d+)", normalized_path, re.IGNORECASE):
                             continue
                         add_relationship(
                             "gpu_to_gpu_nvlink",
@@ -928,7 +929,8 @@ class NvidiaProvider(ComputeProvider):
                     add_relationship("gpu_nvlink", f"gpu:{gpu_uuid}", link_identity, {
                         "source": "nvidia-smi nvlink --status",
                         "state": raw.get("state"),
-                        "bandwidth_gbps": raw.get("bandwidth_gbps"),                    })
+                        "bandwidth_gbps": raw.get("bandwidth_gbps"),
+                    })
 
         if isinstance(host_physical, Mapping):
             pci_section = host_physical.get("pci")
