@@ -132,7 +132,7 @@ class NvidiaRuntime:
         *,
         gpu_index: int,
         rdma_device: str,
-        trusted_remote: str | None,
+        trusted_remote: Mapping[str, object] | None,
         mode: str = "cuda_dmabuf",
     ) -> dict[str, object]:
         if gpu_index < 0:
@@ -140,9 +140,13 @@ class NvidiaRuntime:
         device = str(rdma_device or "").strip()
         if not device:
             raise ValueError("rdma_device is required")
-        remote = str(trusted_remote or "").strip()
-        if not remote:
-            raise NvidiaRuntimeError("active GPU Direct RDMA verification requires a trusted remote endpoint")
+        if not isinstance(trusted_remote, Mapping):
+            raise NvidiaRuntimeError("active GPU Direct RDMA verification requires a trusted remote endpoint record")
+        remote = str(trusted_remote.get("endpoint") or "").strip()
+        if not remote or trusted_remote.get("verified") is not True or trusted_remote.get("remote_test_server_verified") is not True:
+            raise NvidiaRuntimeError("active GPU Direct RDMA verification requires a verified remote test server")
+        if not str(trusted_remote.get("fabric_path_id") or "").strip():
+            raise NvidiaRuntimeError("active GPU Direct RDMA verification requires a durable fabric path identity")
         if mode != "cuda_dmabuf":
             raise NvidiaRuntimeError("active GPU Direct RDMA verification currently requires explicit cuda_dmabuf mode")
         perftest = self._required_command("ib_write_bw")
@@ -173,6 +177,7 @@ class NvidiaRuntime:
             "rdma_device": device,
             "mode": mode,
             "remote_endpoint": remote,
+            "fabric_path_id": str(trusted_remote["fabric_path_id"]).strip(),
             "observed_output": observed_output[-4000:],
         }
 
