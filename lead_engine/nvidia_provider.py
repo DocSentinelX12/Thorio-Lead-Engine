@@ -964,11 +964,23 @@ class NvidiaProvider(ComputeProvider):
                 if not bus_id:
                     continue
                 pci_identity = f"pci:{bus_id}"
+                pci_path = [str(item).strip().lower() for item in (raw.get("pci_path") or ()) if str(item).strip()]
                 add_component("pci", pci_identity, {
                     "numa_node": raw.get("numa_node"),
                     "iommu_group": raw.get("iommu_group"),
-                    "pci_path": raw.get("pci_path"),
+                    "pci_path": pci_path,
                 }, source="worker-local-linux-sysfs")
+                if pci_path:
+                    root_complex = pci_path[0]
+                    root_identity = f"pci_root_complex:{root_complex}"
+                    add_component("pci_root_complex", root_identity, {
+                        "root_bus_id": root_complex,
+                    }, source="worker-local-linux-sysfs")
+                    add_relationship("pci_to_root_complex", pci_identity, root_identity, {
+                        "source": "worker-local-linux-sysfs",
+                        "field": "pci_path[0]",
+                        "pci_path": pci_path,
+                    })
                 parent_bus_id = str(raw.get("parent_bus_id") or "").strip().lower()
                 if parent_bus_id:
                     parent_identity = f"pci:{parent_bus_id}"
@@ -1011,10 +1023,59 @@ class NvidiaProvider(ComputeProvider):
                     path_nodes.extend(f"pci:{item}" for item in path_pci_ids)
                     path_nodes.append(f"nic:{nic}")
                     if len(path_nodes) >= 4:
+                        gpu_root = gpu_path[0] if gpu_path else None
+                        nic_root = nic_path[0] if nic_path else None
+                        topology_distance = None
+                        if gpu_root and nic_root and gpu_root == nic_root:
+                            gpu_parent = gpu_path[gpu_path.index(gpu_path[-1]) - 1] if len(gpu_path) > 1 else None
+                            nic_parent = nic_path[nic_path.index(nic_path[-1]) - 1] if len(nic_path) > 1 else None
+                            topology_distance = "PIX" if gpu_parent and nic_parent and gpu_parent == nic_parent else "PXB"
+                        elif row.get("same_numa_node") is True:
+                            topology_distance = "PHB"
+                        else:
+                            topology_distance = "SYS"
                         add_relationship("gpu_to_nic_path", f"gpu:{gpu_uuid}", f"nic:{nic}", {
                             "source": "derived_from_worker_local_physical_evidence",
                             "path_nodes": path_nodes,
                             "shared_pci_ancestor": shared_ancestor,
+                            "pci_root_complex": gpu_root if gpu_root == nic_root else None,
+                            "topology_distance": topology_distance,
+                            "confidence": "derived_from_observations",
+                        })
+
+                        rdma_links = network.get("rdma", {}).get("links") if isinstance(network.get("rdma"), Mapping) else None
+                        nic_rdma_links = [
+                            link for link in (rdma_links or ())
+                            if isinstance(link, Mapping) and str(link.get("netdev") or "").strip() == nic
+                        ]
+                        active_rdma = any(
+                            str(link.get("state") or "").upper() == "ACTIVE"
+                            and str(link.get("physical_state") or "").upper() == "LINK_UP"
+                            for link in nic_rdma_links
+                        )
+                        gpu_iommu = gpu_host.get("iommu_group")
+                        nic_iommu = nic_host.get("iommu_group")
+                        same_iommu_group = (
+                            gpu_iommu is not None and nic_iommu is not None and gpu_iommu == nic_iommu
+                        )
+                        if gpu_root and nic_root and gpu_root == nic_root and active_rdma:
+                            eligibility = "topology_eligible"
+                        elif gpu_root and nic_root and gpu_root != nic_root:
+                            eligibility = "topology_ineligible"
+                        else:
+                            eligibility = "unknown"
+                        add_relationship("gpu_to_nic_gdrdma_assessment", f"gpu:{gpu_uuid}", f"nic:{nic}", {
+                            "source": "derived_from_worker_local_physical_evidence",
+                            "topology_distance": topology_distance,
+                            "pci_root_complex_match": gpu_root is not None and gpu_root == nic_root,
+                            "rdma_link_active": active_rdma,
+                            "same_iommu_group": same_iommu_group,
+                            "iommu_group_evidence": {
+                                "gpu": gpu_iommu,
+                                "nic": nic_iommu,
+                            },
+                            "eligibility": eligibility,
+                            "data_path_verified": False,
                             "confidence": "derived_from_observations",
                         })
 
