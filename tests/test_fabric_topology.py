@@ -25,6 +25,33 @@ GPU0 X PIX
         PhysicalFabricTopology.parse_gpu_nic_matrix(text)
 
 
+def test_gpu_nic_matrix_accepts_indented_nvidia_header_with_nic_legend() -> None:
+    text = """    GPU0 GPU1 NIC0 NIC1 CPU Affinity NUMA Affinity GPU NUMA ID
+GPU0 X NV1 PIX PXB 0-31 0-1 0
+GPU1 NV1 X PXB PIX 32-63 1-2 1
+NIC Legend:
+    NIC0: mlx5_0
+    NIC1: mlx5_1
+"""
+    evidence = PhysicalFabricTopology.parse_gpu_nic_matrix(text)
+    assert evidence["gpu_ids"] == ["0", "1"]
+    assert evidence["nic_ids"] == ["mlx5_0", "mlx5_1"]
+    assert evidence["matrix"]["0"]["mlx5_0"] == "PIX"
+    assert evidence["matrix"]["1"]["mlx5_1"] == "PIX"
+
+
+def test_gpu_nic_matrix_accepts_indented_direct_netdev_columns() -> None:
+    text = """   GPU0 GPU1 mlx5_0 mlx5_1 CPU Affinity NUMA Affinity GPU NUMA ID
+GPU0 X NV1 PIX PXB 0-31 0-1 0
+GPU1 NV1 X PXB PIX 32-63 1-2 1
+"""
+    evidence = PhysicalFabricTopology.parse_gpu_nic_matrix(text)
+    assert evidence["gpu_ids"] == ["0", "1"]
+    assert evidence["nic_ids"] == ["mlx5_0", "mlx5_1"]
+    assert evidence["matrix"]["0"]["mlx5_0"] == "PIX"
+    assert evidence["matrix"]["1"]["mlx5_1"] == "PIX"
+
+
 def test_gpu_nic_matrix_preserves_physical_distance() -> None:
     text = """GPU0 GPU1 mlx5_0 mlx5_1
 GPU0 X NV1 PIX PXB
@@ -39,8 +66,6 @@ GPU1 NV1 X PXB PIX
 def test_reconcile_requires_real_pci_ancestry(tmp_path: Path) -> None:
     root = tmp_path / "pci"
     root.mkdir()
-    # GPU and NIC share a PCI switch. The endpoint symlinks mirror the Linux
-    # sysfs shape used by pci_hierarchy().
     switch = root / "0000:00:01.0"
     switch.mkdir()
     gpu_target = root / "0000:01:00.0"
@@ -49,17 +74,10 @@ def test_reconcile_requires_real_pci_ancestry(tmp_path: Path) -> None:
     nic_target.mkdir()
     (gpu_target / "parent").symlink_to(switch, target_is_directory=True)
     (nic_target / "parent").symlink_to(switch, target_is_directory=True)
-
-    # The test helper uses a normal temporary tree, so patch the hierarchy
-    # traversal to the explicit fixture paths by making endpoint paths resolve
-    # through a parent directory chain.
     gpu_parent = gpu_target / "device"
     nic_parent = nic_target / "device"
     gpu_parent.symlink_to(switch, target_is_directory=True)
     nic_parent.symlink_to(switch, target_is_directory=True)
-
-    # A disconnected endpoint must not be accepted merely because it is on
-    # the same NUMA/network domain.
     other = root / "0000:02:00.0"
     other.mkdir()
     with pytest.raises(FabricTopologyError):
@@ -75,12 +93,8 @@ def test_reconcile_produces_explicit_gpu_to_nic_to_rdma_paths(monkeypatch, tmp_p
     gpu.mkdir()
     nic.mkdir()
     switch.mkdir()
-
-    # Linux sysfs resolves the PCI endpoint's device symlink to its PCI
-    # hierarchy. Build that exact shape for the deterministic fixture.
     (gpu / "device").symlink_to(switch, target_is_directory=True)
     (nic / "device").symlink_to(switch, target_is_directory=True)
-
     original = PhysicalFabricTopology.pci_hierarchy
     monkeypatch.setattr(
         PhysicalFabricTopology,
@@ -98,7 +112,6 @@ def test_reconcile_produces_explicit_gpu_to_nic_to_rdma_paths(monkeypatch, tmp_p
         )
     finally:
         monkeypatch.setattr(PhysicalFabricTopology, "pci_hierarchy", original)
-
     assert result["verified"] is True
     assert result["network_domain_membership_not_used_as_physical_proof"] is True
     path = result["paths"][0]
