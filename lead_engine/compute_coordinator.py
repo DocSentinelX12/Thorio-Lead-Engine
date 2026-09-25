@@ -1944,6 +1944,7 @@ class ComputeCoordinator:
                 })
         launch_plan = {
             "attempt_id": attempt_id,
+            "generation": int(attempt_row["generation"]),
             "rendezvous_endpoint": durable_endpoint,
             "world_size": total_processes,
             "nnodes": len(workers),
