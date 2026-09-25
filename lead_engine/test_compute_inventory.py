@@ -606,3 +606,26 @@ def test_stale_recovery_action_cannot_reactivate_a_newer_exact_path_generation(t
 
     assert result["state"] == "CANCELLED"
     assert inventory.physical_paths()[0]["state"] == FabricPathState.FAILED.value
+
+
+def test_recovery_queue_discovers_all_triggered_paths_without_a_backlog_cap(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    for index in range(3):
+        path = PhysicalFabricPath(
+            path_id=f"queued-{index}",
+            source_gpu=f"gpu:a{index}",
+            destination_gpu=f"gpu:b{index}",
+            segments=(f"gpu:a{index}", f"rdma:mlx5_{index}:1"),
+            fabric_domains=("d",),
+            state=FabricPathState.VERIFIED,
+        )
+        inventory.persist_physical_path(path)
+        inventory.fail_physical_path(path.path_id, reason=f"failure-{index}", observed_at=10.0 + index)
+
+    actions = inventory.enqueue_active_path_recovery_actions(now=20.0)
+    due = inventory.due_active_path_recovery_actions(now=20.0)
+
+    assert {item["path_id"] for item in actions} == {"queued-0", "queued-1", "queued-2"}
+    assert {item["path_id"] for item in due} == {"queued-0", "queued-1", "queued-2"}
