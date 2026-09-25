@@ -5,6 +5,7 @@ from pathlib import Path
 from lead_engine.compute_coordinator import ComputeCoordinator
 from lead_engine.compute_pool import ComputePool, WorkerIdentity, local_worker_identity
 from lead_engine.compute_provider import ProviderResourceSnapshot
+from lead_engine.free_compute_acquisition import AcquiredCompute, FreeComputeAcquisitionStore, FreeComputeOffer, FreeComputeProvider
 from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
 
 
@@ -127,3 +128,57 @@ def test_local_worker_identity_carries_authoritative_nvidia_physical_evidence(mo
     identity = local_worker_identity("node-a")
     assert identity.domain_id == "supercomputer-a"
     assert identity.physical_fabric_evidence["physical_fabric"]["components"][0]["identity"] == "gpu:GPU-real"
+
+
+class _FreeGpuProvider(FreeComputeProvider):
+    provider_id = "free-provider"
+
+    def discover_free(self):
+        return ()
+
+    def acquire_free(self, offer):
+        acquisition_id = FreeComputeAcquisitionStore.acquisition_id(offer)
+        return AcquiredCompute(
+            provider_id=offer.provider_id,
+            domain_id=offer.domain_id,
+            offer_id=offer.offer_id,
+            acquisition_id=acquisition_id,
+            acquired_at=101.0,
+            expires_at=200.0,
+            gpu_capable=True,
+            enrollment={"worker_id": "node-a", "acquisition_id": acquisition_id},
+        )
+
+
+def test_acquired_external_gpu_is_not_trusted_until_authenticated_physical_enrollment(tmp_path: Path) -> None:
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token")
+    coordinator.register_free_compute_provider(_FreeGpuProvider())
+    offer = FreeComputeOffer(
+        provider_id="free-provider",
+        domain_id="supercomputer-a",
+        offer_id="offer-1",
+        observed_at=100.0,
+        expires_at=200.0,
+        gpu_capable=True,
+        no_cost=True,
+        capacity_evidence={"source": "provider-observation", "gpu_count": 1},
+    )
+    acquired = coordinator.acquire_free_compute(offer)
+    assert acquired.acquisition_id == FreeComputeAcquisitionStore.acquisition_id(offer)
+    assert coordinator.free_compute_status()["eligible_verified_count"] == 0
+    assert coordinator.free_compute_status()["eligible_acquired_count"] == 0
+
+    identity = _identity()
+    identity = WorkerIdentity(
+        **{**identity.__dict__, "physical_fabric_evidence": {**identity.physical_fabric_evidence, "acquisition_id": acquired.acquisition_id}}
+    )
+    coordinator.register_worker(identity)
+
+    status = coordinator.free_compute_status()
+    assert status["eligible_acquired_count"] == 0
+    assert status["eligible_verified_count"] == 1
+    record = next(item for item in status["records"] if item["acquisition_id"] == acquired.acquisition_id)
+    assert record["status"] == "verified"
+    assert record["worker_id"] == "node-a"
+    assert record["verification"]["gpu_discovery_state"] == "healthy"
+    assert record["verification"]["gpu_resources"][0]["gpu_uuid"] == "GPU-0"
