@@ -228,6 +228,45 @@ class PhysicalHostDiscovery:
         interfaces.sort(key=lambda item: str(item["name"]))
         return {"source": "worker-local-linux-sysfs", "interfaces": interfaces}
 
+    def _iommu(self) -> dict[str, object]:
+        try:
+            cmdline = self._read("/proc/cmdline").strip()
+        except OSError:
+            cmdline = ""
+        configured_by = None
+        configured_mode = None
+        tokens = cmdline.split()
+        for token in tokens:
+            if token == "iommu=pt" or token == "iommu.passthrough=1":
+                configured_by = token
+                configured_mode = "passthrough"
+                break
+            if token == "iommu=off":
+                configured_by = token
+                configured_mode = "disabled"
+                break
+            if token in {"iommu=on", "iommu.passthrough=0"} or token.endswith("_iommu=on"):
+                configured_by = token
+                configured_mode = "translated"
+                break
+        try:
+            groups = [
+                path.name
+                for path in self._glob("/sys/kernel/iommu_groups/[0-9]*")
+                if path.name.isdigit()
+            ]
+        except OSError:
+            groups = []
+        evidence: dict[str, object] = {
+            "source": "worker-local-linux-kernel",
+            "kernel_cmdline": cmdline,
+            "iommu_groups_present": bool(groups),
+            "iommu_group_count": len(groups),
+        }
+        if configured_by is not None:
+            evidence["configured_by"] = configured_by
+            evidence["configured_mode"] = configured_mode
+        return evidence
     def _numa(self) -> dict[str, object]:
         nodes: list[dict[str, object]] = []
         try:
@@ -289,4 +328,5 @@ class PhysicalHostDiscovery:
             "pci": self._pci(),
             "network": self._network(),
             "numa": self._numa(),
+            "iommu": self._iommu(),
         }
