@@ -1244,14 +1244,24 @@ class ComputeCoordinator:
             row = connection.execute("SELECT * FROM compute_execution_attempts WHERE allocation_id=? ORDER BY generation DESC LIMIT 1", (allocation_id,)).fetchone()
         if not row:
             return None
-        item = dict(row); item["resource_ids"] = json.loads(item["resource_ids"] or "[]"); item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]"); return item
+        item = dict(row)
+        item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
+        item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]")
+        if item.get("launch_plan_verification"):
+            item["launch_plan_verification"] = json.loads(item["launch_plan_verification"])
+        return item
 
     def execution_attempt(self, attempt_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM compute_execution_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
         if not row:
             return None
-        item = dict(row); item["resource_ids"] = json.loads(item["resource_ids"] or "[]"); item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]"); return item
+        item = dict(row)
+        item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
+        item["artifact_refs"] = json.loads(item["artifact_refs"] or "[]")
+        if item.get("launch_plan_verification"):
+            item["launch_plan_verification"] = json.loads(item["launch_plan_verification"])
+        return item
 
     def bind_physical_allocation(self, *, task_id: str, attempt_id: str, generation: int, allocation_id: str, provider_id: str, domain_id: str, resource_ids: list[str] | tuple[str, ...], lease_token: str) -> bool:
         if not task_id.strip() or not attempt_id.strip() or not allocation_id.strip():
