@@ -270,6 +270,43 @@ class ComputeInventory:
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_active_tests_remote "
                 "ON compute_physical_fabric_active_tests(remote_worker_id,observed_at)"
             )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_physical_fabric_recovery_actions (
+                action_id TEXT PRIMARY KEY,
+                path_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                trigger_fingerprint TEXT NOT NULL,
+                state TEXT NOT NULL,
+                required_stage TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at REAL NOT NULL,
+                owner TEXT,
+                lease_expires_at REAL,
+                last_error TEXT,
+                trigger_snapshot_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                completed_at REAL
+            )""")
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_compute_physical_fabric_recovery_action_generation "
+                "ON compute_physical_fabric_recovery_actions(path_id,generation)"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_compute_physical_fabric_recovery_action_trigger "
+                "ON compute_physical_fabric_recovery_actions(path_id,trigger_fingerprint)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_recovery_actions_due "
+                "ON compute_physical_fabric_recovery_actions(state,next_attempt_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_recovery_actions_path "
+                "ON compute_physical_fabric_recovery_actions(path_id,generation)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_recovery_actions_lease "
+                "ON compute_physical_fabric_recovery_actions(state,lease_expires_at)"
+            )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_verifications_path "
                 "ON compute_physical_fabric_verifications(path_id,observed_at)"
@@ -843,6 +880,212 @@ class ComputeInventory:
         else:
             selected = tuple(dict.fromkeys(str(path_id).strip() for path_id in path_ids if str(path_id).strip()))
         return {path_id: self.active_path_intelligence(path_id=path_id) for path_id in selected}
+
+    def _active_path_recovery_trigger(self, *, path_id: str) -> dict[str, Any]:
+        plan = self.active_path_recovery_plan(path_id=path_id)
+        if plan["action"] == "no_recovery_action_required":
+            return {"plan": plan, "trigger_fingerprint": None}
+        intelligence = dict(plan["intelligence"])
+        latest = dict(intelligence.get("latest") or {})
+        material = {
+            "path_id": path_id,
+            "action": plan["action"],
+            "state": plan["state"],
+            "intelligence_state": plan["intelligence_state"],
+            "latest": latest,
+            "required_segments": list(plan["required_segments"]),
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {"plan": plan, "trigger_fingerprint": fingerprint, "trigger_snapshot": material}
+
+    def ensure_active_path_recovery_action(self, *, path_id: str, now: float | None = None) -> dict[str, Any]:
+        """Create or return the durable recovery action for the current exact-path trigger."""
+        exact_path_id = str(path_id or "").strip()
+        if not exact_path_id:
+            raise ValueError("fabric path id is required")
+        trigger = self._active_path_recovery_trigger(path_id=exact_path_id)
+        if trigger["trigger_fingerprint"] is None:
+            raise ValueError("exact fabric path does not currently require recovery")
+        timestamp = time.time() if now is None else float(now)
+        snapshot = dict(trigger["trigger_snapshot"])
+        fingerprint = str(trigger["trigger_fingerprint"])
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """SELECT * FROM compute_physical_fabric_recovery_actions
+                   WHERE path_id=? AND trigger_fingerprint=?""",
+                (exact_path_id, fingerprint),
+            ).fetchone()
+            if existing is not None:
+                connection.commit()
+                return self._recovery_action_row(existing)
+            generation_row = connection.execute(
+                "SELECT COALESCE(MAX(generation),0) AS generation FROM compute_physical_fabric_recovery_actions WHERE path_id=?",
+                (exact_path_id,),
+            ).fetchone()
+            generation = int(generation_row["generation"] or 0) + 1
+            action_id = hashlib.sha256(
+                json.dumps(
+                    {"path_id": exact_path_id, "generation": generation, "trigger_fingerprint": fingerprint},
+                    ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            connection.execute(
+                """INSERT INTO compute_physical_fabric_recovery_actions(
+                    action_id,path_id,generation,trigger_fingerprint,state,required_stage,
+                    attempt_count,next_attempt_at,owner,lease_expires_at,last_error,
+                    trigger_snapshot_json,created_at,updated_at,completed_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    action_id, exact_path_id, generation, fingerprint, "PENDING",
+                    str(trigger["plan"]["action"]), 0, timestamp, None, None, None,
+                    json.dumps(snapshot, ensure_ascii=False, sort_keys=True),
+                    timestamp, timestamp, None,
+                ),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT * FROM compute_physical_fabric_recovery_actions WHERE action_id=?",
+                (action_id,),
+            ).fetchone()
+        return self._recovery_action_row(row)
+
+    @staticmethod
+    def _recovery_action_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "action_id": row["action_id"],
+            "path_id": row["path_id"],
+            "generation": int(row["generation"]),
+            "trigger_fingerprint": row["trigger_fingerprint"],
+            "state": row["state"],
+            "required_stage": row["required_stage"],
+            "attempt_count": int(row["attempt_count"]),
+            "next_attempt_at": row["next_attempt_at"],
+            "owner": row["owner"],
+            "lease_expires_at": row["lease_expires_at"],
+            "last_error": row["last_error"],
+            "trigger_snapshot": json.loads(row["trigger_snapshot_json"] or "{}"),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "completed_at": row["completed_at"],
+        }
+
+    def active_path_recovery_actions(self, *, path_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM compute_physical_fabric_recovery_actions"
+        args: tuple[Any, ...] = ()
+        if path_id is not None:
+            query += " WHERE path_id=?"
+            args = (str(path_id),)
+        query += " ORDER BY path_id,generation"
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [self._recovery_action_row(row) for row in rows]
+
+    def claim_active_path_recovery_action(
+        self,
+        *,
+        action_id: str,
+        owner: str,
+        now: float | None = None,
+        lease_seconds: float = 300.0,
+    ) -> dict[str, Any] | None:
+        """Atomically claim one due action, allowing only expired leases to be reclaimed."""
+        exact_action_id = str(action_id or "").strip()
+        claimant = str(owner or "").strip()
+        if not exact_action_id or not claimant:
+            raise ValueError("recovery action id and owner are required")
+        if lease_seconds <= 0:
+            raise ValueError("recovery action lease must be positive")
+        timestamp = time.time() if now is None else float(now)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM compute_physical_fabric_recovery_actions WHERE action_id=?",
+                (exact_action_id,),
+            ).fetchone()
+            if row is None:
+                connection.commit()
+                return None
+            current_state = str(row["state"])
+            current_owner = row["owner"]
+            lease_expires = row["lease_expires_at"]
+            due = float(row["next_attempt_at"]) <= timestamp
+            lease_available = lease_expires is None or float(lease_expires) <= timestamp
+            if current_state in {"SUCCEEDED", "CANCELLED"} or not due or not lease_available:
+                connection.commit()
+                return None
+            attempt_count = int(row["attempt_count"]) + 1
+            lease_until = timestamp + float(lease_seconds)
+            connection.execute(
+                """UPDATE compute_physical_fabric_recovery_actions
+                   SET state='CLAIMED',attempt_count=?,owner=?,lease_expires_at=?,
+                       updated_at=?,last_error=NULL
+                   WHERE action_id=?""",
+                (attempt_count, claimant, lease_until, timestamp, exact_action_id),
+            )
+            connection.commit()
+            claimed = connection.execute(
+                "SELECT * FROM compute_physical_fabric_recovery_actions WHERE action_id=?",
+                (exact_action_id,),
+            ).fetchone()
+        return self._recovery_action_row(claimed)
+
+    def update_active_path_recovery_action(
+        self,
+        *,
+        action_id: str,
+        owner: str,
+        state: str,
+        required_stage: str | None = None,
+        next_attempt_at: float | None = None,
+        error: str | None = None,
+        completed_at: float | None = None,
+    ) -> dict[str, Any]:
+        """Advance a claimed recovery action without releasing ownership implicitly."""
+        exact_action_id = str(action_id or "").strip()
+        claimant = str(owner or "").strip()
+        next_state = str(state or "").strip().upper()
+        allowed = {"CLAIMED", "PHYSICAL_REVERIFYING", "AWAITING_ACTIVE_MEASUREMENT", "ACTIVE_MEASURING", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED"}
+        if next_state not in allowed:
+            raise ValueError("invalid recovery action state")
+        timestamp = time.time()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM compute_physical_fabric_recovery_actions WHERE action_id=?",
+                (exact_action_id,),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ValueError("recovery action does not exist")
+            if row["owner"] != claimant:
+                connection.rollback()
+                raise ValueError("recovery action is not owned by caller")
+            if row["lease_expires_at"] is not None and float(row["lease_expires_at"]) <= timestamp:
+                connection.rollback()
+                raise ValueError("recovery action lease has expired")
+            next_stage = required_stage if required_stage is not None else row["required_stage"]
+            next_due = timestamp if next_attempt_at is None else float(next_attempt_at)
+            completed = timestamp if completed_at is None and next_state == "SUCCEEDED" else completed_at
+            connection.execute(
+                """UPDATE compute_physical_fabric_recovery_actions
+                   SET state=?,required_stage=?,next_attempt_at=?,last_error=?,
+                       completed_at=?,updated_at=?,lease_expires_at=NULL,owner=?
+                   WHERE action_id=?""",
+                (
+                    next_state, next_stage, next_due, error,
+                    completed, timestamp, None if next_state in {"SUCCEEDED", "CANCELLED"} else claimant,
+                    exact_action_id,
+                ),
+            )
+            connection.commit()
+            result = connection.execute(
+                "SELECT * FROM compute_physical_fabric_recovery_actions WHERE action_id=?",
+                (exact_action_id,),
+            ).fetchone()
+        return self._recovery_action_row(result)
 
     def execute_active_path_recovery_cycle(self, *, path_id: str, physical_evidence: Sequence[Mapping[str, Any]], active_measurement: Mapping[str, Any] | None = None, evidence: Mapping[str, Any] | None = None, observed_at: float | None = None) -> dict[str, Any]:
         """Execute one exact-path recovery cycle without skipping either evidence gate."""
