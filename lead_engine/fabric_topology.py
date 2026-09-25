@@ -96,7 +96,10 @@ class PhysicalFabricTopology:
         lines = [line.rstrip() for line in text.splitlines() if line.strip()]
         if not lines:
             raise FabricTopologyError("GPU-NIC topology output is empty")
-        header_index = next((i for i, line in enumerate(lines) if _GPU.search(line)), None)
+        # NVIDIA aligns topology tables with leading whitespace. Detect the
+        # header from whitespace-independent tokens so real command output is
+        # parsed exactly like unindented fixtures and direct-netdev variants.
+        header_index = next((i for i, line in enumerate(lines) if any(_GPU.fullmatch(token) for token in line.split())), None)
         if header_index is None:
             raise FabricTopologyError("GPU-NIC topology header is missing")
         header = lines[header_index].split()
