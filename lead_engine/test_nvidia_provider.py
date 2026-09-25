@@ -570,3 +570,65 @@ def test_physical_fabric_graph_does_not_invent_unknown_nvlink_peer_or_remote_pat
         item["relationship_type"] == "inter_node_path"
         for item in evidence["relationships"]
     )
+
+
+def test_physical_fabric_graph_exposes_observed_pci_ancestry_for_gpu_and_nic():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network={
+            "link_capabilities": {
+                "eth0": {"bus_info": "0000:41:00.0"},
+            },
+            "rdma": {
+                "devices": [{
+                    "device": "mlx5_0",
+                    "pci_bus_id": "0000:41:00.0",
+                }],
+                "links": [{
+                    "rdma_device": "mlx5_0",
+                    "port": 1,
+                    "netdev": "eth0",
+                    "pci_bus_id": "0000:41:00.0",
+                    "state": "ACTIVE",
+                }],
+            },
+        },
+        host_physical={
+            "pci": {
+                "devices": [
+                    {
+                        "bus_id": "0000:17:00.0",
+                        "numa_node": 0,
+                        "parent_bus_id": "0000:10:00.0",
+                        "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:17:00.0"],
+                        "iommu_group": 7,
+                    },
+                    {
+                        "bus_id": "0000:41:00.0",
+                        "numa_node": 0,
+                        "parent_bus_id": "0000:40:00.0",
+                        "pci_path": ["0000:00:00.0", "0000:40:00.0", "0000:41:00.0"],
+                        "iommu_group": 8,
+                    },
+                ]
+            }
+        },
+        observed_at=1234.5,
+    )
+    ancestry = [
+        item for item in evidence["relationships"]
+        if item["relationship_type"] == "pci_parent"
+    ]
+    assert {
+        item["source"] for item in ancestry
+    } == {"pci:0000:17:00.0", "pci:0000:41:00.0"}
+    assert all(
+        item["evidence"]["source"] == "worker-local-linux-sysfs"
+        for item in ancestry
+    )
