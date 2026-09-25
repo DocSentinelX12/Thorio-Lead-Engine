@@ -123,11 +123,13 @@ def test_local_worker_identity_carries_authoritative_nvidia_physical_evidence(mo
     )
 
     monkeypatch.setenv("THORIO_COMPUTE_DOMAIN", "supercomputer-a")
+    monkeypatch.setenv("THORIO_COMPUTE_ACQUISITION_ID", "acquisition-123")
     monkeypatch.setattr(nvidia_provider.NvidiaProvider, "discover", lambda self: snapshot)
 
     identity = local_worker_identity("node-a")
     assert identity.domain_id == "supercomputer-a"
     assert identity.physical_fabric_evidence["physical_fabric"]["components"][0]["identity"] == "gpu:GPU-real"
+    assert identity.physical_fabric_evidence["acquisition_id"] == "acquisition-123"
 
 
 class _FreeGpuProvider(FreeComputeProvider):
