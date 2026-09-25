@@ -170,6 +170,7 @@ class NvidiaRuntime:
             raise NvidiaRuntimeError(
                 "active GPU Direct RDMA verification completed without recognized ib_write_bw evidence"
             )
+        measurement = self._parse_active_gdrdma_measurement(stdout)
         return {
             "verified": True,
             "test": "ib_write_bw",
@@ -179,6 +180,54 @@ class NvidiaRuntime:
             "remote_endpoint": remote,
             "fabric_path_id": str(trusted_remote["fabric_path_id"]).strip(),
             "observed_output": observed_output[-4000:],
+            **measurement,
+        }
+
+    @staticmethod
+    def _parse_active_gdrdma_measurement(output: str) -> dict[str, object]:
+        """Extract only explicitly printed performance measurements from ib_write_bw."""
+        bandwidth_gbps = None
+        latency_us = None
+        bandwidth_line = None
+        latency_line = None
+        for raw_line in str(output).splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            bandwidth_match = re.search(
+                r"^BW\s+average\[Gb/sec\]\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*$",
+                line,
+                re.IGNORECASE,
+            )
+            if bandwidth_match:
+                bandwidth_gbps = float(bandwidth_match.group(1))
+                bandwidth_line = line
+                continue
+            bandwidth_match = re.search(
+                r"^Bandwidth\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*Gbps\s*$",
+                line,
+                re.IGNORECASE,
+            )
+            if bandwidth_match:
+                bandwidth_gbps = float(bandwidth_match.group(1))
+                bandwidth_line = line
+                continue
+            latency_match = re.search(
+                r"^Latency\s*\[[^\]]+\]\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*$",
+                line,
+                re.IGNORECASE,
+            )
+            if latency_match:
+                latency_us = float(latency_match.group(1))
+                latency_line = line
+        return {
+            "measurement_status": "measured" if bandwidth_gbps is not None or latency_us is not None else "executed",
+            "bandwidth_gbps": bandwidth_gbps,
+            "latency_us": latency_us,
+            "raw_measurement_evidence": {
+                "bandwidth_line": bandwidth_line,
+                "latency_line": latency_line,
+            },
         }
 
     @staticmethod
