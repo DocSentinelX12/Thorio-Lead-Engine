@@ -74,3 +74,94 @@ def test_expected_endpoint_can_supply_missing_plan_endpoint():
         worker.pop("rendezvous_endpoint")
     evidence = validate_launch_plan(plan, expected_endpoint="node-a:29500")
     assert evidence["rendezvous_endpoint"] == "node-a:29500"
+
+def test_coordinator_launch_boundary_persists_verified_contract(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "token")
+    now = 1_000.0
+    attempt_id = "attempt-verified"
+    with coordinator._connect() as connection:
+        connection.execute(
+            """INSERT INTO compute_tasks(
+                   task_id,payload,status,worker_id,lease_token,lease_until,
+                   attempt_id,generation,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            ("task-verified", "{}", "leased", "fabric:" + attempt_id, "lease",
+             now + 300, attempt_id, 1, now, now),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,
+                   lease_token_digest,started_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (attempt_id, "task-verified", 1, "fabric:" + attempt_id, "leased",
+             __import__("hashlib").sha256(b"lease").hexdigest(), now),
+        )
+        connection.commit()
+
+    plan = {
+        "attempt_id": attempt_id,
+        "world_size": 2,
+        "nnodes": 2,
+        "rendezvous_endpoint": "node-a:29500",
+        "workers": [
+            {"worker_id": "worker-a", "node_id": "node-a", "process_count": 1,
+             "gpu_bindings": [{"gpu_id": "0", "gpu_uuid": "GPU-a", "rank": 0, "local_rank": 0}]},
+            {"worker_id": "worker-b", "node_id": "node-b", "process_count": 1,
+             "gpu_bindings": [{"gpu_id": "0", "gpu_uuid": "GPU-b", "rank": 1, "local_rank": 0}]},
+        ],
+    }
+
+    evidence = coordinator._validate_and_persist_launch_plan(plan)
+
+    assert evidence["verified"] is True
+    attempt = coordinator.execution_attempt(attempt_id)
+    assert attempt["launch_plan_verification"] == __import__("json").dumps(
+        evidence, ensure_ascii=False, sort_keys=True
+    )
+
+
+def test_coordinator_launch_boundary_rejects_invalid_contract_before_persistence(tmp_path):
+    from lead_engine.compute_coordinator import ComputeCoordinator
+
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), "token")
+    attempt_id = "attempt-invalid"
+    with coordinator._connect() as connection:
+        connection.execute(
+            """INSERT INTO compute_tasks(
+                   task_id,payload,status,worker_id,lease_token,lease_until,
+                   attempt_id,generation,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            ("task-invalid", "{}", "leased", "fabric:" + attempt_id, "lease",
+             2_000.0, attempt_id, 1, 1_000.0, 1_000.0),
+        )
+        connection.execute(
+            """INSERT INTO compute_execution_attempts(
+                   attempt_id,task_id,generation,worker_id,status,
+                   lease_token_digest,started_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (attempt_id, "task-invalid", 1, "fabric:" + attempt_id, "leased",
+             __import__("hashlib").sha256(b"lease").hexdigest(), 1_000.0),
+        )
+        connection.commit()
+
+    invalid_plan = {
+        "attempt_id": attempt_id,
+        "world_size": 3,
+        "nnodes": 2,
+        "rendezvous_endpoint": "node-a:29500",
+        "workers": [
+            {"worker_id": "worker-a", "node_id": "node-a", "process_count": 1,
+             "gpu_bindings": [{"gpu_id": "0", "gpu_uuid": "GPU-a", "rank": 0, "local_rank": 0}]},
+            {"worker_id": "worker-b", "node_id": "node-b", "process_count": 1,
+             "gpu_bindings": [{"gpu_id": "0", "gpu_uuid": "GPU-b", "rank": 1, "local_rank": 0}]},
+        ],
+    }
+
+    with pytest.raises(DistributedExecutionContractError, match="world_size does not match total process bindings"):
+        coordinator._validate_and_persist_launch_plan(invalid_plan)
+
+    attempt = coordinator.execution_attempt(attempt_id)
+    assert attempt["launch_plan_verification"] is None
+
