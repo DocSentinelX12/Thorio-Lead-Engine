@@ -1055,6 +1055,14 @@ class NvidiaProvider(ComputeProvider):
                         )
                         gpu_iommu = gpu_host.get("iommu_group")
                         nic_iommu = nic_host.get("iommu_group")
+                        iommu_evidence = host_physical.get("iommu") if isinstance(host_physical, Mapping) else None
+                        if not isinstance(iommu_evidence, Mapping):
+                            iommu_evidence = {
+                                "status": "unknown",
+                                "reason": "worker-local IOMMU mode was not observed",
+                            }
+                        else:
+                            iommu_evidence = dict(iommu_evidence)
                         same_iommu_group = (
                             gpu_iommu is not None and nic_iommu is not None and gpu_iommu == nic_iommu
                         )
@@ -1074,6 +1082,7 @@ class NvidiaProvider(ComputeProvider):
                                 "gpu": gpu_iommu,
                                 "nic": nic_iommu,
                             },
+                            "iommu": iommu_evidence,
                             "eligibility": eligibility,
                             "data_path_verified": False,
                             "confidence": "derived_from_observations",
