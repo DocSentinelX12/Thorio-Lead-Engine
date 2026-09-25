@@ -391,3 +391,108 @@ def test_nvidia_discovery_carries_physical_host_inventory_into_snapshot_evidence
     snapshot = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=fake_runner, now=lambda: 1234.5).discover()
 
     assert snapshot.evidence["host_physical"] == host_evidence
+
+
+def test_nvidia_discovery_parses_current_nvlink_state_and_bandwidth():
+    output = """GPU 0: NVIDIA H100 (UUID: GPU-aaa)
+ Link 0: 26.562 GB/s
+ Link 1: <inactive>
+GPU 1: NVIDIA H100 (UUID: GPU-bbb)
+ Link 0: 26.562 GB/s
+ Link 1: 25 GB/s
+"""
+    gpus = (
+        GpuResource(
+            node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+            vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+            health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+        ),
+        GpuResource(
+            node_id="node-01", gpu_id="1", gpu_uuid="GPU-bbb",
+            vram_bytes=80 * 1024**3, pci_bus_id="0000:18:00.0", numa_node=0,
+            health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+        ),
+    )
+
+    parsed = NvidiaProvider._parse_nvlink_status(output, gpus)
+
+    assert parsed["source"] == "nvidia-smi nvlink --status"
+    assert parsed["available"] is True
+    assert parsed["links"] == [
+        {"gpu_id": "0", "gpu_uuid": "GPU-aaa", "link_id": 0, "state": "active", "bandwidth_gbps": 26.562},
+        {"gpu_id": "0", "gpu_uuid": "GPU-aaa", "link_id": 1, "state": "inactive", "bandwidth_gbps": None},
+        {"gpu_id": "1", "gpu_uuid": "GPU-bbb", "link_id": 0, "state": "active", "bandwidth_gbps": 26.562},
+        {"gpu_id": "1", "gpu_uuid": "GPU-bbb", "link_id": 1, "state": "active", "bandwidth_gbps": 25.0},
+    ]
+
+
+def test_physical_fabric_evidence_records_provenance_and_conflicts_without_overwriting_truth():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    network = {
+        "link_capabilities": {
+            "eth0": {"bus_info": "0000:17:00.1", "speed_mbps": 400000},
+        },
+        "gpu_nic_locality": [{
+            "gpu_uuid": "GPU-aaa", "gpu_pci_bus_id": "0000:17:00.0",
+            "nic": "eth0", "nic_pci_bus_id": "0000:17:00.1",
+            "gpu_numa_node": 0, "nic_numa_node": 0,
+            "same_numa_node": True, "shared_pci_ancestor": "0000:17:00.0",
+            "source": "sysfs",
+        }],
+        "rdma": {
+            "devices": [{"device": "mlx5_0", "pci_bus_id": "0000:17:00.1", "state": "ACTIVE"}],
+            "links": [{
+                "rdma_device": "mlx5_0", "port": 1, "netdev": "eth0",
+                "pci_bus_id": "0000:17:00.1", "state": "ACTIVE",
+                "physical_state": "LINK_UP", "link_layer": "Ethernet",
+                "gids": ["fe80::1"],
+            }],
+        },
+    }
+    host_physical = {
+        "pci": {
+            "devices": [
+                {"bus_id": "0000:17:00.0", "numa_node": 1},
+                {"bus_id": "0000:17:00.1", "numa_node": 0},
+            ]
+        }
+    }
+    nvlink_status = {
+        "source": "nvidia-smi nvlink --status",
+        "available": True,
+        "links": [{
+            "gpu_id": "0", "gpu_uuid": "GPU-aaa", "link_id": 0,
+            "state": "active", "bandwidth_gbps": 26.562,
+        }],
+    }
+
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network=network,
+        observed_at=1234.5,
+        host_physical=host_physical,
+        nvlink_status=nvlink_status,
+    )
+
+    gpu_component = next(item for item in evidence["components"] if item["identity"] == "gpu:GPU-aaa")
+    assert gpu_component["evidence"] == {
+        "source": "nvidia-smi",
+        "confidence": "direct_observation",
+        "observed_at": 1234.5,
+    }
+    assert any(item["relationship_type"] == "gpu_to_nic" for item in evidence["relationships"])
+    assert any(item["relationship_type"] == "gpu_nvlink" for item in evidence["relationships"])
+    assert any(item["relationship_type"] == "nic_to_rdma_device" for item in evidence["relationships"])
+    assert evidence["contradictions"] == [{
+        "identity": "gpu:GPU-aaa",
+        "field": "numa_node",
+        "values": [
+            {"source": "nvidia-smi", "value": 0},
+            {"source": "sysfs", "value": 1},
+        ],
+    }]
