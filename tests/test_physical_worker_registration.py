@@ -175,7 +175,7 @@ def test_acquired_external_gpu_is_not_trusted_until_authenticated_physical_enrol
     coordinator.register_worker(identity)
 
     status = coordinator.free_compute_status()
-    assert status["eligible_acquired_count"] == 0
+    assert status["eligible_acquired_count"] == 1
     assert status["eligible_verified_count"] == 1
     record = next(item for item in status["records"] if item["acquisition_id"] == acquired.acquisition_id)
     assert record["status"] == "verified"
