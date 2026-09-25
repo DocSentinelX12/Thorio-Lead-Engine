@@ -201,6 +201,37 @@ def test_active_gdrdma_client_rejects_nonzero_perftest_result():
             trusted_remote={"endpoint": "198.51.100.10", "verified": True, "remote_test_server_verified": True, "fabric_path_id": "path-1"},
         )
 
+
+def test_active_gdrdma_measurement_parses_only_explicit_bandwidth_and_latency():
+    runtime = NvidiaRuntime(
+        runner=lambda args, timeout: (
+            0,
+            "RDMA_Write BW Test\\n"
+            "Device : mlx5_0\\n"
+            "BW average[Gb/sec] : 187.5\\n"
+            "Peak[Gb/sec] : 201.0\\n"
+            "Latency[usec] : 4.25\\n",
+            "",
+        ),
+        which=lambda name: "/usr/bin/" + name,
+    )
+    result = runtime.verify_active_gpu_direct_rdma(
+        gpu_index=0,
+        rdma_device="mlx5_0",
+        trusted_remote={
+            "endpoint": "198.51.100.10",
+            "verified": True,
+            "remote_test_server_verified": True,
+            "fabric_path_id": "path-1",
+        },
+    )
+
+    assert result["measurement_status"] == "measured"
+    assert result["bandwidth_gbps"] == 187.5
+    assert result["latency_us"] == 4.25
+    assert result["raw_measurement_evidence"]["bandwidth_line"].startswith("BW average")
+    assert result["raw_measurement_evidence"]["latency_line"].startswith("Latency")
+
 def test_probe_evidence_contains_only_observed_execution_identity():
     evidence = build_probe_evidence(
         rank=1,
