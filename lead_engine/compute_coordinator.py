@@ -567,6 +567,23 @@ class ComputeCoordinator:
         self.inventory.observe(snapshot)
 
     def register_worker(self, identity: WorkerIdentity) -> Dict[str, Any]:
+        acquisition_id = str(identity.physical_fabric_evidence.get("acquisition_id") or "").strip()
+        if acquisition_id:
+            self.free_compute_acquisition.confirm_worker_enrollment(
+                acquisition_id=acquisition_id,
+                worker_id=identity.worker_id,
+                verification={
+                    "gpu_capable": bool(identity.gpu_resources),
+                    "gpu_discovery_state": identity.gpu_discovery_state,
+                    "gpu_discovery_error": identity.gpu_discovery_error,
+                    "gpu_resources": [asdict(gpu) for gpu in identity.gpu_resources],
+                    "driver_version": identity.driver_version,
+                    "cuda_version": identity.cuda_version,
+                    "nccl_version": identity.nccl_version,
+                    "domain_id": identity.domain_id,
+                    "physical_fabric_evidence": identity.physical_fabric_evidence,
+                },
+            )
         result = self.pool.register(identity)
         self._observe_worker_resources(identity)
         return result
