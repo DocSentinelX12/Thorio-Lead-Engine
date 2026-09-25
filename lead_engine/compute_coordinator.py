@@ -30,6 +30,7 @@ from .compute_resources import ComputeRequirements, CpuResource, GpuResource, Gp
 from .compute_scheduler import ComputeScheduler, ComputeSchedulingError
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .physical_fabric import AdaptiveFabricRouteSelector
+from .distributed_execution_contract import validate_launch_plan
 
 
 class ComputeCoordinator:
@@ -247,13 +248,16 @@ class ComputeCoordinator:
                 verification TEXT,
                 authoritative_acceptance TEXT NOT NULL DEFAULT 'pending',
                 allocation_id TEXT,
-                placement_id TEXT
+                placement_id TEXT,
+                launch_plan_verification TEXT
             )""")
             attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(compute_execution_attempts)")}
             if "allocation_id" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN allocation_id TEXT")
             if "placement_id" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN placement_id TEXT")
+            if "launch_plan_verification" not in attempt_columns:
+                connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN launch_plan_verification TEXT")
             if "rendezvous_endpoint" not in attempt_columns:
                 connection.execute("ALTER TABLE compute_execution_attempts ADD COLUMN rendezvous_endpoint TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS compute_execution_participants (
@@ -1681,6 +1685,25 @@ class ComputeCoordinator:
             "rdma_physical_state": path.get("rdma_physical_state"),
             "physical_evidence": path.get("physical_evidence"),
         }
+    def _validate_and_persist_launch_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Enforce the complete multi-worker contract at the authoritative launch boundary."""
+        evidence = validate_launch_plan(
+            plan,
+            expected_endpoint=str(plan.get("rendezvous_endpoint") or "").strip(),
+        )
+        serialized = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+        with self._connect() as connection:
+            updated = connection.execute(
+                """UPDATE compute_execution_attempts
+                   SET launch_plan_verification=?
+                   WHERE attempt_id=? AND generation=? AND status='leased'""",
+                (serialized, str(plan["attempt_id"]), int(plan.get("generation") or 0)),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("execution attempt changed before launch-plan verification could be persisted")
+            connection.commit()
+        return evidence
+
     def fabric_launch_plan(self, attempt_id: str, rendezvous_endpoint: str) -> Dict[str, Any]:
         """Build the exact per-process launch contract from durable physical participants.
 
@@ -1909,7 +1932,7 @@ class ComputeCoordinator:
                     "redundant_source_paths": len(source_paths) > 1,
                     "redundant_target_paths": len(target_paths) > 1,
                 })
-        return {
+        launch_plan = {
             "attempt_id": attempt_id,
             "rendezvous_endpoint": durable_endpoint,
             "world_size": total_processes,
@@ -1918,6 +1941,9 @@ class ComputeCoordinator:
             "fabric_routes": route_pairs,
             "workers": workers,
         }
+        launch_contract_verification = self._validate_and_persist_launch_plan(launch_plan)
+        launch_plan["launch_contract_verification"] = launch_contract_verification
+        return launch_plan
 
     def _set_execution_participant_status(self, attempt_id: str, status: str, error: str = "") -> None:
         with self._connect() as connection:
