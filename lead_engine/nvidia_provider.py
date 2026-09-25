@@ -864,9 +864,26 @@ class NvidiaProvider(ComputeProvider):
                         "physical_state": raw.get("physical_state"),
                         "gids": raw.get("gids") or [],
                     })
+                    pci_bus_id = str(raw.get("pci_bus_id") or "").strip()
+                    if pci_bus_id:
+                        pci_identity = f"pci:{pci_bus_id}"
+                        add_component("pci", pci_identity, source="sysfs")
+                        add_relationship("rdma_port_to_pci", port_identity, pci_identity, {
+                            "source": "rdma-core",
+                            "field": "pci_bus_id",
+                            "port": port,
+                        })
                     netdev = str(raw.get("netdev") or "").strip()
                     if netdev:
                         add_relationship("nic_to_rdma_device", f"nic:{netdev}", rdma_identity, {
+                            "source": "rdma-core",
+                            "netdev": netdev,
+                            "port": port,
+                            "state": raw.get("state"),
+                            "physical_state": raw.get("physical_state"),
+                            "link_layer": raw.get("link_layer"),
+                        })
+                        add_relationship("nic_to_rdma_port", f"nic:{netdev}", port_identity, {
                             "source": "rdma-core",
                             "netdev": netdev,
                             "port": port,
@@ -966,6 +983,40 @@ class NvidiaProvider(ComputeProvider):
                             "pci_path": raw.get("pci_path"),
                         },
                     )
+
+            locality_rows = network.get("gpu_nic_locality")
+            if isinstance(locality_rows, list):
+                for row in locality_rows:
+                    if not isinstance(row, Mapping):
+                        continue
+                    gpu_uuid = str(row.get("gpu_uuid") or "").strip()
+                    nic = str(row.get("nic") or "").strip()
+                    gpu_pci = str(row.get("gpu_pci_bus_id") or "").strip().lower()
+                    nic_pci = str(row.get("nic_pci_bus_id") or "").strip().lower()
+                    shared_ancestor = str(row.get("shared_pci_ancestor") or "").strip().lower()
+                    if not gpu_uuid or not nic or not gpu_pci or not nic_pci or not shared_ancestor:
+                        continue
+                    gpu_host = host_by_bus.get(gpu_pci)
+                    nic_host = host_by_bus.get(nic_pci)
+                    if not isinstance(gpu_host, Mapping) or not isinstance(nic_host, Mapping):
+                        continue
+                    gpu_path = [str(item).strip().lower() for item in (gpu_host.get("pci_path") or ()) if str(item).strip()]
+                    nic_path = [str(item).strip().lower() for item in (nic_host.get("pci_path") or ()) if str(item).strip()]
+                    if shared_ancestor not in gpu_path or shared_ancestor not in nic_path:
+                        continue
+                    gpu_index = gpu_path.index(shared_ancestor)
+                    nic_index = nic_path.index(shared_ancestor)
+                    path_pci_ids = list(reversed(gpu_path[gpu_index:])) + nic_path[nic_index + 1:]
+                    path_nodes = [f"gpu:{gpu_uuid}"]
+                    path_nodes.extend(f"pci:{item}" for item in path_pci_ids)
+                    path_nodes.append(f"nic:{nic}")
+                    if len(path_nodes) >= 4:
+                        add_relationship("gpu_to_nic_path", f"gpu:{gpu_uuid}", f"nic:{nic}", {
+                            "source": "derived_from_worker_local_physical_evidence",
+                            "path_nodes": path_nodes,
+                            "shared_pci_ancestor": shared_ancestor,
+                            "confidence": "derived_from_observations",
+                        })
 
             for gpu in gpus:
                 if not gpu.pci_bus_id:
