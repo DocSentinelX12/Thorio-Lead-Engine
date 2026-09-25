@@ -16,6 +16,7 @@ from typing import Any
 from .compute_provider import ProviderResourceSnapshot
 from .compute_fabric_telemetry import summarize_route_health
 from .compute_resources import GpuResource, NodeResource, ResourceState
+from .physical_fabric import FabricPathState, FabricVerificationResult, PhysicalFabricVerification
 
 
 class ComputeInventory:
@@ -238,6 +239,35 @@ class ComputeInventory:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_measurement_history_path "
                 "ON compute_physical_fabric_measurement_history(path_id,observed_at)"
+            )
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_physical_fabric_active_tests (
+                test_id TEXT PRIMARY KEY,
+                path_id TEXT NOT NULL,
+                source_gpu TEXT NOT NULL,
+                destination_gpu TEXT NOT NULL,
+                worker_id TEXT NOT NULL,
+                remote_worker_id TEXT NOT NULL,
+                gpu_uuid TEXT NOT NULL,
+                rdma_device TEXT NOT NULL,
+                rdma_port INTEGER NOT NULL,
+                remote_endpoint TEXT NOT NULL,
+                test TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                bandwidth_gbps REAL,
+                latency_us REAL,
+                measurement_json TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                observed_at REAL NOT NULL,
+                recorded_at REAL NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_active_tests_path "
+                "ON compute_physical_fabric_active_tests(path_id,observed_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_active_tests_remote "
+                "ON compute_physical_fabric_active_tests(remote_worker_id,observed_at)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_compute_physical_fabric_verifications_path "
@@ -621,6 +651,173 @@ class ComputeInventory:
                 "measurement_observed_at": row["measurement_observed_at"],
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    def record_active_gdrdma_measurement(
+        self,
+        *,
+        path_id: str,
+        measurement: dict[str, Any],
+        evidence: dict[str, Any] | None = None,
+        observed_at: float | None = None,
+    ) -> str:
+        """Persist one active GPU Direct RDMA test and measure only its exact path."""
+        exact_path_id = str(path_id or "").strip()
+        if not exact_path_id:
+            raise ValueError("fabric path id is required")
+        if not isinstance(measurement, dict):
+            raise ValueError("active GPU Direct RDMA measurement must be an object")
+        if str(measurement.get("fabric_path_id") or "").strip() != exact_path_id:
+            raise ValueError("active measurement fabric path identity does not match")
+        when = time.time() if observed_at is None else float(observed_at)
+        status = str(measurement.get("measurement_status") or "").strip().lower()
+        if status not in {"executed", "measured", "degraded", "failed", "unavailable"}:
+            raise ValueError("active measurement status is invalid")
+        required = ("remote_worker_id", "remote_endpoint", "gpu_uuid", "rdma_device", "rdma_port")
+        if any(not str(measurement.get(field) or "").strip() for field in required):
+            raise ValueError("active measurement is missing required endpoint or device identity")
+        try:
+            rdma_port = int(measurement["rdma_port"])
+        except (TypeError, ValueError):
+            raise ValueError("active measurement rdma_port must be an integer")
+        if rdma_port < 1:
+            raise ValueError("active measurement rdma_port must be positive")
+        if measurement.get("verified") is not True and status == "measured":
+            raise ValueError("measured active GPU Direct RDMA evidence must be verified")
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT path_id,source_gpu,destination_gpu,segments_json,state,measurement_json,
+                          measurement_observed_at,reason,failure_domain
+                   FROM compute_physical_fabric_paths WHERE path_id=?""",
+                (exact_path_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("fabric path does not exist")
+            source_gpu = str(row["source_gpu"] or "").strip()
+            destination_gpu = str(row["destination_gpu"] or "").strip()
+            gpu_uuid = str(measurement["gpu_uuid"]).strip()
+            expected_gpu = source_gpu.removeprefix("gpu:")
+            if gpu_uuid != expected_gpu:
+                raise ValueError("active measurement GPU identity does not match path source")
+            source_port = f"rdma:{str(measurement['rdma_device']).strip()}:{rdma_port}"
+            segments = json.loads(row["segments_json"] or "[]")
+            if source_port not in {str(segment).strip() for segment in segments}:
+                raise ValueError("active measurement RDMA endpoint is not a segment of the exact fabric path")
+            measurement_payload = dict(measurement)
+            measurement_payload["observed_at"] = when
+            evidence_payload = dict(evidence or {})
+            material = {
+                "path_id": exact_path_id,
+                "measurement": measurement_payload,
+                "evidence": evidence_payload,
+                "observed_at": when,
+            }
+            test_id = hashlib.sha256(
+                json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            bandwidth = measurement.get("bandwidth_gbps")
+            latency = measurement.get("latency_us")
+            bandwidth_value = float(bandwidth) if bandwidth is not None else None
+            latency_value = float(latency) if latency is not None else None
+            connection.execute(
+                """INSERT OR IGNORE INTO compute_physical_fabric_active_tests(
+                    test_id,path_id,source_gpu,destination_gpu,worker_id,remote_worker_id,
+                    gpu_uuid,rdma_device,rdma_port,remote_endpoint,test,mode,status,
+                    bandwidth_gbps,latency_us,measurement_json,evidence_json,observed_at,recorded_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    test_id, exact_path_id, source_gpu, destination_gpu,
+                    str(measurement.get("worker_id") or "").strip(),
+                    str(measurement["remote_worker_id"]).strip(),
+                    gpu_uuid, str(measurement["rdma_device"]).strip(), rdma_port,
+                    str(measurement["remote_endpoint"]).strip(),
+                    str(measurement.get("test") or "ib_write_bw").strip(),
+                    str(measurement.get("mode") or "cuda_dmabuf").strip(),
+                    status, bandwidth_value, latency_value,
+                    json.dumps(measurement_payload, ensure_ascii=False, sort_keys=True),
+                    json.dumps(evidence_payload, ensure_ascii=False, sort_keys=True),
+                    when, time.time(),
+                ),
+            )
+            connection.commit()
+
+        current_measurement = json.loads(row["measurement_json"] or "{}")
+        current_observed = row["measurement_observed_at"]
+        verification = FabricVerificationResult(
+            path_id=exact_path_id,
+            state=FabricPathState(str(row["state"])),
+            reason=row["reason"],
+            failure_domain=row["failure_domain"],
+            measurement=current_measurement if isinstance(current_measurement, dict) else {},
+            measurement_observed_at=current_observed,
+            required_segments=tuple(str(segment) for segment in segments),
+        )
+        if status == "measured":
+            measured = PhysicalFabricVerification.measure(
+                verification,
+                measurement=measurement_payload,
+                observed_at=when,
+            )
+            self.persist_physical_verification(
+                measured,
+                evidence={
+                    "active_test_id": test_id,
+                    "active_gdrdma": evidence_payload,
+                    "measurement_identity": measurement_payload,
+                },
+                observed_at=when,
+            )
+        elif status == "degraded":
+            reason = str(measurement.get("degradation_reason") or "").strip()
+            failure_domain = str(measurement.get("failure_domain") or "").strip()
+            if reason and failure_domain:
+                degraded = PhysicalFabricVerification.measure(
+                    verification,
+                    measurement={**measurement_payload, "status": "degraded"},
+                    observed_at=when,
+                )
+                self.persist_physical_verification(
+                    degraded,
+                    evidence={"active_test_id": test_id, "active_gdrdma": evidence_payload},
+                    observed_at=when,
+                )
+        elif status == "failed":
+            reason = str(measurement.get("failure_reason") or "").strip()
+            failure_domain = str(measurement.get("failure_domain") or "").strip()
+            if reason and failure_domain:
+                failed = PhysicalFabricVerification.fail(
+                    verification,
+                    reason=reason,
+                    failure_domain=failure_domain,
+                )
+                self.persist_physical_verification(
+                    failed,
+                    evidence={"active_test_id": test_id, "active_gdrdma": evidence_payload},
+                    observed_at=when,
+                )
+        return test_id
+
+    def active_gdrdma_tests(self, *, path_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM compute_physical_fabric_active_tests"
+        args: tuple[Any, ...] = ()
+        if path_id is not None:
+            query += " WHERE path_id=?"
+            args = (str(path_id),)
+        query += " ORDER BY observed_at,test_id"
+        with self._connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        return [
+            {
+                **{key: row[key] for key in (
+                    "test_id", "path_id", "source_gpu", "destination_gpu", "worker_id",
+                    "remote_worker_id", "gpu_uuid", "rdma_device", "rdma_port",
+                    "remote_endpoint", "test", "mode", "status", "bandwidth_gbps",
+                    "latency_us", "observed_at", "recorded_at"
+                )},
+                "measurement": json.loads(row["measurement_json"] or "{}"),
+                "evidence": json.loads(row["evidence_json"] or "{}"),
             }
             for row in rows
         ]
