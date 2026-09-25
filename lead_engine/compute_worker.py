@@ -75,6 +75,11 @@ class ComputeWorkerClient:
     def fabric_state(self, attempt_id: str, generation: int, lease_token: str, status: str, error: str = "") -> Dict[str, Any]: return self.request("/fabric/state", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token, "status": status, "error": error})
     def fabric_launch_plan(self, attempt_id: str, generation: int, lease_token: str, rendezvous_endpoint: str) -> Dict[str, Any]: return self.request("/fabric/launch-plan", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token, "rendezvous_endpoint": rendezvous_endpoint})
     def fabric_record_verification(self, attempt_id: str, generation: int, lease_token: str, verification: Dict[str, Any]) -> Dict[str, Any]: return self.request("/fabric/verification", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token, "verification": verification})
+    def fabric_record_active_gdrdma_measurement(self, attempt_id: str, generation: int, lease_token: str, path_id: str, measurement: Dict[str, Any], evidence: Dict[str, Any] | None = None, observed_at: float | None = None) -> Dict[str, Any]:
+        body = {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token, "path_id": path_id, "measurement": dict(measurement), "evidence": dict(evidence or {})}
+        if observed_at is not None:
+            body["observed_at"] = float(observed_at)
+        return self.request("/fabric/active-gdrdma-measurement", body)
     def gpu_record_verification(self, attempt_id: str, generation: int, lease_token: str, verification: Dict[str, Any]) -> Dict[str, Any]: return self.request("/fabric/gpu-verification", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token, "verification": verification})
     def fabric_converge(self, attempt_id: str, generation: int, lease_token: str) -> Dict[str, Any]: return self.request("/fabric/converge", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token})
     def claim(self) -> Optional[Dict[str, Any]]:
