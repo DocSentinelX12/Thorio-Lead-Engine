@@ -150,7 +150,7 @@ class PhysicalHostDiscovery:
         devices: list[dict[str, object]] = []
         for path in self._glob("/sys/bus/pci/devices/*"):
             bus_id = path.name.strip().lower()
-            if not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\\.[0-7]", bus_id):
+            if not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", bus_id):
                 continue
             item: dict[str, object] = {"bus_id": bus_id}
             for field, relative in (
