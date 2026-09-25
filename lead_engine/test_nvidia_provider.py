@@ -861,6 +861,8 @@ def test_physical_fabric_graph_exposes_only_evidence_backed_gpu_to_nic_traversal
                 "pci:0000:10:00.0", "pci:0000:41:00.0", "nic:eth0",
             ],
             "shared_pci_ancestor": "0000:10:00.0",
+            "pci_root_complex": "0000:00:00.0",
+            "topology_distance": "PIX",
             "confidence": "derived_from_observations",
             "observed_at": 1234.5,
         },
