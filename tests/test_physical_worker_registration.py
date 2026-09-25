@@ -170,7 +170,7 @@ def test_acquired_external_gpu_is_not_trusted_until_authenticated_physical_enrol
 
     identity = _identity()
     identity = WorkerIdentity(
-        **{**identity.__dict__, "physical_fabric_evidence": {**identity.physical_fabric_evidence, "acquisition_id": acquired.acquisition_id}}
+        **{**identity.__dict__, "gpu_discovery_state": "healthy", "physical_fabric_evidence": {**identity.physical_fabric_evidence, "acquisition_id": acquired.acquisition_id}}
     )
     coordinator.register_worker(identity)
 
