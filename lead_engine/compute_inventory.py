@@ -1087,6 +1087,103 @@ class ComputeInventory:
             ).fetchone()
         return self._recovery_action_row(result)
 
+    @staticmethod
+    def _recovery_retry_seconds(attempt_count: int) -> int:
+        return min(3600, 60 * (2 ** max(0, int(attempt_count) - 1)))
+
+    def execute_active_path_recovery_action(
+        self,
+        *,
+        action_id: str,
+        owner: str,
+        physical_evidence: Sequence[Mapping[str, Any]],
+        active_measurement: Mapping[str, Any] | None = None,
+        evidence: Mapping[str, Any] | None = None,
+        observed_at: float | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Run one leased recovery action and close it only after both evidence gates succeed."""
+        timestamp = time.time() if now is None else float(now)
+        action = next((row for row in self.active_path_recovery_actions() if row["action_id"] == str(action_id)), None)
+        if action is None:
+            raise ValueError("recovery action does not exist")
+        claimed = self.claim_active_path_recovery_action(
+            action_id=action["action_id"], owner=owner, now=timestamp
+        )
+        if claimed is None:
+            raise ValueError("recovery action is not claimable")
+        current_trigger = self._active_path_recovery_trigger(path_id=claimed["path_id"])
+        if current_trigger["trigger_fingerprint"] != claimed["trigger_fingerprint"]:
+            cancelled = self.update_active_path_recovery_action(
+                action_id=claimed["action_id"], owner=owner, state="CANCELLED",
+                error="recovery action generation is stale",
+            )
+            return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": cancelled["state"], "allow_routing": False}
+
+        plan = current_trigger["plan"]
+        try:
+            if plan["action"] == "fresh_physical_reverification_required":
+                self.update_active_path_recovery_action(
+                    action_id=claimed["action_id"], owner=owner, state="PHYSICAL_REVERIFYING"
+                )
+                reverification = self.apply_active_path_reverification(
+                    path_id=claimed["path_id"], evidence=physical_evidence, observed_at=observed_at
+                )
+                if active_measurement is None:
+                    awaiting = self.update_active_path_recovery_action(
+                        action_id=claimed["action_id"], owner=owner,
+                        state="AWAITING_ACTIVE_MEASUREMENT",
+                        required_stage="fresh_active_measurement_required",
+                    )
+                    return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": awaiting["state"], "allow_routing": False, "reverification": reverification}
+            elif plan["action"] == "fresh_active_measurement_required":
+                self.update_active_path_recovery_action(
+                    action_id=claimed["action_id"], owner=owner, state="ACTIVE_MEASURING"
+                )
+            else:
+                cancelled = self.update_active_path_recovery_action(
+                    action_id=claimed["action_id"], owner=owner, state="CANCELLED",
+                    error="recovery trigger cleared before execution",
+                )
+                return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": cancelled["state"], "allow_routing": False}
+
+            if active_measurement is None:
+                raise ValueError("fresh active measurement is required before routing")
+            self.update_active_path_recovery_action(
+                action_id=claimed["action_id"], owner=owner, state="ACTIVE_MEASURING"
+            )
+            test_id = self.record_active_gdrdma_measurement(
+                path_id=claimed["path_id"],
+                measurement=dict(active_measurement),
+                evidence=dict(evidence or {}),
+                observed_at=observed_at,
+            )
+            intelligence = self.active_path_intelligence(path_id=claimed["path_id"])
+            if intelligence.get("state") == "stable":
+                completed = self.update_active_path_recovery_action(
+                    action_id=claimed["action_id"], owner=owner,
+                    state="SUCCEEDED", required_stage="no_recovery_action_required",
+                )
+                return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": completed["state"], "test_id": test_id, "intelligence": intelligence, "allow_routing": True}
+            retry_seconds = self._recovery_retry_seconds(claimed["attempt_count"])
+            retry = self.update_active_path_recovery_action(
+                action_id=claimed["action_id"], owner=owner,
+                state="RETRY_WAIT",
+                required_stage="fresh_physical_reverification_required",
+                next_attempt_at=timestamp + retry_seconds,
+                error="fresh active measurement did not establish stable exact-path intelligence",
+            )
+            return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": retry["state"], "test_id": test_id, "intelligence": intelligence, "allow_routing": False, "retry_in_seconds": retry_seconds}
+        except Exception as exc:
+            retry_seconds = self._recovery_retry_seconds(claimed["attempt_count"])
+            retry = self.update_active_path_recovery_action(
+                action_id=claimed["action_id"], owner=owner,
+                state="RETRY_WAIT",
+                next_attempt_at=timestamp + retry_seconds,
+                error=str(exc),
+            )
+            return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": retry["state"], "allow_routing": False, "retry_in_seconds": retry_seconds, "error": str(exc)}
+
     def execute_active_path_recovery_cycle(self, *, path_id: str, physical_evidence: Sequence[Mapping[str, Any]], active_measurement: Mapping[str, Any] | None = None, evidence: Mapping[str, Any] | None = None, observed_at: float | None = None) -> dict[str, Any]:
         """Execute one exact-path recovery cycle without skipping either evidence gate."""
         plan = self.active_path_recovery_plan(path_id=path_id)
