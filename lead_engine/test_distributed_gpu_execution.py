@@ -167,7 +167,7 @@ def test_active_gdrdma_client_uses_cuda_dmabuf_and_records_only_observed_result(
     result = runtime.verify_active_gpu_direct_rdma(
         gpu_index=0,
         rdma_device="mlx5_0",
-        trusted_remote={"endpoint": "198.51.100.10", "verified": True, "remote_test_server_verified": True, "fabric_path_id": "path-1"},
+        trusted_remote={"endpoint": "198.51.100.10", "verified": True, "remote_test_server_verified": True, "fabric_path_id": "path-1", "remote_worker_id": "worker-b", "remote_gpu_uuid": "GPU-b"},
         mode="cuda_dmabuf",
     )
 
@@ -176,6 +176,11 @@ def test_active_gdrdma_client_uses_cuda_dmabuf_and_records_only_observed_result(
     assert result["rdma_device"] == "mlx5_0"
     assert result["mode"] == "cuda_dmabuf"
     assert result["remote_endpoint"] == "198.51.100.10"
+    assert result["remote_worker_id"] == "worker-b"
+    assert result["remote_gpu_uuid"] == "GPU-b"
+    assert result["direction"] == "client_to_server"
+    assert result["returncode"] == 0
+    assert result["command"][-1] == "198.51.100.10"
     assert result["observed_output"].startswith("RDMA_Write BW Test")
     assert captured == [(
         "/usr/bin/ib_write_bw",
