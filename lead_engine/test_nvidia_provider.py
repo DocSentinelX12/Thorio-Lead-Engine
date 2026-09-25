@@ -367,3 +367,27 @@ def test_nvidia_discovery_derives_verified_local_topology_graph():
     assert topology["gpu_affinity"]["0"]["numa"] == 0
     assert topology["gpu_affinity"]["1"]["numa"] == 0
     assert topology["connectivity_components"] == [["0", "1"]]
+
+
+def test_nvidia_discovery_carries_physical_host_inventory_into_snapshot_evidence(monkeypatch):
+    host_evidence = {
+        "source": "worker-local-linux-sysfs",
+        "node_id": "node-01",
+        "cpu": {"logical_cpu_count": 4, "core_count": 4, "socket_count": 2, "online_cpus": [0, 1, 2, 3], "topology": []},
+        "memory": {"mem_total_bytes": 268435456},
+        "storage": {"devices": [{"name": "nvme0n1", "capacity_bytes": 1073741824}]},
+        "pci": {"devices": [{"bus_id": "0000:17:00.0", "vendor_id": "0x10de", "device_id": "0x2330", "class_code": "0x030200", "numa_node": 0}]},
+    }
+
+    class StubHostDiscovery:
+        def discover(self, *, node_id):
+            assert node_id == "node-01"
+            return host_evidence
+
+    monkeypatch.setattr(
+        "lead_engine.nvidia_provider.PhysicalHostDiscovery",
+        lambda: StubHostDiscovery(),
+    )
+    snapshot = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=fake_runner, now=lambda: 1234.5).discover()
+
+    assert snapshot.evidence["host_physical"] == host_evidence
