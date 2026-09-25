@@ -1088,6 +1088,13 @@ class NvidiaProvider(ComputeProvider):
                         )
                         gpu_iommu = gpu_host.get("iommu_group")
                         nic_iommu = nic_host.get("iommu_group")
+                        pci_direct = host_physical.get("pci_direct_features") if isinstance(host_physical, Mapping) else None
+                        pci_direct_devices = pci_direct.get("devices") if isinstance(pci_direct, Mapping) else {}
+                        if not isinstance(pci_direct_devices, Mapping):
+                            pci_direct_devices = {}
+                        gpu_direct = pci_direct_devices.get(gpu_pci)
+                        nic_direct = pci_direct_devices.get(nic_pci)
+                        ancestor_direct = pci_direct_devices.get(shared_ancestor)
                         iommu_evidence = host_physical.get("iommu") if isinstance(host_physical, Mapping) else None
                         if not isinstance(iommu_evidence, Mapping):
                             iommu_evidence = {
@@ -1116,6 +1123,11 @@ class NvidiaProvider(ComputeProvider):
                                 "nic": nic_iommu,
                             },
                             "iommu": iommu_evidence,
+                            "pci_direct_features": {
+                                "gpu": gpu_direct if isinstance(gpu_direct, Mapping) else {"status": "unknown"},
+                                "nic": nic_direct if isinstance(nic_direct, Mapping) else {"status": "unknown"},
+                                "shared_pci_ancestor": ancestor_direct if isinstance(ancestor_direct, Mapping) else {"status": "unknown"},
+                            },
                             "eligibility": eligibility,
                             "data_path_verified": False,
                             "confidence": "derived_from_observations",
