@@ -131,3 +131,21 @@ def test_adaptive_route_selector_uses_active_path_evidence_as_a_tiebreaker():
     assert result["path_id"] == "path-b"
     assert result["selection_reason"] == "observed_route_health_and_active_path_evidence"
     assert result["evidence"][0]["active_path_intelligence"]["state"] == "stable"
+
+
+def test_scheduler_attaches_durable_active_path_intelligence_to_canonical_paths():
+    from types import SimpleNamespace
+    from lead_engine.compute_scheduler import ComputeScheduler
+
+    scheduler = object.__new__(ComputeScheduler)
+    scheduler.physical_path_provider = lambda: ({"path_id": "path-1", "state": "MEASURED", "measurement": {"bandwidth_gbps": 190.0}},)
+    scheduler.inventory = SimpleNamespace(
+        active_path_intelligence_for_paths=lambda path_ids: {
+            "path-1": {"state": "degrading", "bandwidth_change_ratio": -0.20}
+        }
+    )
+
+    paths = scheduler._physical_paths()
+
+    assert paths[0]["active_path_intelligence"]["state"] == "degrading"
+    assert paths[0]["active_path_intelligence"]["bandwidth_change_ratio"] == -0.20
