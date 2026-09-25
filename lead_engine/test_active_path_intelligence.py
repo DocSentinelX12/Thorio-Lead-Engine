@@ -68,6 +68,7 @@ def test_active_path_intelligence_distinguishes_connectivity_failure_from_bandwi
     assert result["state"] == "failed"
     assert result["failure_or_connectivity_failure"] is True
     assert result["bandwidth_delta_gbps"] is None
+    assert result["reverification"]["required"] is True
 
 
 def test_active_path_intelligence_never_merges_different_endpoint_or_direction_history():
@@ -95,6 +96,8 @@ def test_active_path_intelligence_marks_measured_after_failure_as_recovery_evide
     assert result["state"] == "recovered"
     assert result["recovery"]["prior_failure_observed"] is True
     assert result["recovery"]["latest_measurement_verified"] is True
+    assert result["reverification"]["required"] is True
+    assert "recovered" in result["reverification"]["reason"]
 
 
 def test_active_path_intelligence_rejects_mismatched_path_identity():
