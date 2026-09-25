@@ -164,3 +164,32 @@ def test_provider_identity_mismatch_is_rejected():
         result = manager.discover()
         assert result["offers"] == ()
         assert len(result["errors"]) == 1
+
+
+def test_expired_verified_gpu_is_not_eligible(tmp_path):
+    now = [150.0]
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: now[0])
+    provider = Provider()
+    manager.register(provider)
+
+    acquired = manager.acquire(offer(expires_at=200.0))
+    store.mark_worker_verified(
+        acquired.acquisition_id,
+        worker_id="external-worker-1",
+        verification={
+            "gpu_capable": True,
+            "gpu_discovery_state": "healthy",
+            "gpu_resources": [{"gpu_uuid": "GPU-real"}],
+            "physical_fabric_evidence": {"physical_fabric": {"components": [{"component_type": "gpu", "identity": "gpu:GPU-real"}]}},
+        },
+    )
+
+    assert manager.status()["eligible_verified_count"] == 1
+    assert manager.status()["expired_verified_count"] == 0
+
+    now[0] = 200.0
+    status = manager.status()
+    assert status["eligible_verified_count"] == 0
+    assert status["expired_verified_count"] == 1
+    assert status["records"][0]["status"] == "verified"
