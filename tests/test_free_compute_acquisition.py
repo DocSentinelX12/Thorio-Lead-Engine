@@ -193,3 +193,114 @@ def test_expired_verified_gpu_is_not_eligible(tmp_path):
     assert status["eligible_verified_count"] == 0
     assert status["expired_verified_count"] == 1
     assert status["records"][0]["status"] == "verified"
+
+
+def test_continuous_hunter_discovers_and_acquires_without_stopping_on_provider_failure(tmp_path):
+    class FlakyProvider(Provider):
+        provider_id = "flaky-provider"
+
+        def __init__(self):
+            super().__init__()
+            self.discovery_calls = 0
+
+        def discover_free(self):
+            self.discovery_calls += 1
+            if self.discovery_calls == 1:
+                raise RuntimeError("temporarily unavailable")
+            return (
+                FreeComputeOffer(
+                    provider_id=self.provider_id,
+                    domain_id="domain-1",
+                    offer_id="offer-flaky",
+                    observed_at=100.0,
+                    expires_at=500.0,
+                    gpu_capable=True,
+                    no_cost=True,
+                    capacity_evidence={"source": "provider-observation", "gpu_count": 8},
+                ),
+            )
+
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=500.0,
+                gpu_capable=True,
+                enrollment={"worker_id": "flaky-worker", "enrollment_mode": "authenticated"},
+            )
+
+    class HealthyProvider(Provider):
+        provider_id = "healthy-provider"
+
+        def discover_free(self):
+            return (
+                FreeComputeOffer(
+                    provider_id=self.provider_id,
+                    domain_id="domain-1",
+                    offer_id="offer-healthy",
+                    observed_at=100.0,
+                    expires_at=500.0,
+                    gpu_capable=True,
+                    no_cost=True,
+                    capacity_evidence={"source": "provider-observation", "gpu_count": 4},
+                ),
+            )
+
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=500.0,
+                gpu_capable=True,
+                no_cost=True,
+                gpu_capable=True,
+                enrollment={"worker_id": "healthy-worker", "enrollment_mode": "authenticated"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    flaky = FlakyProvider()
+    manager.register(flaky)
+    manager.register(HealthyProvider())
+
+    first = manager.hunt_once()
+    assert first["provider_count"] == 2
+    assert first["acquired_count"] == 1
+    assert len(first["errors"]) == 1
+    assert first["errors"][0]["provider_id"] == "flaky-provider"
+
+    second = manager.hunt_once()
+    assert second["acquired_count"] == 1
+    records = {item["provider_id"]: item for item in store.records()}
+    assert records["flaky-provider"]["status"] == "acquired"
+    assert records["healthy-provider"]["status"] == "acquired"
+    assert flaky.discovery_calls == 2
+
+
+def test_continuous_hunter_runs_immediately_then_waits_between_cycles(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    provider = Provider()
+    manager.register(provider)
+
+    sleeps = []
+    cycles = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            raise StopIteration
+
+    with pytest.raises(StopIteration):
+        manager.run_continuously(interval_seconds=7.0, sleep=sleep, on_cycle=lambda result: cycles.append(result))
+
+    assert len(cycles) == 2
+    assert sleeps == [7.0]
