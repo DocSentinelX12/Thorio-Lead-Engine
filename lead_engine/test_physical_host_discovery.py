@@ -8,15 +8,20 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
         "/proc/meminfo": "MemTotal:       262144 kB\nMemAvailable:   200000 kB\n",
         "/sys/devices/system/cpu/online": "0-3\n",
         "/sys/devices/system/cpu/cpu0/topology/core_id": "0\n",
+        "/sys/devices/system/cpu/cpu0/topology/thread_siblings_list": "0-1\n",
         "/sys/devices/system/cpu/cpu0/topology/physical_package_id": "0\n",
-        "/sys/devices/system/cpu/cpu1/topology/core_id": "1\n",
+        "/sys/devices/system/cpu/cpu1/topology/core_id": "0\n",
+        "/sys/devices/system/cpu/cpu1/topology/thread_siblings_list": "0-1\n",
         "/sys/devices/system/cpu/cpu1/topology/physical_package_id": "0\n",
         "/sys/devices/system/cpu/cpu2/topology/core_id": "0\n",
+        "/sys/devices/system/cpu/cpu2/topology/thread_siblings_list": "2-3\n",
         "/sys/devices/system/cpu/cpu2/topology/physical_package_id": "1\n",
-        "/sys/devices/system/cpu/cpu3/topology/core_id": "1\n",
+        "/sys/devices/system/cpu/cpu3/topology/core_id": "0\n",
+        "/sys/devices/system/cpu/cpu3/topology/thread_siblings_list": "2-3\n",
         "/sys/devices/system/cpu/cpu3/topology/physical_package_id": "1\n",
         "/sys/block/nvme0n1/size": "2097152\n",
         "/sys/block/nvme0n1/queue/logical_block_size": "512\n",
+        "/sys/block/nvme0n1/queue/physical_block_size": "4096\n",
         "/sys/block/nvme0n1/removable": "0\n",
         "/sys/block/nvme0n1/ro": "0\n",
         "/sys/block/nvme0n1/device/vendor": "0x8086\n",
@@ -25,6 +30,11 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
         "/sys/bus/pci/devices/0000:17:00.0/device": "0x2330\n",
         "/sys/bus/pci/devices/0000:17:00.0/class": "0x030200\n",
         "/sys/bus/pci/devices/0000:17:00.0/numa_node": "0\n",
+        "/sys/devices/system/node/node0/cpulist": "0-1\n",
+        "/sys/devices/system/node/node0/meminfo": "Node 0 MemTotal:       131072 kB\nNode 0 MemFree:         65536 kB\n",
+        "/sys/devices/system/node/node1/cpulist": "2-3\n",
+        "/sys/devices/system/node/node1/meminfo": "Node 1 MemTotal:       131072 kB\nNode 1 MemFree:         65536 kB\n",
+        "/sys/devices/system/node/online": "0-1\n",
     }
     directories = {
         "/sys/block": ["nvme0n1"],
@@ -53,9 +63,9 @@ def test_physical_host_discovery_records_cpu_memory_storage_and_pci_evidence():
     assert evidence["memory"]["mem_total_bytes"] == 262144 * 1024
     assert evidence["cpu"]["logical_cpu_count"] == 4
     assert evidence["cpu"]["socket_count"] == 2
-    assert evidence["cpu"]["core_count"] == 4
+    assert evidence["cpu"]["core_count"] == 2\n    assert evidence["cpu"]["thread_siblings"] == [[0, 1], [2, 3]]
     assert evidence["storage"]["devices"][0]["name"] == "nvme0n1"
-    assert evidence["storage"]["devices"][0]["capacity_bytes"] == 2097152 * 512
+    assert evidence["storage"]["devices"][0]["capacity_bytes"] == 2097152 * 512\n    assert evidence["storage"]["devices"][0]["physical_block_size"] == 4096
     assert evidence["pci"]["devices"][0]["bus_id"] == "0000:17:00.0"
     assert evidence["pci"]["devices"][0]["vendor_id"] == "0x10de"
-    assert evidence["pci"]["devices"][0]["numa_node"] == 0
+    assert evidence["pci"]["devices"][0]["numa_node"] == 0\n    assert evidence["numa"]["nodes"][0]["node_id"] == 0\n    assert evidence["numa"]["nodes"][0]["cpu_count"] == 2\n    assert evidence["numa"]["nodes"][0]["mem_total_bytes"] == 131072 * 1024\n    assert evidence["numa"]["distance_matrix"] == {}
