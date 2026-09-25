@@ -65,14 +65,21 @@ class PhysicalHostDiscovery:
         online = self._expand_cpu_list(self._read("/sys/devices/system/cpu/online"))
         if not online:
             raise PhysicalHostDiscoveryError("Linux CPU online set is empty")
-        records: list[dict[str, int]] = []
+        records: list[dict[str, object]] = []
         cores: set[tuple[int, int]] = set()
         sockets: set[int] = set()
+        thread_sibling_sets: set[tuple[int, ...]] = set()
         for cpu in online:
             base = f"/sys/devices/system/cpu/cpu{cpu}/topology"
             core = self._positive_int(self._read(f"{base}/core_id"), f"cpu{cpu} core_id")
             package = self._positive_int(self._read(f"{base}/physical_package_id"), f"cpu{cpu} physical_package_id")
             cores.add((package, core))
+            try:
+                siblings = self._expand_cpu_list(self._read(f"{base}/thread_siblings_list"))
+            except (OSError, ValueError, PhysicalHostDiscoveryError):
+                siblings = (cpu,)
+            if siblings:
+                thread_sibling_sets.add(tuple(siblings))
             sockets.add(package)
             records.append({"logical_cpu": cpu, "core_id": core, "package_id": package})
         return {
@@ -81,6 +88,7 @@ class PhysicalHostDiscovery:
             "core_count": len(cores),
             "socket_count": len(sockets),
             "topology": records,
+            "thread_siblings": [list(group) for group in sorted(thread_sibling_sets)],
         }
 
     def _memory(self) -> dict[str, int]:
@@ -114,9 +122,19 @@ class PhysicalHostDiscovery:
                 "name": name,
                 "capacity_bytes": sectors * block_size,
                 "logical_block_size": block_size,
+                "physical_block_size": block_size,
                 "removable": bool(removable),
                 "read_only": bool(read_only),
             }
+            try:
+                physical_block_size = self._positive_int(
+                    self._read(path / "queue/physical_block_size"),
+                    f"{name} physical block size",
+                )
+                if physical_block_size > 0:
+                    device["physical_block_size"] = physical_block_size
+            except (OSError, PhysicalHostDiscoveryError):
+                pass
             for field, relative in (("vendor", "device/vendor"), ("model", "device/model")):
                 try:
                     value = self._read(path / relative).strip()
@@ -155,6 +173,55 @@ class PhysicalHostDiscovery:
         devices.sort(key=lambda item: str(item["bus_id"]))
         return {"devices": devices}
 
+    def _numa(self) -> dict[str, object]:
+        nodes: list[dict[str, object]] = []
+        try:
+            online_raw = self._read("/sys/devices/system/node/online")
+        except OSError:
+            online_raw = ""
+        if online_raw.strip():
+            node_ids = self._expand_cpu_list(online_raw)
+        else:
+            node_ids = tuple(
+                int(path.name[4:])
+                for path in self._glob("/sys/devices/system/node/node[0-9]*")
+                if re.fullmatch(r"node[0-9]+", path.name)
+            )
+        distances: dict[str, list[int]] = {}
+        for node_id in node_ids:
+            base = f"/sys/devices/system/node/node{node_id}"
+            try:
+                cpulist = self._expand_cpu_list(self._read(f"{base}/cpulist"))
+            except (OSError, ValueError, PhysicalHostDiscoveryError):
+                cpulist = ()
+            mem_total = mem_free = 0
+            try:
+                meminfo = self._read(f"{base}/meminfo")
+            except OSError:
+                meminfo = ""
+            for line in meminfo.splitlines():
+                match = re.match(rf"^Node\s+{node_id}\s+(MemTotal|MemFree):\s+(\d+)\s+kB", line)
+                if match:
+                    value = int(match.group(2)) * 1024
+                    if match.group(1) == "MemTotal":
+                        mem_total = value
+                    else:
+                        mem_free = value
+            nodes.append({
+                "node_id": node_id,
+                "cpus": list(cpulist),
+                "cpu_count": len(cpulist),
+                "mem_total_bytes": mem_total,
+                "mem_free_bytes": mem_free,
+            })
+            try:
+                values = [int(value) for value in self._read(f"{base}/distance").split()]
+                distances[str(node_id)] = values
+            except (OSError, ValueError):
+                pass
+        nodes.sort(key=lambda item: int(item["node_id"]))
+        return {"nodes": nodes, "distance_matrix": distances}
+
     def discover(self, *, node_id: str) -> dict[str, object]:
         if not str(node_id).strip():
             raise ValueError("node_id is required")
@@ -165,4 +232,5 @@ class PhysicalHostDiscovery:
             "memory": self._memory(),
             "storage": self._storage(),
             "pci": self._pci(),
+            "numa": self._numa(),
         }
