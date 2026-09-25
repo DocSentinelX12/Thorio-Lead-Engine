@@ -983,6 +983,37 @@ class ComputeInventory:
             rows = connection.execute(query, args).fetchall()
         return [self._recovery_action_row(row) for row in rows]
 
+    def enqueue_active_path_recovery_actions(self, *, now: float | None = None) -> list[dict[str, Any]]:
+        """Discover every currently triggered exact path and durably enqueue it without dropping backlog."""
+        timestamp = time.time() if now is None else float(now)
+        actions: list[dict[str, Any]] = []
+        for path in self.physical_paths():
+            path_id = str(path.get("path_id") or "").strip()
+            if not path_id:
+                continue
+            try:
+                action = self.ensure_active_path_recovery_action(path_id=path_id, now=timestamp)
+            except ValueError as exc:
+                if str(exc) == "exact fabric path does not currently require recovery":
+                    continue
+                raise
+            actions.append(action)
+        return actions
+
+    def due_active_path_recovery_actions(self, *, now: float | None = None) -> list[dict[str, Any]]:
+        """Return all due durable actions, including retryable and awaiting-measurement work."""
+        timestamp = time.time() if now is None else float(now)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM compute_physical_fabric_recovery_actions
+                   WHERE state NOT IN ('SUCCEEDED','CANCELLED')
+                     AND next_attempt_at<=?
+                     AND (lease_expires_at IS NULL OR lease_expires_at<=?)
+                   ORDER BY next_attempt_at,path_id,generation""",
+                (timestamp, timestamp),
+            ).fetchall()
+        return [self._recovery_action_row(row) for row in rows]
+
     def claim_active_path_recovery_action(
         self,
         *,
