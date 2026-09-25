@@ -1042,6 +1042,8 @@ class ComputeInventory:
         next_attempt_at: float | None = None,
         error: str | None = None,
         completed_at: float | None = None,
+        trigger_fingerprint: str | None = None,
+        trigger_snapshot: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Advance a claimed recovery action without releasing ownership implicitly."""
         exact_action_id = str(action_id or "").strip()
@@ -1069,15 +1071,18 @@ class ComputeInventory:
             next_stage = required_stage if required_stage is not None else row["required_stage"]
             next_due = timestamp if next_attempt_at is None else float(next_attempt_at)
             completed = timestamp if completed_at is None and next_state == "SUCCEEDED" else completed_at
+            current_fingerprint = row["trigger_fingerprint"] if trigger_fingerprint is None else str(trigger_fingerprint)
+            current_snapshot = row["trigger_snapshot_json"] if trigger_snapshot is None else json.dumps(dict(trigger_snapshot), ensure_ascii=False, sort_keys=True)
             connection.execute(
                 """UPDATE compute_physical_fabric_recovery_actions
                    SET state=?,required_stage=?,next_attempt_at=?,last_error=?,
-                       completed_at=?,updated_at=?,lease_expires_at=NULL,owner=?
+                       completed_at=?,updated_at=?,lease_expires_at=NULL,owner=?,
+                       trigger_fingerprint=?,trigger_snapshot_json=?
                    WHERE action_id=?""",
                 (
                     next_state, next_stage, next_due, error,
                     completed, timestamp, None if next_state in {"SUCCEEDED", "CANCELLED"} else claimant,
-                    exact_action_id,
+                    current_fingerprint, current_snapshot, exact_action_id,
                 ),
             )
             connection.commit()
@@ -1129,11 +1134,16 @@ class ComputeInventory:
                 reverification = self.apply_active_path_reverification(
                     path_id=claimed["path_id"], evidence=physical_evidence, observed_at=observed_at
                 )
+                refreshed_trigger = self._active_path_recovery_trigger(path_id=claimed["path_id"])
+                if refreshed_trigger["trigger_fingerprint"] is None:
+                    raise ValueError("recovery trigger disappeared after physical reverification")
                 if active_measurement is None:
                     awaiting = self.update_active_path_recovery_action(
                         action_id=claimed["action_id"], owner=owner,
                         state="AWAITING_ACTIVE_MEASUREMENT",
                         required_stage="fresh_active_measurement_required",
+                        trigger_fingerprint=refreshed_trigger["trigger_fingerprint"],
+                        trigger_snapshot=refreshed_trigger["trigger_snapshot"],
                     )
                     return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": awaiting["state"], "allow_routing": False, "reverification": reverification}
             elif plan["action"] == "fresh_active_measurement_required":
