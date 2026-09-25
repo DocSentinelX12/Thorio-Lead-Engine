@@ -402,3 +402,56 @@ class FreeComputeAcquisitionManager:
             "eligible_verified_count": len(eligible),
             "expired_verified_count": len(expired_verified),
         }
+
+
+    def hunt_once(self) -> dict[str, Any]:
+        """Perform one complete discovery/acquisition sweep across every provider.
+
+        A provider failure is isolated to that provider. The sweep continues so
+        one unavailable source can never suppress capacity from other sources.
+        """
+        discovery = self.discover()
+        acquired: list[dict[str, Any]] = []
+        errors = list(discovery["errors"])
+        for offer_data in discovery["offers"]:
+            offer = FreeComputeOffer(**offer_data)
+            try:
+                result = self.acquire(offer)
+                acquired.append(asdict(result))
+            except Exception as exc:
+                errors.append(
+                    {
+                        "provider_id": offer.provider_id,
+                        "offer_id": offer.offer_id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+        return {
+            "provider_count": discovery["provider_count"],
+            "offers_observed": len(discovery["offers"]),
+            "acquired_count": len(acquired),
+            "acquired": tuple(acquired),
+            "errors": tuple(errors),
+        }
+
+    def run_continuously(
+        self,
+        *,
+        interval_seconds: float,
+        sleep=time.sleep,
+        on_cycle=None,
+    ) -> None:
+        """Continuously hunt for free capacity until the host stops the loop.
+
+        The first hunt is immediate. Subsequent hunts wait exactly the requested
+        interval. Provider errors are returned in each cycle and never terminate
+        the loop. The host process remains responsible for graceful shutdown.
+        """
+        interval = float(interval_seconds)
+        if interval <= 0:
+            raise ValueError("interval_seconds must be positive")
+        while True:
+            result = self.hunt_once()
+            if on_cycle is not None:
+                on_cycle(result)
+            sleep(interval)
