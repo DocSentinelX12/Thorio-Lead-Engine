@@ -208,9 +208,8 @@ def test_active_gdrdma_measurement_parses_only_explicit_bandwidth_and_latency():
             0,
             "RDMA_Write BW Test\\n"
             "Device : mlx5_0\\n"
-            "BW average[Gb/sec] : 187.5\\n"
-            "Peak[Gb/sec] : 201.0\\n"
-            "Latency[usec] : 4.25\\n",
+            "#bytes     #iterations    BW peak[Gb/sec]    BW average[Gb/sec]   MsgRate[Mpps]\\n"
+            "64         5000             201.0               187.5               7.02\\n",
             "",
         ),
         which=lambda name: "/usr/bin/" + name,
@@ -227,10 +226,10 @@ def test_active_gdrdma_measurement_parses_only_explicit_bandwidth_and_latency():
     )
 
     assert result["measurement_status"] == "measured"
-    assert result["bandwidth_gbps"] == 187.5
-    assert result["latency_us"] == 4.25
-    assert result["raw_measurement_evidence"]["bandwidth_line"].startswith("BW average")
-    assert result["raw_measurement_evidence"]["latency_line"].startswith("Latency")
+    assert result["bandwidth_samples"] == ({"message_size_bytes": 64, "iterations": 5000, "peak_bandwidth_gbps": 201.0, "bandwidth_gbps": 187.5, "message_rate_mpps": 7.02},)
+    assert result["bandwidth_gbps"] is None
+    assert result["latency_us"] is None
+    assert result["raw_measurement_evidence"]["bandwidth_lines"] == ("64         5000             201.0               187.5               7.02",)
 
 def test_probe_evidence_contains_only_observed_execution_identity():
     evidence = build_probe_evidence(
