@@ -632,3 +632,121 @@ def test_physical_fabric_graph_exposes_observed_pci_ancestry_for_gpu_and_nic():
         item["evidence"]["source"] == "worker-local-linux-sysfs"
         for item in ancestry
     )
+
+
+
+def test_physical_fabric_graph_exposes_rdmа_port_pci_attachment_and_precise_nic_port_edge():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network={
+            "link_capabilities": {
+                "ib0": {"bus_info": "0000:41:00.0"},
+            },
+            "rdma": {
+                "devices": [{
+                    "device": "mlx5_0", "pci_bus_id": "0000:41:00.0",
+                }],
+                "links": [{
+                    "rdma_device": "mlx5_0", "port": 1, "netdev": "ib0",
+                    "pci_bus_id": "0000:41:00.0", "state": "ACTIVE",
+                    "physical_state": "LINK_UP", "link_layer": "InfiniBand",
+                }],
+            },
+        },
+        observed_at=1234.5,
+    )
+    relationships = evidence["relationships"]
+    assert any(
+        item["relationship_type"] == "rdma_port_to_pci"
+        and item["source"] == "rdma:mlx5_0:1"
+        and item["target"] == "pci:0000:41:00.0"
+        for item in relationships
+    )
+    assert any(
+        item["relationship_type"] == "nic_to_rdma_port"
+        and item["source"] == "nic:ib0"
+        and item["target"] == "rdma:mlx5_0:1"
+        for item in relationships
+    )
+
+
+def test_physical_fabric_graph_exposes_only_evidence_backed_gpu_to_nic_traversal():
+    gpu = GpuResource(
+        node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+        vram_bytes=80 * 1024**3, pci_bus_id="0000:17:00.0", numa_node=0,
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    evidence = NvidiaProvider._physical_fabric_evidence(
+        node_id="node-01",
+        gpus=(gpu,),
+        network={
+            "link_capabilities": {
+                "eth0": {"bus_info": "0000:41:00.0"},
+                "eth1": {"bus_info": "0000:81:00.0"},
+            },
+            "gpu_nic_locality": [
+                {
+                    "gpu_uuid": "GPU-aaa", "gpu_pci_bus_id": "0000:17:00.0",
+                    "nic": "eth0", "nic_pci_bus_id": "0000:41:00.0",
+                    "shared_pci_ancestor": "0000:10:00.0",
+                    "same_numa_node": True, "source": "sysfs",
+                },
+                {
+                    "gpu_uuid": "GPU-aaa", "gpu_pci_bus_id": "0000:17:00.0",
+                    "nic": "eth1", "nic_pci_bus_id": "0000:81:00.0",
+                    "shared_pci_ancestor": None,
+                    "same_numa_node": False, "source": "sysfs",
+                },
+            ],
+        },
+        host_physical={
+            "pci": {
+                "devices": [
+                    {
+                        "bus_id": "0000:17:00.0",
+                        "parent_bus_id": "0000:10:00.0",
+                        "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:17:00.0"],
+                        "numa_node": 0,
+                    },
+                    {
+                        "bus_id": "0000:41:00.0",
+                        "parent_bus_id": "0000:10:00.0",
+                        "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:41:00.0"],
+                        "numa_node": 0,
+                    },
+                    {
+                        "bus_id": "0000:81:00.0",
+                        "parent_bus_id": "0000:80:00.0",
+                        "pci_path": ["0000:00:00.0", "0000:80:00.0", "0000:81:00.0"],
+                        "numa_node": 1,
+                    },
+                ]
+            }
+        },
+        observed_at=1234.5,
+    )
+    paths = [
+        item for item in evidence["relationships"]
+        if item["relationship_type"] == "gpu_to_nic_path"
+    ]
+    assert paths == [{
+        "relationship_type": "gpu_to_nic_path",
+        "source": "gpu:GPU-aaa",
+        "target": "nic:eth0",
+        "evidence": {
+            "source": "derived_from_worker_local_physical_evidence",
+            "path_nodes": [
+                "gpu:GPU-aaa", "pci:0000:17:00.0",
+                "pci:0000:10:00.0", "pci:0000:41:00.0", "nic:eth0",
+            ],
+            "shared_pci_ancestor": "0000:10:00.0",
+            "confidence": "derived_from_observations",
+            "observed_at": 1234.5,
+        },
+    }]
