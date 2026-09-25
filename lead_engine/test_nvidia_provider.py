@@ -745,6 +745,15 @@ def test_physical_fabric_graph_records_pci_root_complex_and_gdrdma_topology_asse
                 "iommu_groups_present": True,
                 "iommu_group_count": 8,
             },
+            "pci_direct_features": {
+                "source": "lspci -D -vvv",
+                "available": True,
+                "devices": {
+                    "0000:17:00.0": {"acsctl": "SrcValid+", "acs_enabled": True},
+                    "0000:41:00.0": {"atsctl": "Enable+", "ats_enabled": True},
+                    "0000:10:00.0": {"acsctl": "SrcValid+ ReqRedir-", "acs_enabled": True},
+                },
+            },
             "pci": {"devices": [
                 {"bus_id": "0000:17:00.0", "numa_node": 0, "iommu_group": 7,
                  "pci_path": ["0000:00:00.0", "0000:10:00.0", "0000:17:00.0"]},
@@ -763,7 +772,9 @@ def test_physical_fabric_graph_records_pci_root_complex_and_gdrdma_topology_asse
     assert assessment["evidence"]["same_iommu_group"] is False
     assert assessment["evidence"]["iommu"]["configured_mode"] == "passthrough"
     assert assessment["evidence"]["iommu"]["source"] == "worker-local-linux-kernel"
-    assert assessment["evidence"]["eligibility"] == "topology_eligible"
+    assert assessment["evidence"]["pci_direct_features"]["gpu"]["acs_enabled"] is True
+    assert assessment["evidence"]["pci_direct_features"]["nic"]["ats_enabled"] is True
+    assert assessment["evidence"]["pci_direct_features"]["shared_pci_ancestor"]["acsctl"] == "SrcValid+ ReqRedir-"    assert assessment["evidence"]["eligibility"] == "topology_eligible"
     assert assessment["evidence"]["data_path_verified"] is False
 
 
