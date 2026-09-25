@@ -128,4 +128,6 @@ def test_physical_host_discovery_records_iommu_kernel_evidence_without_inference
         "kernel_cmdline": "BOOT_IMAGE=/vmlinuz iommu=pt quiet",
         "configured_mode": "passthrough",
         "configured_by": "iommu=pt",
+        "iommu_groups_present": False,
+        "iommu_group_count": 0,
     }
