@@ -297,8 +297,7 @@ class NvidiaProvider(ComputeProvider):
                 "addresses": sorted(addresses),
             }
         ordered_domains = sorted(domains)
-        link_capabilities = {            name: self._discover_ethtool_link(name, self._runner, self.timeout_seconds)
-            for name in sorted(normalized)
+        link_capabilities = {            name: self._discover_ethtool_link(name, self._runner, self.timeout_seconds)            for name in sorted(normalized)
         }
         evidence: dict[str, object] = {
             "source": "iproute2",
@@ -597,8 +596,7 @@ class NvidiaProvider(ComputeProvider):
             raise NvidiaDiscoveryError("structured NVIDIA topology is missing domain mappings")
         updated: list[GpuResource] = []
         for gpu in gpus:            updated.append(GpuResource(
-                node_id=gpu.node_id, gpu_id=gpu.gpu_id, gpu_uuid=gpu.gpu_uuid, model=gpu.model,
-                vram_bytes=gpu.vram_bytes, compute_capability=gpu.compute_capability,
+                node_id=gpu.node_id, gpu_id=gpu.gpu_id, gpu_uuid=gpu.gpu_uuid, model=gpu.model,                vram_bytes=gpu.vram_bytes, compute_capability=gpu.compute_capability,
                 driver_version=gpu.driver_version, cuda_version=gpu.cuda_version,
                 pci_bus_id=gpu.pci_bus_id, numa_node=gpu.numa_node,
                 nvlink_domain=nvlink_domains.get(gpu.gpu_id),
@@ -897,8 +895,7 @@ class NvidiaProvider(ComputeProvider):
                         right_uuid = gpu_uuid_by_id.get(str(right_gpu_id))
                         normalized_path = str(path_type).strip()
                         if not right_uuid or not normalized_path or normalized_path.upper() == "X":
-                            continue
-                        if not re.fullmatch(r"NV(?:L|\d+)", normalized_path, re.IGNORECASE):
+                            continue                        if not re.fullmatch(r"NV(?:L|\d+)", normalized_path, re.IGNORECASE):
                             continue
                         add_relationship(
                             "gpu_to_gpu_nvlink",
@@ -941,6 +938,33 @@ class NvidiaProvider(ComputeProvider):
                 for raw in host_devices or ()
                 if isinstance(raw, Mapping) and str(raw.get("bus_id") or "").strip()
             }
+            for raw in host_devices or ():
+                if not isinstance(raw, Mapping):
+                    continue
+                bus_id = str(raw.get("bus_id") or "").strip().lower()
+                if not bus_id:
+                    continue
+                pci_identity = f"pci:{bus_id}"
+                add_component("pci", pci_identity, {
+                    "numa_node": raw.get("numa_node"),
+                    "iommu_group": raw.get("iommu_group"),
+                    "pci_path": raw.get("pci_path"),
+                }, source="worker-local-linux-sysfs")
+                parent_bus_id = str(raw.get("parent_bus_id") or "").strip().lower()
+                if parent_bus_id:
+                    parent_identity = f"pci:{parent_bus_id}"
+                    add_component("pci", parent_identity, source="worker-local-linux-sysfs")
+                    add_relationship(
+                        "pci_parent",
+                        pci_identity,
+                        parent_identity,
+                        {
+                            "source": "worker-local-linux-sysfs",
+                            "field": "parent_bus_id",
+                            "pci_path": raw.get("pci_path"),
+                        },
+                    )
+
             for gpu in gpus:
                 if not gpu.pci_bus_id:
                     continue
