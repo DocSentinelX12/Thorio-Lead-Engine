@@ -844,6 +844,78 @@ class ComputeInventory:
             selected = tuple(dict.fromkeys(str(path_id).strip() for path_id in path_ids if str(path_id).strip()))
         return {path_id: self.active_path_intelligence(path_id=path_id) for path_id in selected}
 
+    def active_path_recovery_plan(self, *, path_id: str) -> dict[str, Any]:
+        """Return a durable-action plan for one exact path; never treats missing evidence as recovery."""
+        exact_path_id = str(path_id or "").strip()
+        if not exact_path_id:
+            raise ValueError("fabric path id is required")
+        path = next((row for row in self.physical_paths() if row["path_id"] == exact_path_id), None)
+        if path is None:
+            raise ValueError("fabric path does not exist")
+        intelligence = self.active_path_intelligence(path_id=exact_path_id)
+        state = str(path.get("state") or "").strip().upper()
+        trigger = str(intelligence.get("state") or "").strip().lower()
+        if state in {FabricPathState.FAILED.value, FabricPathState.DEGRADED.value, FabricPathState.RECOVERED.value} or trigger in {"failed", "degrading", "unstable", "recovered"}:
+            action = "fresh_physical_reverification_required"
+            allow_routing = False
+        elif state == FabricPathState.REVERIFIED.value:
+            action = "fresh_active_measurement_required"
+            allow_routing = False
+        elif state == FabricPathState.MEASURED.value and trigger not in {"failed", "degrading", "unstable", "recovered"}:
+            action = "no_recovery_action_required"
+            allow_routing = True
+        else:
+            action = "no_recovery_action_required"
+            allow_routing = False
+        return {
+            "path_id": exact_path_id,
+            "state": state,
+            "intelligence_state": trigger,
+            "action": action,
+            "allow_routing": allow_routing,
+            "required_segments": tuple(path["segments"]),
+            "intelligence": intelligence,
+        }
+
+    def apply_active_path_reverification(
+        self,
+        *,
+        path_id: str,
+        evidence: Sequence[Mapping[str, Any]],
+        observed_at: float | None = None,
+    ) -> dict[str, Any]:
+        """Reactivate physical-path state only after newer, complete exact-path evidence."""
+        exact_path_id = str(path_id or "").strip()
+        if not exact_path_id:
+            raise ValueError("fabric path id is required")
+        path = next((row for row in self.physical_paths() if row["path_id"] == exact_path_id), None)
+        if path is None:
+            raise ValueError("fabric path does not exist")
+        when = time.time() if observed_at is None else float(observed_at)
+        prior_updated_at = float(path.get("updated_at") or 0.0)
+        if when <= prior_updated_at:
+            raise ValueError("fresh physical reverification must be newer than the current path observation")
+        verification = FabricVerificationResult(
+            path_id=exact_path_id,
+            state=FabricPathState(str(path["state"])),
+            reason=path.get("reason"),
+            failure_domain=path.get("failure_domain"),
+            required_segments=tuple(str(segment) for segment in path["segments"]),
+            measurement=dict(path.get("measurement") or {}),
+            measurement_observed_at=path.get("measurement_observed_at"),
+        )
+        result = PhysicalFabricVerification.reverify(verification, evidence=tuple(evidence))
+        if result.state is not FabricPathState.REVERIFIED:
+            raise ValueError(result.reason or "fresh path-segment evidence is incomplete")
+        self.persist_physical_verification(result, evidence={"segments": [dict(item) for item in evidence]}, observed_at=when)
+        return {
+            "path_id": exact_path_id,
+            "state": result.state.value,
+            "allow_routing": False,
+            "next_action": "fresh_active_measurement_required",
+            "required_segments": result.required_segments,
+        }
+
     def physical_paths(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
