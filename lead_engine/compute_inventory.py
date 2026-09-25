@@ -844,6 +844,22 @@ class ComputeInventory:
             selected = tuple(dict.fromkeys(str(path_id).strip() for path_id in path_ids if str(path_id).strip()))
         return {path_id: self.active_path_intelligence(path_id=path_id) for path_id in selected}
 
+    def execute_active_path_recovery_cycle(self, *, path_id: str, physical_evidence: Sequence[Mapping[str, Any]], active_measurement: Mapping[str, Any] | None = None, evidence: Mapping[str, Any] | None = None, observed_at: float | None = None) -> dict[str, Any]:
+        """Execute one exact-path recovery cycle without skipping either evidence gate."""
+        plan = self.active_path_recovery_plan(path_id=path_id)
+        if plan["action"] != "fresh_physical_reverification_required":
+            if plan["action"] == "fresh_active_measurement_required" and active_measurement is not None:
+                test_id = self.record_active_gdrdma_measurement(path_id=path_id, measurement=dict(active_measurement), evidence=dict(evidence or {}), observed_at=observed_at)
+                refreshed = self.active_path_intelligence(path_id=path_id)
+                return {"path_id": path_id, "stage": "active_measurement", "test_id": test_id, "intelligence": refreshed, "allow_routing": refreshed.get("state") == "stable"}
+            return {"path_id": path_id, "stage": "no_action", "plan": plan}
+        reverification = self.apply_active_path_reverification(path_id=path_id, evidence=physical_evidence, observed_at=observed_at)
+        if active_measurement is None:
+            return {"path_id": path_id, "stage": "physical_reverification", "reverification": reverification, "allow_routing": False}
+        test_id = self.record_active_gdrdma_measurement(path_id=path_id, measurement=dict(active_measurement), evidence=dict(evidence or {}), observed_at=observed_at)
+        refreshed = self.active_path_intelligence(path_id=path_id)
+        return {"path_id": path_id, "stage": "active_measurement", "test_id": test_id, "intelligence": refreshed, "allow_routing": refreshed.get("state") == "stable"}
+
     def active_path_recovery_plan(self, *, path_id: str) -> dict[str, Any]:
         """Return a durable-action plan for one exact path; never treats missing evidence as recovery."""
         exact_path_id = str(path_id or "").strip()
