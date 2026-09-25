@@ -102,6 +102,7 @@ def test_coordinator_launch_boundary_persists_verified_contract(tmp_path):
 
     plan = {
         "attempt_id": attempt_id,
+        "generation": 1,
         "world_size": 2,
         "nnodes": 2,
         "rendezvous_endpoint": "node-a:29500",
@@ -146,6 +147,7 @@ def test_coordinator_launch_boundary_rejects_invalid_contract_before_persistence
 
     invalid_plan = {
         "attempt_id": attempt_id,
+        "generation": 1,
         "world_size": 3,
         "nnodes": 2,
         "rendezvous_endpoint": "node-a:29500",
