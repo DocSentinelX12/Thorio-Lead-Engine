@@ -3215,6 +3215,14 @@ class _Handler(BaseHTTPRequestHandler):
                     verification=body["verification"]
                 )
                 self._send(200 if ok else 409, {"ok": ok})
+            elif self.path == "/fabric/active-gdrdma-measurement":
+                result = self.server.coordinator.record_active_gdrdma_measurement(
+                    attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
+                    worker_id=str(body["worker_id"]), lease_token=str(body["lease_token"]),
+                    path_id=str(body["path_id"]), measurement=body["measurement"],
+                    evidence=body.get("evidence") or {}, observed_at=body.get("observed_at"),
+                )
+                self._send(200, result)
             elif self.path == "/fabric/gpu-verification":
                 ok = self.server.coordinator.record_gpu_execution_verification(
                     attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
