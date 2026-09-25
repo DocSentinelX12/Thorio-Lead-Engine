@@ -31,6 +31,42 @@ def fake_runner(args, _timeout):
     return CommandResult(0, SMI, "")
 
 
+def test_nvidia_discovery_preserves_rdma_topology_check_and_topo_evidence():
+    def runner(args, _timeout):
+        command = tuple(args)
+        if command == ("rdma_topo", "check"):
+            return CommandResult(0, "ACS check: PASS\\nIOMMU check: PASS\\n", "")
+        if command == ("rdma_topo", "topo"):
+            return CommandResult(0, "GPU 0 <-> mlx5_0:1\\n", "")
+        return fake_runner(args, _timeout)
+
+    provider = NvidiaProvider(runner=runner)
+    evidence = provider._probe_rdma_topology()
+
+    assert evidence["source"] == "rdma_topo"
+    assert evidence["check"]["available"] is True
+    assert evidence["check"]["stdout"] == "ACS check: PASS\\nIOMMU check: PASS\\n"
+    assert evidence["topo"]["available"] is True
+    assert evidence["topo"]["stdout"] == "GPU 0 <-> mlx5_0:1\\n"
+
+
+def test_nvidia_discovery_keeps_rdma_topology_unavailable_without_inference():
+    def runner(args, _timeout):
+        if tuple(args) == ("rdma_topo", "check"):
+            return CommandResult(127, "", "rdma_topo not found")
+        if tuple(args) == ("rdma_topo", "topo"):
+            raise NvidiaDiscoveryError("rdma_topo not installed")
+        return fake_runner(args, _timeout)
+
+    provider = NvidiaProvider(runner=runner)
+    evidence = provider._probe_rdma_topology()
+
+    assert evidence["check"]["available"] is False
+    assert evidence["check"]["stderr"] == "rdma_topo not found"
+    assert evidence["topo"]["available"] is False
+    assert evidence["topo"]["error"] == "rdma_topo not installed"
+
+
 def test_nvidia_discovery_records_stable_gpu_truth_and_topology():
     provider = NvidiaProvider(node_id="node-01", domain_id="cell-01", runner=fake_runner, now=lambda: 1234.5)
     snapshot = provider.discover()
