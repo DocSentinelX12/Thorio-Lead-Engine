@@ -33,6 +33,68 @@ def _gpu(gpu_id, uuid):
     )
 
 
+
+def test_active_gdrdma_measurement_is_durable_and_tied_to_exact_fabric_path(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="fabric-path-1",
+        source_gpu="gpu:GPU-a",
+        destination_gpu="gpu:GPU-b",
+        segments=("gpu:GPU-a", "pci:0000:17:00.0", "nic:ib0", "rdma:mlx5_0:1", "fabric:domain-1", "rdma:mlx5_1:1", "nic:ib1", "gpu:GPU-b"),
+        fabric_domains=("fabric:domain-1",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+
+    measurement = {
+        "measurement_status": "measured",
+        "verified": True,
+        "test": "ib_write_bw",
+        "fabric_path_id": "fabric-path-1",
+        "gpu_uuid": "GPU-a",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "remote_worker_id": "worker-b",
+        "remote_endpoint": "198.51.100.10",
+        "mode": "cuda_dmabuf",
+        "bandwidth_gbps": 187.5,
+        "latency_us": 4.25,
+    }
+    measurement_id = inventory.record_active_gdrdma_measurement(
+        path_id="fabric-path-1",
+        measurement=measurement,
+        evidence={"raw_output": "RDMA_Write BW Test", "direction": "client_to_server"},
+        observed_at=1000.0,
+    )
+
+    path_row = next(item for item in inventory.physical_paths() if item["path_id"] == "fabric-path-1")
+    history = inventory.physical_fabric_measurement_history(path_id="fabric-path-1")
+    assert measurement_id
+    assert path_row["state"] == FabricPathState.MEASURED.value
+    assert path_row["measurement"]["fabric_path_id"] == "fabric-path-1"
+    assert path_row["measurement"]["bandwidth_gbps"] == 187.5
+    assert path_row["measurement_observed_at"] == 1000.0
+    assert len(history) == 1
+    assert history[0]["measurement"]["remote_worker_id"] == "worker-b"
+
+
+def test_active_gdrdma_measurement_rejects_unknown_path_without_persistence(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    with pytest.raises(ValueError, match="fabric path does not exist"):
+        inventory.record_active_gdrdma_measurement(
+            path_id="missing-path",
+            measurement={
+                "verified": True,
+                "fabric_path_id": "missing-path",
+                "remote_worker_id": "worker-b",
+                "remote_endpoint": "198.51.100.10",
+            },
+            evidence={},
+            observed_at=1000.0,
+        )
+
 def test_multiple_gpus_are_independently_addressable(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     result = inventory.observe(_snapshot(gpus=(_gpu("0", "uuid-0"), _gpu("1", "uuid-1"))))
