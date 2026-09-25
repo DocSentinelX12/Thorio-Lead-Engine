@@ -774,7 +774,8 @@ def test_physical_fabric_graph_records_pci_root_complex_and_gdrdma_topology_asse
     assert assessment["evidence"]["iommu"]["source"] == "worker-local-linux-kernel"
     assert assessment["evidence"]["pci_direct_features"]["gpu"]["acs_enabled"] is True
     assert assessment["evidence"]["pci_direct_features"]["nic"]["ats_enabled"] is True
-    assert assessment["evidence"]["pci_direct_features"]["shared_pci_ancestor"]["acsctl"] == "SrcValid+ ReqRedir-"    assert assessment["evidence"]["eligibility"] == "topology_eligible"
+    assert assessment["evidence"]["pci_direct_features"]["shared_pci_ancestor"]["acsctl"] == "SrcValid+ ReqRedir-"
+    assert assessment["evidence"]["eligibility"] == "topology_eligible"
     assert assessment["evidence"]["data_path_verified"] is False
 
 
