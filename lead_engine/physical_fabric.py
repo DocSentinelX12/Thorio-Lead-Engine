@@ -313,7 +313,7 @@ class AdaptiveFabricRouteSelector:
     _ELIGIBLE_STATES = frozenset({FabricPathState.VERIFIED.value, FabricPathState.MEASURED.value, FabricPathState.REVERIFIED.value})
 
     @classmethod
-    def _candidates(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
+    def _candidates(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]], active_path_intelligence: Mapping[str, Mapping[str, object]] | None = None) -> list[dict[str, object]]:
         candidates = []
         for raw in paths:
             path_id = str(raw.get("path_id") or "").strip()
@@ -322,32 +322,39 @@ class AdaptiveFabricRouteSelector:
             measurement = raw.get("measurement")
             if not path_id or state not in cls._ELIGIBLE_STATES or state != FabricPathState.MEASURED.value or not isinstance(health, Mapping) or not isinstance(measurement, Mapping):
                 continue
-            candidates.append({"path_id": path_id, "health": dict(health), "measurement": dict(measurement), "state": state})
+            active = active_path_intelligence.get(path_id) if isinstance(active_path_intelligence, Mapping) else None
+            candidates.append({"path_id": path_id, "health": dict(health), "measurement": dict(measurement), "state": state, "active_path_intelligence": dict(active) if isinstance(active, Mapping) else None})
         return candidates
 
     @classmethod
-    def _key(cls, candidate: Mapping[str, object]) -> tuple[float, float, float, float, str]:
+    def _key(cls, candidate: Mapping[str, object]) -> tuple[float, float, float, int, int, float, str]:
         health = candidate["health"]
         assert isinstance(health, Mapping)
+        active = candidate.get("active_path_intelligence")
+        active_state = str(active.get("state") or "").strip().lower() if isinstance(active, Mapping) else ""
+        state_rank = {"failed": 3, "degrading": 2, "unstable": 1}.get(active_state, 0)
+        bandwidth_change = float(active.get("bandwidth_change_ratio")) if isinstance(active, Mapping) and active.get("bandwidth_change_ratio") is not None else 0.0
         return (
             float(health.get("failure_rate", float("inf"))),
             float(health.get("latency_delta_from_mean_ms", float("inf"))),
             float(health.get("latest_latency_ms", float("inf"))),
+            state_rank,
             -float(health.get("sample_count", 0) or 0),
+            -bandwidth_change,
             str(candidate["path_id"]),
         )
 
     @classmethod
-    def select(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]]) -> dict[str, object]:
-        candidates = sorted(cls._candidates(paths, route_health), key=cls._key)
+    def select(cls, paths: Sequence[Mapping[str, object]], route_health: Mapping[str, Mapping[str, object]], *, active_path_intelligence: Mapping[str, Mapping[str, object]] | None = None) -> dict[str, object]:
+        candidates = sorted(cls._candidates(paths, route_health, active_path_intelligence), key=cls._key)
         if not candidates:
             return {"path_id": None, "selection_reason": "no_current_measured_route", "alternatives": (), "evidence": ()}
         selected = candidates[0]
         return {
             "path_id": selected["path_id"],
-            "selection_reason": "observed_route_health",
+            "selection_reason": "observed_route_health_and_active_path_evidence" if isinstance(active_path_intelligence, Mapping) else "observed_route_health",
             "alternatives": tuple(str(item["path_id"]) for item in candidates[1:]),
-            "evidence": tuple({"path_id": str(item["path_id"]), "health": dict(item["health"]), "measurement": dict(item["measurement"])} for item in candidates),
+            "evidence": tuple({"path_id": str(item["path_id"]), "health": dict(item["health"]), "measurement": dict(item["measurement"]), "active_path_intelligence": dict(item["active_path_intelligence"]) if isinstance(item.get("active_path_intelligence"), Mapping) else None} for item in candidates),
         }
 
     @classmethod
