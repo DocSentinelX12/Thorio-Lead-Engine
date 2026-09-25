@@ -893,6 +893,9 @@ class ComputeInventory:
             "state": plan["state"],
             "intelligence_state": plan["intelligence_state"],
             "latest": latest,
+            "failure_observations": list((intelligence.get("evidence") or {}).get("failed_observations") or ()),
+            "path_reason": plan.get("reason"),
+            "path_failure_domain": plan.get("failure_domain"),
             "required_segments": list(plan["required_segments"]),
         }
         fingerprint = hashlib.sha256(
