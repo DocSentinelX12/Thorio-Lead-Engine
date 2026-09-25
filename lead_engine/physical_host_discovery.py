@@ -16,12 +16,20 @@ class PhysicalHostDiscoveryError(RuntimeError):
 
 FileReader = Callable[[str | Path], str]
 Globber = Callable[[str], list[Path]]
+PathResolver = Callable[[Path], Path]
 
 
 class PhysicalHostDiscovery:
-    def __init__(self, *, file_reader: FileReader | None = None, globber: Globber | None = None):
+    def __init__(
+        self,
+        *,
+        file_reader: FileReader | None = None,
+        globber: Globber | None = None,
+        path_resolver: PathResolver | None = None,
+    ):
         self._read = file_reader or self._read_file
         self._glob = globber or self._glob_paths
+        self._resolve = path_resolver or Path.resolve
 
     @staticmethod
     def _read_file(path: str | Path) -> str:
