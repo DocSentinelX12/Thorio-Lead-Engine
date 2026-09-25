@@ -501,6 +501,18 @@ def test_recovery_action_closes_only_after_physical_and_stable_active_gates(tmp_
         state=FabricPathState.VERIFIED,
     )
     inventory.persist_physical_path(path)
+    for observed_at, bandwidth in ((1.0, 100.0), (2.0, 100.0)):
+        inventory.record_active_gdrdma_measurement(
+            path_id=path.path_id,
+            measurement={
+                "fabric_path_id": path.path_id, "measurement_status": "measured",
+                "verified": True, "remote_test_server_verified": True,
+                "worker_id": "w", "remote_worker_id": "rw", "remote_endpoint": "ep",
+                "gpu_uuid": "a", "rdma_device": "mlx5_0", "rdma_port": 1,
+                "bandwidth_gbps": bandwidth,
+            },
+            observed_at=observed_at,
+        )
     inventory.fail_physical_path(path.path_id, reason="active failure", observed_at=10.0)
     action = inventory.ensure_active_path_recovery_action(path_id=path.path_id, now=20.0)
 
