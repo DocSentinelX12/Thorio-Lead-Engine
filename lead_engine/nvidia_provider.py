@@ -74,6 +74,38 @@ class NvidiaProvider(ComputeProvider):
         return result
 
     @staticmethod
+    def _parse_pci_direct_features(text: str) -> dict[str, dict[str, object]]:
+        """Parse only explicit ACS/ATS state reported by lspci."""
+        features: dict[str, dict[str, object]] = {}
+        current: str | None = None
+        for line in text.splitlines():
+            header = re.match(r"^([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-7])\\s+", line)
+            if header:
+                current = header.group(1).lower()
+                features.setdefault(current, {})
+                continue
+            if current is None:
+                continue
+            acs = re.search(r"ACSCtl:\\s*(.*?)(?:\\s+ACSCap:|$)", line)
+            if acs:
+                features[current]["acsctl"] = acs.group(1).strip()
+                features[current]["acs_enabled"] = any(flag in acs.group(1) for flag in ("SrcValid+", "ReqRedir+", "CmpltRedir+"))
+            ats = re.search(r"ATSCtl:\\s*(.*?)(?:\\s+ATSCap:|$)", line)
+            if ats:
+                features[current]["atsctl"] = ats.group(1).strip()
+                features[current]["ats_enabled"] = "Enable+" in ats.group(1)
+        return features
+
+    def _probe_pci_direct_features(self) -> dict[str, object]:
+        try:
+            result = self._runner(("lspci", "-D", "-vvv"), self.timeout_seconds)
+        except (NvidiaDiscoveryError, OSError):
+            return {"source": "lspci -D -vvv", "available": False, "devices": {}}
+        if result.returncode != 0:
+            return {"source": "lspci -D -vvv", "available": False, "error": (result.stderr or result.stdout).strip()[:1000], "devices": {}}
+        devices = self._parse_pci_direct_features(result.stdout)
+        return {"source": "lspci -D -vvv", "available": True, "devices": devices}
+    @staticmethod
     def _rdma_pci_bus_id(device: str) -> str | None:
         try:
             target = (Path("/sys/class/infiniband") / device / "device").resolve()
@@ -670,6 +702,7 @@ class NvidiaProvider(ComputeProvider):
             nvlink_status_error = str(exc)
 
         host_physical = self._physical_host_discovery.discover(node_id=self.node_id)
+        host_physical["pci_direct_features"] = self._probe_pci_direct_features()
         network_evidence = self._discover_network()
         if isinstance(network_evidence, dict):
             network_evidence["rdma"] = self._discover_rdma()
