@@ -297,8 +297,7 @@ class NvidiaProvider(ComputeProvider):
                 "addresses": sorted(addresses),
             }
         ordered_domains = sorted(domains)
-        link_capabilities = {
-            name: self._discover_ethtool_link(name, self._runner, self.timeout_seconds)
+        link_capabilities = {            name: self._discover_ethtool_link(name, self._runner, self.timeout_seconds)
             for name in sorted(normalized)
         }
         evidence: dict[str, object] = {
@@ -597,8 +596,7 @@ class NvidiaProvider(ComputeProvider):
         if not isinstance(domains, Mapping) or not isinstance(nvlink_domains, Mapping):
             raise NvidiaDiscoveryError("structured NVIDIA topology is missing domain mappings")
         updated: list[GpuResource] = []
-        for gpu in gpus:
-            updated.append(GpuResource(
+        for gpu in gpus:            updated.append(GpuResource(
                 node_id=gpu.node_id, gpu_id=gpu.gpu_id, gpu_uuid=gpu.gpu_uuid, model=gpu.model,
                 vram_bytes=gpu.vram_bytes, compute_capability=gpu.compute_capability,
                 driver_version=gpu.driver_version, cuda_version=gpu.cuda_version,
@@ -687,6 +685,7 @@ class NvidiaProvider(ComputeProvider):
                 observed_at=observed_at,
                 host_physical=host_physical,
                 nvlink_status=nvlink_status,
+                topology=structured_topology,
             )
 
         toolkit_version = None
@@ -738,6 +737,7 @@ class NvidiaProvider(ComputeProvider):
         observed_at: float | None = None,
         host_physical: Mapping[str, object] | None = None,
         nvlink_status: Mapping[str, object] | None = None,
+        topology: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         """Build the canonical physical graph from observed evidence only."""
         components: dict[str, dict[str, object]] = {}
@@ -877,6 +877,40 @@ class NvidiaProvider(ComputeProvider):
                             "link_layer": raw.get("link_layer"),
                         })
 
+        if isinstance(topology, Mapping):
+            topology_links = topology.get("links")
+            gpu_uuid_by_id = {
+                str(gpu.gpu_id): gpu.gpu_uuid
+                for gpu in gpus
+                if gpu.gpu_uuid
+            }
+            if isinstance(topology_links, Mapping):
+                for left_gpu_id, raw_targets in sorted(topology_links.items(), key=lambda item: str(item[0])):
+                    if not isinstance(raw_targets, Mapping):
+                        continue
+                    left_uuid = gpu_uuid_by_id.get(str(left_gpu_id))
+                    if not left_uuid:
+                        continue
+                    for right_gpu_id, path_type in sorted(raw_targets.items(), key=lambda item: str(item[0])):
+                        if str(left_gpu_id) >= str(right_gpu_id):
+                            continue
+                        right_uuid = gpu_uuid_by_id.get(str(right_gpu_id))
+                        normalized_path = str(path_type).strip()
+                        if not right_uuid or not normalized_path or normalized_path.upper() == "X":
+                            continue
+                        if not re.fullmatch(r"NV(?:L|\d+)", normalized_path, re.IGNORECASE):
+                            continue
+                        add_relationship(
+                            "gpu_to_gpu_nvlink",
+                            f"gpu:{left_uuid}",
+                            f"gpu:{right_uuid}",
+                            {
+                                "source": "nvidia-smi topo -m",
+                                "topology_path": normalized_path,
+                                "symmetric": True,
+                            },
+                        )
+
         if isinstance(nvlink_status, Mapping):
             links = nvlink_status.get("links")
             if isinstance(links, list):
@@ -897,8 +931,7 @@ class NvidiaProvider(ComputeProvider):
                     add_relationship("gpu_nvlink", f"gpu:{gpu_uuid}", link_identity, {
                         "source": "nvidia-smi nvlink --status",
                         "state": raw.get("state"),
-                        "bandwidth_gbps": raw.get("bandwidth_gbps"),
-                    })
+                        "bandwidth_gbps": raw.get("bandwidth_gbps"),                    })
 
         if isinstance(host_physical, Mapping):
             pci_section = host_physical.get("pci")
