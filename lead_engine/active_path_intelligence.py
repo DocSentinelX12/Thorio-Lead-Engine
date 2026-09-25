@@ -135,10 +135,16 @@ class ActivePathIntelligence:
             latest_bandwidth = float(latest["bandwidth_gbps"])
             bandwidth_delta = latest_bandwidth - float(baseline["bandwidth_gbps"])
             bandwidth_change_ratio = bandwidth_delta / float(baseline["bandwidth_gbps"]) if baseline["bandwidth_gbps"] else None
-            if len(comparable) >= 4 and variability["coefficient_of_variation"] is not None and variability["coefficient_of_variation"] > 0.10 and abs(bandwidth_change_ratio or 0.0) < 0.10:
-                state = "unstable"
-            elif bandwidth_change_ratio is not None and bandwidth_change_ratio < 0 and latest_bandwidth < min(float(row["bandwidth_gbps"]) for row in baseline_rows):
+            all_values = [float(row["bandwidth_gbps"]) for row in comparable]
+            all_mean = sum(all_values) / len(all_values)
+            all_variance = sum((value - all_mean) ** 2 for value in all_values) / len(all_values)
+            all_cv = math.sqrt(all_variance) / all_mean if all_mean > 0 else None
+            variability["all_sample_count"] = len(all_values)
+            variability["all_sample_coefficient_of_variation"] = all_cv
+            if bandwidth_change_ratio is not None and bandwidth_change_ratio < 0 and latest_bandwidth < min(float(row["bandwidth_gbps"]) for row in baseline_rows):
                 state = "degrading"
+            elif len(comparable) >= 4 and all_cv is not None and all_cv > 0.10:
+                state = "unstable"
             else:
                 state = "stable"
 
