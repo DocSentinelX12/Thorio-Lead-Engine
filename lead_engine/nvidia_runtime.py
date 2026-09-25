@@ -162,8 +162,10 @@ class NvidiaRuntime:
         return {"network_transport": unique_transports[0] if unique_transports else None, "hca_selections": tuple(dict(items) for items in sorted({tuple(sorted(item.items())) for item in hca_selections})), "peer_connections": tuple(peer_connections), "network_evidence_lines": tuple(evidence_lines[-8:]), "gpu_direct_rdma": gpu_direct_rdma}
 
     @classmethod
-    def validate_nccl_transport_against_rdma(cls, log_output: str, rdma_evidence: Mapping[str, object], *, gpu_uuid: str | None = None, gpu_nic_locality: Sequence[Mapping[str, object]] | None = None) -> dict[str, object]:
+    def validate_nccl_transport_against_rdma(cls, log_output: str, rdma_evidence: Mapping[str, object], *, gpu_uuid: str | None = None, gpu_nic_locality: Sequence[Mapping[str, object]] | None = None, require_gpu_direct_rdma: bool = False) -> dict[str, object]:
         network = cls.parse_nccl_network_evidence(log_output)
+        if require_gpu_direct_rdma and network.get("network_transport") == "IB" and network.get("gpu_direct_rdma") is not True:
+            raise NvidiaRuntimeError("IB execution does not contain explicit GPU Direct RDMA evidence")
         devices = rdma_evidence.get("devices") if isinstance(rdma_evidence, Mapping) else None
         if not isinstance(devices, list):
             raise NvidiaRuntimeError("RDMA evidence does not contain a device inventory")
@@ -212,7 +214,14 @@ class NvidiaRuntime:
             if not matched:
                 raise NvidiaRuntimeError(f"NCCL IB device is not reconciled to verified NIC locality for GPU {gpu_uuid}")
             locality_evidence = matched[0]
-        return {**network, "rdma_devices": rdma_devices, "verified_rdma_devices": verified, "verified_hca_selections": tuple(verified_selections) if network["network_transport"] == "IB" else (), "verified_rdma_links": tuple(verified_links) if network["network_transport"] == "IB" else (), "gpu_nic_locality": locality_evidence}
+        data_path_verified = bool(
+            network.get("network_transport") == "IB"
+            and network.get("gpu_direct_rdma") is True
+            and verified_selections
+            and verified_links
+            and locality_evidence is not None
+        )
+        return {**network, "rdma_devices": rdma_devices, "verified_rdma_devices": verified, "verified_hca_selections": tuple(verified_selections) if network["network_transport"] == "IB" else (), "verified_rdma_links": tuple(verified_links) if network["network_transport"] == "IB" else (), "gpu_nic_locality": locality_evidence, "data_path_verified": data_path_verified}
 
     @staticmethod
     def reconcile_planned_physical_path(
