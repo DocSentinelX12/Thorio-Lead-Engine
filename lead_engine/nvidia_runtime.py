@@ -185,48 +185,52 @@ class NvidiaRuntime:
 
     @staticmethod
     def _parse_active_gdrdma_measurement(output: str) -> dict[str, object]:
-        """Extract only explicitly printed performance measurements from ib_write_bw."""
-        bandwidth_gbps = None
-        latency_us = None
-        bandwidth_line = None
-        latency_line = None
+        """Extract only explicitly printed perftest measurements."""
+        bandwidth_samples = []
+        latency_samples = []
+        bandwidth_lines = []
+        latency_lines = []
+        table_row = re.compile(
+            r"^\\s*(\\d+)\\s+(\\d+)\\s+"
+            r"([0-9]+(?:\\.[0-9]+)?)\\s+"
+            r"([0-9]+(?:\\.[0-9]+)?)\\s+"
+            r"([0-9]+(?:\\.[0-9]+)?)\\s*$"
+        )
         for raw_line in str(output).splitlines():
             line = raw_line.strip()
             if not line:
                 continue
-            bandwidth_match = re.search(
-                r"^BW\s+average\[Gb/sec\]\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*$",
-                line,
-                re.IGNORECASE,
-            )
-            if bandwidth_match:
-                bandwidth_gbps = float(bandwidth_match.group(1))
-                bandwidth_line = line
-                continue
-            bandwidth_match = re.search(
-                r"^Bandwidth\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*Gbps\s*$",
-                line,
-                re.IGNORECASE,
-            )
-            if bandwidth_match:
-                bandwidth_gbps = float(bandwidth_match.group(1))
-                bandwidth_line = line
+            row = table_row.match(line)
+            if row:
+                sample = {
+                    "message_size_bytes": int(row.group(1)),
+                    "iterations": int(row.group(2)),
+                    "peak_bandwidth_gbps": float(row.group(3)),
+                    "bandwidth_gbps": float(row.group(4)),
+                    "message_rate_mpps": float(row.group(5)),
+                }
+                bandwidth_samples.append(sample)
+                bandwidth_lines.append(line)
                 continue
             latency_match = re.search(
-                r"^Latency\s*\[[^\]]+\]\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*$",
+                r"^Latency\\s*\\[[^\\]]+\\]\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*$",
                 line,
                 re.IGNORECASE,
             )
             if latency_match:
-                latency_us = float(latency_match.group(1))
-                latency_line = line
+                latency_samples.append(float(latency_match.group(1)))
+                latency_lines.append(line)
+        bandwidth_gbps = bandwidth_samples[0]["bandwidth_gbps"] if len(bandwidth_samples) == 1 else None
+        latency_us = latency_samples[0] if len(latency_samples) == 1 else None
         return {
-            "measurement_status": "measured" if bandwidth_gbps is not None or latency_us is not None else "executed",
+            "measurement_status": "measured" if bandwidth_samples or latency_samples else "executed",
             "bandwidth_gbps": bandwidth_gbps,
             "latency_us": latency_us,
+            "bandwidth_samples": tuple(bandwidth_samples),
+            "latency_samples_us": tuple(latency_samples),
             "raw_measurement_evidence": {
-                "bandwidth_line": bandwidth_line,
-                "latency_line": latency_line,
+                "bandwidth_lines": tuple(bandwidth_lines[-64:]),
+                "latency_lines": tuple(latency_lines[-64:]),
             },
         }
 
