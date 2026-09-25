@@ -401,7 +401,8 @@ def test_active_path_reverification_reactivates_only_exact_failed_path_with_comp
     )
 
     assert result["state"] == FabricPathState.REVERIFIED.value
-    assert result["allow_routing"] is True
+    assert result["allow_routing"] is False
+    assert result["next_action"] == "fresh_active_measurement_required"
     assert result["path_id"] == path.path_id
     assert inventory.physical_paths()[0]["state"] == FabricPathState.REVERIFIED.value
     history = inventory.physical_verification_history()
