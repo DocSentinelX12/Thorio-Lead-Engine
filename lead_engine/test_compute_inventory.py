@@ -435,3 +435,54 @@ def test_closed_loop_recovery_requires_verified_active_measurement_before_routin
     assert result["stage"] == "active_measurement"
     assert result["test_id"]
     assert inventory.physical_paths()[0]["state"] == FabricPathState.MEASURED.value
+
+
+def test_recovery_action_is_durable_and_deduplicated_per_exact_path_generation(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="recovery-action-path",
+        source_gpu="gpu:a",
+        destination_gpu="gpu:b",
+        segments=("gpu:a", "rdma:mlx5_0:1"),
+        fabric_domains=("d",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="active failure", observed_at=10.0)
+
+    first = inventory.ensure_active_path_recovery_action(path_id=path.path_id)
+    duplicate = inventory.ensure_active_path_recovery_action(path_id=path.path_id)
+
+    assert first["action_id"] == duplicate["action_id"]
+    assert first["generation"] == 1
+    assert first["state"] == "PENDING"
+    assert first["required_stage"] == "fresh_physical_reverification_required"
+    assert inventory.active_path_recovery_actions(path_id=path.path_id) == [first]
+
+
+def test_recovery_action_claim_is_single_owner_and_expiry_allows_reclaim(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="recovery-claim-path",
+        source_gpu="gpu:a",
+        destination_gpu="gpu:b",
+        segments=("gpu:a", "rdma:mlx5_0:1"),
+        fabric_domains=("d",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    inventory.fail_physical_path(path.path_id, reason="active failure", observed_at=10.0)
+    action = inventory.ensure_active_path_recovery_action(path_id=path.path_id)
+
+    claimed = inventory.claim_active_path_recovery_action(action_id=action["action_id"], owner="worker-1", now=20.0, lease_seconds=30.0)
+    blocked = inventory.claim_active_path_recovery_action(action_id=action["action_id"], owner="worker-2", now=21.0, lease_seconds=30.0)
+    reclaimed = inventory.claim_active_path_recovery_action(action_id=action["action_id"], owner="worker-2", now=51.0, lease_seconds=30.0)
+
+    assert claimed["owner"] == "worker-1"
+    assert blocked is None
+    assert reclaimed["owner"] == "worker-2"
+    assert reclaimed["attempt_count"] == 2
