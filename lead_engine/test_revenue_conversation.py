@@ -142,3 +142,12 @@ def test_route_switch_requires_independently_qualified_candidate(tmp_path):
     assert stored["outreach_route"] == "Shiftr"
     assert stored["route_switch_history"] == []
     assert stored["conversation_events"][-1]["warnings"] == ["route_switch_candidate_not_qualified"]
+
+
+def test_astrivon_route_switch_requires_verified_service_fit():
+    from lead_engine.revenue_conversation import _route_switch
+    lead = {"potential_routes": ["Astrivon Labs"], "qualification_results": {"Astrivon Labs": {"qualified": True, "route_research": {"verified": True}, "service_fit_verified": False}}}
+    route, reason, evidence = _route_switch(lead, "Astrivon Labs", "We are looking for a dev agency to build an MVP.")
+    assert route is None
+    assert reason == "route_switch_astrivon_service_fit_not_verified"
+    assert evidence is None
