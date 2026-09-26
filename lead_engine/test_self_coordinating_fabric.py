@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 from .self_coordinating_fabric import FabricCoordinator, NodeCapacity, PlacementCandidate
+from .compute_inventory import ComputeInventory
+from .physical_fabric import FabricPathState, PhysicalFabricPath
 
 
 def _coordinator(tmp_path):
-    return FabricCoordinator(str(tmp_path / "fabric-coordinator.sqlite3"), standby_capacity=1)
+    inventory = ComputeInventory(str(tmp_path / "physical-inventory.sqlite3"))
+    for path_id in ("p1", "p2", "p3", "p4", "verified-path-1"):
+        inventory.persist_physical_path(
+            PhysicalFabricPath(
+                path_id=path_id,
+                source_gpu=f"gpu:{path_id}:source",
+                destination_gpu=f"gpu:{path_id}:destination",
+                segments=(f"gpu:{path_id}:source", f"rdma:{path_id}:1"),
+                fabric_domains=(f"domain:{path_id}",),
+                state=FabricPathState.VERIFIED,
+            )
+        )
+    coordinator = FabricCoordinator(str(tmp_path / "fabric-coordinator.sqlite3"), standby_capacity=1)
+    coordinator.bind_physical_path_authority(inventory)
+    return coordinator
 
 
 def _candidate(workload, node, domain, path, score=1.0, *, independent=True):
