@@ -22,7 +22,7 @@ def _review_lead(
     return result
 
 
-def _approved_lead(
+def _delivery_ready_lead(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
     result = prepare_partner_lead(lead)
@@ -41,7 +41,7 @@ def build_delivery_manifest(
     entering a partner queue.
 
     A lead may be delivered to multiple supported routes when those
-    routes are explicitly present in approved_routes or routes.
+    routes are explicitly present in eligible_routes, preserved_routes, or routes.
 
     Unsupported, rejected, or otherwise invalid routes are placed
     into Review.
@@ -63,7 +63,9 @@ def build_delivery_manifest(
     }
 
     for lead in leads:
-        approved_routes = lead.get("approved_routes")
+        approved_routes = lead.get("eligible_routes")
+        if approved_routes is None:
+            approved_routes = lead.get("preserved_routes")
 
         if isinstance(approved_routes, str):
             approved_routes = [approved_routes]
@@ -141,7 +143,7 @@ def build_delivery_manifest(
                 continue
 
             manifest[route].append(
-                _approved_lead(
+                _delivery_ready_lead(
                     decision["lead"],
                 )
             )
@@ -158,19 +160,12 @@ def build_delivery_manifest(
     return manifest
 
 
-def approved_partner_leads(
+def delivery_ready_partner_leads(
     leads: Iterable[Dict[str, Any]],
     partner: str,
 ) -> List[Dict[str, Any]]:
-    """
-    Return only approved leads for one supported partner.
-    """
-
+    """Return only machine-verified, delivery-ready leads for one supported partner."""
     partner = str(partner or "").strip()
-
     if partner not in PARTNER_ROUTES:
         return []
-
-    manifest = build_delivery_manifest(leads)
-
-    return manifest[partner]
+    return build_delivery_manifest(leads)[partner]
