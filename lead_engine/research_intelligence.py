@@ -290,17 +290,33 @@ def _claims_for_section(
     value = _text(section.get(value_key)) or _text(lead.get(value_key))
     if not value:
         value = _text(refs[0].get("evidence") or refs[0].get("signal"))
-    return [
+    status = "verified" if _status(section) == "verified" and any(_status(item) == "verified" for item in refs) else ("corroborated" if len(set(keys)) > 1 else "observed")
+    claims = [
         _claim(
             claim_type,
             "opportunity",
             predicate,
             value,
             evidence_keys=keys,
-            status="verified" if _status(section) == "verified" and any(_status(item) == "verified" for item in refs) else ("corroborated" if len(set(keys)) > 1 else "observed"),
+            status=status,
             section=section_name,
         )
     ]
+    if section_name == "current_intent_research":
+        current_need = _text(lead.get("current_need") or section.get("current_need"))
+        if current_need:
+            claims.append(
+                _claim(
+                    "current_need",
+                    "opportunity",
+                    "has_current_need",
+                    current_need,
+                    evidence_keys=keys,
+                    status=status,
+                    section=section_name,
+                )
+            )
+    return claims
 
 
 def _route_claims(section: Mapping[str, Any], opportunity_id: str) -> list[Dict[str, Any]]:
