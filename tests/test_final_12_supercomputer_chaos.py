@@ -72,11 +72,16 @@ def _snapshot(supercomputer: int) -> ProviderResourceSnapshot:
     )
 
 
-def _path(path_id: str, domain: str) -> PhysicalFabricPath:
+def _path(
+    path_id: str,
+    domain: str,
+    source_gpu: str,
+    destination_gpu: str,
+) -> PhysicalFabricPath:
     return PhysicalFabricPath(
         path_id=path_id,
-        source_gpu=f"gpu:{path_id}:source",
-        destination_gpu=f"gpu:{path_id}:destination",
+        source_gpu=source_gpu,
+        destination_gpu=destination_gpu,
         segments=(f"gpu:{path_id}:source", f"rdma:{path_id}:1"),
         fabric_domains=(domain,),
         state=FabricPathState.VERIFIED,
@@ -117,19 +122,26 @@ def _integration(tmp_path):
 
 def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, PhysicalFabricPath], dict[str, str]]:
     gpu_keys: dict[str, str] = {}
+    gpu_identities: dict[int, tuple[str, str]] = {}
     for index in range(SUPERCOMPUTERS):
         integration.inventory.observe(_snapshot(index))
         node_id = f"final-sc-{index:02d}-node-00"
-        gpu = next(
+        gpus = [
             item for item in integration.inventory.resources()
             if item["node_id"] == node_id and item["resource_type"] == "gpu"
+        ]
+        assert len(gpus) == 2
+        gpu_keys[node_id] = str(gpus[0]["resource_key"])
+        gpu_identities[index] = (
+            str(gpus[0]["identity_key"]),
+            str(gpus[1]["identity_key"]),
         )
-        gpu_keys[node_id] = str(gpu["resource_key"])
 
     paths: dict[str, PhysicalFabricPath] = {}
     for index in range(SUPERCOMPUTERS):
         path_id = f"final-path-{index:02d}"
-        path = _path(path_id, f"final-domain-{index:02d}")
+        source_gpu, destination_gpu = gpu_identities[index]
+        path = _path(path_id, f"final-domain-{index:02d}", source_gpu, destination_gpu)
         integration.inventory.persist_physical_path(path)
         integration.inventory.record_active_gdrdma_measurement(
             path_id=path_id, measurement=_measurement(path_id, 10.0)
@@ -139,7 +151,12 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         )
         paths[path_id] = path
 
-    replacement = _path("final-replacement-00", "final-standby-domain-00")
+    replacement = _path(
+        "final-replacement-00",
+        "final-standby-domain-00",
+        gpu_identities[1][0],
+        gpu_identities[1][1],
+    )
     integration.inventory.persist_physical_path(replacement)
     integration.inventory.record_active_gdrdma_measurement(
         path_id=replacement.path_id, measurement=_measurement(replacement.path_id, 12.0)
