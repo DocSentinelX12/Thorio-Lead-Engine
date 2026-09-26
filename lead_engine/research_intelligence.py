@@ -334,7 +334,7 @@ def _structured_claims(lead: Mapping[str, Any], company: Mapping[str, Any], deci
                 "company",
                 _text(lead.get("company")),
                 evidence_keys=company_keys,
-                status="verified" if company.get("company_verified") is True else ("observed" if company_keys else "unknown"),
+                status="verified" if company.get("company_verified") is True and company_keys else ("observed" if company_keys else "unknown"),
                 section="company_research",
             )
         )
@@ -352,7 +352,7 @@ def _structured_claims(lead: Mapping[str, Any], company: Mapping[str, Any], deci
                 "decision_maker",
                 decision_name,
                 evidence_keys=decision_keys,
-                status="verified" if decision_status in _VERIFIED else ("observed" if decision_keys else "unknown"),
+                status="verified" if decision_status in _VERIFIED and decision_keys else ("observed" if decision_keys else "unknown"),
                 section="decision_maker_research",
             )
         )
@@ -434,7 +434,7 @@ def build_research_intelligence(lead: Mapping[str, Any], *, now: datetime | None
     for section_name in VERIFIABLE_RESEARCH_SECTIONS:
         section = lead.get(section_name)
         if isinstance(section, Mapping):
-            claims.extend(_claims_for_section(section_name, section, nodes, opportunity_id))
+            claims.extend(_claims_for_section(section_name, section, nodes, opportunity_id, lead))
     route = lead.get("route_research")
     if isinstance(route, Mapping):
         claims.extend(_route_claims(route, opportunity_id))
