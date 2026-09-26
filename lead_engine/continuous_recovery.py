@@ -95,7 +95,7 @@ class ContinuousRecoveryController:
     def observe(self,*,path_id,generation,fingerprint,criticality,confidence,cascade_risk,strategy="known_good_recovery",now=None):
         self._assert(now); evidence=self.gateway.path(path_id); impact=self.gateway.dependencies.impact(path_id); exact=str(evidence["path_id"])
         if exact!=str(path_id).strip(): raise ContinuousRecoveryError("authoritative path identity changed")
-        episode=self.store.upsert_episode(scope_id=exact,generation=generation,fingerprint=fingerprint,criticality=criticality,confidence=confidence,cascade_risk=cascade_risk,failure_domains=tuple(impact["failure_domains"]),affected_entities=tuple(tuple(x) for x in impact["affected_entities"]),strategy=strategy,now=now); self.store.update(episode_id=episode["episode_id"],state="OBSERVED",now=now,payload={"prediction":prediction}); return self.store._episode(self.store._connect(),episode["episode_id"])
+        episode=self.store.upsert_episode(scope_id=exact,generation=generation,fingerprint=fingerprint,criticality=criticality,confidence=confidence,cascade_risk=cascade_risk,failure_domains=tuple(impact["failure_domains"]),affected_entities=tuple(tuple(x) for x in impact["affected_entities"]),strategy=strategy,now=now); return self.store.update(episode_id=episode["episode_id"],state="OBSERVED",now=now,payload={"prediction":prediction})
     @staticmethod
     def _conflict(a,b):
         return bool(set(a["failure_domains"])&set(b["failure_domains"]) or set(a["affected_entities"])&set(b["affected_entities"]) or a["scope_id"]==b["scope_id"])
