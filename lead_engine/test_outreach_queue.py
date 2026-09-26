@@ -28,6 +28,7 @@ def test_build_outreach_queue_separates_approved_routes():
     assert len(queues["Shiftr"]) == 1
     assert len(queues["Paxus"]) == 1
     assert len(queues["Thorio"]) == 1
+    assert len(queues["Astrivon Labs"]) == 1
     assert len(queues["Review"]) == 1
 
 
@@ -78,6 +79,7 @@ def test_summarize_queue_returns_all_routes():
     assert summary["Shiftr"] == 2
     assert summary["Paxus"] == 1
     assert summary["Thorio"] == 1
+    assert summary["Astrivon Labs"] == 0
     assert summary["Review"] == 1
 
 
