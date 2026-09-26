@@ -51,14 +51,29 @@ def validate_opportunity_identity(payload: Dict[str, Any]) -> str:
     opportunity_id = normalize_identity_value(payload.get("opportunity_id"))
     if fingerprint and opportunity_id and fingerprint != opportunity_id:
         raise ValueError("opportunity_id must match fingerprint.")
+    identity_fields = (
+        "source",
+        "source_id",
+        "url",
+        "source_url",
+        "company",
+        "person",
+        "contact_name",
+        "job_title",
+        "signal_type",
+        "discovered_at",
+    )
+    has_identity_inputs = any(normalize_identity_value(payload.get(key)) for key in identity_fields)
     if fingerprint:
-        expected = lead_identity(payload)
-        if expected != fingerprint:
-            raise ValueError("fingerprint does not match canonical opportunity identity.")
+        if has_identity_inputs:
+            expected = lead_identity(payload)
+            if expected != fingerprint:
+                raise ValueError("fingerprint does not match canonical opportunity identity.")
         return fingerprint
     if opportunity_id:
-        expected = lead_identity(payload)
-        if expected != opportunity_id:
-            raise ValueError("opportunity_id does not match canonical opportunity identity.")
+        if has_identity_inputs:
+            expected = lead_identity(payload)
+            if expected != opportunity_id:
+                raise ValueError("opportunity_id does not match canonical opportunity identity.")
         return opportunity_id
     return canonical_opportunity_identity(payload)["opportunity_id"]
