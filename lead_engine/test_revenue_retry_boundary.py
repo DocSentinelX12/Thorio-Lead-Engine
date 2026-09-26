@@ -24,7 +24,7 @@ def test_browser_unavailable_is_a_retryable_revenue_transport_failure(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead(); db.insert_if_new(lead); db.record_airtable_handoff(lead["fingerprint"], package_digest(lead), "recLead", "recResearch", ["recCompany"], "2026-09-18T00:00:00+00:00"); enqueue(db, "outreach_closer", {"lead": lead}); register_revenue_transport(_BrowserUnavailableTransport())
     try: result = run_worker_once(db, "outreach_closer", worker_id="browser-retry-worker")
     finally: register_revenue_transport(None)
-    assert result["completed_count"] == 0 and result["failed_count"] == 0 and result["retryable_count"] == 1
+    assert result["completed_count"] == 0 and result["failed_count"] == 0 and result["retryable_count"] == 1, result
 
 def test_outreach_closer_metadata_declares_authorized_execution():
     role = agent_registry()["outreach_closer"]; specialization = specialization_registry()["outreach_closer"]; assert "execute" in role.purpose.lower(); assert "authorize" in specialization.mission.lower(); assert "execute authorized outbound" in {item.lower() for item in specialization.responsibilities}
