@@ -54,7 +54,7 @@ def test_normalize_lead_maps_core_airtable_fields():
 def test_normalize_lead_preserves_independent_routes():
     fields = _normalize_lead({"company": "Multi Route Corp", "source": "company website", "signal": "AI automation need", "evidence": "Company announced an AI automation project.", "potential_routes": ["Paxus", "Shiftr", "Thorio"]})
     assert fields["Applicable Routes"] == ["Paxus", "Shiftr", "Thorio"]
-    assert fields["Recommended Partner"] == "Both"
+    assert fields["Recommended Partner"] == "Multiple"
 
 
 def test_airtable_configuration_uses_expected_environment_names():
