@@ -151,7 +151,7 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         integration.inventory.record_active_gdrdma_measurement(
             path_id=path_id,
             measurement=_measurement(
-                path_id, 10.0, gpu_uuid=source_gpu, rdma_device=f"rdma:{path_id}:1"
+                path_id, 10.0, gpu_uuid=source_gpu, rdma_device=path_id
             ),
         )
         integration.inventory.record_active_gdrdma_measurement(
@@ -174,7 +174,7 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         measurement=_measurement(
             replacement.path_id, 12.0,
             gpu_uuid=gpu_identities[1][0],
-            rdma_device="rdma:final-replacement-00:1",
+            rdma_device="final-replacement-00",
         ),
     )
     integration.inventory.record_active_gdrdma_measurement(
@@ -222,7 +222,7 @@ def _evidence(action):
             path_id,
             float(action["updated_at"]) + 1.0,
             gpu_uuid=required_segments[0],
-            rdma_device=required_segments[1],
+            rdma_device=path_id,
         ),
         "evidence": {
             "proof_phase": "authoritative_recovery",
