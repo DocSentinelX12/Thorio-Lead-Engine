@@ -103,6 +103,8 @@ def sync_astrivon_referral(lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 def sync_astrivon_commissions(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(lead, dict): raise ValueError("Lead payload must be a dictionary.")
     if "Astrivon Labs" not in _routes(lead): return []
+    if _text(lead.get("astrivon_status") or "qualified") != "active" or lead.get("astrivon_partner_confirmed") is not True:
+        return []
     fingerprint = _text(lead.get("fingerprint")); company = _text(lead.get("company"))
     events = lead.get("astrivon_payment_events", [])
     if not isinstance(events, (list, tuple)): return []
