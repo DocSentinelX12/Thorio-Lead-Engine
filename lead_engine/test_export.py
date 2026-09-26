@@ -15,10 +15,7 @@ def make_lead(company, route, signal, evidence):
         "status": "qualified",
         "qualified": True,
         "qualification_status": "qualified",
-        "approval_status": "approved",
-        "human_approved": True,
-        "approval_required": False,
-        "approved_routes": [route],
+        "eligible_routes": [route],
     }
 
 
@@ -49,16 +46,14 @@ def test_export_all_partners_groups_leads():
     assert len(result["Thorio"]) == 1
 
 
-def test_export_partner_leads_requires_human_approval():
-    lead = make_lead("Pending Corp", "Shiftr", "technology engineering project", "Pending Corp has a technology engineering project.")
-    lead["approval_status"] = "pending"
-    lead["human_approved"] = False
-    lead["approval_required"] = True
-    lead["approved_routes"] = []
-    assert export_partner_leads([lead], "Shiftr") == []
+def test_export_does_not_require_human_approval():
+    lead = make_lead("Autonomous Corp", "Shiftr", "technology engineering project", "Autonomous Corp has a technology engineering project.")
+    assert "approval_status" not in lead
+    assert "human_approved" not in lead
+    assert export_partner_leads([lead], "Shiftr")[0]["company"] == "Autonomous Corp"
 
 
-def test_export_partner_leads_requires_route_specific_approval():
+def test_export_requires_machine_eligible_route():
     lead = make_lead("Wrong Route Corp", "Paxus", "contract staffing need", "Wrong Route Corp needs contract staffing.")
-    lead["approved_routes"] = ["Shiftr"]
+    lead["eligible_routes"] = ["Shiftr"]
     assert export_partner_leads([lead], "Paxus") == []
