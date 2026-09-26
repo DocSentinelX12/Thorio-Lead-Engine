@@ -49,6 +49,10 @@ class HealingAuthorityGateway:
         self.inventory = inventory
         self.recovery_orchestrator = recovery_orchestrator
         self.fabric_coordinator = fabric_coordinator
+        if getattr(self.fabric_coordinator, "physical_path_authority", None) is None:
+            self.fabric_coordinator.bind_physical_path_authority(inventory)
+        elif self.fabric_coordinator.physical_path_authority is not inventory:
+            raise ValueError("fabric coordinator must use the same physical inventory authority")
         self.evidence_graph = HealingEvidenceGraph(inventory.db_path)
         self.dependencies = HealingDependencyAnalyzer(self.evidence_graph)
         self.intelligence = HealingIntelligence(
