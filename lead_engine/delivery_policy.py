@@ -1,7 +1,7 @@
 from typing import Any, Dict
 
 
-SUPPORTED_ROUTES = ("Shiftr", "Paxus", "Thorio")
+SUPPORTED_ROUTES = ("Shiftr", "Paxus", "Thorio", "Astrivon Labs")
 QUALIFIED_STATUSES = {"qualified", "approved", "accepted"}
 MIN_DELIVERY_SCORE = 50
 
