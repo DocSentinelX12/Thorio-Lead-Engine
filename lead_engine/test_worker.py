@@ -7,6 +7,7 @@ from .sync_worker import (
     sync_pending,
 )
 from .sales_handoff import package_digest
+from .research_intelligence import build_research_intelligence
 import json
 
 
@@ -399,6 +400,7 @@ def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkey
     db = LeadDB(data_dir=str(tmp_path))
     lead = {
         "fingerprint": "worker-handoff-ready",
+        "opportunity_id": "worker-handoff-ready",
         "company": "Acme",
         "contact_email": "taylor@example.com",
         "qualified": True,
@@ -419,6 +421,7 @@ def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkey
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
         "potential_routes": ["Thorio"], "eligible_routes": ["Thorio"], "preserved_routes": ["Thorio"], "routing_result": {"destinations": ["Thorio"], "review_required": False},
     }
+    lead["research_intelligence"] = build_research_intelligence(lead)
     db.insert_if_new(lead)
     digest = package_digest(lead)
     raw = dict(lead)
