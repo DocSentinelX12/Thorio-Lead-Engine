@@ -85,6 +85,10 @@ jobs:
           path: artifacts/healing-replication.xml
           if-no-files-found: ignore
 
+      - name: Run predictive healing intelligence tests
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_prediction.py
+
       - name: Run continuous autonomous recovery tests
         run: |
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_continuous_recovery.py lead_engine/test_healing_fault_injection.py
