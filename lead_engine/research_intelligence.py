@@ -299,7 +299,7 @@ def _claims_for_section(
             status=status,
             section=section_name,
         )
-    ]
+    )
     if section_name == "current_intent_research":
         current_need = _text(lead.get("current_need") or section.get("current_need"))
         if current_need:
