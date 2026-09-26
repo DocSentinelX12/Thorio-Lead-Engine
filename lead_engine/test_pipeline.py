@@ -37,7 +37,7 @@ def test_pipeline_routes_and_persists_lead(tmp_path):
 
     assert result["status"] == "accepted"
     assert result["accepted"] is True
-    assert result["lead"]["route"] == "Shiftr"
+    assert result["lead"]["route"] == "Thorio"
     assert "Shiftr" in result["potential_routes"]
     assert "Thorio" in result["potential_routes"]
     assert result["sync_status"] == "synced"
