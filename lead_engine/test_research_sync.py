@@ -9,7 +9,7 @@ def test_research_payload_preserves_research_and_raw_lead():
         "company": "Acme",
         "research_status": "complete",
         "research_verified_fields": ["company_verified", "decision_maker"],
-        "company_research": {
+        "research_intelligence": {"intelligence_version": "1", "opportunity_id": "research-test-1", "claims": [], "evidence_graph": {"nodes": {}}},\n        "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
             "decision_maker_evidence": "https://example.com/taylor",
@@ -32,7 +32,7 @@ def test_research_payload_preserves_research_and_raw_lead():
         "business_need_research",
         "technical_product_hiring_research",
     ]
-    assert json.loads(fields["Company Research"])["decision_maker"] == "Taylor"
+    assert json.loads(fields["Research Intelligence"])["intelligence_version"] == "1"\n    assert json.loads(fields["Company Research"])["decision_maker"] == "Taylor"
     assert "Technical/Product/Hiring Research" not in fields
     assert "Technical Product Hiring Research" in fields
     assert json.loads(fields["Technical Product Hiring Research"])["need"] == "engineering expansion"
