@@ -22,6 +22,7 @@ def test_build_outreach_queue_separates_approved_routes():
         make_lead("Shiftr", "remote software engineer"),
         make_lead("Paxus", "contract staffing need", "Acme needs contractors for a technology project."),
         make_lead("Thorio", "remote product designer"),
+        make_lead("Astrivon Labs", "dev agency", "Acme needs an MVP built for its startup."),
         {"company": "Needs Review", "route": "Review"},
     ]
     queues = build_outreach_queue(leads)
