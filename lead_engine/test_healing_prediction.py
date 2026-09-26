@@ -12,7 +12,7 @@ def _graph(tmp_path):
         (30.0, "FAILED", 45.0, False),
         (40.0, "FAILED", 40.0, False),
         (50.0, "MEASURED", 98.0, True),
-        (60.0, "MEASURED", 42.0, True),
+        (60.0, "FAILED", 42.0, False),
     )
     for observed_at, state, bandwidth, verified in samples:
         graph.record_observation(
@@ -39,7 +39,7 @@ def test_signal_discovery_learns_path_scoped_failure_relationship(tmp_path):
     discovered = predictor.discover(scope_id="path-a")
     assert discovered["predictive_signal_count"] >= 1
     bandwidth = next(item for item in discovered["signals"] if item["signal"].endswith("bandwidth_gbps"))
-    assert bandwidth["failed_samples"] == 2
+    assert bandwidth["failed_samples"] == 3
     assert bandwidth["healthy_samples"] == 4
     assert bandwidth["effect"] < 0
 
