@@ -256,3 +256,6 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
     all_refs = _refs(business + intent + technical + commercial + _items(company_research.get("public_company_facts")) + _items(company_research.get("public_decision_maker_facts")), opportunity_id=opportunity_id, research_section="closer_package")
     package["closer_package"] = {"ready": False, "verification_status": "research_required", "researched_at": _now(), "company": str(lead.get("company") or "").strip(), "contact": str(lead.get("contact_name") or lead.get("person") or "").strip(), "evidence": all_refs, "required_verification": list(VERIFIABLE_RESEARCH_SECTIONS), "provenance": {"source": "canonical_research_sections", "evidence_count": len(all_refs)}, "unknowns": list(package["research_gaps"]["unknowns"])}
     return package
+
+
+# Public research intelligence seam. The intelligence module keeps its own section constants\n# so importing it here does not create a circular dependency.\nfrom .research_intelligence import (\n    build_research_intelligence,\n    merge_research_intelligence,\n    validate_research_intelligence,\n)\n
