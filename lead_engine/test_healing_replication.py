@@ -28,6 +28,14 @@ def test_quorum_commits_healing_action_and_replica_catches_up(tmp_path):
     )
     assert action["action_id"].startswith("heal:")
     assert state.commit_index() == 1
+    state.claim_action(
+        action["action_id"],
+        owner="controller-a",
+        controller_id="controller-a",
+        fencing_token=leader["fencing_token"],
+        now=11.5,
+        lease_seconds=5.0,
+    )
 
     state.set_replica_available(2, False)
     state.checkpoint(
@@ -151,7 +159,7 @@ def test_reconciliation_never_rolls_back_a_higher_committed_index(tmp_path):
     paths = _paths(tmp_path)
     state = ReplicatedHealingState(paths)
     leader = state.acquire_leadership("controller-a", generation=1, now=10.0)
-    state.ensure_action(
+    action = state.ensure_action(
         scope_id="scope",
         failure_fingerprint="failure",
         generation=1,
@@ -159,6 +167,14 @@ def test_reconciliation_never_rolls_back_a_higher_committed_index(tmp_path):
         controller_id="controller-a",
         fencing_token=leader["fencing_token"],
         now=11.0,
+    )
+    state.claim_action(
+        action["action_id"],
+        owner="controller-a",
+        controller_id="controller-a",
+        fencing_token=leader["fencing_token"],
+        now=11.5,
+        lease_seconds=5.0,
     )
     state.set_replica_available(2, False)
     state.checkpoint(
