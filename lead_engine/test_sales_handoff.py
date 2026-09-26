@@ -116,9 +116,17 @@ def test_package_projection_contains_canonical_identity():
     from .sales_handoff import package_projection
 
     lead = _ready_lead()
+    lead.update({
+        "source": "linkedin",
+        "source_id": "post-1",
+        "url": "https://linkedin.example/post-1",
+        "person": "Taylor",
+        "job_title": "CTO",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
+    })
     from .lead_identity import canonical_opportunity_identity
-    identity = canonical_opportunity_identity(lead)
-    lead.update(identity)
+    lead.update(canonical_opportunity_identity(lead))
 
     projection = package_projection(lead)
 
