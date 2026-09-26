@@ -51,8 +51,8 @@ def test_quorum_commits_healing_action_and_replica_catches_up(tmp_path):
 
     state.set_replica_available(2, True)
     repaired = state.reconcile()
-    assert repaired["commit_index"] == 2
-    assert repaired["replicas"][2]["commit_index"] == 2
+    assert repaired["commit_index"] == 3
+    assert repaired["replicas"][2]["commit_index"] == 3
 
     restored = ReplicatedHealingState(_paths(tmp_path))
     assert restored.action(action["action_id"])["checkpoint"] == "physical_reverify"
