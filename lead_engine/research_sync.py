@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from .airtable_sync import AirtableSyncError, AIRTABLE_API_URL, _request, _text
 from .config import LeadEngineConfig
 from .sales_handoff import package_digest
-from .lead_identity import validate_opportunity_identity
+from .lead_identity import validate_opportunity_identity\nfrom .research_intelligence import validate_research_intelligence
 
 _RESEARCH_FIELD_MAP = {
     "Company Research": "company_research",
