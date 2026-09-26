@@ -261,8 +261,7 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
 
 
 def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
-    if payload.get("authorized") is not True:
-        raise OutreachContractError("outreach_closer requires explicit authorized=True")
+    """Prepare revenue outreach autonomously after verified research."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     decision = build_outreach_decision(lead)
     updated = dict(lead)
@@ -272,14 +271,13 @@ def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, A
         if fingerprint:
             stored = ctx.db.update_payload(fingerprint, updated)
             if stored is None:
-                raise OutreachContractError(f"Lead not found for authorized outreach preparation: {fingerprint}")
+                raise OutreachContractError(f"Lead not found for autonomous outreach preparation: {fingerprint}")
             updated = stored
-    return {"role": "outreach_closer", "lead": dict(updated), "action": "prepare_authorized_outreach", "autonomous": True, "authorized": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "verified_research_only"}
+    return {"role": "outreach_closer", "lead": dict(updated), "action": "prepare_outreach", "autonomous": True, "human_approval_required": False, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "verified_research_only"}
 
 
 def follow_up_action(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
-    if payload.get("authorized") is not True or str(payload.get("authorized_by_role") or "").strip().lower() != "high_ticket_sales_closer":
-        raise OutreachContractError("follow_up requires authorization by high_ticket_sales_closer")
+    """Continue an observed revenue conversation autonomously."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     outcome = str(payload.get("outcome") or lead.get("outreach_state") or "").strip().lower()
     if not outcome:
@@ -292,7 +290,7 @@ def follow_up_action(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, A
             if stored is None:
                 raise OutreachContractError(f"Lead not found for follow-up update: {fingerprint}")
             updated = stored
-    result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "authorized": True, "authorized_by_role": "high_ticket_sales_closer", "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_authorized_follow_up", "outcome_recorded": True}
+    result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "human_approval_required": False, "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_follow_up", "outcome_recorded": True}
     objection = payload.get("objection")
     if objection:
         result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"))
