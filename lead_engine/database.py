@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .agent_registry import agent_registry
+from .lead_identity import validate_opportunity_identity
 
 
 class LeadDB:
@@ -102,6 +103,7 @@ class LeadDB:
         fingerprint = payload.get("fingerprint")
         if not fingerprint:
             raise ValueError("Lead payload must contain a fingerprint.")
+        validate_opportunity_identity(payload)
         cursor = self.conn.execute("INSERT OR IGNORE INTO leads (fingerprint, payload) VALUES (?, ?)", (str(fingerprint), json.dumps(payload, ensure_ascii=False)))
         if self._batch_write_depth == 0:
             self.conn.commit()
@@ -159,6 +161,7 @@ class LeadDB:
         incoming_rank = lifecycle_order.get(incoming_state, 0) if incoming_state else 0
         protected_revenue_fields = ("revenue_lifecycle_state", "sales_eligibility", "sales_eligibility_reason", "eligible_routes", "preserved_routes", "outreach_state", "outreach_attempt", "next_follow_up_at", "follow_up_due", "conversation_id", "outreach_route", "active_route", "outreach_history", "conversation_events", "response_count", "last_response_at", "last_outreach_action_id", "last_outreach_delivery", "route_switch_history", "outreach_stop_reason")
         current.update(updates)
+        validate_opportunity_identity(current)
         if current_rank > incoming_rank and current_state:
             for field in protected_revenue_fields:
                 if field in before:
