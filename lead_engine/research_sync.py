@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from .airtable_sync import AirtableSyncError, AIRTABLE_API_URL, _request, _text
 from .config import LeadEngineConfig
 from .sales_handoff import package_digest
+from .lead_identity import validate_opportunity_identity
 
 _RESEARCH_FIELD_MAP = {
     "Company Research": "company_research",
@@ -64,8 +65,10 @@ def _verified_fields(lead: Dict[str, Any]) -> list[str]:
 def _research_payload(lead: Dict[str, Any]) -> Dict[str, Any]:
     fingerprint = _text(lead.get("fingerprint"))
     company = _text(lead.get("company"))
-    if not fingerprint:
-        raise ValueError("Research synchronization requires a lead fingerprint.")
+    if not fingerprint and not _text(lead.get("opportunity_id")):
+        raise ValueError("Research synchronization requires a canonical opportunity identity.")
+    validate_opportunity_identity(dict(lead))
+    fingerprint = fingerprint or _text(lead.get("opportunity_id"))
     if not company:
         raise ValueError("Research synchronization requires a company.")
 
@@ -87,7 +90,9 @@ def _research_payload(lead: Dict[str, Any]) -> Dict[str, Any]:
             fields[airtable_field] = value
 
     raw_payload = dict(lead)
-    raw_payload["__thorio_package_digest"] = package_digest(lead)
+    raw_payload["opportunity_id"] = _text(lead.get("opportunity_id")) or fingerprint
+    raw_payload["fingerprint"] = fingerprint
+    raw_payload["__thorio_package_digest"] = package_digest(raw_payload)
     raw_package = _json_text(raw_payload)
     if raw_package is None:
         raise ValueError("Research synchronization requires a serializable lead payload.")
