@@ -22,10 +22,10 @@ def test_promotion_requires_sustained_contextual_evidence_and_safety(tmp_path):
     ctx = mgr.context_key(fabric_path_id="path-2", failure_domain="fd-a", workload_class="training")
     mgr.register_champion(context_key=ctx, strategy="known-good")
     exp = mgr.start_challenger(context_key=ctx, challenger_strategy="candidate-v2")
-    for i in range(5):
+    for i in range(10):
         mgr.record_outcome(
             experiment_id=exp["experiment_id"], strategy="known-good",
-            success=(i < 4), evidence={"path": "path-2", "sample": i},
+            success=(i < 8), evidence={"path": "path-2", "sample": i},
             observed_at=float(i + 1),
         )
         mgr.record_outcome(
@@ -68,6 +68,7 @@ def test_failed_challenger_rolls_back_to_original_champion(tmp_path):
     mgr.record_outcome(experiment_id=exp["experiment_id"], strategy="candidate", success=False, evidence={"failure": "timeout"})
     state = mgr.rollback(experiment_id=exp["experiment_id"], reason="candidate regression")
     assert state["champion"]["strategy"] == "known-good"
+    assert state["challengers"] == ()
     assert all(s["state"] != "ACTIVE" or s["role"] == "CHAMPION" for s in state["strategies"])
 
 
