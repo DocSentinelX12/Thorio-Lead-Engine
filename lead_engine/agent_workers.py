@@ -9,7 +9,8 @@ from .agent_specializations import AgentSpecialization, get_specialization
 from .agent_stateful_handlers import identity_resolution
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
-from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, build_canonical_research_package, finalize_research_readiness, merge_canonical_section\nfrom .research_intelligence import build_research_intelligence
+from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, build_canonical_research_package, finalize_research_readiness, merge_canonical_section
+from .research_intelligence import build_research_intelligence
 from .opportunity_provenance import normalize_evidence_event, validate_provenance_collection
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .revenue_conversation import objection_reply
