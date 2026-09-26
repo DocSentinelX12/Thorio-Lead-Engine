@@ -312,7 +312,13 @@ def _route_claims(section: Mapping[str, Any], opportunity_id: str) -> list[Dict[
         if not isinstance(item, Mapping):
             continue
         keys = [
-            str(ref.get("canonical_evidence_key") or canonical_evidence_key(ref))
+            normalize_evidence_event(
+                ref,
+                opportunity_id=opportunity_id,
+                research_section="route_research",
+                route=str(route),
+                collector="research_intelligence",
+            )["canonical_evidence_key"]
             for ref in _evidence_list(item.get("evidence"))
         ]
         if not keys:
