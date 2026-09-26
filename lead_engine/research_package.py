@@ -279,7 +279,13 @@ def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any]
 def build_canonical_research_package(lead: Mapping[str, Any], company_research: Mapping[str, Any], specialist_findings: Mapping[str, Any] | None = None) -> Dict[str, Dict[str, Any]]:
     """Materialize canonical research sections without promoting observation to verification."""
     findings = specialist_findings if isinstance(specialist_findings, Mapping) else {}
-    opportunity_id = str(lead.get("opportunity_id") or lead.get("fingerprint") or canonical_opportunity_identity(lead)["opportunity_id"]).strip()
+    supplied_opportunity_id = str(lead.get("opportunity_id") or "").strip()
+    supplied_fingerprint = str(lead.get("fingerprint") or "").strip()
+    if supplied_opportunity_id and supplied_fingerprint and supplied_opportunity_id != supplied_fingerprint:
+        raise ValueError("Canonical research opportunity_id and fingerprint must match.")
+    opportunity_id = supplied_opportunity_id or supplied_fingerprint
+    if not opportunity_id:
+        opportunity_id = str(canonical_opportunity_identity(lead)["opportunity_id"]).strip()
     public = company_research.get("public_web_research")
     public_facts = public.get("facts", {}) if isinstance(public, Mapping) else {}
     social = _items(company_research.get("social_findings"))
@@ -297,6 +303,7 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
     }
     missing_evidence = [name for name in VERIFIABLE_RESEARCH_SECTIONS if not package[name]["evidence"]]
     missing_sections = list(missing_evidence)
+    has_any_evidence = any(bool(package[name].get("evidence")) for name in VERIFIABLE_RESEARCH_SECTIONS)
     package["research_gaps"] = {"verified": False, "verification_status": "observed_evidence" if has_any_evidence else "research_required", "researched_at": _now(), "missing_sections": missing_sections, "unknowns": ["company_verification", "decision_maker_verification", "current_need_verification", "route_verification"] + missing_evidence, "provenance": {"source": "canonical_research_sections", "checked_sections": list(VERIFIABLE_RESEARCH_SECTIONS), "missing_count": len(missing_evidence)}}
     all_refs = _refs(business + intent + technical + commercial + _items(company_research.get("public_company_facts")) + _items(company_research.get("public_decision_maker_facts")), opportunity_id=opportunity_id, research_section="closer_package")
     package["closer_package"] = {"ready": False, "verification_status": "research_required", "researched_at": _now(), "company": str(lead.get("company") or "").strip(), "contact": str(lead.get("contact_name") or lead.get("person") or "").strip(), "evidence": all_refs, "required_verification": list(VERIFIABLE_RESEARCH_SECTIONS), "provenance": {"source": "canonical_research_sections", "evidence_count": len(all_refs)}, "unknowns": list(package["research_gaps"]["unknowns"])}
