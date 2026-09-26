@@ -213,6 +213,14 @@ class FabricCoordinator:
             node = db.execute("SELECT * FROM nodes WHERE node_id=?", (node_id,)).fetchone()
             if node is None:
                 raise ValueError(f"unknown coordination node: {node_id}")
+            if node["state"] == "failed":
+                prior = db.execute(
+                    "SELECT payload FROM decisions WHERE kind='reconcile_failure' ORDER BY created DESC"
+                ).fetchall()
+                for row in prior:
+                    payload = json.loads(row["payload"])
+                    if payload.get("failed_node_id") == node_id:
+                        return payload
             db.execute("UPDATE nodes SET state='failed',updated=? WHERE node_id=?", (now, node_id))
             affected = db.execute("SELECT * FROM allocations WHERE node_id=? AND state='active' ORDER BY workload_id", (node_id,)).fetchall()
             affected_ids = [r["workload_id"] for r in affected]
@@ -249,12 +257,16 @@ class FabricCoordinator:
         with self._connect() as db:
             available = db.execute("SELECT COUNT(*) AS n FROM nodes WHERE state='available'").fetchone()["n"]
             active = db.execute("SELECT COUNT(*) AS n FROM allocations WHERE state='active'").fetchone()["n"]
-            return available - active - self.standby_capacity >= required_nodes
+            # Experimental work may consume only capacity strictly beyond both
+            # the production allocation set and the configured standby reserve.
+            # Equality is intentionally insufficient: the reserve must remain
+            # available while the experiment is running.
+            return available - active > self.standby_capacity + required_nodes
 
     def snapshot(self) -> dict[str, Any]:
         with self._connect() as db:
             nodes = [dict(r) for r in db.execute("SELECT * FROM nodes ORDER BY node_id")]
             workloads = [dict(r) for r in db.execute("SELECT * FROM workloads ORDER BY workload_id")]
-            allocations = [dict(r) for r in db.execute("SELECT * FROM allocations WHERE state IN ('active','unplaced') ORDER BY workload_id")]
+            allocations = [dict(r) for r in db.execute("SELECT * FROM allocations WHERE state IN ('active','unplaced') ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END, workload_id")]
             decisions = [dict(r) for r in db.execute("SELECT * FROM decisions ORDER BY created DESC LIMIT 100")]
         return {"nodes": nodes, "workloads": workloads, "allocations": allocations, "decisions": decisions}
