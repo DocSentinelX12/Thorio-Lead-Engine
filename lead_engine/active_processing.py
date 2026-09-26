@@ -6,6 +6,7 @@ from .agent_stateful_handlers import airtable_integrity as _airtable_integrity
 from .agent_stateful_handlers import routing as _routing
 from .agent_stateful_handlers import verification as _verification
 from .research_package import finalize_research_readiness, research_readiness
+from .research_intelligence import build_research_intelligence
 from .research_sync import sync_research
 from .sales_handoff import package_digest, package_is_ready
 
@@ -59,7 +60,9 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
             updated[name] = dict(section)
             changed = True
         if changed:
+            updated["research_intelligence"] = build_research_intelligence(updated)
             updated, _ = finalize_research_readiness(updated)
+            updated["research_intelligence"] = build_research_intelligence(updated)
             ctx.db.update_payload(fingerprint, updated)
 
     # Verification is a durable state boundary. A queued verification task may
@@ -94,7 +97,9 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
         research["decision_maker_verification_status"] = "verified"
         if result.get("decision_maker_role_evidence"): research["decision_maker_role_evidence"] = result["decision_maker_role_evidence"]
         updated = dict(current_lead); updated["company_research"] = research
+        updated["research_intelligence"] = build_research_intelligence(updated)
         updated, readiness = finalize_research_readiness(updated)
+        updated["research_intelligence"] = build_research_intelligence(updated)
         stored = ctx.db.update_payload(fingerprint, updated) or updated
         research_sync_result = None
         if readiness["ready"]:
