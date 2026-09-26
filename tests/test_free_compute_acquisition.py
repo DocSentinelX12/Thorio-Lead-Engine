@@ -261,7 +261,6 @@ def test_continuous_hunter_discovers_and_acquires_without_stopping_on_provider_f
                 expires_at=500.0,
                 gpu_capable=True,
                 no_cost=True,
-                gpu_capable=True,
                 enrollment={"worker_id": "healthy-worker", "enrollment_mode": "authenticated"},
             )
 
