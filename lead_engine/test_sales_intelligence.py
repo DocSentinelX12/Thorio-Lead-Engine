@@ -78,15 +78,11 @@ def test_verified_section_without_provenance_is_rejected():
         build_closer_intelligence(lead)
 
 
-def test_prospect_identity_cannot_be_reused_with_another_fingerprint():
+def test_prospect_evidence_with_another_fingerprint_is_rejected():
     lead = _lead()
-    lead["company_research"]["decision_maker_evidence"] = "https://other.example/taylor"
-    lead["company_research"]["decision_maker"] = "Taylor from Other"
-    lead["fingerprint"] = "op-2"
-    package = build_closer_intelligence(lead)
-    assert package["opportunity_fingerprint"] == "op-2"
-    assert package["decision_maker"]["name"] == "Taylor from Other"
-    assert "https://other.example/taylor" in package["decision_maker"]["evidence_refs"]
+    lead["business_need_research"]["evidence"][0]["fingerprint"] = "op-other"
+    with pytest.raises(SalesIntelligenceError, match="different opportunity"):
+        build_closer_intelligence(lead)
 
 
 def test_outreach_copy_rejects_forbidden_dash_characters_and_bad_punctuation():
