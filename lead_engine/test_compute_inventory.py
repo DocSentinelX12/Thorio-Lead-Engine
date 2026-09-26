@@ -57,6 +57,9 @@ def test_active_gdrdma_measurement_is_durable_and_tied_to_exact_fabric_path(tmp_
         "fabric_path_id": "fabric-path-1",
         "worker_id": "worker-a",
         "gpu_uuid": "GPU-a",
+                "remote_gpu_uuid": "GPU-b",
+                "remote_rdma_device": "mlx5_1",
+                "remote_rdma_port": 1,
         "rdma_port": 1,
         "remote_worker_id": "worker-b",
         "remote_endpoint": "198.51.100.10",
@@ -121,6 +124,9 @@ def test_inventory_derives_active_path_intelligence_from_immutable_test_history(
                 "fabric_path_id": path.path_id,
                 "worker_id": "worker-a",
                 "gpu_uuid": "GPU-a",
+                "remote_gpu_uuid": "GPU-b",
+                "remote_rdma_device": "mlx5_1",
+                "remote_rdma_port": 1,
                 "rdma_device": "mlx5_0",
                 "rdma_port": 1,
                 "remote_worker_id": "worker-b",
@@ -161,6 +167,9 @@ def test_route_health_carries_exact_active_path_intelligence_without_synthesizin
         measurement={
             "measurement_status": "measured", "verified": True, "test": "ib_write_bw",
             "fabric_path_id": path.path_id, "worker_id": "worker-a", "gpu_uuid": "GPU-a",
+                "remote_gpu_uuid": "GPU-b",
+                "remote_rdma_device": "mlx5_1",
+                "remote_rdma_port": 1,
             "rdma_device": "mlx5_0", "rdma_port": 1, "remote_worker_id": "worker-b",
             "remote_endpoint": "198.51.100.10", "remote_test_server_verified": True,
             "direction": "client_to_server", "mode": "cuda_dmabuf", "bandwidth_gbps": 180.0,
@@ -430,7 +439,7 @@ def test_closed_loop_recovery_requires_verified_active_measurement_before_routin
     inventory.persist_physical_path(path)
     inventory.fail_physical_path(path.path_id, reason="failure", observed_at=10.0)
     physical = tuple({"segment": s, "result": "pass"} for s in path.segments)
-    measurement = {"fabric_path_id": path.path_id, "measurement_status": "measured", "verified": True, "remote_test_server_verified": True, "worker_id": "w", "remote_worker_id": "rw", "remote_endpoint": "ep", "gpu_uuid": "a", "rdma_device": "mlx5_0", "rdma_port": 1, "bandwidth_gbps": 100.0}
+    measurement = {"fabric_path_id": path.path_id, "measurement_status": "measured", "verified": True, "remote_test_server_verified": True, "worker_id": "w", "remote_worker_id": "rw", "remote_endpoint": "ep", "gpu_uuid": "a", "remote_gpu_uuid": "b", "remote_rdma_device": "mlx5_1", "remote_rdma_port": 1, "rdma_device": "mlx5_0", "rdma_port": 1, "bandwidth_gbps": 100.0}
     result = inventory.execute_active_path_recovery_cycle(path_id=path.path_id, physical_evidence=physical, active_measurement=measurement, observed_at=11.0)
     assert result["stage"] == "active_measurement"
     assert result["test_id"]
@@ -508,7 +517,7 @@ def test_recovery_action_closes_only_after_physical_and_stable_active_gates(tmp_
                 "fabric_path_id": path.path_id, "measurement_status": "measured",
                 "verified": True, "remote_test_server_verified": True,
                 "worker_id": "w", "remote_worker_id": "rw", "remote_endpoint": "ep",
-                "gpu_uuid": "a", "rdma_device": "mlx5_0", "rdma_port": 1,
+                "gpu_uuid": "a", "remote_gpu_uuid": "b", "remote_rdma_device": "mlx5_1", "remote_rdma_port": 1, "rdma_device": "mlx5_0", "rdma_port": 1,
                 "bandwidth_gbps": bandwidth,
             },
             observed_at=observed_at,
@@ -525,7 +534,7 @@ def test_recovery_action_closes_only_after_physical_and_stable_active_gates(tmp_
         "worker_id": "w",
         "remote_worker_id": "rw",
         "remote_endpoint": "ep",
-        "gpu_uuid": "a",
+        "gpu_uuid": "a", "remote_gpu_uuid": "b", "remote_rdma_device": "mlx5_1", "remote_rdma_port": 1,
         "rdma_device": "mlx5_0",
         "rdma_port": 1,
         "bandwidth_gbps": 100.0,
@@ -564,7 +573,7 @@ def test_recovery_action_retries_without_closing_when_active_evidence_is_not_sta
         "fabric_path_id": path.path_id, "measurement_status": "measured",
         "verified": True, "remote_test_server_verified": True,
         "worker_id": "w", "remote_worker_id": "rw", "remote_endpoint": "ep",
-        "gpu_uuid": "a", "rdma_device": "mlx5_0", "rdma_port": 1,
+        "gpu_uuid": "a", "remote_gpu_uuid": "b", "remote_rdma_device": "mlx5_1", "remote_rdma_port": 1, "rdma_device": "mlx5_0", "rdma_port": 1,
         "bandwidth_gbps": 100.0,
     }
     result = inventory.execute_active_path_recovery_action(
