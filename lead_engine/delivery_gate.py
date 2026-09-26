@@ -11,9 +11,7 @@ def evaluate_delivery_gate(
     Validate whether a lead is eligible for partner delivery.
 
     This gate validates route, evidence, and delivery policy.
-    Human approval is enforced at the final delivery boundary,
-    not here, so leads can continue to be collected, qualified,
-    routed, and stored while awaiting human approval.
+    This is a machine eligibility boundary. It does not consult human approval state.
     """
 
     route_result = validate_partner_route(lead)
