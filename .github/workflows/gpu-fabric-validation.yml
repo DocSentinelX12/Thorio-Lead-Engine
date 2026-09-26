@@ -66,6 +66,7 @@ jobs:
         run: |
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_state.py lead_engine/test_autonomous_healing.py lead_engine/test_healing_policy.py lead_engine/test_healing_actions.py lead_engine/test_healing_workloads.py lead_engine/test_healing_control_plane.py lead_engine/test_healing_learning.py
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_authorities.py
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_integration.py
 
       - name: Run compute remote and execution fabric regressions
         run: |
