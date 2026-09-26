@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from .router import ROUTES, score_routes
+from .astrivon_referral import match_astrivon_services
 
 UNVERIFIED = "Unverified"
 IN_REVIEW = "In Review"
@@ -160,7 +161,11 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
         if route == "Shiftr" and SHIFTR_SERVICE_NEED_CONTEXT.search(route_text):
             category_score = max(category_score, 1)
         qualified = category_score > 0 and intent["qualified"] and route_research["verified"]
-        results[route] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": intent, "recent_inquiry": intent, "route_research": route_research, "reason": "Verified research supports this route and recent intent." if qualified else "Route-specific verified research and recent intent are incomplete.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
+        result = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": intent, "recent_inquiry": intent, "route_research": route_research, "reason": "Verified research supports this route and recent intent." if qualified else "Route-specific verified research and recent intent are incomplete.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
+        if route == "Astrivon Labs":
+            result["service_fit"] = list(match_astrivon_services(route_text))
+            result["service_fit_verified"] = bool(result["service_fit"] and route_research["verified"])
+        results[route] = result
     paxus = results["Paxus"]
     paxus_referral = _paxus_referral_checks(lead, paxus["qualified"])
     paxus["true_referral"] = paxus_referral["passed"]
