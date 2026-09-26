@@ -36,6 +36,21 @@ def test_observation_durably_enqueues_authoritative_recovery_action():
         assert actions[0]["path_id"]=="p1"
 
 
+def test_controller_generation_is_independent_of_path_recovery_generation():
+    with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
+        g=gateway(f.name); path(g.inventory,"p1")
+        c1=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c1")
+        c1.start(generation=1,now=20)
+        c1.observe(path_id="p1",generation=1,fingerprint="fp-1",criticality=2,confidence=.9,cascade_risk=.1,now=21)
+        c2=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c2")
+        c2.start(generation=2,now=22)
+        c2.observe(path_id="p1",generation=2,fingerprint="fp-2",criticality=2,confidence=.9,cascade_risk=.1,now=23)
+        result=c2.run_cycle(evidence_provider=evidence,now=23)
+        assert result[0]["path_id"]=="p1"
+        assert result[0]["state"]=="SUCCEEDED"
+        assert result[0]["allow_routing"] is True
+
+
 def test_stale_controller_is_fenced():
     with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
         g=gateway(f.name); path(g.inventory,"p1"); c1=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c1"); c2=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c2")
