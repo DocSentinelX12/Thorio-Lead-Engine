@@ -83,3 +83,49 @@ def test_astrivon_specialist_evidence_enters_route_research():
         {"astrivon_demand_discovery": {"findings": [{"evidence": "Acme is looking for a dev agency to build an MVP."}]}}
     )
     assert package["route_research"]["routes"]["Astrivon Labs"]["evidence"]
+
+
+def test_research_package_evidence_carries_canonical_opportunity_provenance():
+    package = build_canonical_research_package(
+        {"fingerprint": "canonical-provenance", "opportunity_id": "canonical-provenance", "company": "Acme"},
+        {"public_business_need_facts": [{"url": "https://acme.example/need", "evidence": "Need", "observed_at": "2026-09-26T00:00:00+00:00"}]},
+        {},
+    )
+
+    evidence = package["business_need_research"]["evidence"][0]
+    assert evidence["opportunity_id"] == "canonical-provenance"
+    assert evidence["fingerprint"] == "canonical-provenance"
+    assert evidence["research_section"] == "business_need_research"
+    assert evidence["verification_status"] == "observed_evidence"
+
+
+def test_research_package_rejects_cross_opportunity_existing_evidence():
+    import pytest
+
+    generated = {
+        "verified": False,
+        "verification_status": "observed_evidence",
+        "evidence": [
+            {
+                "opportunity_id": "opp-1",
+                "fingerprint": "opp-1",
+                "evidence": "new",
+                "observed_at": "2026-09-26T00:00:00+00:00",
+            }
+        ],
+    }
+    existing = {
+        "verified": False,
+        "verification_status": "observed_evidence",
+        "evidence": [
+            {
+                "opportunity_id": "opp-2",
+                "fingerprint": "opp-2",
+                "evidence": "foreign",
+                "observed_at": "2026-09-26T00:01:00+00:00",
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="opportunity"):
+        merge_canonical_section(generated, existing, opportunity_id="opp-1", research_section="business_need_research")
