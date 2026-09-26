@@ -27,7 +27,7 @@ class HealingExperimentManager:
     MIN_LOWER_BOUND = 0.65
     MIN_MARGIN = 0.05
 
-    def __init__(self, db_path: str = ":memory__"):
+    def __init__(self, db_path: str = ":memory:"):
         self.db_path = db_path
         self._memory = sqlite3.connect(":memory:") if db_path == ":memory__" else None
         if self._memory:
