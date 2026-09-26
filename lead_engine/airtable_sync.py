@@ -1191,18 +1191,21 @@ def _recommended_partner(
     has_paxus = "Paxus" in routes
     has_shiftr = "Shiftr" in routes
     has_thorio = "Thorio" in routes
+    has_astrivon = "Astrivon Labs" in routes
 
-    if has_paxus and has_shiftr:
+    if has_paxus and has_shiftr and not has_thorio and not has_astrivon:
         return "Both"
+    if len(routes) > 1:
+        return "Multiple"
 
     if has_shiftr:
         return "Shiftr"
-
     if has_paxus:
         return "Paxus"
-
     if has_thorio:
         return "Thorio"
+    if has_astrivon:
+        return "Astrivon Labs"
 
     return "Review"
 
@@ -1378,6 +1381,7 @@ def _work_queue(
         "🟣 Shiftr Verification",
         "🔵 Paxus Verification",
         "🟦 Thorio Sales",
+        "🟩 Astrivon Referral",
         "📬 Follow Up",
         "🔎 Research",
         "💰 Revenue / Referral",
@@ -1400,6 +1404,8 @@ def _work_queue(
 
     if "Thorio" in routes:
         return "🟦 Thorio Sales"
+    if "Astrivon Labs" in routes:
+        return "🟩 Astrivon Referral"
 
     return "🔎 Research"
 
@@ -1447,6 +1453,7 @@ def _normalize_routes(
         "Paxus",
         "Shiftr",
         "Thorio",
+        "Astrivon Labs",
     }
 
     result = []
