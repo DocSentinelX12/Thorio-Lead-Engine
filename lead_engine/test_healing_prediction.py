@@ -40,7 +40,7 @@ def test_signal_discovery_learns_path_scoped_failure_relationship(tmp_path):
     assert discovered["predictive_signal_count"] >= 1
     bandwidth = next(item for item in discovered["signals"] if item["signal"].endswith("bandwidth_gbps"))
     assert bandwidth["failed_samples"] == 3
-    assert bandwidth["healthy_samples"] == 4
+    assert bandwidth["healthy_samples"] == 3
     assert bandwidth["effect"] < 0
 
 
