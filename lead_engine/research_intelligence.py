@@ -251,9 +251,12 @@ def _claims_for_section(
     section_name: str,
     section: Mapping[str, Any],
     nodes: Mapping[str, Mapping[str, Any]],
+    opportunity_id: str,
+    lead: Mapping[str, Any],
 ) -> list[Dict[str, Any]]:
     refs = [item for item in _evidence_list(section.get("evidence")) if isinstance(item, Mapping)]
-    keys = [str(item.get("canonical_evidence_key") or canonical_evidence_key(item)) for item in refs]
+    normalized_refs = [normalize_evidence_event(item, opportunity_id=opportunity_id, research_section=section_name, route=_text(item.get("route")) or None, collector="research_intelligence") for item in refs]
+    keys = [str(item["canonical_evidence_key"]) for item in normalized_refs]
     explicit: list[Dict[str, Any]] = []
     for item, key in zip(normalized_refs, keys):
         claim_type = _text(item.get("claim_type"))
@@ -284,7 +287,7 @@ def _claims_for_section(
     if spec is None or not refs:
         return []
     claim_type, predicate, value_key = spec
-    value = _text(section.get(value_key))
+    value = _text(section.get(value_key)) or _text(lead.get(value_key))
     if not value:
         value = _text(refs[0].get("evidence") or refs[0].get("signal"))
     return [
