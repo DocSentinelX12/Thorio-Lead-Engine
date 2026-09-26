@@ -53,10 +53,39 @@ class FabricCoordinator:
             raise ValueError("standby_capacity must not be negative")
         self.db_path = db_path
         self.standby_capacity = standby_capacity
+        self.physical_path_authority = None
         self._memory = sqlite3.connect(":memory:") if db_path == ":memory:" else None
         if self._memory:
             self._memory.row_factory = sqlite3.Row
         self._initialize()
+
+    def bind_physical_path_authority(self, authority: Any) -> None:
+        if authority is None or not callable(getattr(authority, "verified_physical_paths", None)):
+            raise ValueError("a physical path authority with verified_physical_paths() is required")
+        self.physical_path_authority = authority
+
+    def _verified_path_ids(self) -> set[str]:
+        if self.physical_path_authority is None:
+            raise RuntimeError("physical path authority is not bound")
+        return {
+            str(row.get("path_id") or "").strip()
+            for row in self.physical_path_authority.verified_physical_paths()
+            if str(row.get("path_id") or "").strip()
+        }
+
+    def capacity_state(self) -> dict[str, Any]:
+        with self._connect() as db:
+            available_nodes = int(db.execute("SELECT COUNT(*) AS n FROM nodes WHERE state='available'").fetchone()["n"])
+            active_allocations = int(db.execute("SELECT COUNT(*) AS n FROM allocations WHERE state='active'").fetchone()["n"])
+            rows = db.execute("SELECT node_id FROM nodes WHERE state='available' ORDER BY node_id").fetchall()
+            occupied = {str(r["node_id"]) for r in db.execute("SELECT node_id FROM allocations WHERE state='active'").fetchall()}
+            protected = tuple(str(r["node_id"]) for r in rows if str(r["node_id"]) not in occupied)[: self.standby_capacity]
+        return {
+            "available_nodes": available_nodes,
+            "active_allocations": active_allocations,
+            "standby_capacity_available": len(protected) >= self.standby_capacity if self.standby_capacity else True,
+            "protected_standby_nodes": protected,
+        }
 
     def _connect(self) -> sqlite3.Connection:
         if self._memory:
@@ -143,6 +172,7 @@ class FabricCoordinator:
 
     def _eligible_candidates(self, candidates: Iterable[PlacementCandidate]) -> list[PlacementCandidate]:
         rows = list(candidates)
+        verified_path_ids = self._verified_path_ids()
         with self._connect() as db:
             nodes = {r["node_id"]: r for r in db.execute("SELECT * FROM nodes").fetchall()}
             allocations = {r["node_id"] for r in db.execute("SELECT node_id FROM allocations WHERE state='active'").fetchall()}
@@ -155,6 +185,8 @@ class FabricCoordinator:
                 continue
             if candidate.node_id in allocations:
                 continue
+            if candidate.fabric_path_id not in verified_path_ids:
+                raise ValueError(f"unverified physical fabric path: {candidate.fabric_path_id}")
             if not candidate.independent:
                 continue
             result.append(candidate)
