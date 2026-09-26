@@ -274,9 +274,6 @@ def _claims_for_section(
                 section=section_name,
             )
         )
-    if explicit:
-        return explicit
-
     mapping = {
         "business_need_research": ("business_need", "has_business_need", "business_need"),
         "current_intent_research": ("current_intent", "has_current_intent", "current_need"),
@@ -285,13 +282,14 @@ def _claims_for_section(
     }
     spec = mapping.get(section_name)
     if spec is None or not refs:
-        return []
+        return explicit
     claim_type, predicate, value_key = spec
     value = _text(section.get(value_key)) or _text(lead.get(value_key))
     if not value:
         value = _text(refs[0].get("evidence") or refs[0].get("signal"))
     status = "verified" if _status(section) == "verified" and any(_status(item) == "verified" for item in refs) else ("corroborated" if len(set(keys)) > 1 else "observed")
-    claims = [
+    claims = list(explicit)
+    claims.append(
         _claim(
             claim_type,
             "opportunity",
@@ -316,7 +314,7 @@ def _claims_for_section(
                     section=section_name,
                 )
             )
-    return claims
+    return list({claim["claim_id"]: claim for claim in claims}.values())
 
 
 def _route_claims(section: Mapping[str, Any], opportunity_id: str) -> list[Dict[str, Any]]:
