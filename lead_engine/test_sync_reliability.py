@@ -56,7 +56,10 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
         "lead_engine.sync_worker.sync_followup"
     ) as mock_followup, patch(
         "lead_engine.sync_worker.sync_master_tracker"
-    ) as mock_master_tracker:
+    ) as mock_master_tracker, patch(
+        "lead_engine.sync_worker.package_is_ready",
+        return_value=True,
+    ):
 
         mock_sync.return_value = {
             "status": "created",
@@ -183,6 +186,7 @@ def test_autonomous_revenue_eligibility_syncs_outreach_without_human_delivery_ap
     }
 
     with patch("lead_engine.sync_worker.sync_lead_if_missing", return_value={"status": "created", "record": {"id": "lead-001"}}), \
+         patch("lead_engine.sync_worker.package_is_ready", return_value=True), \
          patch("lead_engine.sync_worker.sync_research", return_value={"status": "created", "record": {"id": "research-001"}}), \
          patch("lead_engine.sync_worker.sync_outreach", return_value={"status": "created", "record": {"id": "outreach-001"}}) as mock_outreach, \
          patch("lead_engine.sync_worker.sync_master_tracker", return_value={"status": "synced"}) as mock_master:
