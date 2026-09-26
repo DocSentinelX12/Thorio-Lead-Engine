@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
 from .sales_handoff import package_is_ready, package_projection
+from .research_intelligence import build_research_intelligence
+import pytest
 
 
 def _complete_lead() -> dict:
@@ -29,9 +31,13 @@ def _complete_lead() -> dict:
     }
 
 
-def test_complete_canonical_research_materializes_intelligence_at_handoff_boundary():
+def test_complete_canonical_research_requires_materialized_intelligence_at_handoff_boundary():
     lead = _complete_lead()
     assert "research_intelligence" not in lead
+    with pytest.raises(ValueError, match="Research intelligence requires an opportunity_id"):
+        package_projection(lead)
+
+    lead["research_intelligence"] = build_research_intelligence(lead)
     projection = package_projection(lead)
     intelligence = projection["research_intelligence"]
     assert intelligence["opportunity_id"] == lead["opportunity_id"]

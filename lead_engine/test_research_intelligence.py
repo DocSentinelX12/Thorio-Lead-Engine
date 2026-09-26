@@ -29,6 +29,7 @@ def _lead() -> dict:
         "signal": "Acme is hiring backend engineers.",
         "evidence": "Acme careers page lists backend engineering roles.",
         "potential_routes": ["Shiftr", "Thorio"],
+        "research_status": "complete",
         "company_research": {
             "company_verified": True,
             "company_description": "Acme builds workflow software.",
@@ -258,7 +259,7 @@ def test_research_intelligence_rejects_cross_opportunity_evidence():
         research_package.build_research_intelligence(lead)
 
 
-def test_research_intelligence_survives_complete_handoff_projection_and_changes_digest():
+def test_research_intelligence_survives_complete_handoff_projection_and_binds_digest():
     lead = _lead()
     intelligence = research_package.build_research_intelligence(lead)
     enriched = {**lead, "research_intelligence": intelligence}
@@ -266,8 +267,12 @@ def test_research_intelligence_survives_complete_handoff_projection_and_changes_
     projection = package_projection(enriched)
     assert projection["research_intelligence"] == intelligence
 
-    digest_before = package_digest(lead)
-    digest_after = package_digest(enriched)
+    with pytest.raises(ValueError, match="Research intelligence requires an opportunity_id"):
+        package_digest(lead)
+
+    digest_before = package_digest(enriched)
+    changed = {**enriched, "research_intelligence": {**intelligence, "unknowns": ["budget", "timeline"]}}
+    digest_after = package_digest(changed)
     assert digest_before != digest_after
 
 

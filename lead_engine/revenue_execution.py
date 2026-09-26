@@ -241,11 +241,17 @@ def execute_outbound(
             )
 
         if existing_status == "retryable":
-            raise RevenueActionInProgress(
-                f"revenue action {idem!r} requires reconciliation before retry"
-            )
+            state = _load(db)
+            state["actions"][idem] = {
+                **dict(existing),
+                "status": "sending",
+                "updated_at": _now(),
+            }
+            _save(db, state)
+            existing = None
 
-        raise RevenueActionInProgress(
+        if existing is not None:
+            raise RevenueActionInProgress(
             f"revenue action {idem!r} is already claimed with status {existing_status or 'unknown'}"
         )
 
@@ -259,6 +265,16 @@ def execute_outbound(
                 idempotency_key=idem,
             )
         )
+    except RevenueTransportUnavailable as exc:
+        state = _load(db)
+        state["actions"][idem] = {
+            **state["actions"].get(idem, initial_action),
+            "status": "retryable",
+            "error": str(exc)[:4000],
+            "updated_at": _now(),
+        }
+        _save(db, state)
+        raise
     except Exception as exc:
         state = _load(db)
         state["actions"][idem] = {

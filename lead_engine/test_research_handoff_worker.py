@@ -16,6 +16,7 @@ def test_company_research_worker_persists_canonical_sections_from_specialist_fin
         "specialist_findings": {
             "recent_inquiry_discovery": {"findings": [{"url": "https://example.com/inquiry", "evidence": "Acme is looking for an engineering team now.", "observed_at": "2026-09-16T00:00:00+00:00"}]},
             "engineering_demand_discovery": {"findings": [{"url": "https://example.com/engineering", "evidence": "Acme needs backend engineering support.", "observed_at": "2026-09-16T00:00:00+00:00"}]},
+            "social_company_context": {"findings": [{"url": "https://example.com/commercial", "evidence": "Acme operates a commercial software business.", "observed_at": "2026-09-16T00:00:00+00:00"}]},
         },
     }
     assert db.insert_if_new(lead) is True
