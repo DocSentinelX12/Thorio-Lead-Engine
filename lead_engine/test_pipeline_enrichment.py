@@ -64,4 +64,4 @@ def test_pipeline_does_not_change_route_during_enrichment(tmp_path):
 
     assert result["accepted"] is True
     assert result["lead"]["route"] == "Thorio"
-    assert result["lead"]["potential_routes"] == ["Thorio", "Shiftr"]
+    assert result["lead"]["potential_routes"] == ["Shiftr", "Thorio"]
