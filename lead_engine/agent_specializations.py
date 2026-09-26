@@ -25,9 +25,10 @@ for agent, mission in _SOCIAL_ROLES.items():
     _SPECIALIZATIONS.append(AgentSpecialization(agent, f"Deeply {mission} using only permitted evidence.", ("correlate observations", "check recency", "resolve identities", "preserve source provenance", "flag uncertainty"), ("lead", "evidence_events"), ("social research", "evidence_events", "research status", "research gaps"), ("unauthorized access", "fabricated identity", "fabricated contact", "fabricated consent", "qualification without evidence")))
 
 _PROCESSING = {
-    "qualification_a": ("Perform the primary independent evidence-based qualification review for Thorio, Shiftr, and Paxus.", ("current need", "recent inquiry", "destination categories", "multi-route qualification")),
+    "qualification_a": ("Perform the primary independent evidence-based qualification review for Thorio, Shiftr, Paxus, and Astrivon Labs.", ("current need", "recent inquiry", "destination categories", "multi-route qualification")),
     "qualification_b": ("Independently validate qualification decisions and challenge unsupported conclusions.", ("recheck evidence", "challenge stale evidence", "verify route logic", "flag disagreement")),
     "company_research": ("Resolve company identity, context, people, products, hiring activity, and evidence.", ("verify company", "research decision makers", "enrich context", "record evidence")),
+    "astrivon_demand_discovery": ("Research Astrivon-specific agency, MVP, B2B sales, automation, AI/ML, product scaling, and funding needs.", ("dev agency", "MVP", "B2B outreach", "sales automation", "AI/ML", "computer vision", "seed funding", "non-technical founder")),
     "paxus_research": ("Resolve unknown Paxus referral requirements without turning unknown into failure or pass.", ("verify company", "find hiring contact", "verify communication evidence", "verify consent evidence")),
     "identity_resolution": ("Resolve company, person, and opportunity identity before semantic duplicate analysis.", ("compare identity keys", "resolve aliases", "preserve distinct opportunities", "record provenance")),
     "duplicate_resolution": ("Distinguish duplicate evidence from related but distinct opportunities.", ("compare identity", "compare opportunity context", "merge duplicate evidence", "preserve separate needs")),
@@ -36,7 +37,7 @@ _PROCESSING = {
     "routing": ("Route each verified opportunity to every valid destination without collapsing multi-route matches.", ("evaluate routes", "preserve route evidence", "emit destination set", "block unverified routing")),
     "airtable_integrity": ("Verify durable Airtable synchronization and consistency.", ("check writes", "check identifiers", "detect partial sync", "produce recovery work")),
     "monitoring": ("Continuously detect worker, queue, scheduler, persistence, and delivery anomalies.", ("inspect leases", "detect stalled work", "detect queue growth", "surface failures")),
-    "audit": ("Independently audit decisions, provenance, Paxus gates, and protected business invariants.", ("audit qualification", "audit dedupe", "audit routing", "audit provenance")),
+    "audit": ("Independently audit decisions, provenance, partner-specific gates, and protected business invariants.", ("audit qualification", "audit dedupe", "audit routing", "audit provenance")),
     "outreach_closer": ("Autonomously decide, authorize, and execute evidence-grounded revenue outreach actions.", ("understand prospect", "identify problem and buying signal", "select valid destination", "personalize from verified evidence", "handle objections", "choose cadence", "execute authorized outbound", "record conversion state")),
     "follow_up": ("Process only follow-up tasks explicitly authorized by the high-ticket sales closer; never originate or send revenue communication.", ("review observed engagement", "record objection or response outcomes", "prepare closer-authorized cadence state", "enforce stop states", "preserve conversation provenance")),
 }
