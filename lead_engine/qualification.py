@@ -86,6 +86,7 @@ def _verified_research_text(lead: Dict[str, Any], route: str | None = None) -> s
 
 
 def _verified_intent(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Require recent evidence from the verified research itself, including nested evidence events."""
     sections = _research_sections(lead)
     candidates = []
     for key in ("current_intent_research", "business_need_research", "route_research"):
@@ -96,14 +97,23 @@ def _verified_intent(lead: Dict[str, Any]) -> Dict[str, Any]:
             value = section.get(field)
             if isinstance(value, str) and value.strip():
                 candidates.append((field, value.strip(), section))
-    for field, value, section in candidates:
-        timestamp = None
-        for key in ("observed_at", "need_at", "current_need_at", "hiring_need_at", "inquiry_at", "inquired_at", "last_inquiry_at", "intent_at"):
-            timestamp = _recent_timestamp(section.get(key), CURRENT_NEED_DAYS)
+        evidence = section.get("evidence")
+        if isinstance(evidence, list):
+            for item in evidence:
+                if not isinstance(item, dict):
+                    continue
+                item_status = str(item.get("verification_status") or item.get("status") or "").strip().lower()
+                if item_status not in {"verified", "research_verified", "complete"}:
+                    continue
+                item_value = str(item.get("evidence") or item.get("signal") or "").strip()
+                if item_value:
+                    candidates.append(("evidence", item_value, item))
+    timestamp_keys = ("observed_at", "need_at", "current_need_at", "hiring_need_at", "inquiry_at", "inquired_at", "last_inquiry_at", "intent_at", "collected_at", "published_at")
+    for field, value, source in candidates:
+        for timestamp_key in timestamp_keys:
+            timestamp = _recent_timestamp(source.get(timestamp_key), CURRENT_NEED_DAYS if field not in {"recent_inquiry", "inquiry", "inquired"} else RECENT_INQUIRY_DAYS)
             if timestamp:
-                break
-        if timestamp:
-            return {"qualified": True, "observed_at": timestamp, "evidence": value, "source_section": field, "reason": "Recent intent is explicitly researched and verified."}
+                return {"qualified": True, "observed_at": timestamp, "evidence": value, "source_section": field, "reason": "Recent intent is explicitly researched and verified."}
     return {"qualified": False, "observed_at": None, "evidence": "", "source_section": None, "reason": "No recent intent is explicitly researched and verified."}
 
 
