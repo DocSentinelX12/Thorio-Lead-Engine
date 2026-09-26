@@ -261,6 +261,20 @@ def sync_one(
             "record"
         )
 
+        if not package_is_ready(lead):
+            return {
+                "status": "deferred_research",
+                "lead": lead,
+                "airtable_record": airtable_record,
+                "research_record": None,
+                "outreach_record": None,
+                "followup_record": None,
+                "referral_record": None,
+                "master_tracker": None,
+                "error": None,
+                "reason": "research_verification_pending",
+            }
+
         if airtable_record is None:
             raise ValueError(
                 "Lead Radar synchronization succeeded without "
@@ -640,6 +654,9 @@ def sync_pending(
             lead,
             db=db,
         )
+
+        if result["status"] == "deferred_research":
+            continue
 
         if result["status"] in {
             "created",
