@@ -29,7 +29,7 @@ class HealingExperimentManager:
 
     def __init__(self, db_path: str = ":memory:"):
         self.db_path = db_path
-        self._memory = sqlite3.connect(":memory:") if db_path == ":memory__" else None
+        self._memory = sqlite3.connect(":memory:") if db_path == ":memory:" else None
         if self._memory:
             self._memory.row_factory = sqlite3.Row
         with self._connect() as db:
@@ -339,20 +339,24 @@ class HealingExperimentManager:
             )
             return self.status(context_key=exp["context_key"])
 
+    @staticmethod
+    def _status_from_db(db, context_key: str) -> dict[str, Any]:
+        rows = db.execute(
+            "SELECT * FROM healing_strategies WHERE context_key=? ORDER BY generation,strategy",
+            (context_key,),
+        ).fetchall()
+        champion = next((dict(r) for r in rows if r["role"] == "CHAMPION" and r["state"] == "ACTIVE"), None)
+        challengers = tuple(dict(r) for r in rows if r["role"] == "CHALLENGER" and r["state"] == "ACTIVE")
+        return {
+            "context_key": context_key,
+            "champion": champion,
+            "challengers": challengers,
+            "strategies": tuple(dict(r) for r in rows),
+        }
+
     def status(self, *, context_key: str) -> dict[str, Any]:
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT * FROM healing_strategies WHERE context_key=? ORDER BY generation,strategy",
-                (context_key,),
-            ).fetchall()
-            champion = next((dict(r) for r in rows if r["role"] == "CHAMPION" and r["state"] == "ACTIVE"), None)
-            challengers = tuple(dict(r) for r in rows if r["role"] == "CHALLENGER" and r["state"] == "ACTIVE")
-            return {
-                "context_key": context_key,
-                "champion": champion,
-                "challengers": challengers,
-                "strategies": tuple(dict(r) for r in rows),
-            }
+            return self._status_from_db(db, context_key)
 
     def select(self, *, context_key: str, known_good_strategy: str | None = None) -> dict[str, Any]:
         state = self.status(context_key=context_key)
