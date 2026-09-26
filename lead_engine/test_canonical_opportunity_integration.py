@@ -57,3 +57,17 @@ def test_same_company_and_contact_can_retain_distinct_opportunity_identity():
     ).to_dict()
 
     assert first["opportunity_id"] != second["opportunity_id"]
+
+
+def test_durable_storage_rejects_cross_opportunity_identity(tmp_path):
+    import pytest
+    from .database import LeadDB
+
+    db = LeadDB(data_dir=tmp_path)
+
+    with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
+        db.insert_if_new({
+            "fingerprint": "opp-1",
+            "opportunity_id": "opp-2",
+            "company": "Acme",
+        })
