@@ -153,3 +153,22 @@ def test_batch_delivery_defers_research_required_leads_without_recording_sync_er
     state = db.get_sync_state("research-deferred-001")
     assert state["synced"] is False
     assert state["last_error"] == ""
+
+
+def test_batch_delivery_defers_incomplete_research_without_marking_sync_failure(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = _lead("batch-research-deferred-001")
+    assert db.insert_if_new(lead)
+
+    with patch("lead_engine.batch_delivery._run_batch_high_volume_sync") as mock_batch, \
+         patch("lead_engine.batch_delivery.package_is_ready", return_value=False), \
+         patch("lead_engine.batch_delivery.sync_research") as mock_research:
+        mock_batch.return_value = None
+        result = sync_pending_batched(db, limit=10)
+
+    assert result["failed_count"] == 0
+    assert result["synced_count"] == 1
+    assert result["deferred_count"] == 1
+    assert result["deferred"][0]["fingerprint"] == "batch-research-deferred-001"
+    mock_research.assert_not_called()
+    assert db.get_sync_state("batch-research-deferred-001")["synced"] is True
