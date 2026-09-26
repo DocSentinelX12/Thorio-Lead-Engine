@@ -9,6 +9,7 @@ from typing import Any
 
 from .healing_dependencies import HealingDependencyAnalyzer
 from .healing_evidence import HealingEvidenceGraph
+from .healing_prediction import PredictiveHealingIntelligence
 
 
 class HealingIntelligence:
@@ -32,6 +33,7 @@ class HealingIntelligence:
         self.graph = graph
         self.dependencies = dependencies
         self.db_path = db_path
+        self.predictor = PredictiveHealingIntelligence(graph=graph, db_path=db_path)
         self._memory = sqlite3.connect(":memory:") if db_path == ":memory:" else None
         if self._memory:
             self._memory.row_factory = sqlite3.Row
@@ -93,7 +95,9 @@ class HealingIntelligence:
         if fabric_path_id not in evidence["path_ids"]:
             raise ValueError("exact fabric path identity is absent from authoritative evidence")
         impact = self.dependencies.impact(scope_id)
-        serialized = not redundant_capacity or not standby_capacity_available
+        prediction = self.predictor.predict(scope_id=scope_id)
+        predicted_risk = float(prediction["failure_risk"] or 0.0)
+        serialized = not redundant_capacity or not standby_capacity_available or predicted_risk >= 0.75
         degraded = not redundant_capacity and not standby_capacity_available
 
         plan_id = self._id(scope_id, generation, strategy)
@@ -132,6 +136,8 @@ class HealingIntelligence:
             "standby_capacity_available": standby_capacity_available,
             "mode": mode,
             "requires_degraded_mode": degraded,
+            "prediction": prediction,
+            "counterfactual": self.predictor.counterfactual(scope_id=scope_id),
             "affected_entities": impact["affected_entities"],
             "failure_domains": impact["failure_domains"],
             "steps": steps,
