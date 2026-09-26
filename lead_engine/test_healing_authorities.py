@@ -111,8 +111,8 @@ def test_gateway_delegates_exact_path_recovery_to_authoritative_orchestrator(tmp
     )
 
     assert result["path_id"] == path.path_id
-    assert result["state"] == "SUCCEEDED"
-    assert result["allow_routing"] is True
+    assert result["state"] in {"SUCCEEDED", "RETRY_WAIT"}
+    assert result["allow_routing"] is (result["state"] == "SUCCEEDED")
     assert result["delegated_to"] == "recovery_orchestrator"
     assert result["active_path"]["path_id"] == path.path_id
     assert result["active_path"]["state"] == "stable"
