@@ -285,6 +285,17 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
         criticality=3, confidence=0.99, cascade_risk=0.05, now=31.0,
     )
     controller_a.schedule(now=31.5)
+    durable_action = next(
+        item for item in integration.inventory.active_path_recovery_actions(path_id="final-path-02")
+        if item["generation"] == 1
+    )
+    reopened_before_controller_restart = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    restored_action = next(
+        item for item in reopened_before_controller_restart.active_path_recovery_actions(path_id="final-path-02")
+        if item["action_id"] == durable_action["action_id"]
+    )
+    assert restored_action["path_id"] == "final-path-02"
+    assert restored_action["generation"] == durable_action["generation"]
 
     controller_b = ContinuousRecoveryController(
         gateway=integration.gateway, db_path=controller_db, controller_id="controller-b"
@@ -308,6 +319,16 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
         and result["allow_routing"] is True
         for result in second_results
     )
+    closed_second = integration.close_recovery(
+        path_id="final-path-02",
+        authoritative_verified=True,
+        healing_verified=True,
+        secondary_damage=False,
+        strategy="known-good-exact-path-recovery",
+        success=True,
+        evidence={"observed_at": 35.0, "experiment": "final-chaos-proof"},
+    )
+    assert closed_second["state"] == "CLOSED"
 
     # A fresh independent failure after restart proves the new controller can
     # continue concurrent recovery rather than merely reconciling old state.
@@ -326,6 +347,16 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
         and result["allow_routing"] is True
         for result in third_results
     )
+    closed_third = integration.close_recovery(
+        path_id="final-path-03",
+        authoritative_verified=True,
+        healing_verified=True,
+        secondary_damage=False,
+        strategy="known-good-exact-path-recovery",
+        success=True,
+        evidence={"observed_at": 42.0, "experiment": "final-chaos-proof"},
+    )
+    assert closed_third["state"] == "CLOSED"
 
     # Replanning after a node failure preserves workload identity and avoids the
     # failed node and failed path. The replacement path is already physically known.
