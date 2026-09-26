@@ -73,3 +73,13 @@ def test_route_research_keeps_evidence_scoped_to_supported_routes():
     assert routes["Thorio"]["evidence"]
     assert routes["Shiftr"]["evidence"]
     assert routes["Paxus"]["evidence"] == []
+
+
+def test_astrivon_specialist_evidence_enters_route_research():
+    from lead_engine.research_package import build_canonical_research_package
+    package = build_canonical_research_package(
+        {"company": "Acme"},
+        {"public_company_facts": []},
+        {"astrivon_demand_discovery": {"findings": [{"evidence": "Acme is looking for a dev agency to build an MVP."}]}}
+    )
+    assert package["route_research"]["routes"]["Astrivon Labs"]["evidence"]
