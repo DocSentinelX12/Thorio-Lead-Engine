@@ -53,6 +53,42 @@ def test_transactional_action_rejects_stale_owner(tmp_path):
         executor.execute(action_id=action["action_id"], owner="other", steps=(), now=2.0)
 
 
+def test_transactional_action_rechecks_fencing_before_next_step(tmp_path):
+    from lead_engine.healing_replication import ReplicatedHealingState
+
+    paths = tuple(str(tmp_path / f"replica-{index}.sqlite3") for index in range(3))
+    state = ReplicatedHealingState(paths)
+    first = state.acquire_leadership("worker-a", generation=1, now=1.0)
+    action = state.ensure_action(
+        scope_id="scope",
+        failure_fingerprint="f",
+        generation=1,
+        strategy="known_good",
+        controller_id="worker-a",
+        fencing_token=first["fencing_token"],
+        now=1.0,
+    )
+    state.claim_action(
+        action["action_id"], owner="worker-a", controller_id="worker-a",
+        fencing_token=first["fencing_token"], now=1.0, lease_seconds=100,
+    )
+    executor = HealingActionExecutor(state)
+    events = []
+
+    def fence_after_first_step():
+        events.append("first")
+        state.acquire_leadership("worker-b", generation=2, now=2.0)
+
+    with pytest.raises(HealingActionError, match="fenced"):
+        executor.execute(
+            action_id=action["action_id"],
+            owner="worker-a",
+            steps=(("first", fence_after_first_step), ("second", lambda: events.append("second"))),
+            now=2.0,
+        )
+    assert events == ["first"]
+
+
 def test_transactional_action_can_use_quorum_replicated_healing_state(tmp_path):
     from lead_engine.healing_replication import ReplicatedHealingState
 
