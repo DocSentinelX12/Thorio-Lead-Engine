@@ -55,17 +55,6 @@ def check_configuration(config) -> Dict[str, Any]:
             "batch_size must be greater than zero"
         )
 
-    approval_interval = getattr(
-        config,
-        "approval_poll_interval_seconds",
-        None,
-    )
-
-    if (
-        not isinstance(approval_interval, int)
-        or isinstance(approval_interval, bool)
-        or approval_interval < 1
-    ):
 
     if errors:
         return {
