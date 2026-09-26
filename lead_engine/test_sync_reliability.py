@@ -59,6 +59,12 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
     ) as mock_master_tracker, patch(
         "lead_engine.sync_worker.package_is_ready",
         return_value=True,
+    ), patch(
+        "lead_engine.sync_worker.package_digest",
+        return_value="test-digest",
+    ), patch(
+        "lead_engine.sync_worker.verify_airtable_handoff",
+        return_value=(True, "test-digest"),
     ):
 
         mock_sync.return_value = {
