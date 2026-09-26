@@ -125,16 +125,9 @@ class HealingAuthorityGateway:
         coordinator_state = self.fabric_coordinator.capacity_state()
         source_gpu = str(physical.get("source_gpu") or "").strip()
         destination_gpu = str(physical.get("destination_gpu") or "").strip()
-        alternatives = 0
-        if source_gpu and destination_gpu:
-            for candidate in self.inventory.verified_physical_paths():
-                if str(candidate.get("path_id") or "") == exact_path_id:
-                    continue
-                if str(candidate.get("source_gpu") or "") == source_gpu and str(candidate.get("destination_gpu") or "") == destination_gpu:
-                    alternatives += 1
         return {
             "path_id": exact_path_id,
-            "redundant_capacity": alternatives > 0,
+            "redundant_capacity": bool(coordinator_state["recovery_capacity_available"]),
             "standby_capacity_available": bool(coordinator_state["standby_capacity_available"]),
             "available_nodes": int(coordinator_state["available_nodes"]),
             "active_allocations": int(coordinator_state["active_allocations"]),
