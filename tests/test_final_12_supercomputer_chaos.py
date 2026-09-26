@@ -7,8 +7,6 @@ learning, closure, restart reconciliation, and concurrent recovery together.
 """
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from lead_engine.compute_inventory import ComputeInventory
