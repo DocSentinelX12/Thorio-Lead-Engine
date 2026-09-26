@@ -1,6 +1,9 @@
 name: Full Test Suite (Manual)
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       test_path:
@@ -27,8 +30,11 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Check out repository
+      - name: Check out absolute latest main
         uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v6
