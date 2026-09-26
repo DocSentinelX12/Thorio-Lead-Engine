@@ -55,7 +55,7 @@ def test_missing_exact_opportunity_is_blocked(tmp_path):
     assert reason == "missing_exact_opportunity"
 
 
-def test_exact_same_company_person_and_need_is_blocked_as_duplicate(tmp_path):
+def test_exact_same_company_person_and_need_is_not_blocked_after_verification(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     existing = _lead("existing-opportunity")
     current = _lead("current-opportunity")
@@ -64,8 +64,8 @@ def test_exact_same_company_person_and_need_is_blocked_as_duplicate(tmp_path):
     db.record_airtable_handoff(current["fingerprint"], package_digest(current), "recLead", "recResearch", ["recCompany"], "2026-09-18T00:00:00+00:00")
 
     eligible, reason = _sales_eligibility(current, _routing(), {}, db)
-    assert eligible is False
-    assert reason == "exact_duplicate"
+    assert eligible is True
+    assert reason == "eligible"
 
 
 def test_different_business_need_remains_eligible(tmp_path):
