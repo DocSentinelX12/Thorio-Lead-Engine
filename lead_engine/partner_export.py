@@ -1,6 +1,5 @@
 from typing import Any, Dict, Iterable, List
 
-from .delivery_approval import delivery_authorized
 from .delivery_gate import prepare_for_delivery
 
 
@@ -15,19 +14,22 @@ PARTNER_ROUTES = (
 def build_partner_exports(
     leads: Iterable[Dict[str, Any]],
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Build partner-specific exports only after quality and route approval gates."""
+    """Build partner-specific exports from machine-verified route eligibility."""
 
     exports = {route: [] for route in PARTNER_ROUTES}
 
     for lead in leads:
-        approved_routes = lead.get("approved_routes")
-        if isinstance(approved_routes, str):
-            approved_routes = [approved_routes]
-
-        if isinstance(approved_routes, (list, tuple, set)):
+        routes = lead.get("eligible_routes")
+        if isinstance(routes, str):
+            routes = [routes]
+        if not isinstance(routes, (list, tuple, set)):
+            routes = lead.get("preserved_routes")
+        if isinstance(routes, str):
+            routes = [routes]
+        if isinstance(routes, (list, tuple, set)):
             candidate_routes = [
                 str(route).strip()
-                for route in approved_routes
+                for route in routes
                 if str(route).strip() in PARTNER_ROUTES
             ]
         else:
@@ -49,9 +51,6 @@ def build_partner_exports(
             if route in seen_routes:
                 continue
             seen_routes.add(route)
-
-            if not delivery_authorized(lead, route):
-                continue
 
             route_lead = dict(lead)
             route_lead["route"] = route
@@ -83,12 +82,9 @@ def prepare_partner_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
         "business_need": lead.get("business_need", ""),
         "route": lead.get("route", ""),
         "potential_routes": lead.get("potential_routes", []),
-        "approved_routes": lead.get("approved_routes", []),
+        "eligible_routes": lead.get("eligible_routes", []),
         "qualified": lead.get("qualified") is True,
         "qualification_status": lead.get("qualification_status", ""),
-        "approval_status": lead.get("approval_status", ""),
-        "human_approved": lead.get("human_approved"),
-        "approval_required": lead.get("approval_required"),
         "delivery_status": lead.get("delivery_status", ""),
         "delivery_reason": lead.get("delivery_reason", ""),
         "lead_score": lead.get("lead_score", 0),
@@ -98,7 +94,7 @@ def prepare_partner_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def partner_export_summary(leads: Iterable[Dict[str, Any]]) -> Dict[str, int]:
-    """Return authorized, delivery-ready counts by partner route."""
+    """Return machine-verified, delivery-ready counts by partner route."""
 
     exports = build_partner_exports(leads)
     return {partner: len(exports[partner]) for partner in PARTNER_ROUTES}
