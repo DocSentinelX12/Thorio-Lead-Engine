@@ -44,6 +44,8 @@ def drain_pending(
         "synced_count": 0,
         "already_exists_count": 0,
         "failed_count": 0,
+        "deferred_research": [],
+        "deferred_research_count": 0,
         "batches": 0,
         "drain_complete": False,
     }
@@ -53,7 +55,7 @@ def drain_pending(
         if not isinstance(result, dict):
             raise RuntimeError("Airtable sync returned a non-object result")
 
-        for key in ("synced", "already_exists", "failed"):
+        for key in ("synced", "already_exists", "failed", "deferred_research"):
             values = result.get(key)
             if isinstance(values, list):
                 aggregate[key].extend(values)
@@ -61,12 +63,14 @@ def drain_pending(
         aggregate["synced_count"] += int(result.get("synced_count", 0) or 0)
         aggregate["already_exists_count"] += int(result.get("already_exists_count", 0) or 0)
         aggregate["failed_count"] += int(result.get("failed_count", 0) or 0)
+        aggregate["deferred_research_count"] += int(result.get("deferred_research_count", 0) or 0)
         aggregate["batches"] += 1
 
         processed = (
             int(result.get("synced_count", 0) or 0)
             + int(result.get("already_exists_count", 0) or 0)
             + int(result.get("failed_count", 0) or 0)
+            + int(result.get("deferred_research_count", 0) or 0)
         )
         if int(result.get("failed_count", 0) or 0) > 0:
             break
