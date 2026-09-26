@@ -303,7 +303,7 @@ class HealingExperimentManager:
                  exp["context_key"], exp["challenger_strategy"], "promoted",
                  json.dumps(payload, sort_keys=True, default=str), now),
             )
-            return self.status(context_key=exp["context_key"])
+            return self._status_from_db(db, exp["context_key"])
 
     def rollback(self, *, experiment_id: str, reason: str) -> dict[str, Any]:
         if not reason.strip():
@@ -337,7 +337,7 @@ class HealingExperimentManager:
                  exp["context_key"], exp["challenger_strategy"], "rollback",
                  json.dumps(payload, sort_keys=True), now),
             )
-            return self.status(context_key=exp["context_key"])
+            return self._status_from_db(db, exp["context_key"])
 
     @staticmethod
     def _status_from_db(db, context_key: str) -> dict[str, Any]:
