@@ -258,7 +258,7 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
     controller_a = ContinuousRecoveryController(
         gateway=integration.gateway, db_path=controller_db, controller_id="controller-a"
     )
-    controller_a.start(generation=1, now=21.0, lease_seconds=5.0)
+    controller_a.start(generation=1, now=21.0, lease_seconds=15.0)
     fault_injection = HealingFaultInjection(controller_a)
     assert {
         item["name"] for item in fault_injection.scenario_catalog()
