@@ -6,6 +6,7 @@ ROUTES = (
     "Shiftr",
     "Paxus",
     "Thorio",
+    "Astrivon Labs",
 )
 
 
@@ -150,6 +151,11 @@ def _has_job_role_context(text: str) -> bool:
     return bool(re.search(JOB_ROLE_CONTEXT, text, re.IGNORECASE))
 
 
+def _has_astrivon_context(text: str) -> bool:
+    patterns = (r"\\bdev agency\\b", r"\\btech partner\\b", r"\\bmvp\\b", r"\\bb2b outreach\\b", r"\\blead generation\\b", r"\\bsales automation\\b", r"\\bcomputer vision\\b", r"\\bcrm automation\\b", r"\\bseed funding\\b", r"\\bnon-technical founder\\b", r"\\bweb/mobile app\\b")
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
+
 def _has_shiftr_service_context(text: str) -> bool:
     return bool(re.search(
         r"\bneed(?:s|ed)?\b|\bwant(?:s|ed)?\b|\blooking for\b|\bseeking\b|\bneed help\b|\bhelp with\b"
@@ -179,7 +185,7 @@ def score_routes(company: str, signal: str, evidence: str) -> Dict[str, int]:
     text = _text(company, signal, evidence)
     scores = {"Shiftr": 0, "Paxus": 0, "Thorio": 0}
 
-    if not (_has_hiring_context(text) or _has_job_role_context(text) or _has_shiftr_service_context(text)):
+    if not (_has_hiring_context(text) or _has_job_role_context(text) or _has_shiftr_service_context(text) or _has_astrivon_context(text)):
         return scores
 
     scores["Shiftr"] = _matches(text, SHIFTR_RULES)
@@ -207,6 +213,8 @@ def route(company: str, signal: str, evidence: str) -> str:
         return "Paxus"
     if scores["Thorio"] > 0:
         return "Thorio"
+    if scores["Astrivon Labs"] > 0:
+        return "Astrivon Labs"
     return "Review"
 
 
