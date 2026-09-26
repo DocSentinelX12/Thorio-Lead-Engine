@@ -92,14 +92,6 @@ class LeadEngineConfig:
         if batch_size <= 0:
             batch_size = DEFAULT_BATCH_SIZE
 
-        raw_poll_interval = os.getenv(
-            "LEAD_ENGINE_APPROVAL_POLL_INTERVAL",
-            str(DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS),
-        )
-        try:
-        except (TypeError, ValueError):
-            approval_poll_interval_seconds = DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
-
         sync_enabled = os.getenv("LEAD_ENGINE_SYNC_ENABLED", "true").strip().lower() in {
             "1", "true", "yes", "on"
         }
@@ -118,7 +110,6 @@ class LeadEngineConfig:
             airtable_lead_sources_table=airtable_lead_sources_table,
             batch_size=batch_size,
             sync_enabled=sync_enabled,
-            approval_poll_interval_seconds=approval_poll_interval_seconds,
         )
 
     @property
@@ -146,8 +137,6 @@ class LeadEngineConfig:
             raise ValueError("AIRTABLE_BASE_ID must be configured.")
         if not isinstance(self.batch_size, int) or isinstance(self.batch_size, bool) or self.batch_size <= 0:
             raise ValueError("batch_size must be an integer greater than zero.")
-        if not isinstance(self.approval_poll_interval_seconds, int) or isinstance(self.approval_poll_interval_seconds, bool) or self.approval_poll_interval_seconds < 1:
-            raise ValueError("approval_poll_interval_seconds must be at least 1.")
         if not isinstance(self.sync_enabled, bool):
             raise ValueError("sync_enabled must be a boolean.")
 
@@ -172,5 +161,4 @@ class LeadEngineConfig:
             "airtable_tables": self.airtable_tables,
             "batch_size": self.batch_size,
             "sync_enabled": self.sync_enabled,
-            "approval_poll_interval_seconds": self.approval_poll_interval_seconds,
         }
