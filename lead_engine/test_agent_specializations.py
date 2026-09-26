@@ -29,3 +29,10 @@ def test_unknown_agent_cannot_receive_a_specialization():
         assert "No professional specialization" in str(exc)
     else:
         raise AssertionError("Unknown agents must not receive an implicit specialization")
+
+
+def test_astrivon_discovery_specialist_is_registered_for_execution():
+    from lead_engine.advanced_agent_logic import advanced_handler_registry
+    from lead_engine.agent_specializations import get_specialization
+    assert get_specialization("astrivon_demand_discovery").agent == "astrivon_demand_discovery"
+    assert "astrivon_demand_discovery" in advanced_handler_registry()
