@@ -71,6 +71,9 @@ def _research_payload(lead: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Research synchronization requires a canonical opportunity identity (fingerprint or opportunity_id).")
     validate_opportunity_identity(dict(lead))
     fingerprint = fingerprint or _text(lead.get("opportunity_id"))
+    intelligence = lead.get("research_intelligence")
+    if isinstance(intelligence, dict):
+        validate_research_intelligence(intelligence, opportunity_id=fingerprint)
     if not company:
         raise ValueError("Research synchronization requires a company.")
 
