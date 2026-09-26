@@ -103,7 +103,7 @@ def _measurement(
         "remote_worker_id": f"remote:{path_id}",
         "remote_endpoint": f"endpoint:{path_id}",
         "gpu_uuid": gpu_uuid or f"{path_id}:gpu",
-        "rdma_device": rdma_device or f"rdma:{path_id}",
+        "rdma_device": rdma_device or path_id,
         "rdma_port": 1,
         "bandwidth_gbps": bandwidth,
         "observed_at": observed_at,
@@ -157,7 +157,7 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         integration.inventory.record_active_gdrdma_measurement(
             path_id=path_id,
             measurement=_measurement(
-                path_id, 11.0, gpu_uuid=source_gpu, rdma_device=f"rdma:{path_id}:1"
+                path_id, 11.0, gpu_uuid=source_gpu, rdma_device=path_id
             ),
         )
         paths[path_id] = path
@@ -182,7 +182,7 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         measurement=_measurement(
             replacement.path_id, 13.0,
             gpu_uuid=gpu_identities[1][0],
-            rdma_device="rdma:final-replacement-00:1",
+            rdma_device="final-replacement-00",
         ),
     )
     paths[replacement.path_id] = replacement
@@ -494,7 +494,7 @@ def test_final_proof_rejects_stale_recovery_and_preserves_authoritative_gates(tm
         action_id=action["action_id"],
         owner="stale-proof",
         physical_evidence=tuple({"segment": segment, "result": "pass"} for segment in paths["final-path-04"].segments),
-        active_measurement=_measurement("final-path-04", 53.0),
+        active_measurement=_measurement("final-path-04", 53.0, gpu_uuid=paths["final-path-04"].source_gpu, rdma_device="final-path-04"),
         observed_at=53.0,
         now=53.0,
     )
