@@ -9,6 +9,7 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
     now = datetime.now(timezone.utc).isoformat()
     return {
         "fingerprint": fingerprint,
+        "opportunity_id": fingerprint,
         "company": "Acme",
         "person": "Taylor",
         "business_need": business_need,
@@ -19,6 +20,7 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
         "preserved_routes": ["Thorio"],
         "routing_result": {"destinations": ["Thorio"], "review_required": False},
         "need_at": now,
+        "research_intelligence": {"intelligence_version": "1", "opportunity_id": fingerprint, "fingerprint": fingerprint, "claims": [], "evidence_graph": {"nodes": {}}},
         "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
@@ -33,11 +35,11 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
             "observed_at": now,
             "evidence_url": "https://example.com/need",
         },
-        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": business_need, "evidence": ["https://example.com/need"]},
-        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/hiring"]},
-        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
+        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": business_need, "evidence": [{"url": "https://example.com/need", "evidence": business_need}]},
+        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/hiring", "evidence": "Technical hiring need"}]},
+        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/commercial", "evidence": "Commercial context"}]},
         "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "current need"}}},
-        "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
+        "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": business_need}]},
         "research_status": "complete",
     }
 
