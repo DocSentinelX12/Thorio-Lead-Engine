@@ -90,7 +90,7 @@ class AstrivonReferral:
             and self.current_need.strip()
             and self.verified_evidence.strip()
             and self.human_approved
-            and self.status == "qualified"
+            and self.status in {"qualified", "referred"}
         )
 
     def meeting_payload(self) -> dict[str, Any]:
