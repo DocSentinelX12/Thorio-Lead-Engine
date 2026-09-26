@@ -87,4 +87,6 @@ def test_delivery_counts_empty():
         "Shiftr": 0,
         "Paxus": 0,
         "Thorio": 0,
+        "Astrivon Labs": 0,
+        "Review": 0,
     }
