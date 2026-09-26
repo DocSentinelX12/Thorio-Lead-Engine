@@ -41,4 +41,6 @@ def test_astrivon_qualifies_from_verified_need_and_route_research():
     astrivon = result["companies"]["Astrivon Labs"]
 
     assert astrivon["qualified"] is True
+    assert astrivon["service_fit_verified"] is True
+    assert "End-to-End Product Development" in astrivon["service_fit"]
     assert "Astrivon Labs" in result["qualified_companies"]
