@@ -11,7 +11,7 @@ from .lead_identity import validate_opportunity_identity
 
 _RESEARCH_FIELD_MAP = {
     "Company Research": "company_research",
-    "Decision Maker Research": "decision_maker_research",
+    "Decision Maker Research": "decision_maker_research",\n    "Research Intelligence": "research_intelligence",
     "Business Need Research": "business_need_research",
     "Current Intent Research": "current_intent_research",
     "Technical Product Hiring Research": "technical_product_hiring_research",
@@ -23,7 +23,7 @@ _RESEARCH_FIELD_MAP = {
 }
 
 _RAW_RESEARCH_KEYS = {
-    "company_research", "decision_maker_research", "business_need_research", "current_intent_research",
+    "company_research", "decision_maker_research", "research_intelligence", "business_need_research", "current_intent_research",
     "technical_product_hiring_research", "commercial_research", "route_research", "closer_package",
     "research_gaps", "research_status", "research_verified_fields", "research_sources", "research_timestamp",
     "research_completed_at", "evidence_events",
