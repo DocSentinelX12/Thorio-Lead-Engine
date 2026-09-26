@@ -21,6 +21,7 @@ DISCOVERY_TARGETS = {
     "product_design_demand_discovery": ("product manager", "product", "ux", "ui", "design", "designer", "user experience"),
     "contract_team_demand_discovery": ("contract", "contractor", "staff augmentation", "outsourc", "dedicated team", "development team", "agency", "freelance"),
     "recent_inquiry_discovery": ("looking for", "need a", "need an", "seeking", "any recommendations", "can anyone recommend", "hiring", "we are hiring", "we're hiring", "urgent", "immediately"),
+    "astrivon_demand_discovery": ("dev agency", "tech partner", "mvp", "b2b outreach", "b2b sales", "lead generation", "sales automation", "ai/ml", "computer vision", "business workflow", "crm automation", "full-stack software engineer", "web/mobile app", "seed funding", "non-technical founder", "outsource sales pipeline", "reduce in-house dev costs", "reduce in-house sales costs"),
 }
 
 SOCIAL_TARGETS = {
