@@ -174,3 +174,29 @@ def test_reconciliation_never_rolls_back_a_higher_committed_index(tmp_path):
     result = state.reconcile()
     assert result["commit_index"] == 2
     assert all(replica["commit_index"] == 2 for replica in result["replicas"])
+
+
+def test_replicated_projection_survives_restart_and_quorum_loss(tmp_path):
+    paths = _paths(tmp_path)
+    state = ReplicatedHealingState(paths)
+    leader = state.acquire_leadership("controller-a", generation=1, now=10.0)
+    state.record_projection(
+        name="control-plane",
+        value={"state": "ACTIVE", "generation": 1},
+        controller_id="controller-a",
+        fencing_token=leader["fencing_token"],
+        now=11.0,
+    )
+    restored = ReplicatedHealingState(paths)
+    assert restored.projection("control-plane")["value"]["state"] == "ACTIVE"
+
+    restored.set_replica_available(0, False)
+    restored.set_replica_available(1, False)
+    with pytest.raises(HealingReplicationError, match="quorum"):
+        restored.record_projection(
+            name="control-plane",
+            value={"state": "FENCED_PENDING_RECONCILIATION"},
+            controller_id="controller-a",
+            fencing_token=leader["fencing_token"],
+            now=12.0,
+        )
