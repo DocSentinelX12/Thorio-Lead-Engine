@@ -80,9 +80,12 @@ class FabricCoordinator:
             rows = db.execute("SELECT node_id FROM nodes WHERE state='available' ORDER BY node_id").fetchall()
             occupied = {str(r["node_id"]) for r in db.execute("SELECT node_id FROM allocations WHERE state='active'").fetchall()}
             protected = tuple(str(r["node_id"]) for r in rows if str(r["node_id"]) not in occupied)[: self.standby_capacity]
+        free_capacity = available_nodes - active_allocations
         return {
             "available_nodes": available_nodes,
             "active_allocations": active_allocations,
+            "free_capacity": free_capacity,
+            "recovery_capacity_available": free_capacity > self.standby_capacity,
             "standby_capacity_available": len(protected) >= self.standby_capacity if self.standby_capacity else True,
             "protected_standby_nodes": protected,
         }
