@@ -76,3 +76,9 @@ def test_delivery_counts():
     leads[2]["evidence"] = "Acme needs contractors for a technology project."
     counts = delivery_counts(leads)
     assert counts == {"Shiftr": 2, "Paxus": 1, "Thorio": 1, "Astrivon Labs": 0, "Review": 1}
+
+
+def test_astrivon_lead_is_deliverable():
+    lead = make_lead("Astrivon Labs", "Looking for a dev agency")
+    lead["evidence"] = "Acme needs an MVP built for its startup."
+    assert deliverable_partner(lead) == "Astrivon Labs"
