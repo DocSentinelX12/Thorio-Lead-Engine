@@ -31,6 +31,16 @@ PARTNER_ROUTES = {
             "consulting",
         ),
     },
+    "Astrivon Labs": {
+        "required_signal_terms": (
+            "dev agency", "tech partner", "mvp", "b2b outreach", "b2b sales",
+            "lead generation", "sales automation", "ai/ml", "computer vision",
+            "business workflow", "crm", "full-stack software engineer",
+            "scaling my web/mobile app", "seed funding", "non-technical founder",
+            "outsource sales pipeline", "reduce in-house dev costs",
+            "reduce in-house sales costs",
+        ),
+    },
     "Thorio": {
         "required_signal_terms": (
             "remote",
