@@ -46,9 +46,9 @@ def _has_job_role_context(text: str) -> bool:
 
 def _has_astrivon_context(text: str) -> bool:
     patterns = (
-        r"\bdev agency\b", r"\btech partner\b", r"\bmvp\b", r"\bb2b outreach\b",
-        r"\bb2b sales\b", r"\blead generation\b", r"\bsales automation\b",
-        r"\bcomputer vision\b", r"\bcrm automation\b", r"\bautomate business workflow\b",
+        r"\bdev agency\b", r"\btech partner\b", r"\bmvp\b", r"\bai/ml\b", r"\bai developer\b", r"\bmachine learning\b", r"\bfull[- ]stack software engineer\b", r"\bscaling my web/mobile app\b", r"\bneed help scaling\b", r"\bb2b outreach\b",
+        r"\bb2b sales\b", r"\blead generation\b", r"\blead generation specialist\b", r"\bsales representative\b", r"\bsales automation\b", r"\bsales automation expert\b",
+        r"\bcomputer vision\b", r"\bcrm\b", r"\bcrm automation\b", r"\bautomate business workflow\b",
         r"\bseed funding\b", r"\braised seed funding\b", r"\bnon-technical founder\b",
         r"\bweb/mobile app\b", r"\bsoftware development\b", r"\bproduct development\b",
         r"\boutsource sales pipeline\b", r"\breduce in-house dev costs\b", r"\breduce in-house sales costs\b",
