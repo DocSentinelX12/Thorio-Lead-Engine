@@ -150,17 +150,33 @@ class HealingAuthorityGateway:
                 observed_at=float(latest["observed_at"]),
                 payload=dict(intelligence),
             )
+        if latest.get("observed_at") is not None:
+            self.evidence_graph.record_relationship(
+                scope_id=exact_path_id, source_type="active_path", source_id=exact_path_id,
+                relation="observes", target_type="fabric_path", target_id=exact_path_id,
+                source_authority="active_path_intelligence", generation=1, confidence=1.0,
+                observed_at=float(latest["observed_at"]), payload={"fabric_path_id": exact_path_id},
+            )
         for action in recovery_actions:
             action_observed_at = float(action.get("updated_at") or action.get("created_at") or 0.0)
+            action_id = str(action["action_id"])
+            action_generation = int(action.get("generation") or 1)
             self.evidence_graph.record_observation(
                 scope_id=exact_path_id,
                 entity_type="recovery_action",
-                entity_id=str(action["action_id"]),
+                entity_id=action_id,
                 source_authority="recovery_orchestrator",
-                generation=int(action.get("generation") or 1),
+                generation=action_generation,
                 confidence=1.0,
                 observed_at=action_observed_at,
                 payload=dict(action),
+            )
+            self.evidence_graph.record_relationship(
+                scope_id=exact_path_id, source_type="recovery_action", source_id=action_id,
+                relation="recovers", target_type="fabric_path", target_id=exact_path_id,
+                source_authority="recovery_orchestrator", generation=action_generation,
+                confidence=1.0, observed_at=action_observed_at,
+                payload={"fabric_path_id": exact_path_id},
             )
         return {
             "path_id": exact_path_id,
