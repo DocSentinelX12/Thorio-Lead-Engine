@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 from .delivery_gate import evaluate_delivery_gate
 
 
-PARTNER_ROUTES = ("Shiftr", "Paxus", "Thorio")
+PARTNER_ROUTES = ("Shiftr", "Paxus", "Thorio", "Astrivon Labs")
 
 
 def deliverable_partner(lead: Dict[str, Any]) -> str:
