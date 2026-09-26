@@ -71,3 +71,36 @@ def test_no_response_advances_cadence_and_exhausts():
 
 def test_objection_handler_stops_on_opt_out_language(): assert "not follow up" in objection_response("Please stop and remove me", "Thorio").lower()
 def test_objection_handler_does_not_make_unsupported_price_claims(): assert "assumptions" in objection_response("That sounds too expensive", "Shiftr").lower()
+
+
+def test_astrivon_outreach_requests_introductory_meeting():
+    lead = lead(
+        potential_routes=["Astrivon Labs"],
+        qualification_results={
+            "Astrivon Labs": {
+                "qualified": True,
+                "route_research": {
+                    "verified": True,
+                    "evidence": "Verified Astrivon route need.",
+                },
+            }
+        },
+    )
+    lead["research_status"] = "complete"
+    lead["research_verified_fields"] = [
+        "current_intent_research",
+        "business_need_research",
+    ]
+    lead["current_intent_research"] = {
+        "verified": True,
+        "current_need": "Looking for a dev agency",
+        "evidence_url": "https://example.com/need",
+    }
+    lead["business_need_research"] = {
+        "verified": True,
+        "business_need": "Need an MVP built",
+        "evidence_url": "https://example.com/mvp",
+    }
+    decision = build_outreach_decision(lead)
+    assert decision.route == "Astrivon Labs"
+    assert "introductory meeting" in decision.body
