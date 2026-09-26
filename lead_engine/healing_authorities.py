@@ -240,15 +240,16 @@ class HealingIntegrationFabric:
         learning: HealingLearning,
         closure: HealingClosureValidator,
     ) -> None:
-        self.gateway = HealingAuthorityGateway(
-            inventory=inventory,
-            recovery_orchestrator=recovery_orchestrator,
-        )
         self.inventory = inventory
         self.recovery_orchestrator = recovery_orchestrator
         self.fabric_coordinator = fabric_coordinator
         if getattr(self.fabric_coordinator, "physical_path_authority", None) is None:
             self.fabric_coordinator.bind_physical_path_authority(inventory)
+        self.gateway = HealingAuthorityGateway(
+            inventory=inventory,
+            recovery_orchestrator=recovery_orchestrator,
+            fabric_coordinator=fabric_coordinator,
+        )
         self.workload_recovery = workload_recovery
         self.control_plane = control_plane
         self.learning = learning
