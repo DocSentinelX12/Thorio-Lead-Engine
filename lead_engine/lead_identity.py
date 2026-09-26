@@ -39,7 +39,7 @@ def canonical_opportunity_identity(lead: Dict[str, Any]) -> Dict[str, Any]:
         "opportunity_id": fingerprint,
         "fingerprint": fingerprint,
         "identity_version": CANONICAL_IDENTITY_VERSION,
-        "derivation": derivation,
+        "identity_derivation": derivation,
     }
 
 
