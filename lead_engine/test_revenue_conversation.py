@@ -17,10 +17,11 @@ def _lead(fingerprint="conversation-test"):
     now = datetime.now(timezone.utc).isoformat()
     return {"fingerprint": fingerprint, "company": "Acme", "contact_email": "taylor@example.com", "signal": "Acme needs a remote engineering team", "business_need": "remote engineering team", "qualified": True, "potential_routes": ["Shiftr", "Paxus"], "preserved_routes": ["Shiftr", "Paxus"], "eligible_routes": ["Shiftr", "Paxus"], "research_status": "complete", "research_verified_fields": ["current_intent_research", "route_research"], "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_email": "taylor@example.com", "decision_maker_verification_status": "verified", "company_verification_evidence": ["https://example.com/company"]}, "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote engineering team", "observed_at": now, "evidence_url": "https://example.com/need"}, "route_research": {"verified": True, "verification_status": "verified", "routes": {"Shiftr": {"verified": True, "verification_status": "verified", "evidence": "Acme needs a remote engineering team."}, "Paxus": {"verified": True, "verification_status": "verified", "evidence": "Acme has a current technology staffing need."}}}, "qualification_results": {"Shiftr": {"qualified": True, "route_research": {"verified": True, "evidence": "Acme needs a remote engineering team."}}, "Paxus": {"qualified": True, "true_referral": True, "route_research": {"verified": True, "evidence": "Acme has a current technology staffing need."}}}, "outreach_route": "Shiftr", "outreach_state": "awaiting_response", "outreach_attempt": 1, "outreach_history": [{"action_id": "a1"}], "conversation_id": f"conversation:{fingerprint}:shiftr"}
 
-def test_follow_up_cannot_be_queued_without_closer_authorization(tmp_path):
-    db = LeadDB(data_dir=tmp_path); lead = _lead("authorization-test"); db.insert_if_new(lead)
-    with pytest.raises(ValueError, match="high_ticket_sales_closer"): enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True})
-    assert pending(db, "follow_up") == []
+def test_follow_up_queue_is_not_blocked_by_human_authorization(tmp_path):
+    db = LeadDB(data_dir=tmp_path); lead = _lead("autonomous-follow-up-test"); db.insert_if_new(lead)
+    task = enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True})
+    assert task["agent"] == "follow_up"
+    assert pending(db, "follow_up")
 
 def test_inbound_response_is_durable_and_idempotent(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead(); db.insert_if_new(lead)
