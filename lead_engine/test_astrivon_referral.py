@@ -25,19 +25,22 @@ def _referral(**overrides):
     return AstrivonReferral(**values)
 
 
-def test_astrivon_requires_human_approval_before_meeting_setup():
+def test_astrivon_meeting_setup_does_not_require_human_approval():
     referral = _referral(human_approved=False)
-    with pytest.raises(AstrivonReferralError, match="human-approved"):
-        referral.meeting_payload()
+    payload = referral.meeting_payload()
+    assert payload["partner"] == "Astrivon Labs"
+    assert payload["execution_owner"] == "Astrivon Labs"
 
 
-def test_astrivon_introduction_requires_real_referral_id():
-    with pytest.raises(AstrivonReferralError, match="real referral ID"):
-        _referral().mark_introduced(referral_id="")
+def test_astrivon_introduction_does_not_require_partner_referral_id():
+    introduced = _referral(human_approved=False).mark_introduced()
+    assert introduced.status == "introduced"
+    assert introduced.referral_id is None
+    assert introduced.introduced_at
 
 
 def test_astrivon_payment_is_20_percent_of_received_revenue():
-    referral = _referral().mark_introduced(referral_id="astr-001").confirm_partner()
+    referral = _referral().mark_introduced().confirm_partner(referral_id="astr-001")
     referral = referral.record_client_payment(
         event_id="payment-001",
         revenue_amount="1250.00",
@@ -112,9 +115,9 @@ def test_astrivon_lifecycle_supports_referred_introduced_active_closed_and_ended
         verified_evidence="https://example.com/need",
         human_approved=True,
     )
-    referred = referral.mark_referred(referral_id="astr-1")
-    introduced = referred.mark_introduced(referral_id="astr-1", introduced_at="2026-09-26T00:00:00+00:00")
-    active = introduced.confirm_partner()
+    referred = referral.mark_referred()
+    introduced = referred.mark_introduced(introduced_at="2026-09-26T00:00:00+00:00")
+    active = introduced.confirm_partner(referral_id="astr-1")
     closed = active.mark_closed()
     ended = closed.mark_ended()
     assert referred.status == "referred"
