@@ -124,7 +124,9 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
                 research_section=section_name,
             )
     merged = dict(lead); merged["company_research"] = merged_research; merged["evidence_events"] = merged_events; merged.update(canonical)
+    merged["research_intelligence"] = build_research_intelligence(merged)
     merged, readiness = finalize_research_readiness(merged)
+    merged["research_intelligence"] = build_research_intelligence(merged)
     stored = _persist_lead(ctx.db, merged)
     research = stored.get("company_research") if isinstance(stored.get("company_research"), Mapping) else {}
     specialist = stored.get("specialist_findings") if isinstance(stored.get("specialist_findings"), Mapping) else {}
