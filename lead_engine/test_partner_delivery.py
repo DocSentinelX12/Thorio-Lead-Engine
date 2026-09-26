@@ -32,6 +32,12 @@ def test_thorio_lead_is_deliverable():
     assert deliverable_partner(make_lead("Thorio")) == "Thorio"
 
 
+def test_astrivon_lead_is_deliverable():
+    lead = make_lead("Astrivon Labs", "Looking for a dev agency")
+    lead["evidence"] = "Startup needs an MVP built for its new platform."
+    assert deliverable_partner(lead) == "Astrivon Labs"
+
+
 def test_review_lead_has_no_partner():
     assert deliverable_partner(make_lead("Review")) == ""
 
