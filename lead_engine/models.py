@@ -46,6 +46,7 @@ class Lead:
     # businesses. The legacy fields remain for backward compatibility.
     qualification_results: Dict[str, Any] = None
     research_status: str = "not_started"
+    research_intelligence: Dict[str, Any] = None
 
     status: str = "Unverified"
     evidence: str = ""
@@ -100,6 +101,8 @@ class Lead:
             self.qualification_results = {}
         if self.evidence_events is None:
             self.evidence_events = []
+        if self.research_intelligence is None:
+            self.research_intelligence = {}
         if self.identity_derivation is None:
             self.identity_derivation = {}
 
