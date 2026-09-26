@@ -109,7 +109,7 @@ def validate_provenance_collection(
     if not isinstance(events, list):
         return []
     normalized: list[Dict[str, Any]] = []
-    seen: set[str] = set()
+    positions: dict[str, int] = {}
     for event in events:
         item = normalize_evidence_event(
             event,
@@ -118,8 +118,16 @@ def validate_provenance_collection(
             route=route,
         )
         key = item["canonical_evidence_key"]
-        if key in seen:
+        existing_index = positions.get(key)
+        if existing_index is None:
+            positions[key] = len(normalized)
+            normalized.append(item)
             continue
-        seen.add(key)
-        normalized.append(item)
+        existing = normalized[existing_index]
+        existing_status = _text(existing.get("verification_status")).lower()
+        incoming_status = _text(item.get("verification_status")).lower()
+        if incoming_status in VERIFIED_STATUSES and existing_status not in VERIFIED_STATUSES:
+            merged = dict(existing)
+            merged.update(item)
+            normalized[existing_index] = merged
     return normalized
