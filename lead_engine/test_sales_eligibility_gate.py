@@ -1,14 +1,16 @@
 from lead_engine.active_processing import _sales_eligibility
 from lead_engine.database import LeadDB
+from lead_engine.research_intelligence import build_research_intelligence
 from lead_engine.sales_handoff import package_digest
 
 
 def _lead(qualified=True):
-    return {
+    lead = {
         "fingerprint": "sales-gate-test",
         "opportunity_id": "sales-gate-test",
         "company": "Acme",
         "person": "Alex CTO",
+        "contact_email": "alex@example.com",
         "business_need": "remote software engineer hiring",
         "qualified": qualified,
         "potential_routes": ["thorio"],
@@ -16,28 +18,17 @@ def _lead(qualified=True):
         "preserved_routes": ["thorio"],
         "routing_result": {"destinations": ["thorio"], "review_required": False},
         "research_status": "complete",
-        "research_intelligence": {"intelligence_version": "1", "opportunity_id": "sales-gate-test", "fingerprint": "sales-gate-test", "claims": [], "evidence_graph": {"nodes": {}}},
-        "current_intent_research": {
-            "verified": True,
-            "verification_status": "verified",
-            "current_need": "remote software engineer hiring",
-            "observed_at": "2026-09-14T00:00:00+00:00",
-            "evidence_url": "https://example.com/need",
-        },
-        "company_research": {
-            "company_verified": True,
-            "decision_maker": "Alex CTO",
-            "decision_maker_evidence": "company leadership page",
-            "decision_maker_verification_status": "verified",
-            "decision_maker_email": "alex@example.com",
-        },
-        "decision_maker_research": {"verified": True, "verification_status": "verified", "evidence": ["company leadership page"]},
-        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": "remote software engineer hiring", "evidence": ["https://example.com/need"]},
-        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/hiring"]},
-        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
-        "route_research": {"verified": True, "verification_status": "verified", "routes": {"thorio": {"verified": True, "verification_status": "verified", "evidence": "current need"}}},
-        "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote software engineer hiring", "observed_at": "2026-09-26T00:00:00+00:00", "evidence": [{"url": "https://example.com/need", "evidence": "Acme has current engineering hiring intent", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "company_research": {"company_verified": True, "decision_maker": "Alex CTO", "decision_maker_evidence": "https://example.com/alex", "decision_maker_verification_status": "verified", "decision_maker_email": "alex@example.com", "public_company_facts": [{"url": "https://example.com/company", "evidence": "Acme company profile", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "decision_maker_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/alex", "evidence": "Alex is an Acme decision maker", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": "remote software engineer hiring", "evidence": [{"url": "https://example.com/need", "evidence": "Acme needs remote software engineering capacity", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/hiring", "evidence": "Acme is hiring software engineers", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/commercial", "evidence": "Acme has relevant commercial context", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"thorio": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/route", "evidence": "Current remote software engineering need", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]}}},
+        "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Current engineering need", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
     }
+    lead["research_intelligence"] = build_research_intelligence(lead)
+    return lead
 
 
 def _routing():
