@@ -169,15 +169,11 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
     if str(research.get("decision_maker_verification_status") or "").strip().lower() != "verified": return False, "decision_maker_not_verified"
     if not str(lead.get("contact_email") or research.get("decision_maker_email") or "").strip(): return False, "missing_contact_email"
     if db is None:
-        return False, "airtable_handoff_required"
+        return False, "runtime_database_required"
     if not package_is_ready(lead):
         return False, "research_package_not_ready"
-    digest = package_digest(lead)
-    handoff = db.get_airtable_handoff(str(lead.get("fingerprint") or ""))
-    if not isinstance(handoff, Mapping):
-        return False, "airtable_handoff_required"
-    if str(handoff.get("package_digest") or "").strip() != digest:
-        return False, "airtable_handoff_stale"
+    # Airtable is an asynchronous operational record and audit sink. It must
+    # never become a human approval or timing gate for revenue outreach.
     return True, "eligible"
 
 
