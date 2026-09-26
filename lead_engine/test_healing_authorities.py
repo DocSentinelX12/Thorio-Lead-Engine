@@ -77,7 +77,7 @@ def test_gateway_binds_exact_physical_active_and_recovery_authorities(tmp_path):
 def test_gateway_never_synthesizes_unknown_path(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     orchestrator = RecoveryOrchestrator(inventory)
-    gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator)
+    gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator, fabric_coordinator=FabricCoordinator(str(tmp_path / "coord.sqlite3")))
 
     with pytest.raises(HealingAuthorityError, match="unknown physical fabric path"):
         gateway.path("path-that-does-not-exist")
@@ -89,7 +89,7 @@ def test_gateway_delegates_exact_path_recovery_to_authoritative_orchestrator(tmp
         path_id="path-recover",
         source_gpu="gpu:path-recover:a",
         destination_gpu="gpu:path-recover:b",
-        segments=("gpu:path-recover:a", "rdma:path-recover:1"),
+        segments=("gpu:path-recover:a", "rdma:path-recover:source:1", "rdma:path-recover:remote:1", "gpu:path-recover:b"),
         fabric_domains=("domain:path-recover",),
         state=FabricPathState.DEGRADED,
     )
@@ -102,7 +102,7 @@ def test_gateway_delegates_exact_path_recovery_to_authoritative_orchestrator(tmp
     )
     inventory.fail_physical_path(path.path_id, reason="link failure", observed_at=3.0)
     orchestrator = RecoveryOrchestrator(inventory)
-    gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator)
+    gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator, fabric_coordinator=FabricCoordinator(str(tmp_path / "coord.sqlite3")))
     orchestrator.discover(now=20.0)
 
     result = gateway.recover_path(
