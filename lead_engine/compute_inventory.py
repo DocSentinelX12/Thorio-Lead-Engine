@@ -1189,7 +1189,7 @@ class ComputeInventory:
                 )
             else:
                 cancelled = self.update_active_path_recovery_action(
-                    action_id=claimed["action_id"], owner=owner, state="CANCELLED",
+                    action_id=claimed["action_id"], owner=owner, state="CANCELLED", now=timestamp,
                     error="recovery trigger cleared before execution",
                 )
                 return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": cancelled["state"], "allow_routing": False}
