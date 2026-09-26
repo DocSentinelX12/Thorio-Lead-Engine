@@ -9,8 +9,10 @@ from lead_engine.production_research_gate import ProductionResearchGateError, va
 def _complete_lead(fingerprint: str = "complete-1") -> dict:
     return {
         "fingerprint": fingerprint,
+        "opportunity_id": fingerprint,
         "company": "Acme",
         "research_status": "complete",
+        "research_intelligence": {"intelligence_version": "1", "opportunity_id": fingerprint, "fingerprint": fingerprint, "claims": [], "evidence_graph": {"nodes": {}}},
         "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
