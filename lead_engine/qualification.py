@@ -65,23 +65,22 @@ def _verified_research_text(lead: Dict[str, Any], route: str | None = None) -> s
     sections = _research_sections(lead)
     verified_parts: list[str] = []
     for key, section in sections.items():
+        if key == "route_research":
+            routes = section.get("routes")
+            if isinstance(routes, dict) and route:
+                route_item = routes.get(route)
+                if isinstance(route_item, dict) and _section_verified(route_item):
+                    for field in ("evidence", "business_need", "current_need", "need", "service_need", "requirement", "role", "description", "intent"):
+                        value = route_item.get(field)
+                        if isinstance(value, str) and value.strip():
+                            verified_parts.append(value.strip())
+                continue
         if not _section_verified(section):
             continue
         for field in ("business_need", "current_need", "recent_inquiry", "need", "service_need", "requirement", "role", "description", "intent"):
             value = section.get(field)
             if isinstance(value, str) and value.strip():
                 verified_parts.append(value.strip())
-        if key == "route_research":
-            routes = section.get("routes")
-            if isinstance(routes, dict):
-                route_items = [(route, routes.get(route))] if route else []
-                for route_name, route_item in route_items:
-                    if not isinstance(route_item, dict) or not _section_verified(route_item):
-                        continue
-                    for field in ("evidence", "business_need", "current_need", "need", "service_need", "requirement", "description"):
-                        value = route_item.get(field)
-                        if isinstance(value, str) and value.strip():
-                            verified_parts.append(value.strip())
     return " ".join(verified_parts)
 
 
@@ -120,7 +119,7 @@ def _verified_intent(lead: Dict[str, Any]) -> Dict[str, Any]:
 def _route_research(lead: Dict[str, Any], route: str) -> Dict[str, Any]:
     sections = _research_sections(lead)
     section = sections.get("route_research")
-    if not section or not _section_verified(section):
+    if not section:
         return {"verified": False, "evidence": "", "reason": f"{route} route research is not explicitly verified."}
     routes = section.get("routes")
     route_item = routes.get(route) if isinstance(routes, dict) else section.get(route)
