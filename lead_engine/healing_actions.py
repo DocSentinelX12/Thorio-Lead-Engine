@@ -34,6 +34,7 @@ class HealingActionExecutor:
         compensations: Sequence[tuple[str, Callable[[], Any]]] = (),
         now: float | None = None,
     ) -> dict[str, Any]:
+        fencing_token: int | None = None
         try:
             current = self.state.action(action_id)
             if current.get("owner") != owner:
