@@ -156,6 +156,32 @@ def _explicitly_verified(value: Any) -> bool:
     return str(value.get("verification_status") or value.get("status") or "").strip().lower() in {"verified", "research_verified", "complete"}
 
 
+def _research_intelligence_ready(lead: Mapping[str, Any]) -> bool:
+    intelligence = lead.get("research_intelligence")
+    if not isinstance(intelligence, Mapping) or not intelligence:
+        return False
+    opportunity_id = str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip()
+    if not opportunity_id:
+        return False
+    try:
+        validate_research_intelligence(intelligence, opportunity_id=opportunity_id)
+    except ValueError:
+        return False
+    graph = intelligence.get("evidence_graph")
+    claims = intelligence.get("claims")
+    if not isinstance(graph, Mapping) or not isinstance(graph.get("nodes"), Mapping) or not graph["nodes"]:
+        return False
+    if not isinstance(claims, list) or not claims:
+        return False
+    for profile_name in ("company", "need", "decision_maker", "commercial", "stakeholders"):
+        profile = intelligence.get(profile_name)
+        if not isinstance(profile, Mapping):
+            return False
+        if profile_name != "commercial" and not isinstance(profile.get("known"), Mapping):
+            return False
+    return True
+
+
 def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
     """Return the single canonical readiness decision for completed research and closer handoff."""
     missing_sections = [
@@ -174,7 +200,8 @@ def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
     closer = lead.get("closer_package")
     closer_evidence = isinstance(closer, Mapping) and bool(closer.get("evidence"))
     closer_package_ready = isinstance(closer, Mapping) and closer.get("ready") is True
-    ready = not missing_sections and company_verified and decision_maker_verified and closer_evidence
+    intelligence_ready = _research_intelligence_ready(lead)
+    ready = not missing_sections and company_verified and decision_maker_verified and closer_evidence and intelligence_ready
     blockers = list(missing_sections)
     if not company_verified:
         blockers.append("company_verification")
@@ -184,6 +211,8 @@ def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
         blockers.append("closer_package_evidence")
     if not closer_package_ready:
         blockers.append("closer_package_not_ready")
+    if not intelligence_ready:
+        blockers.append("research_intelligence")
     return {
         "ready": ready,
         "missing_sections": missing_sections,
