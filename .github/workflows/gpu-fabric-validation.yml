@@ -74,7 +74,16 @@ jobs:
 
       - name: Run replicated healing state tests
         run: |
-          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_replication.py
+          mkdir -p artifacts
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_replication.py --junitxml=artifacts/healing-replication.xml
+
+      - name: Upload replicated healing diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: healing-replication-diagnostics
+          path: artifacts/healing-replication.xml
+          if-no-files-found: ignore
 
       - name: Run continuous autonomous recovery tests
         run: |
