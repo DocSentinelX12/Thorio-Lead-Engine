@@ -26,7 +26,7 @@ def _measurement(path_id: str, gpu_uuid: str) -> dict[str, object]:
         "remote_worker_id": f"remote:{path_id}",
         "remote_endpoint": f"endpoint:{path_id}",
         "gpu_uuid": gpu_uuid,
-        "rdma_device": f"rdma:{path_id}:1",
+        "rdma_device": path_id,
         "rdma_port": 1,
         "bandwidth_gbps": 100.0,
     }
@@ -76,7 +76,7 @@ def test_orchestrator_execution_is_exact_path_scoped_and_closes_only_after_stabl
         action_id=action["action_id"],
         owner="recovery-worker-a",
         physical_evidence=_physical_evidence(path_a),
-        active_measurement=_measurement(path_a.path_id, f"{path_a.path_id}"),
+        active_measurement=_measurement(path_a.path_id, f"{path_a.path_id}:a"),
         observed_at=21.0,
         now=21.0,
     )
