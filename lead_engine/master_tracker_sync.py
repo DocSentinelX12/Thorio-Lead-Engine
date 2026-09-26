@@ -20,9 +20,14 @@ def _upsert(table_key: str, lookup_field: str, lookup_value: Any, fields: Dict[s
     if record is None: raise AirtableSyncError(f"Airtable returned no created record for {table_key}.")
     return {"status": "created", "record": record}
 def _routes(lead: Dict[str, Any]) -> List[str]:
-    value = lead.get("potential_routes", []); value = [value] if isinstance(value, str) else value
-    if not isinstance(value, (list, tuple, set)): return []
-    return list(dict.fromkeys(_text(route) for route in value if _text(route) in {"Paxus", "Shiftr", "Thorio"}))
+    value = lead.get("potential_routes", [])
+    if isinstance(value, str): value = [value]
+    allowed = {"Paxus", "Shiftr", "Thorio", "Astrivon Labs"}
+    if isinstance(value, (list, tuple, set)):
+        routes = list(dict.fromkeys(_text(route) for route in value if _text(route) in allowed))
+        if routes: return routes
+    route = _text(lead.get("route"))
+    return [route] if route in allowed else []
 def _company_source(lead: Dict[str, Any]) -> str:
     source = _text(lead.get("source")).lower()
     if source in {"x", "twitter"}: return "X"
@@ -72,10 +77,11 @@ def _opportunity_need(lead: Dict[str, Any], route: str) -> str:
     if any(term in combined for term in ("saas", "product")): return "SaaS / Product"
     if any(term in combined for term in ("staff augmentation", "augmentation")): return "Staff Augmentation"
     if any(term in combined for term in ("software", "development", "build", "custom")): return "Software Development"
+    if any(term in combined for term in ("b2b", "sales", "lead generation", "outreach")): return "B2B Outreach / Lead Generation"
     return "Other"
 def _opportunity_fields(lead: Dict[str, Any], route: str) -> Dict[str, Any]:
     fingerprint = _text(lead.get("fingerprint")); company = _text(lead.get("company"))
-    return {"Opportunity": _opportunity_key(lead, route), "Company": company, "Partner": route, "Need": _opportunity_need(lead, route), "Stage": _text(lead.get("opportunity_stage")) or "Qualified", "Priority": _text(lead.get("priority")) or None, "Estimated Value": lead.get("estimated_value"), "Referral Date": _text(lead.get("submitted_at"))[:10] if lead.get("submitted_at") else None, "Next Follow-up": _text(lead.get("next_action_date"))[:10] if lead.get("next_action_date") else None, "Referral Confirmed": bool(lead.get("paxus_accepted")) if route == "Paxus" else bool(lead.get("partner_confirmed")), "Partner Contact": _text(lead.get("partner_contact")) or None, "Notes": f"Lead fingerprint: {fingerprint}" if fingerprint else None}
+    return {"Opportunity": _opportunity_key(lead, route), "Company": company, "Partner": route, "Need": _opportunity_need(lead, route), "Stage": _text(lead.get("opportunity_stage")) or "Qualified", "Priority": _text(lead.get("priority")) or None, "Estimated Value": lead.get("estimated_value"), "Referral Date": _text(lead.get("submitted_at"))[:10] if lead.get("submitted_at") else None, "Next Follow-up": _text(lead.get("next_action_date"))[:10] if lead.get("next_action_date") else None, "Referral Confirmed": bool(lead.get("paxus_accepted")) if route == "Paxus" else bool(lead.get("partner_confirmed") or lead.get("astrivon_partner_confirmed")), "Partner Contact": _text(lead.get("partner_contact")) or None, "Notes": f"Lead fingerprint: {fingerprint}" if fingerprint else None}
 def sync_opportunities(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(lead, dict): raise ValueError("Lead payload must be a dictionary.")
     if lead.get("qualified") is not True: return []
@@ -85,6 +91,33 @@ def sync_opportunities(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
         results.append(_upsert("opportunities", "Opportunity", _opportunity_key(lead, route), _opportunity_fields(lead, route)))
     return results
 def sync_lead_source(lead: Dict[str, Any]) -> Dict[str, Any]: return {"status": "skipped", "reason": "Lead Sources is a source-configuration table; discovered leads use Lead Radar and downstream lifecycle tables."}
+def sync_astrivon_referral(lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(lead, dict): raise ValueError("Lead payload must be a dictionary.")
+    if "Astrivon Labs" not in _routes(lead): return None
+    fingerprint = _text(lead.get("fingerprint")); company = _text(lead.get("company"))
+    if not fingerprint or not company: raise ValueError("Astrivon referral synchronization requires a fingerprint and company.")
+    referral = lead.get("astrivon_referral") if isinstance(lead.get("astrivon_referral"), dict) else {}
+    referral_key = f"{fingerprint}:Astrivon Labs"
+    fields = {"Referral": referral_key, "Company": company, "Opportunity": _opportunity_key(lead, "Astrivon Labs"), "Partner": "Astrivon Labs", "Submitted Date": _text(referral.get("introduced_at") or lead.get("astrivon_introduced_at"))[:10] or None, "Partner Confirmed": referral.get("partner_confirmed") is True or lead.get("astrivon_partner_confirmed") is True, "Partner Confirmation / ID": _text(referral.get("referral_id") or lead.get("astrivon_referral_id")) or None, "Outcome": "Active" if referral.get("partner_confirmed") is True or lead.get("astrivon_partner_confirmed") is True else "Qualified", "Commission Rate": 0.20, "Notes": _text(lead.get("notes")) or None}
+    return _upsert("referrals", "Referral", referral_key, fields)
+def sync_astrivon_commissions(lead: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if not isinstance(lead, dict): raise ValueError("Lead payload must be a dictionary.")
+    if "Astrivon Labs" not in _routes(lead): return []
+    fingerprint = _text(lead.get("fingerprint")); company = _text(lead.get("company"))
+    events = lead.get("astrivon_payment_events", [])
+    if not isinstance(events, (list, tuple)): return []
+    results: List[Dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict): continue
+        event_id = _text(event.get("event_id"))
+        if not event_id: raise ValueError("Astrivon payment events require event_id.")
+        try: revenue = float(event.get("revenue_amount"))
+        except (TypeError, ValueError): raise ValueError("Astrivon payment events require numeric revenue_amount.")
+        if revenue <= 0: raise ValueError("Astrivon payment event revenue must be greater than zero.")
+        referral_key = f"{fingerprint}:Astrivon Labs:{event_id}"
+        fields = {"Company": company, "Referral": referral_key, "Partner": "Astrivon Labs", "Deal / Placement Value": revenue, "Commission Rate": 0.20, "Expected Commission": round(revenue * 0.20, 2), "Eligible / Trigger Date": _text(event.get("received_at"))[:10] or None, "Paid": event.get("paid") is True, "Actual Amount": event.get("actual_commission"), "Payment Date": _text(event.get("commission_payment_date"))[:10] or None, "Payment Method": _text(event.get("commission_payment_method")) or None, "Notes": _text(event.get("notes")) or None}
+        results.append(_upsert("commissions", "Referral", referral_key, fields))
+    return results
 def sync_commission(lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not isinstance(lead, dict): raise ValueError("Lead payload must be a dictionary.")
     if not paxus_commission_tracking_enabled(lead): return None
@@ -105,4 +138,4 @@ def sync_commission(lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return _upsert("commissions", "Referral", fingerprint, fields)
 def sync_master_tracker(lead: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(lead, dict): raise ValueError("Lead payload must be a dictionary.")
-    return {"status": "synced", "reason": None, "company": sync_company(lead), "opportunities": sync_opportunities(lead), "lead_source": {"status": "skipped", "reason": "Lead Sources is configuration-only."}, "commission": sync_commission(lead)}
+    return {"status": "synced", "reason": None, "company": sync_company(lead), "opportunities": sync_opportunities(lead), "astrivon_referral": sync_astrivon_referral(lead), "astrivon_commissions": sync_astrivon_commissions(lead), "lead_source": {"status": "skipped", "reason": "Lead Sources is configuration-only."}, "commission": sync_commission(lead)}
