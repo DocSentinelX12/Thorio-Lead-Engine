@@ -143,6 +143,27 @@ def _lead() -> dict:
     }
 
 
+
+def test_research_readiness_requires_evidence_for_every_verified_section():
+    lead = _lead()
+    lead["commercial_research"]["evidence"] = []
+
+    readiness = research_package.research_readiness(lead)
+
+    assert readiness["ready"] is False
+    assert "commercial_research" in readiness["missing_sections"]
+
+
+def test_finalize_research_readiness_preserves_each_missing_section():
+    lead = _lead()
+    lead["commercial_research"]["evidence"] = []
+    updated, readiness = research_package.finalize_research_readiness(lead)
+
+    assert readiness["ready"] is False
+    assert updated["research_status"] == "research_required"
+    assert updated["research_gaps"]["missing_sections"] == ["commercial_research"]
+
+
 def test_research_intelligence_public_seam_exists():
     assert callable(getattr(research_package, "build_research_intelligence", None))
 
