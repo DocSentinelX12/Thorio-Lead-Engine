@@ -5,6 +5,13 @@ import pytest
 from lead_engine.healing_control_plane import ControlPlaneRecovery, ControlPlaneRecoveryError
 
 
+def test_control_plane_register_cannot_bypass_reconciliation_on_existing_authority(tmp_path):
+    cp = ControlPlaneRecovery(str(tmp_path / "control.sqlite3"))
+    cp.register("controller-a", generation=1)
+    with pytest.raises(ControlPlaneRecoveryError, match="takeover and reconciliation"):
+        cp.register("controller-b", generation=2)
+
+
 def test_control_plane_takeover_fences_stale_controller(tmp_path):
     cp = ControlPlaneRecovery(str(tmp_path / "control.sqlite3"))
     cp.register("controller-a", generation=1)
