@@ -313,9 +313,14 @@ class HealingExperimentManager:
             exp = db.execute("SELECT * FROM healing_experiments WHERE experiment_id=?", (experiment_id,)).fetchone()
             if not exp:
                 raise HealingExperimentError("unknown experiment")
+            # Rollback closes every active challenger in this context. The
+            # previously authoritative champion is the only strategy allowed to
+            # remain active after a failed experiment.
             db.execute(
-                "UPDATE healing_strategies SET state='RETIRED',role='RETIRED',updated_at=? WHERE context_key=? AND strategy=?",
-                (now, exp["context_key"], exp["challenger_strategy"]),
+                """UPDATE healing_strategies
+                   SET state='RETIRED', role='RETIRED', updated_at=?
+                   WHERE context_key=? AND role='CHALLENGER' AND state='ACTIVE'""",
+                (now, exp["context_key"]),
             )
             db.execute(
                 "UPDATE healing_strategies SET state='ACTIVE',role='CHAMPION',updated_at=? WHERE context_key=? AND strategy=?",
