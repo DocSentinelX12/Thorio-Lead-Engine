@@ -101,6 +101,8 @@ def test_placement_and_migration_use_authoritative_allocation_and_exact_path(tmp
     integration.fabric_coordinator.register_node(NodeCapacity("node-a", "domain-a", 8, 8, 8))
     integration.fabric_coordinator.register_node(NodeCapacity("node-b", "domain-b", 8, 8, 8))
     integration.fabric_coordinator.submit_workload("workload-a", criticality=3)
+    path = _path("path-a")
+    integration.inventory.persist_physical_path(path)
     allocation = integration.coordinate(
         (
             PlacementCandidate("workload-a", "node-a", "domain-a", "path-a", 10.0),
@@ -156,7 +158,7 @@ def test_integration_never_invents_unknown_physical_path(tmp_path):
 
 def test_recovery_closure_does_not_promote_before_evidence(tmp_path):
     integration = _integration(tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(HealingAuthorityError):
         integration.close_recovery(
             path_id="path-x",
             authoritative_verified=False,
