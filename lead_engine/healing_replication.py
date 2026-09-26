@@ -531,7 +531,7 @@ class ReplicatedHealingState:
         for index in range(len(self.replica_paths)):
             if not self._available[index] or index == canonical:
                 continue
-            self._repair_log_from_canonical(index, canonical_entries)
+            self._repair_log_from_canonical(index, canonical, canonical_entries)
             self._apply_until(index, highest)
 
         result = {
@@ -548,7 +548,12 @@ class ReplicatedHealingState:
         }
         return result
 
-    def _repair_log_from_canonical(self, index: int, entries: list[dict[str, Any]]) -> None:
+    def _repair_log_from_canonical(
+        self,
+        index: int,
+        canonical_index: int,
+        entries: list[dict[str, Any]],
+    ) -> None:
         with self._connect(index) as db:
             current = db.execute(
                 "SELECT log_index,checksum FROM healing_replication_log ORDER BY log_index"
@@ -571,13 +576,14 @@ class ReplicatedHealingState:
                         entry["checksum"], entry["committed"], entry["created_at"],
                     ),
                 )
+            canonical_meta = self._meta(canonical_index)
             db.execute(
                 "UPDATE healing_replication_meta SET commit_index=?,generation=?,leader_id=?,fencing_token=?,updated_at=? WHERE singleton=1",
                 (
                     len(entries),
-                    int(self._meta(entries and 0 or index)["generation"]) if entries else int(self._meta(index)["generation"]),
-                    self._meta(0)["leader_id"],
-                    self._meta(0)["fencing_token"],
+                    int(canonical_meta["generation"]),
+                    str(canonical_meta["leader_id"]),
+                    int(canonical_meta["fencing_token"]),
                     time.time(),
                 ),
             )
