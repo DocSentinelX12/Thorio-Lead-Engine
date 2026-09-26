@@ -64,19 +64,19 @@ def test_full_exact_path_recovery_closes_and_records_learning(tmp_path):
     path = _path("path-integrated")
     integration.inventory.persist_physical_path(path)
     integration.inventory.record_active_gdrdma_measurement(
-        path_id=path.path_id, measurement=_measurement(path.path_id, 1.0, 200.0)
+        path_id=path.path_id, measurement=_measurement(path.path_id, 1.0, 100.0)
     )
     integration.inventory.record_active_gdrdma_measurement(
-        path_id=path.path_id, measurement=_measurement(path.path_id, 2.0, 198.0)
+        path_id=path.path_id, measurement=_measurement(path.path_id, 2.0, 100.0)
     )
-    integration.inventory.fail_physical_path(path.path_id, reason="link failure", observed_at=3.0)
+    integration.inventory.fail_physical_path(path.path_id, reason="link failure", observed_at=10.0)
 
     action = integration.recovery_orchestrator.discover(now=20.0)[0]
     result = integration.recovery_orchestrator.execute(
         action_id=action["action_id"],
         owner="healer",
         physical_evidence=tuple({"segment": segment, "result": "pass"} for segment in path.segments),
-        active_measurement=_measurement(path.path_id, 21.0, 210.0),
+        active_measurement=_measurement(path.path_id, 21.0, 100.0),
         observed_at=21.0,
         now=21.0,
     )
