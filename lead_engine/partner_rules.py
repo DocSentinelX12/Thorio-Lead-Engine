@@ -50,6 +50,30 @@ PARTNER_ROUTES = {
             "ml",
         ),
     },
+    "Astrivon Labs": {
+        "required_signal_terms": (
+            "looking for a dev agency",
+            "looking for a tech partner",
+            "need an mvp built",
+            "mvp built for my startup",
+            "b2b outreach expert",
+            "b2b sales representative",
+            "lead generation specialist",
+            "sales automation expert",
+            "ai/ml developer",
+            "computer vision specialist",
+            "automate business workflow",
+            "crm automation",
+            "full-stack software engineer",
+            "scaling my web/mobile app",
+            "seed funding",
+            "raised seed funding",
+            "non-technical founder",
+            "outsource sales pipeline",
+            "reduce in-house dev costs",
+            "reduce in-house sales costs",
+        ),
+    },
 }
 
 
