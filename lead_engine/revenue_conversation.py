@@ -177,7 +177,7 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         updated["follow_up_due"] = False
     elif classified in {"interested", "replied", "objection"}:
         updated["next_follow_up_at"] = _now(); updated["follow_up_due"] = True; updated["outreach_state"] = "awaiting_response"
-        enqueue(db, "follow_up", {"lead": updated, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True, "authorized": True, "authorized_by_role": CLOSER_ROLE}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
+        enqueue(db, "follow_up", {"lead": updated, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
     stored = db.update_payload(opportunity_id, updated) or updated
     conversation["outreach_route"] = stored.get("outreach_route"); conversation["next_action"] = "stop" if classified in STOP_STATES or classified == "opted_out" else "closer_follow_up"; conversation["updated_at"] = _now(); _save(db, state)
     return dict(conversation)
