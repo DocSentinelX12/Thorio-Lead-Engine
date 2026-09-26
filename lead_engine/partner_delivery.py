@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 from .delivery_gate import evaluate_delivery_gate
 
 
-PARTNER_ROUTES = ("Shiftr", "Paxus", "Thorio")
+PARTNER_ROUTES = ("Shiftr", "Paxus", "Thorio", "Astrivon Labs")
 
 
 def deliverable_partner(lead: Dict[str, Any]) -> str:
@@ -40,6 +40,7 @@ def partition_leads(
         "Shiftr": [],
         "Paxus": [],
         "Thorio": [],
+        "Astrivon Labs": [],
         "Review": [],
     }
 
@@ -67,5 +68,6 @@ def delivery_counts(
         "Shiftr": len(partitioned["Shiftr"]),
         "Paxus": len(partitioned["Paxus"]),
         "Thorio": len(partitioned["Thorio"]),
+        "Astrivon Labs": len(partitioned["Astrivon Labs"]),
         "Review": len(partitioned["Review"]),
     }
