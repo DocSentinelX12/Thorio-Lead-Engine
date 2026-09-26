@@ -99,14 +99,15 @@ def test_gateway_delegates_exact_path_recovery_to_authoritative_orchestrator(tmp
     inventory.fail_physical_path(path.path_id, reason="link failure", observed_at=3.0)
     orchestrator = RecoveryOrchestrator(inventory)
     gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator)
+    orchestrator.discover(now=20.0)
 
     result = gateway.recover_path(
         path_id=path.path_id,
         owner="healer-1",
         physical_evidence=_physical_evidence(path),
         active_measurement=_measurement(path.path_id, 4.0, 199.0),
-        now=4.0,
-        observed_at=4.0,
+        now=21.0,
+        observed_at=21.0,
     )
 
     assert result["path_id"] == path.path_id
