@@ -40,11 +40,15 @@ class HealingAuthorityGateway:
         *,
         inventory: ComputeInventory,
         recovery_orchestrator: RecoveryOrchestrator,
+        fabric_coordinator: FabricCoordinator | None = None,
     ) -> None:
         if recovery_orchestrator.inventory is not inventory:
             raise ValueError("recovery orchestrator must use the same compute inventory authority")
+        if fabric_coordinator is None:
+            raise ValueError("fabric coordinator is required for authoritative capacity state")
         self.inventory = inventory
         self.recovery_orchestrator = recovery_orchestrator
+        self.fabric_coordinator = fabric_coordinator
         self.evidence_graph = HealingEvidenceGraph(inventory.db_path)
         self.dependencies = HealingDependencyAnalyzer(self.evidence_graph)
         self.intelligence = HealingIntelligence(
@@ -106,6 +110,36 @@ class HealingAuthorityGateway:
             if str(row.get("path_id") or "").strip() == exact_path_id
         )
         return result
+
+    def capacity_state(self, *, path_id: str) -> dict[str, Any]:
+        exact_path_id = str(path_id or "").strip()
+        if not exact_path_id:
+            raise HealingAuthorityError("fabric path id is required")
+        physical = next(
+            (dict(row) for row in self.inventory.physical_paths()
+             if str(row.get("path_id") or "").strip() == exact_path_id),
+            None,
+        )
+        if physical is None:
+            raise HealingAuthorityError(f"unknown physical fabric path: {exact_path_id}")
+        coordinator_state = self.fabric_coordinator.capacity_state()
+        source_gpu = str(physical.get("source_gpu") or "").strip()
+        destination_gpu = str(physical.get("destination_gpu") or "").strip()
+        alternatives = 0
+        if source_gpu and destination_gpu:
+            for candidate in self.inventory.verified_physical_paths():
+                if str(candidate.get("path_id") or "") == exact_path_id:
+                    continue
+                if str(candidate.get("source_gpu") or "") == source_gpu and str(candidate.get("destination_gpu") or "") == destination_gpu:
+                    alternatives += 1
+        return {
+            "path_id": exact_path_id,
+            "redundant_capacity": alternatives > 0,
+            "standby_capacity_available": bool(coordinator_state["standby_capacity_available"]),
+            "available_nodes": int(coordinator_state["available_nodes"]),
+            "active_allocations": int(coordinator_state["active_allocations"]),
+            "protected_standby_nodes": tuple(coordinator_state["protected_standby_nodes"]),
+        }
 
     def path(self, path_id: str) -> dict[str, Any]:
         exact_path_id = str(path_id or "").strip()
@@ -216,6 +250,8 @@ class HealingIntegrationFabric:
         self.inventory = inventory
         self.recovery_orchestrator = recovery_orchestrator
         self.fabric_coordinator = fabric_coordinator
+        if getattr(self.fabric_coordinator, "physical_path_authority", None) is None:
+            self.fabric_coordinator.bind_physical_path_authority(inventory)
         self.workload_recovery = workload_recovery
         self.control_plane = control_plane
         self.learning = learning
