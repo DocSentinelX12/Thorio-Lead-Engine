@@ -265,8 +265,9 @@ class ReplicatedHealingState:
         meta = self._assert_leader(controller_id, fencing_token)
         indexes = self._require_quorum()
         base = int(meta["commit_index"])
-        canonical_index, canonical_entry = self._quorum_canonical()
-        if canonical_index != base:
+        canonical_replica, canonical_entry = self._quorum_canonical()
+        canonical_commit_index = int(self._meta(canonical_replica)["commit_index"])
+        if canonical_commit_index != base:
             raise HealingReplicationError("replication index changed during mutation")
         previous = canonical_entry.get("checksum", "") if base else ""
         log_index = base + 1
@@ -584,13 +585,8 @@ class ReplicatedHealingState:
 
     def reconcile(self) -> dict[str, Any]:
         indexes = self._require_quorum()
-        metas = [self._meta(index) for index in indexes]
-        highest = max(int(meta["commit_index"]) for meta in metas)
-        candidates = [index for index in indexes if int(self._meta(index)["commit_index"]) == highest]
-        if len(candidates) < self.quorum:
-            raise HealingReplicationError("no quorum for reconciliation")
-        canonical = candidates[0]
-        self._validate_chain(canonical, highest)
+        canonical, canonical_entry = self._quorum_canonical()
+        highest = int(self._meta(canonical)["commit_index"])
         canonical_entries: list[dict[str, Any]] = []
         with self._connect(canonical) as db:
             canonical_entries = [dict(row) for row in db.execute(
