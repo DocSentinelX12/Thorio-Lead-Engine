@@ -181,3 +181,12 @@ def test_sync_followup_uses_actual_airtable_schema(monkeypatch):
     assert fields["Notes"] == "Verify project budget."
     for field in ("Lead", "Route", "Follow-up Number"):
         assert field not in fields
+
+
+def test_normalize_routes_and_partner_projection_support_astrivon():
+    from lead_engine.airtable_sync import _normalize_routes, _normalize_lead
+    assert _normalize_routes(["Astrivon Labs", "Unknown"]) == ["Astrivon Labs"]
+    fields = _normalize_lead({"company": "Astrivon Prospect", "source": "linkedin", "signal": "Looking for a dev agency", "evidence": "Need an MVP built.", "potential_routes": ["Astrivon Labs"]})
+    assert fields["Applicable Routes"] == ["Astrivon Labs"]
+    assert fields["Recommended Partner"] == "Astrivon Labs"
+    assert fields["Work Queue"] == "🟩 Astrivon Referral"
