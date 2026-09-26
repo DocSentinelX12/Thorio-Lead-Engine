@@ -57,7 +57,7 @@ def test_provider_acceptance_is_reconciled_without_duplicate_send(tmp_path):
 def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead("production-closer-test"); db.insert_if_new(lead); _confirm_handoff(db, lead); transport = FakeTransport(); register_revenue_transport(transport)
     try:
-        airtable_integrity("airtable_integrity", {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}}, type("Ctx", (), {"db": db})()); result = run_worker_once(db, "outreach_closer", worker_id="closer-worker"); assert result["completed_count"] == 1 and result["failed_count"] == 0 and len(transport.calls) == 1, result
+        airtable_integrity("airtable_integrity", {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}}, type("Ctx", (), {"db": db})()); result = run_worker_once(db, "outreach_closer", worker_id="closer-worker"); assert result["completed_count"] == 1 and result["failed_count"] == 0 and len(transport.calls) == 1, result["results"]
         stored = db.get(lead["fingerprint"]); assert stored["revenue_lifecycle_state"] == "outreach_sent" and stored["outreach_state"] == "awaiting_response" and stored["outreach_history"] and stored["last_outreach_action_id"]
     finally: register_revenue_transport(None)
 
@@ -72,8 +72,8 @@ def test_closer_does_not_wait_for_airtable_handoff(tmp_path):
     register_revenue_transport(transport)
     try:
         result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
-        assert result["completed_count"] == 1, result
-        assert result["failed_count"] == 0, result
+        assert result["completed_count"] == 1, result["results"]
+        assert result["failed_count"] == 0, result["results"]
         assert len(transport.calls) == 1
     finally:
         register_revenue_transport(None)
