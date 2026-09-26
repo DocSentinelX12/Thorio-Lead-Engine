@@ -3,7 +3,9 @@ from .sales_handoff import package_digest, package_is_ready, package_projection,
 
 
 def _ready_lead():
-    return {
+    from .research_package import build_research_intelligence
+
+    lead = {
         "fingerprint": "handoff-test",
         "company": "Acme",
         "contact_name": "Taylor",
@@ -12,20 +14,25 @@ def _ready_lead():
         "research_status": "complete",
         "company_research": {
             "company_verified": True,
+            "company_verification_evidence": "https://example.com/about",
+            "company_description": "Acme builds workflow software.",
             "decision_maker": "Taylor",
             "decision_maker_evidence": "https://example.com/taylor",
             "decision_maker_verification_status": "verified",
             "decision_maker_email": "taylor@example.com",
+            "public_company_facts": [{"url": "https://example.com/about", "evidence": "Acme builds workflow software.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}],
         },
-        "decision_maker_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/taylor"]},
-        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": "engineering expansion", "evidence": ["https://example.com/need"]},
-        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering expansion", "evidence": ["https://example.com/intent"]},
-        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/hiring"]},
-        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": ["https://example.com/commercial"]},
-        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "engineering expansion"}}},
-        "closer_package": {"ready": True, "verification_status": "verified", "evidence": ["https://example.com/need"]},
+        "decision_maker_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/taylor", "evidence": "Taylor is CTO at Acme.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": "engineering expansion", "evidence": [{"url": "https://example.com/need", "evidence": "Acme needs engineering capacity for expansion.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering expansion", "evidence": [{"url": "https://example.com/intent", "evidence": "Acme is actively hiring engineers.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/hiring", "evidence": "Acme has open backend engineering roles.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/commercial", "evidence": "Acme sells enterprise workflow software.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "route_research": {"routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Engineering expansion is relevant to Thorio.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]}}},
+        "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Acme needs engineering capacity for expansion.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
         "potential_routes": ["Thorio"], "eligible_routes": ["Thorio"], "preserved_routes": ["Thorio"], "routing_result": {"destinations": ["Thorio"], "review_required": False},
     }
+    lead["research_intelligence"] = build_research_intelligence(lead)
+    return lead
 
 
 def _records(lead):
