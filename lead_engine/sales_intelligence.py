@@ -47,7 +47,7 @@ def _verified(section: Any) -> bool:
     return _text(section.get("verification_status") or section.get("status")).lower() in VERIFIED_STATUSES
 
 
-def _refs(section: Any) -> tuple[str, ...]:
+def _refs(section: Any, opportunity_fingerprint: str | None = None) -> tuple[str, ...]:
     if not isinstance(section, Mapping):
         return ()
     raw = section.get("evidence", [])
@@ -56,6 +56,9 @@ def _refs(section: Any) -> tuple[str, ...]:
     refs: list[str] = []
     for item in raw:
         if isinstance(item, Mapping):
+            item_fingerprint = _text(item.get("opportunity_fingerprint") or item.get("fingerprint"))
+            if opportunity_fingerprint and item_fingerprint and item_fingerprint != opportunity_fingerprint:
+                raise SalesIntelligenceError("evidence belongs to a different opportunity")
             ref = _text(item.get("url") or item.get("source_url") or item.get("evidence_url") or item.get("source_id"))
         else:
             ref = _text(item)
@@ -64,11 +67,11 @@ def _refs(section: Any) -> tuple[str, ...]:
     return tuple(refs)
 
 
-def _section_claims(lead: Mapping[str, Any], key: str, label: str) -> list[IntelligenceClaim]:
+def _section_claims(lead: Mapping[str, Any], key: str, label: str, opportunity_fingerprint: str) -> list[IntelligenceClaim]:
     section = lead.get(key)
     if not _verified(section):
         return []
-    refs = _refs(section)
+    refs = _refs(section, opportunity_fingerprint)
     if not refs:
         raise SalesIntelligenceError(f"{key} is verified but has no provenance")
     summary = _text(section.get("summary"))
@@ -82,8 +85,9 @@ def _section_claims(lead: Mapping[str, Any], key: str, label: str) -> list[Intel
     return claims
 
 
-def _all_verified_claims(lead: Mapping[str, Any]) -> list[IntelligenceClaim]:
+def _all_verified_claims(lead: Mapping[str, Any], opportunity_fingerprint: str | None = None) -> list[IntelligenceClaim]:
     claims: list[IntelligenceClaim] = []
+    fingerprint = opportunity_fingerprint or _text(lead.get("fingerprint"))
     mapping = (
         ("company_research", "company"),
         ("business_need_research", "business_need"),
@@ -93,7 +97,7 @@ def _all_verified_claims(lead: Mapping[str, Any]) -> list[IntelligenceClaim]:
         ("route_research", "route"),
     )
     for key, label in mapping:
-        claims.extend(_section_claims(lead, key, label))
+        claims.extend(_section_claims(lead, key, label, fingerprint))
     return claims
 
 
@@ -129,7 +133,7 @@ def _decision_maker(lead: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _research_digest(lead: Mapping[str, Any]) -> list[dict[str, Any]]:
-    claims = _all_verified_claims(lead)
+    claims = _all_verified_claims(lead, _text(lead.get("fingerprint")))
     return [claim.as_dict() for claim in claims]
 
 
@@ -219,7 +223,7 @@ def build_closer_intelligence(lead: Mapping[str, Any]) -> dict[str, Any]:
     """Build a deterministic, evidence backed intelligence package for one opportunity."""
     fingerprint, company = _identity(lead)
     decision_maker = _decision_maker(lead)
-    claims = _all_verified_claims(lead)
+    claims = _all_verified_claims(lead, fingerprint)
     need = _current_need(lead, claims)
     evidence = _research_digest(lead)
 
