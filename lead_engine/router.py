@@ -204,7 +204,7 @@ def score_routes(company: str, signal: str, evidence: str) -> Dict[str, int]:
     text = _text(company, signal, evidence)
     scores = {"Shiftr": 0, "Paxus": 0, "Thorio": 0, "Astrivon Labs": 0}
 
-    if not (_has_hiring_context(text) or _has_job_role_context(text) or _has_shiftr_service_context(text)):
+    if not (_has_hiring_context(text) or _has_job_role_context(text) or _has_shiftr_service_context(text) or _matches(text, ASTRIVON_RULES)):
         return scores
 
     scores["Shiftr"] = _matches(text, SHIFTR_RULES)
