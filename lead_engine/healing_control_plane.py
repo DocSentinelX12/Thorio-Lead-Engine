@@ -50,6 +50,12 @@ class ControlPlaneRecovery:
     def register(self, controller_id: str, *, generation: int) -> dict[str, Any]:
         if not controller_id.strip() or generation < 1:
             raise ValueError("controller_id and positive generation are required")
+        with self._connect() as db:
+            current = db.execute("SELECT * FROM control_plane_recovery WHERE singleton=1").fetchone()
+        if current and current["state"] != "EMPTY":
+            raise ControlPlaneRecoveryError(
+                "existing control-plane authority requires takeover and reconciliation; register is bootstrap-only"
+            )
         fencing_token = generation
         if self.replicated_state is not None:
             try:
