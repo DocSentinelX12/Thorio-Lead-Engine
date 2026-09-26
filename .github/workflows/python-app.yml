@@ -325,6 +325,7 @@ jobs:
           sync_failed = 0
           sync_completed = 0
           sync_already_exists = 0
+          sync_deferred_research = 0
           failures = []
           sync_evidence_found = False
           for result in results:
@@ -335,6 +336,7 @@ jobs:
               sync_failed += int(sync.get("failed_count", 0) or 0)
               sync_completed += int(sync.get("synced_count", 0) or 0)
               sync_already_exists += int(sync.get("already_exists_count", 0) or 0)
+              sync_deferred_research += int(sync.get("deferred_research_count", 0) or 0)
               failed_items = sync.get("failed", [])
               if isinstance(failed_items, list):
                   failures.extend(item for item in failed_items if isinstance(item, dict))
@@ -362,11 +364,11 @@ jobs:
                   lead = item.get("lead") if isinstance(item.get("lead"), dict) else {}
                   print(f"SYNC FAILURE {index}: fingerprint={lead.get('fingerprint', '')} company={lead.get('company', '')} route={lead.get('route', '')} error={item.get('error', '')}")
               sys.exit(1)
-          if accepted_total > 0 and (sync_completed + sync_already_exists) <= 0:
-              print(f"AIRTABLE DELIVERY FAILURE: accepted_total={accepted_total} but no successful or already-existing Airtable delivery was recorded.")
+          if (sync_completed + sync_already_exists + sync_deferred_research) <= 0:
+              print("AIRTABLE DELIVERY FAILURE: the production result contained no completed, already-existing, or explicitly deferred research delivery evidence.")
               sys.exit(1)
-          print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, successful_source_count={max(successful_source_counts)}")
-          print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, failed_count={sync_failed}")
+          print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
+          print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
           PY
       - name: Persist Lead Engine state
         if: always()
