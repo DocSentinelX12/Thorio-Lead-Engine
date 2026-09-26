@@ -66,9 +66,15 @@ class HealingAuthorityGateway:
             raise HealingAuthorityError(
                 f"no due authoritative recovery action exists for path: {exact_path_id}"
             )
+        if len(due) > 1:
+            max_generation = max(int(action.get("generation") or 0) for action in due)
+            due = tuple(
+                action for action in due
+                if int(action.get("generation") or 0) == max_generation
+            )
         if len(due) != 1:
             raise HealingAuthorityError(
-                f"multiple due recovery actions exist for exact path: {exact_path_id}"
+                f"ambiguous due recovery generation for exact path: {exact_path_id}"
             )
 
         result = self.recovery_orchestrator.execute(
