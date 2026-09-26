@@ -2,7 +2,7 @@ from lead_engine.delivery_policy import MIN_DELIVERY_SCORE
 from lead_engine.partner_export import build_partner_exports
 
 
-def make_lead(route, company, signal, evidence, approved_routes=None):
+def make_lead(route, company, signal, evidence, eligible_routes=None):
     return {
         "source": "linkedin",
         "source_id": f"{company}-001",
@@ -23,14 +23,11 @@ def make_lead(route, company, signal, evidence, approved_routes=None):
         "status": "qualified",
         "qualified": True,
         "qualification_status": "qualified",
-        "approval_status": "approved",
-        "human_approved": True,
-        "approval_required": False,
-        "approved_routes": approved_routes if approved_routes is not None else [route],
+        "eligible_routes": eligible_routes if eligible_routes is not None else [route],
     }
 
 
-def test_build_partner_exports_routes_approved_leads_by_partner():
+def test_build_partner_exports_routes_machine_eligible_leads_by_partner():
     leads = [
         make_lead("Thorio", "Remote Tech", "remote software engineer", "Remote Tech is hiring a remote software engineer."),
         make_lead("Shiftr", "AI Systems", "technology implementation project", "AI Systems has a technology implementation project."),
@@ -54,36 +51,11 @@ def test_partner_export_preserves_qualification_context():
     assert result["qualification_status"] == "qualified"
 
 
-def test_unapproved_lead_never_enters_partner_export():
-    lead = make_lead("Shiftr", "Unapproved Corp", "remote software engineer", "Unapproved Corp is hiring a remote software engineer.", approved_routes=[])
-    lead["approval_status"] = "pending"
-    lead["human_approved"] = False
-    lead["approval_required"] = True
-    result = build_partner_exports([lead])
-    assert result["Shiftr"] == []
-    assert result["Paxus"] == []
-    assert result["Thorio"] == []
-
-
-def test_rejected_lead_never_enters_partner_export():
-    lead = make_lead("Shiftr", "Rejected Corp", "remote software engineer", "Rejected Corp is hiring a remote software engineer.", approved_routes=["Shiftr"])
-    lead["approval_status"] = "rejected"
-    lead["human_approved"] = False
-    lead["approval_required"] = False
-    assert build_partner_exports([lead])["Shiftr"] == []
-
-
-def test_lead_approved_for_different_partner_cannot_be_exported():
-    lead = make_lead("Paxus", "Wrong Route Corp", "contract staffing need", "Wrong Route Corp needs contract staffing.", approved_routes=["Shiftr"])
-    result = build_partner_exports([lead])
-    assert result["Paxus"] == []
-    assert result["Shiftr"] == []
-
-
-def test_low_quality_lead_cannot_be_exported_even_when_human_approved():
-    lead = make_lead("Shiftr", "Low Score Corp", "remote software engineer", "Low Score Corp is hiring a remote software engineer.")
-    lead["lead_score"] = MIN_DELIVERY_SCORE - 1
-    assert build_partner_exports([lead])["Shiftr"] == []
+def test_partner_export_does_not_require_human_approval():
+    lead = make_lead("Shiftr", "Autonomous Corp", "technology implementation project", "Autonomous Corp has a technology implementation project.")
+    assert "approval_status" not in lead
+    assert "human_approved" not in lead
+    assert build_partner_exports([lead])["Shiftr"][0]["company"] == "Autonomous Corp"
 
 
 def test_route_evidence_mismatch_cannot_be_exported():
