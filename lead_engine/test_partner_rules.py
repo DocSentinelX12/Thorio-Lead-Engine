@@ -123,4 +123,5 @@ def test_supported_partner_routes():
         "Shiftr",
         "Paxus",
         "Thorio",
+        "Astrivon Labs",
     ]
