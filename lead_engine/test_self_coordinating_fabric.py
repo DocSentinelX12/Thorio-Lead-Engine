@@ -86,6 +86,18 @@ def test_physical_path_is_consumed_but_never_invented(tmp_path):
         raise AssertionError("missing exact physical path was accepted")
 
 
+def test_allocator_rejects_unverified_physical_path(tmp_path):
+    c = _coordinator(tmp_path)
+    c.register_node(NodeCapacity("n1", "d1", 8, 4, 1))
+    c.submit_workload("w1", criticality=2)
+    try:
+        c.coordinate([_candidate("w1", "n1", "d1", "unverified-path", 10)])
+    except ValueError as exc:
+        assert "unverified physical fabric path" in str(exc)
+    else:
+        raise AssertionError("unverified physical path was allocated")
+
+
 def test_control_plane_checkpoint_survives_restart(tmp_path):
     path = str(tmp_path / "fabric.sqlite3")
     c = FabricCoordinator(path)
