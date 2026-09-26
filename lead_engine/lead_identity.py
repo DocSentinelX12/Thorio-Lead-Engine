@@ -58,7 +58,6 @@ def validate_opportunity_identity(payload: Dict[str, Any]) -> str:
         "source_url",
         "company",
         "person",
-        "contact_name",
         "job_title",
         "signal_type",
         "discovered_at",
