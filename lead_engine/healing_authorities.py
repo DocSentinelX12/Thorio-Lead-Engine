@@ -10,6 +10,11 @@ from typing import Any
 
 from .compute_inventory import ComputeInventory
 from .recovery_orchestrator import RecoveryOrchestrator
+from .healing_closure import HealingClosureValidator
+from .healing_control_plane import ControlPlaneRecovery
+from .healing_learning import HealingLearning
+from .healing_workloads import WorkloadRecoveryPlanner
+from .self_coordinating_fabric import FabricCoordinator, PlacementCandidate
 
 
 class HealingAuthorityError(RuntimeError):
@@ -109,3 +114,134 @@ class HealingAuthorityGateway:
             "recovery_actions": recovery_actions,
             "authorities": self.AUTHORITIES,
         }
+
+
+class HealingIntegrationFabric:
+    """Cross-authority healing coordinator with explicit source-of-truth boundaries."""
+
+    def __init__(
+        self,
+        *,
+        inventory: ComputeInventory,
+        recovery_orchestrator: RecoveryOrchestrator,
+        fabric_coordinator: FabricCoordinator,
+        workload_recovery: WorkloadRecoveryPlanner,
+        control_plane: ControlPlaneRecovery,
+        learning: HealingLearning,
+        closure: HealingClosureValidator,
+    ) -> None:
+        self.gateway = HealingAuthorityGateway(
+            inventory=inventory,
+            recovery_orchestrator=recovery_orchestrator,
+        )
+        self.inventory = inventory
+        self.recovery_orchestrator = recovery_orchestrator
+        self.fabric_coordinator = fabric_coordinator
+        self.workload_recovery = workload_recovery
+        self.control_plane = control_plane
+        self.learning = learning
+        self.closure = closure
+
+    def path_evidence(self, path_id: str) -> dict[str, Any]:
+        return self.gateway.path(path_id)
+
+    def recover_path(self, **kwargs: Any) -> dict[str, Any]:
+        return self.gateway.recover_path(**kwargs)
+
+    def coordinate(self, candidates: tuple[PlacementCandidate, ...] | list[PlacementCandidate]) -> dict[str, Any]:
+        """Delegate capacity and placement decisions to the global coordinator."""
+        return self.fabric_coordinator.coordinate(tuple(candidates))
+
+    def plan_migration(
+        self,
+        *,
+        workload_id: str,
+        execution_id: str,
+        allocation: dict[str, Any],
+        path_verified: bool,
+    ) -> dict[str, Any]:
+        """Translate an authoritative allocation into the existing workload recovery contract."""
+        if not isinstance(allocation, dict):
+            raise HealingAuthorityError("authoritative allocation record is required")
+        required = ("node_id", "failure_domain", "fabric_path_id", "generation")
+        if any(key not in allocation for key in required):
+            raise HealingAuthorityError("incomplete authoritative allocation record")
+        path_id = str(allocation.get("fabric_path_id") or "").strip()
+        if not path_id:
+            raise HealingAuthorityError("authoritative allocation is missing fabric path identity")
+        physical = next(
+            (
+                row for row in self.inventory.verified_physical_paths()
+                if str(row.get("path_id") or "").strip() == path_id
+            ),
+            None,
+        )
+        if physical is None or path_verified is not True:
+            raise HealingAuthorityError("exact verified physical path is required for migration")
+        destination = {
+            "allocation_authoritative": True,
+            "capacity_verified": True,
+            "fabric_path_id": path_id,
+            "fabric_path_verified": True,
+            "node_id": str(allocation["node_id"]),
+            "failure_domain": str(allocation["failure_domain"]),
+            "generation": int(allocation["generation"]),
+        }
+        return self.workload_recovery.plan_migration(
+            workload_id=workload_id,
+            execution_id=execution_id,
+            destination=destination,
+        )
+
+    def takeover_control_plane(self, controller_id: str, *, generation: int) -> dict[str, Any]:
+        return self.control_plane.takeover(controller_id, generation=generation)
+
+    def reconcile_control_plane(
+        self,
+        controller_id: str,
+        *,
+        generation: int,
+        authoritative_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.control_plane.reconcile(
+            controller_id,
+            generation=generation,
+            authoritative_state=dict(authoritative_state),
+        )
+
+    def activate_control_plane(self, controller_id: str, *, generation: int) -> dict[str, Any]:
+        return self.control_plane.activate(controller_id, generation=generation)
+
+    def close_recovery(
+        self,
+        *,
+        path_id: str,
+        authoritative_verified: bool,
+        healing_verified: bool,
+        secondary_damage: bool,
+        strategy: str,
+        success: bool,
+        evidence: dict[str, Any],
+        promote: bool = False,
+    ) -> dict[str, Any]:
+        """Close only after both authorities agree, then record the verified outcome."""
+        self.path(path_id)
+        closure = self.closure.close(
+            authoritative_verified=authoritative_verified,
+            healing_verified=healing_verified,
+            secondary_damage=secondary_damage,
+        )
+        learning = self.learning.record(
+            strategy,
+            success=success,
+            evidence={
+                "path_id": path_id,
+                "closure": closure,
+                **dict(evidence),
+            },
+        )
+        if promote:
+            if not success:
+                raise HealingAuthorityError("failed recovery cannot promote a strategy")
+            learning = self.learning.promote(strategy, known_good_available=True)
+        return {"state": closure["state"], "path_id": path_id, "learning": learning}
