@@ -9,6 +9,7 @@ from typing import Any, Mapping
 ASTRIVON_PARTNER = "Astrivon Labs"
 ASTRIVON_ROUTE = "Astrivon Labs"
 ASTRIVON_COMMISSION_RATE = Decimal("0.20")
+ASTRIVON_STATUSES = frozenset({"qualified", "referred", "introduced", "active", "closed", "ended"})
 
 ASTRIVON_SERVICE_SIGNALS = {
     "AI & Machine Learning Solutions": ("ai/ml", "machine learning", "ai developer", "ai engineer", "artificial intelligence"),
@@ -120,6 +121,8 @@ class AstrivonReferral:
         referral_id = referral_id.strip()
         if not referral_id:
             raise AstrivonReferralError("Astrivon introduction requires a real referral ID.")
+        if self.status not in {"qualified", "referred"}:
+            raise AstrivonReferralError("Astrivon referral is not in an introducible state.")
         if not self.is_ready_for_introduction():
             raise AstrivonReferralError(
                 "Astrivon referral is not ready for introduction."
@@ -135,6 +138,22 @@ class AstrivonReferral:
                 "introduced_at": timestamp,
             }
         )
+
+    def mark_referred(self, *, referral_id: str | None = None) -> "AstrivonReferral":
+        if self.status not in {"qualified", "referred"}:
+            raise AstrivonReferralError("Astrivon referral cannot transition to referred from its current state.")
+        normalized_id = referral_id.strip() if referral_id else self.referral_id
+        return AstrivonReferral(**{**self.__dict__, "status": "referred", "referral_id": normalized_id})
+
+    def mark_closed(self) -> "AstrivonReferral":
+        if self.status != "active":
+            raise AstrivonReferralError("Astrivon referral can only close from active state.")
+        return AstrivonReferral(**{**self.__dict__, "status": "closed"})
+
+    def mark_ended(self) -> "AstrivonReferral":
+        if self.status not in {"active", "closed"}:
+            raise AstrivonReferralError("Astrivon referral can only end from active or closed state.")
+        return AstrivonReferral(**{**self.__dict__, "status": "ended"})
 
     def confirm_partner(self) -> "AstrivonReferral":
         if not self.referral_id:
