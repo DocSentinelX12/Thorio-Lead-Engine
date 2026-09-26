@@ -95,43 +95,36 @@ class ContinuousRecoveryController:
     def observe(self,*,path_id,generation,fingerprint,criticality,confidence,cascade_risk,strategy="known_good_recovery",now=None):
         self._assert(now); evidence=self.gateway.path(path_id); impact=self.gateway.dependencies.impact(path_id); prediction=self.gateway.intelligence.predictor.predict(scope_id=path_id, observed_at=now); exact=str(evidence["path_id"])
         if exact!=str(path_id).strip(): raise ContinuousRecoveryError("authoritative path identity changed")
-        episode=self.store.upsert_episode(scope_id=exact,generation=generation,fingerprint=fingerprint,criticality=criticality,confidence=confidence,cascade_risk=cascade_risk,failure_domains=tuple(impact["failure_domains"]),affected_entities=tuple(tuple(x) for x in impact["affected_entities"]),strategy=strategy,now=now); durable_actions=self.gateway.recovery_orchestrator.discover(now=now); matching_actions=tuple(action for action in durable_actions if str(action["path_id"])==exact and int(action["generation"])==int(generation)); if not matching_actions: raise ContinuousRecoveryError("authoritative recovery action was not durably enqueued for observed path"); return self.store.update(episode_id=episode["episode_id"],state="OBSERVED",now=now,payload={"prediction":prediction,"recovery_action_id":matching_actions[-1]["action_id"],"recovery_action_generation":matching_actions[-1]["generation"]})
-    @staticmethod
-    def _conflict(a,b):
-        return bool(set(a["failure_domains"])&set(b["failure_domains"]) or set(a["affected_entities"])&set(b["affected_entities"]) or a["scope_id"]==b["scope_id"])
-    def schedule(self,*,now=None):
-        lease=self._assert(now); scheduled=[]
-        for ep in self.store.episodes(states=("OBSERVED","RETRY","REPLAN","CONTAINED")):
-            if any(self._conflict(ep,x) for x in scheduled):
-                self.store.update(episode_id=ep["episode_id"],state="CONTAINED",now=now,owner=self.controller_id,fencing_token=int(lease["fencing_token"]),mode="SERIALIZED",payload={"reason":"dependency_or_failure_domain_conflict"}); continue
-            evidence=self.gateway.path(ep["scope_id"])
-            plan=self.gateway.intelligence.plan(scope_id=ep["scope_id"],generation=int(ep["generation"]),strategy=ep["strategy"],criticality=int(ep["criticality"]),confidence=float(ep["confidence"]),reversible=True,cascade_risk=float(ep["cascade_risk"]),redundant_capacity=True,standby_capacity_available=True,fabric_path_id=str(evidence["path_id"]))
-            self.store.update(episode_id=ep["episode_id"],state="SCHEDULED",now=now,owner=self.controller_id,fencing_token=int(lease["fencing_token"]),mode=str(plan["mode"]),payload={"plan_id":plan["plan_id"],"prediction":plan["prediction"],"counterfactual":plan["counterfactual"]})
-            scheduled.append(next(x for x in self.store.episodes(states=("SCHEDULED",)) if x["episode_id"]==ep["episode_id"]))
-        return tuple(scheduled)
-    def run_cycle(self,*,evidence_provider:Callable[[Mapping[str,Any]],Mapping[str,Any]],now=None):
-        lease=self._assert(now); now=time.time() if now is None else float(now); self.gateway.recovery_orchestrator.discover(now=now); self.schedule(now=now); results=[]
-        for ep in self.store.episodes(states=("SCHEDULED","EXECUTING","RETRY","REPLAN")):
-            self.store.update(episode_id=ep["episode_id"],state="EXECUTING",now=now,owner=self.controller_id,fencing_token=int(lease["fencing_token"]))
-            actions=[a for a in self.gateway.recovery_orchestrator.due(now=now) if str(a["path_id"])==ep["scope_id"] and int(a["generation"])==int(ep["generation"])]
-            if not actions:
-                self.store.update(episode_id=ep["episode_id"],state="REPLAN",now=now,error="no current authoritative recovery action"); continue
-            payload=dict(evidence_provider(dict(actions[-1]))); unsupported=set(payload)-{"physical_evidence","active_measurement","evidence","observed_at"}
-            if unsupported: raise ValueError("unsupported evidence fields: "+", ".join(sorted(unsupported)))
-            try:
-                result=dict(self.gateway.recover_path(path_id=ep["scope_id"],owner=self.controller_id,physical_evidence=tuple(payload.get("physical_evidence",())),active_measurement=payload.get("active_measurement"),evidence=payload.get("evidence"),observed_at=payload.get("observed_at",now),now=now))
-            except Exception as exc:
-                self.store.update(episode_id=ep["episode_id"],state="RETRY",now=now,error=str(exc)); results.append({"episode_id":ep["episode_id"],"state":"RETRY","error":str(exc)}); continue
-            state="RECOVERED" if result.get("state")=="SUCCEEDED" and result.get("allow_routing") is True else ("REPLAN" if result.get("state")=="CANCELLED" else str(result.get("state") or "RETRY"))
-            self.store.update(episode_id=ep["episode_id"],state=state,now=now,payload={"result":result},error=None if state not in {"RETRY","RETRY_WAIT"} else str(result.get("error") or "authoritative recovery remains incomplete")); results.append({"episode_id":ep["episode_id"],**result})
-        return tuple(results)
-    def reconcile(self,*,now=None):
-        self._assert(now); out=[]
-        for ep in self.store.episodes(states=("EXECUTING","SCHEDULED","RETRY","REPLAN","CONTAINED")):
-            path=self.gateway.path(ep["scope_id"]); actions=self.gateway.inventory.active_path_recovery_actions(path_id=ep["scope_id"]); matching=[a for a in actions if int(a["generation"])==int(ep["generation"])]
-            if any(a["state"]=="SUCCEEDED" for a in matching) and bool(path["active_path"].get("allow_routing")): state="RECOVERED"
-            elif any(a["state"]=="CANCELLED" for a in matching): state="REPLAN"
-            else: state="RETRY"
-            out.append(self.store.update(episode_id=ep["episode_id"],state=state,now=now,payload={"reconciled_from_authoritative_state":True}))
-        return tuple(out)
-    def snapshot(self): return self.store.snapshot()
+        episode = self.store.upsert_episode(
+            scope_id=exact,
+            generation=generation,
+            fingerprint=fingerprint,
+            criticality=criticality,
+            confidence=confidence,
+            cascade_risk=cascade_risk,
+            failure_domains=tuple(impact["failure_domains"]),
+            affected_entities=tuple(tuple(x) for x in impact["affected_entities"]),
+            strategy=strategy,
+            now=now,
+        )
+        durable_actions = self.gateway.recovery_orchestrator.discover(now=now)
+        matching_actions = tuple(
+            action
+            for action in durable_actions
+            if str(action["path_id"]) == exact and int(action["generation"]) == int(generation)
+        )
+        if not matching_actions:
+            raise ContinuousRecoveryError(
+                "authoritative recovery action was not durably enqueued for observed path"
+            )
+        return self.store.update(
+            episode_id=episode["episode_id"],
+            state="OBSERVED",
+            now=now,
+            payload={
+                "prediction": prediction,
+                "recovery_action_id": matching_actions[-1]["action_id"],
+                "recovery_action_generation": matching_actions[-1]["generation"],
+            },
+        )
+
