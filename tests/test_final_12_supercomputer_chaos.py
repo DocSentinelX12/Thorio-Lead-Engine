@@ -82,7 +82,7 @@ def _path(
         path_id=path_id,
         source_gpu=source_gpu,
         destination_gpu=destination_gpu,
-        segments=(f"gpu:{path_id}:source", f"rdma:{path_id}:1"),
+        segments=(source_gpu, f"rdma:{path_id}:1", destination_gpu),
         fabric_domains=(domain,),
         state=FabricPathState.VERIFIED,
     )
