@@ -8,7 +8,6 @@ from .agent_queue import enqueue
 from .outreach_engine import STOP_STATES, objection_response
 
 STATE_KEY = "revenue_conversations"
-CLOSER_ROLE = "high_ticket_sales_closer"
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -210,7 +209,7 @@ def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int
         fingerprint = str(lead.get("fingerprint") or "").strip()
         if not fingerprint: continue
         due_at = str(lead.get("next_follow_up_at") or "").strip()
-        enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True, "authorized": True, "authorized_by_role": CLOSER_ROLE}, priority=10, dedupe_key=f"scheduled_followup:{fingerprint}:{due_at}"); queued += 1
+        enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True}, priority=10, dedupe_key=f"scheduled_followup:{fingerprint}:{due_at}"); queued += 1
     return queued
 
 def objection_reply(text: str, route: str) -> str:
