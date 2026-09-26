@@ -130,3 +130,22 @@ def test_batch_delivery_preserves_large_unsynced_backlog_across_runs(tmp_path):
         assert third["synced_count"] == 25
         assert third["failed_count"] == 0
         assert db.pending(limit=1000) == []
+
+
+
+def test_batch_delivery_defers_research_required_leads_without_recording_sync_error(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = _lead("research-deferred-001")
+    assert db.insert_if_new(lead)
+
+    with patch("lead_engine.batch_delivery._run_batch_high_volume_sync"), \
+         patch("lead_engine.batch_delivery.package_is_ready", return_value=False):
+        result = sync_pending_batched(db, limit=10)
+
+    assert result["failed_count"] == 0
+    assert result["synced_count"] == 0
+    assert result["deferred_research_count"] == 1
+    assert result["deferred_research"][0]["reason"] == "research_verification_pending"
+    state = db.get_sync_state("research-deferred-001")
+    assert state["synced"] is False
+    assert state["last_error"] == ""
