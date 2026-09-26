@@ -58,6 +58,18 @@ SIGNAL_WEIGHTS = {
 
 
 ROUTE_SIGNAL_WEIGHTS = {
+    "Astrivon Labs": {
+        "looking for a dev agency": 10, "looking for a tech partner": 10,
+        "need an mvp built": 10, "mvp built for my startup": 10,
+        "b2b outreach expert": 9, "b2b sales representative": 9,
+        "lead generation specialist": 9, "sales automation expert": 9,
+        "ai/ml developer": 9, "computer vision specialist": 9,
+        "automate business workflow": 9, "crm automation": 8,
+        "full-stack software engineer": 8, "scaling my web/mobile app": 9,
+        "raised seed funding": 7, "seed funding": 6,
+        "non-technical founder": 7, "outsource sales pipeline": 8,
+        "reduce in-house dev costs": 7, "reduce in-house sales costs": 7,
+    },
     "Shiftr": {
         "individual developer": 8,
         "software engineer": 7,
