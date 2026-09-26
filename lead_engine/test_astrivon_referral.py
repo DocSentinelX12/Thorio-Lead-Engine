@@ -98,4 +98,5 @@ def test_lead_conversion_uses_verified_route_research():
     referral = lead_to_astrivon_referral(lead)
     assert referral.company == "Acme"
     assert referral.current_need == "Build an MVP"
+    assert "End-to-End Product Development" in referral.services
     assert referral.verified_evidence.startswith("Acme needs")
