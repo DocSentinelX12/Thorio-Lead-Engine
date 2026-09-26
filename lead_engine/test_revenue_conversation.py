@@ -26,7 +26,7 @@ def test_follow_up_queue_is_not_blocked_by_human_authorization(tmp_path):
 def test_inbound_response_is_durable_and_idempotent(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead(); db.insert_if_new(lead)
     first = record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-1", text="Yes, I am interested", outcome="interested"); second = record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-1", text="Yes, I am interested", outcome="interested")
-    stored = db.get(lead["fingerprint"]); assert len(first["events"]) == 1 and len(second["events"]) == 1 and stored["response_count"] == 1 and stored["revenue_lifecycle_state"] == "conversation_active"; assert len(pending(db, "follow_up")) == 1 and pending(db, "follow_up")[0]["payload"]["authorized_by_role"] == "high_ticket_sales_closer"
+    stored = db.get(lead["fingerprint"]); assert len(first["events"]) == 1 and len(second["events"]) == 1 and stored["response_count"] == 1 and stored["revenue_lifecycle_state"] == "conversation_active"; assert len(pending(db, "follow_up")) == 1 and "authorized_by_role" not in pending(db, "follow_up")[0]["payload"]
 
 def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead("objection-test"); db.insert_if_new(lead); transport = FakeTransport(); register_revenue_transport(transport)
