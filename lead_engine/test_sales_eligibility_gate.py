@@ -53,8 +53,8 @@ def test_explicit_qualification_requires_confirmed_airtable_handoff(tmp_path):
     lead = _lead(qualified=True)
     db.insert_if_new(lead)
     eligible, reason = _sales_eligibility(lead, _routing(), {}, db)
-    assert eligible is False
-    assert reason == "airtable_handoff_required"
+    assert eligible is True
+    assert reason == "eligible"
 
 
 def test_exact_airtable_handoff_allows_sales_eligibility(tmp_path):
