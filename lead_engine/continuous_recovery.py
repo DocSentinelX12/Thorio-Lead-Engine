@@ -82,6 +82,19 @@ class RecoveryEpisodeStore:
                 q="SELECT episode_id FROM recovery_episodes WHERE state IN ("+(",".join("?" for _ in states))+") ORDER BY created_at,episode_id"; rows=db.execute(q,states).fetchall()
             else: rows=db.execute("SELECT episode_id FROM recovery_episodes ORDER BY created_at,episode_id").fetchall()
             return tuple(self._episode(db,r["episode_id"]) for r in rows)
+    def recovery_action_id(self, episode_id: str) -> str | None:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT payload_json FROM recovery_episode_events WHERE episode_id=? ORDER BY created_at DESC",
+                (episode_id,),
+            ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            value = payload.get("recovery_action_id")
+            if value:
+                return str(value)
+        return None
+
     def snapshot(self): return {"lease":self.lease(),"episodes":self.episodes()}
 
 class ContinuousRecoveryController:
@@ -293,15 +306,7 @@ class ContinuousRecoveryController:
             actions = self.gateway.inventory.active_path_recovery_actions(
                 path_id=episode["scope_id"]
             )
-            action_id = None
-            for event in self.store._connect().execute(
-                "SELECT payload_json FROM recovery_episode_events WHERE episode_id=? ORDER BY created_at DESC",
-                (episode["episode_id"],),
-            ).fetchall():
-                payload = json.loads(event["payload_json"])
-                if payload.get("recovery_action_id"):
-                    action_id = str(payload["recovery_action_id"])
-                    break
+            action_id = self.store.recovery_action_id(episode["episode_id"])
             matching = [
                 action for action in actions
                 if (action_id is None or str(action["action_id"]) == action_id)
