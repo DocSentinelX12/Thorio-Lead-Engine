@@ -31,7 +31,8 @@ DISCOVERY_AGENT_ROLES: Tuple[AgentRole, ...] = (
     AgentRole("ai_demand_discovery", "discovery.ai_demand", "Find AI, ML, data, and automation demand signals.", 5, "discovery"),
     AgentRole("product_design_demand_discovery", "discovery.product_design", "Find product, design, and UX demand signals.", 5, "discovery"),
     AgentRole("contract_team_demand_discovery", "discovery.contract_team", "Find contractor, staff augmentation, outsourcing, and team demand.", 5, "discovery"),
-    AgentRole("recent_inquiry_discovery", "discovery.recent_inquiry", "Identify recent explicit inquiries and current buying or hiring needs.", 5, "discovery"),\n    AgentRole("astrivon_demand_discovery", "discovery.astrivon_demand", "Find Astrivon-specific agency, MVP, AI/ML, automation, product development, B2B outreach, and funding demand.", 5, "discovery"),
+    AgentRole("recent_inquiry_discovery", "discovery.recent_inquiry", "Identify recent explicit inquiries and current buying or hiring needs.", 5, "discovery"),
+    AgentRole("astrivon_demand_discovery", "discovery.astrivon_demand", "Find Astrivon-specific agency, MVP, AI/ML, automation, product development, B2B outreach, and funding demand.", 5, "discovery"),
 )
 
 SOCIAL_RESEARCH_AGENT_ROLES: Tuple[AgentRole, ...] = (
