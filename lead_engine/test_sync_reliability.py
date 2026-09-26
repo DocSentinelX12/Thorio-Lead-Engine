@@ -187,6 +187,8 @@ def test_autonomous_revenue_eligibility_syncs_outreach_without_human_delivery_ap
 
     with patch("lead_engine.sync_worker.sync_lead_if_missing", return_value={"status": "created", "record": {"id": "lead-001"}}), \
          patch("lead_engine.sync_worker.package_is_ready", return_value=True), \
+         patch("lead_engine.sync_worker.package_digest", return_value="test-digest"), \
+         patch("lead_engine.sync_worker.verify_airtable_handoff", return_value=(True, "test-digest")), \
          patch("lead_engine.sync_worker.sync_research", return_value={"status": "created", "record": {"id": "research-001"}}), \
          patch("lead_engine.sync_worker.sync_outreach", return_value={"status": "created", "record": {"id": "outreach-001"}}) as mock_outreach, \
          patch("lead_engine.sync_worker.sync_master_tracker", return_value={"status": "synced"}) as mock_master:
