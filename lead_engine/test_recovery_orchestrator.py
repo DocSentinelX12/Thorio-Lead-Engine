@@ -76,14 +76,15 @@ def test_orchestrator_execution_is_exact_path_scoped_and_closes_only_after_stabl
         action_id=action["action_id"],
         owner="recovery-worker-a",
         physical_evidence=_physical_evidence(path_a),
-        active_measurement=_measurement(path_a.path_id, f"{path_a.path_id}:a"),
+        active_measurement=_measurement(path_a.path_id, f"{path_a.path_id}"),
         observed_at=21.0,
         now=21.0,
     )
 
     assert result["state"] == "SUCCEEDED"
     assert result["allow_routing"] is True
-    assert inventory.physical_paths()[0]["path_id"] == path_a.path_id
+    path_a_record = next(item for item in inventory.physical_paths() if item["path_id"] == path_a.path_id)
+    assert path_a_record["state"] == FabricPathState.MEASURED.value
     path_b_record = next(item for item in inventory.physical_paths() if item["path_id"] == path_b.path_id)
     assert path_b_record["state"] == FabricPathState.MEASURED.value
 
