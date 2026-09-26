@@ -258,4 +258,10 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
     return package
 
 
-# Public research intelligence seam. The intelligence module keeps its own section constants\n# so importing it here does not create a circular dependency.\nfrom .research_intelligence import (\n    build_research_intelligence,\n    merge_research_intelligence,\n    validate_research_intelligence,\n)\n
+# Public research intelligence seam. The intelligence module keeps its own section constants
+# so importing it here does not create a circular dependency.
+from .research_intelligence import (
+    build_research_intelligence,
+    merge_research_intelligence,
+    validate_research_intelligence,
+)
