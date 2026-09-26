@@ -231,7 +231,7 @@ def _evidence(action):
             path_id,
             float(action["updated_at"]) + 1.0,
             gpu_uuid=required_segments[0].removeprefix("gpu:"),
-            rdma_device=path_id,
+            rdma_device=path_id + ":source",
             remote_gpu_uuid=required_segments[-1].removeprefix("gpu:"),
             remote_rdma_device=required_segments[-2].removeprefix("rdma:").rsplit(":", 1)[0],
         ),
