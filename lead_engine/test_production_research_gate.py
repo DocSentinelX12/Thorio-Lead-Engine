@@ -4,29 +4,31 @@ import pytest
 
 from lead_engine.database import LeadDB
 from lead_engine.production_research_gate import ProductionResearchGateError, validate_production_research_gate
+from lead_engine.research_intelligence import build_research_intelligence
 
 
 def _complete_lead(fingerprint: str = "complete-1") -> dict:
-    return {
+    lead = {
         "fingerprint": fingerprint,
         "opportunity_id": fingerprint,
         "company": "Acme",
+        "person": "Taylor",
+        "contact_email": "taylor@example.com",
         "research_status": "complete",
-        "research_intelligence": {"intelligence_version": "1", "opportunity_id": fingerprint, "fingerprint": fingerprint, "claims": [], "evidence_graph": {"nodes": {}}},
-        "company_research": {
-            "company_verified": True,
-            "decision_maker": "Taylor",
-            "decision_maker_evidence": "https://example.com/taylor",
-            "decision_maker_verification_status": "verified",
-            "decision_maker_email": "taylor@example.com",
-        },
-        "business_need_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Current need"}]},
-        "current_intent_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/intent", "evidence": "Current intent"}]},
-        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/technical", "evidence": "Technical need"}]},
-        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/commercial", "evidence": "Commercial context"}]},
-        "route_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/route", "evidence": "Route fit"}]},
-        "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Current need"}]},
+        "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_verification_status": "verified", "decision_maker_email": "taylor@example.com", "public_company_facts": [{"url": "https://example.com/company", "evidence": "Acme company profile", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "decision_maker_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/taylor", "evidence": "Taylor is an Acme decision maker", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "business_need_research": {"verified": True, "verification_status": "verified", "business_need": "current engineering need", "evidence": [{"url": "https://example.com/need", "evidence": "Acme has a current engineering need", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "current engineering need", "observed_at": "2026-09-26T00:00:00+00:00", "evidence": [{"url": "https://example.com/intent", "evidence": "Acme has current hiring intent", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "technical_product_hiring_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/technical", "evidence": "Acme needs engineering capacity", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "commercial_research": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/commercial", "evidence": "Acme has relevant commercial context", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/route", "evidence": "Thorio route fit", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]}}},
+        "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Current engineering need", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
+        "eligible_routes": ["Thorio"],
+        "preserved_routes": ["Thorio"],
+        "routing_result": {"destinations": ["Thorio"], "review_required": False},
     }
+    lead["research_intelligence"] = build_research_intelligence(lead)
+    return lead
 
 
 def test_production_gate_accepts_complete_synced_research(tmp_path):
@@ -44,6 +46,7 @@ def test_production_gate_rejects_complete_research_without_ready_closer(tmp_path
     db = LeadDB(data_dir=tmp_path)
     lead = _complete_lead()
     lead["closer_package"]["ready"] = False
+    lead["research_intelligence"] = build_research_intelligence(lead)
     db.insert_if_new(lead)
     with pytest.raises(ProductionResearchGateError, match="RESEARCH/CLOSER GATE FAILURE"):
         validate_production_research_gate(db)
@@ -84,11 +87,6 @@ def test_scheduled_cli_fails_closed_when_research_gate_fails(monkeypatch):
     monkeypatch.setattr(cli, "create_application", lambda: _Application())
     monkeypatch.setattr(cli, "_configured_runtime_sources", lambda: [])
     monkeypatch.setattr(cli, "_run_scheduled_with_lock", lambda *args, **kwargs: {"status": "completed"})
-    monkeypatch.setattr(
-        cli,
-        "validate_production_research_gate",
-        lambda db: (_ for _ in ()).throw(ProductionResearchGateError("RESEARCH/CLOSER GATE FAILURE: test")),
-    )
+    monkeypatch.setattr(cli, "validate_production_research_gate", lambda db: (_ for _ in ()).throw(ProductionResearchGateError("RESEARCH/CLOSER GATE FAILURE: test")))
     monkeypatch.setattr(cli, "_install_production_diagnostics", lambda: None)
-
     assert cli.main(["run-scheduled", "--cycles", "1"]) == 1
