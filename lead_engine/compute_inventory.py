@@ -887,6 +887,7 @@ class ComputeInventory:
             return {"plan": plan, "trigger_fingerprint": None}
         intelligence = dict(plan["intelligence"])
         latest = dict(intelligence.get("latest") or {})
+        failure_history = [item for item in self.physical_verification_history() if str(item.get("path_id")) == str(path_id) and str(item.get("state")) == "FAILED"]
         material = {
             "path_id": path_id,
             "action": plan["action"],
@@ -894,6 +895,7 @@ class ComputeInventory:
             "intelligence_state": plan["intelligence_state"],
             "latest": latest,
             "failure_observations": list((intelligence.get("evidence") or {}).get("failed_observations") or ()),
+            "physical_failure_history": failure_history,
             "path_reason": plan.get("reason"),
             "path_failure_domain": plan.get("failure_domain"),
             "required_segments": list(plan["required_segments"]),
@@ -1073,6 +1075,7 @@ class ComputeInventory:
         owner: str,
         state: str,
         required_stage: str | None = None,
+        now: float | None = None,
         next_attempt_at: float | None = None,
         error: str | None = None,
         completed_at: float | None = None,
@@ -1086,7 +1089,7 @@ class ComputeInventory:
         allowed = {"CLAIMED", "PHYSICAL_REVERIFYING", "AWAITING_ACTIVE_MEASUREMENT", "ACTIVE_MEASURING", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED"}
         if next_state not in allowed:
             raise ValueError("invalid recovery action state")
-        timestamp = time.time()
+        timestamp = time.time() if now is None else float(now)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -1154,7 +1157,7 @@ class ComputeInventory:
         current_trigger = self._active_path_recovery_trigger(path_id=claimed["path_id"])
         if current_trigger["trigger_fingerprint"] != claimed["trigger_fingerprint"]:
             cancelled = self.update_active_path_recovery_action(
-                action_id=claimed["action_id"], owner=owner, state="CANCELLED",
+                action_id=claimed["action_id"], owner=owner, state="CANCELLED", now=timestamp,
                 error="recovery action generation is stale",
             )
             return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": cancelled["state"], "allow_routing": False}
@@ -1163,7 +1166,7 @@ class ComputeInventory:
         try:
             if plan["action"] == "fresh_physical_reverification_required":
                 self.update_active_path_recovery_action(
-                    action_id=claimed["action_id"], owner=owner, state="PHYSICAL_REVERIFYING"
+                    action_id=claimed["action_id"], owner=owner, state="PHYSICAL_REVERIFYING", now=timestamp
                 )
                 reverification = self.apply_active_path_reverification(
                     path_id=claimed["path_id"], evidence=physical_evidence, observed_at=observed_at
@@ -1174,7 +1177,7 @@ class ComputeInventory:
                 if active_measurement is None:
                     awaiting = self.update_active_path_recovery_action(
                         action_id=claimed["action_id"], owner=owner,
-                        state="AWAITING_ACTIVE_MEASUREMENT",
+                        state="AWAITING_ACTIVE_MEASUREMENT", now=timestamp,
                         required_stage="fresh_active_measurement_required",
                         trigger_fingerprint=refreshed_trigger["trigger_fingerprint"],
                         trigger_snapshot=refreshed_trigger["trigger_snapshot"],
@@ -1182,7 +1185,7 @@ class ComputeInventory:
                     return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": awaiting["state"], "allow_routing": False, "reverification": reverification}
             elif plan["action"] == "fresh_active_measurement_required":
                 self.update_active_path_recovery_action(
-                    action_id=claimed["action_id"], owner=owner, state="ACTIVE_MEASURING"
+                    action_id=claimed["action_id"], owner=owner, state="ACTIVE_MEASURING", now=timestamp
                 )
             else:
                 cancelled = self.update_active_path_recovery_action(
@@ -1194,7 +1197,7 @@ class ComputeInventory:
             if active_measurement is None:
                 raise ValueError("fresh active measurement is required before routing")
             self.update_active_path_recovery_action(
-                action_id=claimed["action_id"], owner=owner, state="ACTIVE_MEASURING"
+                action_id=claimed["action_id"], owner=owner, state="ACTIVE_MEASURING", now=timestamp
             )
             test_id = self.record_active_gdrdma_measurement(
                 path_id=claimed["path_id"],
@@ -1206,13 +1209,13 @@ class ComputeInventory:
             if intelligence.get("state") == "stable":
                 completed = self.update_active_path_recovery_action(
                     action_id=claimed["action_id"], owner=owner,
-                    state="SUCCEEDED", required_stage="no_recovery_action_required",
+                    state="SUCCEEDED", now=timestamp, required_stage="no_recovery_action_required",
                 )
                 return {"action_id": claimed["action_id"], "path_id": claimed["path_id"], "state": completed["state"], "test_id": test_id, "intelligence": intelligence, "allow_routing": True}
             retry_seconds = self._recovery_retry_seconds(claimed["attempt_count"])
             retry = self.update_active_path_recovery_action(
                 action_id=claimed["action_id"], owner=owner,
-                state="RETRY_WAIT",
+                state="RETRY_WAIT", now=timestamp,
                 required_stage="fresh_physical_reverification_required",
                 next_attempt_at=timestamp + retry_seconds,
                 error="fresh active measurement did not establish stable exact-path intelligence",
@@ -1222,7 +1225,7 @@ class ComputeInventory:
             retry_seconds = self._recovery_retry_seconds(claimed["attempt_count"])
             retry = self.update_active_path_recovery_action(
                 action_id=claimed["action_id"], owner=owner,
-                state="RETRY_WAIT",
+                state="RETRY_WAIT", now=timestamp,
                 next_attempt_at=timestamp + retry_seconds,
                 error=str(exc),
             )
