@@ -80,7 +80,7 @@ def package_projection(lead: Mapping[str, Any]) -> dict[str, Any]:
     if lead.get("fingerprint") or lead.get("opportunity_id"):
         validate_opportunity_identity(dict(lead))
     intelligence = lead.get("research_intelligence")
-    if isinstance(intelligence, Mapping) and intelligence:
+    if isinstance(intelligence, Mapping):
         opportunity_id = str(lead.get("fingerprint") or lead.get("opportunity_id") or "").strip()
         validate_research_intelligence(intelligence, opportunity_id=opportunity_id)
     return {key: _canonical(lead.get(key)) for key in PACKAGE_KEYS if key in lead}
@@ -91,6 +91,30 @@ def package_digest(lead: Mapping[str, Any]) -> str:
 
 def package_is_ready(lead: Mapping[str, Any]) -> bool:
     readiness = research_readiness(lead)
+    intelligence = lead.get("research_intelligence")
+    if not isinstance(intelligence, Mapping) or not intelligence:
+        return False
+    opportunity_id = str(lead.get("fingerprint") or lead.get("opportunity_id") or "").strip()
+    if not opportunity_id:
+        return False
+    try:
+        validate_research_intelligence(intelligence, opportunity_id=opportunity_id)
+    except ValueError:
+        return False
+    graph = intelligence.get("evidence_graph")
+    claims = intelligence.get("claims")
+    if not isinstance(graph, Mapping) or not isinstance(graph.get("nodes"), Mapping) or not graph["nodes"]:
+        return False
+    if not isinstance(claims, list) or not claims:
+        return False
+    for profile_name in ("company", "need", "decision_maker", "commercial", "stakeholders"):
+        profile = intelligence.get(profile_name)
+        if not isinstance(profile, Mapping):
+            return False
+        if profile_name != "commercial" and not isinstance(profile.get("known"), Mapping):
+            return False
+    if not isinstance(intelligence.get("handoff"), Mapping) or intelligence["handoff"].get("ready") is not True:
+        return False
     routing_result = lead.get("routing_result")
     destinations = routing_result.get("destinations") if isinstance(routing_result, Mapping) else None
     eligible_routes = lead.get("eligible_routes")
