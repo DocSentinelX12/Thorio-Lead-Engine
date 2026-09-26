@@ -100,11 +100,19 @@ def test_allocator_rejects_unverified_physical_path(tmp_path):
 
 def test_control_plane_checkpoint_survives_restart(tmp_path):
     path = str(tmp_path / "fabric.sqlite3")
+    inventory = ComputeInventory(str(tmp_path / "physical.sqlite3"))
+    inventory.persist_physical_path(PhysicalFabricPath(
+        path_id="p1", source_gpu="gpu:p1:source", destination_gpu="gpu:p1:destination",
+        segments=("gpu:p1:source", "rdma:p1:source:1", "rdma:p1:remote:1", "gpu:p1:destination"),
+        fabric_domains=("domain:p1",), state=FabricPathState.VERIFIED,
+    ))
     c = FabricCoordinator(path)
+    c.bind_physical_path_authority(inventory)
     c.register_node(NodeCapacity("n1", "d1", 8, 4, 1))
     c.submit_workload("w1", criticality=2)
     c.coordinate([_candidate("w1", "n1", "d1", "p1", 5)])
     restored = FabricCoordinator(path)
+    restored.bind_physical_path_authority(inventory)
     assert restored.snapshot()["allocations"][0]["workload_id"] == "w1"
 
 
