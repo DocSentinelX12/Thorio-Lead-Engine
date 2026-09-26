@@ -164,11 +164,7 @@ def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
         if not _explicitly_verified(lead.get(section))
     ]
     company_research = lead.get("company_research")
-    company_verified = (
-        isinstance(company_research, Mapping)
-        and company_research.get("company_verified") is True
-        and bool(str(company_research.get("company_verification_evidence") or "").strip())
-    )
+    company_verified = isinstance(company_research, Mapping) and company_research.get("company_verified") is True
     decision_maker_verified = (
         isinstance(company_research, Mapping)
         and bool(str(company_research.get("decision_maker") or "").strip())
