@@ -2,23 +2,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 STOP_STATES = frozenset({"declined", "opted_out", "irrelevant", "exhausted", "converted"})
 ACTIVE_STATES = frozenset({"ready", "drafted", "sent", "replied", "interested", "objection"})
 CADENCE_DAYS = (0, 3, 7, 14)
 ROUTES = frozenset({"Thorio", "Shiftr", "Paxus", "Astrivon Labs"})
 @dataclass(frozen=True)
 class OutreachDecision:
-    route: str
-    contact_name: str
-    contact_email: str
-    subject: str
-    body: str
-    evidence_refs: tuple[str, ...]
-    buying_signal: str
-    next_state: str
-    next_follow_up_at: Optional[str]
-    stop_reason: Optional[str]
+    route: str; contact_name: str; contact_email: str; subject: str; body: str; evidence_refs: tuple[str, ...]; buying_signal: str; next_state: str; next_follow_up_at: Optional[str]; stop_reason: Optional[str]
 class OutreachContractError(ValueError): pass
 def _text(value: Any) -> str: return str(value or "").strip()
 def _research(lead: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -56,10 +47,6 @@ def _evidence_refs(lead: Mapping[str, Any]) -> tuple[str, ...]:
     for mapping_key in ("current_intent_research", "business_need_research", "route_research"):
         ref = _research_ref(_verified_research_mapping(lead, mapping_key))
         if ref: refs.append(ref)
-    for event in lead.get("evidence_events", []) if isinstance(lead.get("evidence_events"), list) else []:
-        if isinstance(event, Mapping):
-            ref = _text(event.get("source_url") or event.get("url") or event.get("source_id"))
-            if ref: refs.append(ref)
     return tuple(dict.fromkeys(refs))
 def _route_verified(lead: Mapping[str, Any], route: str) -> bool:
     qualification = lead.get("qualification_results")
@@ -69,6 +56,7 @@ def _route_verified(lead: Mapping[str, Any], route: str) -> bool:
     route_research = result.get("route_research")
     if not isinstance(route_research, Mapping) or route_research.get("verified") is not True: return False
     if route == "Paxus" and result.get("true_referral") is not True: return False
+    if route == "Astrivon Labs" and result.get("service_fit_verified") is not True: return False
     return True
 def choose_route(lead: Mapping[str, Any]) -> str:
     routes = _routes(lead)
@@ -84,7 +72,11 @@ def _subject(route: str, signal: str) -> str:
     short = signal.rstrip(".!?")
     if len(short) > 72: short = short[:69].rstrip() + "..."
     return f"Re: {short}" if short else f"A possible fit for {route}"
-def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str: return f"Hi {contact_name},\n\nI saw that {signal.strip().rstrip('.!?')}. If that is still a priority at {company}, I may be able to help.\n\nI work with {_offer(route)}. Based on the researched need, it looks worth a quick conversation to see whether there is a real fit.\n\nWould it be useful if I sent over the most relevant option?\n\nBest,\nThorio"
+def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
+    clean_signal = signal.strip().rstrip(".!?")
+    if route == "Astrivon Labs":
+        return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.\n\nI work with Astrivon Labs, whose senior developers handle technical discovery and delivery across AI/ML, computer vision, business automation, product development, and B2B outreach infrastructure. Based on the researched need, it looks worth a brief conversation to see whether there is a real fit.\n\nWould you be open to an introductory meeting with the Astrivon team?\n\nBest,\nThorio"
+    return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.\n\nI work with {_offer(route)}. Based on the researched need, it looks worth a quick conversation to see whether there is a real fit.\n\nWould it be useful if I sent over the most relevant option?\n\nBest,\nThorio"
 def _require_research_contract(lead: Mapping[str, Any]) -> Mapping[str, Any]:
     if _text(lead.get("research_status")).lower() not in {"complete", "research_complete"}: raise OutreachContractError("Completed research is required before outreach")
     research = _research(lead)
@@ -113,9 +105,7 @@ def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[dateti
     if outcome not in allowed: raise OutreachContractError(f"Unsupported outreach outcome: {outcome}")
     updated = dict(lead); now = now or datetime.now(timezone.utc); history = list(lead.get("outreach_history") or []) if isinstance(lead.get("outreach_history"), list) else []
     if str(lead.get("sales_eligibility") or "").strip().lower() == "eligible" and outcome not in STOP_STATES:
-        verified_signal = _verified_buying_signal(lead)
-        updated["current_need"] = verified_signal
-        updated["verified_follow_up_signal"] = verified_signal
+        verified_signal = _verified_buying_signal(lead); updated["current_need"] = verified_signal; updated["verified_follow_up_signal"] = verified_signal
     history.append({"at": now.isoformat(), "outcome": outcome}); updated["outreach_history"] = history; updated["outreach_state"] = outcome
     if outcome in STOP_STATES: updated["outreach_stop_reason"] = outcome; updated["next_follow_up_at"] = None
     elif outcome == "no_response":
