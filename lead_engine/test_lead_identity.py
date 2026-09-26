@@ -59,6 +59,35 @@ def test_canonical_opportunity_identity_exposes_version_and_derivation():
     assert identity["derivation"]["source_id"] == "post-1"
 
 
+def test_canonical_identity_derivation_retains_available_company_and_contact_context():
+    from .lead_identity import canonical_opportunity_identity
+
+    identity = canonical_opportunity_identity({
+        "source": "linkedin",
+        "source_id": "post-1",
+        "url": "https://linkedin.example/post-1",
+        "company": "Acme",
+        "company_website": "https://acme.example",
+        "person": "Jane CTO",
+        "contact_name": "Jane CTO",
+        "contact_title": "Chief Technology Officer",
+        "contact_email": "jane@example.com",
+        "linkedin_url": "https://linkedin.example/in/jane",
+        "job_title": "AI Engineer",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
+    })
+
+    derivation = identity["derivation"]
+
+    assert derivation["company"] == "acme"
+    assert derivation["company_website"] == "https://acme.example"
+    assert derivation["contact_name"] == "jane cto"
+    assert derivation["contact_title"] == "chief technology officer"
+    assert derivation["contact_email"] == "jane@example.com"
+    assert derivation["linkedin_url"] == "https://linkedin.example/in/jane"
+
+
 def test_canonical_opportunity_identity_ignores_research_mutation():
     from .lead_identity import canonical_opportunity_identity
 
