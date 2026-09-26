@@ -164,6 +164,17 @@ def test_finalize_research_readiness_preserves_each_missing_section():
     assert updated["research_gaps"]["missing_sections"] == ["commercial_research"]
 
 
+
+def test_research_readiness_rejects_empty_research_intelligence():
+    lead = _lead()
+    lead["research_intelligence"] = {}
+
+    readiness = research_package.research_readiness(lead)
+
+    assert readiness["ready"] is False
+    assert "research_intelligence" in readiness["blockers"]
+
+
 def test_research_intelligence_public_seam_exists():
     assert callable(getattr(research_package, "build_research_intelligence", None))
 
