@@ -25,6 +25,17 @@ def test_durable_idempotent_episode():
         a=c.observe(path_id="p1",generation=1,fingerprint="fp",criticality=3,confidence=.9,cascade_risk=.1,now=21); b=c.observe(path_id="p1",generation=1,fingerprint="fp",criticality=3,confidence=.9,cascade_risk=.1,now=22)
         assert a["episode_id"]==b["episode_id"] and len(c.snapshot()["episodes"])==1
 
+def test_observation_durably_enqueues_authoritative_recovery_action():
+    with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
+        g=gateway(f.name); path(g.inventory,"p1"); c=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c1"); c.start(generation=1,now=20)
+        c.observe(path_id="p1",generation=1,fingerprint="fp",criticality=3,confidence=.9,cascade_risk=.1,now=21)
+        actions=g.inventory.active_path_recovery_actions(path_id="p1")
+        assert len(actions)==1
+        assert actions[0]["generation"]==1
+        assert actions[0]["state"]=="PENDING"
+        assert actions[0]["path_id"]=="p1"
+
+
 def test_stale_controller_is_fenced():
     with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
         g=gateway(f.name); path(g.inventory,"p1"); c1=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c1"); c2=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c2")
