@@ -236,6 +236,7 @@ def approval_summary(
             "Shiftr": 0,
             "Paxus": 0,
             "Thorio": 0,
+            "Astrivon Labs": 0,
         },
     }
 
