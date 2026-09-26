@@ -156,6 +156,10 @@ class HealingAuthorityGateway:
             for row in self.inventory.active_path_recovery_actions(path_id=exact_path_id)
         )
 
+        evidence_generation = max(
+            (int(action.get("generation") or 0) for action in recovery_actions),
+            default=1,
+        )
         physical_observed_at = float(
             physical.get("measurement_observed_at")
             or physical.get("updated_at")
@@ -167,10 +171,10 @@ class HealingAuthorityGateway:
             entity_type="fabric_path",
             entity_id=exact_path_id,
             source_authority="compute_inventory",
-            generation=1,
+            generation=evidence_generation,
             confidence=1.0,
             observed_at=physical_observed_at,
-            payload=dict(physical),
+            payload={**dict(physical), "evidence_generation": evidence_generation},
         )
         latest = dict(intelligence.get("latest") or {})
         if latest.get("observed_at") is not None:
@@ -179,17 +183,17 @@ class HealingAuthorityGateway:
                 entity_type="active_path",
                 entity_id=exact_path_id,
                 source_authority="active_path_intelligence",
-                generation=1,
+                generation=evidence_generation,
                 confidence=1.0,
                 observed_at=float(latest["observed_at"]),
-                payload=dict(intelligence),
+                payload={**dict(intelligence), "evidence_generation": evidence_generation},
             )
         if latest.get("observed_at") is not None:
             self.evidence_graph.record_relationship(
                 scope_id=exact_path_id, source_type="active_path", source_id=exact_path_id,
                 relation="observes", target_type="fabric_path", target_id=exact_path_id,
-                source_authority="active_path_intelligence", generation=1, confidence=1.0,
-                observed_at=float(latest["observed_at"]), payload={"fabric_path_id": exact_path_id},
+                source_authority="active_path_intelligence", generation=evidence_generation, confidence=1.0,
+                observed_at=float(latest["observed_at"]), payload={"fabric_path_id": exact_path_id, "evidence_generation": evidence_generation},
             )
         for action in recovery_actions:
             action_observed_at = float(action.get("updated_at") or action.get("created_at") or 0.0)
