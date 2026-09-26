@@ -157,3 +157,11 @@ def test_paxus_does_not_match_normal_technology_job_posting():
     )
 
     assert "Paxus" not in routes
+
+
+def test_astrivon_workflow_automation_signal_routes_directly():
+    assert "Astrivon Labs" in potential_routes(
+        "OperationsCo",
+        "Looking to automate business workflow / CRM",
+        "The company needs CRM automation.",
+    )
