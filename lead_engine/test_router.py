@@ -134,6 +134,7 @@ def test_score_routes_returns_all_destinations():
         "Shiftr",
         "Paxus",
         "Thorio",
+        "Astrivon Labs",
     }
 
 
