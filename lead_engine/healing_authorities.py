@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .healing_dependencies import HealingDependencyAnalyzer
+from .healing_evidence import HealingEvidenceGraph
+from .healing_intelligence import HealingIntelligence
+
 from .compute_inventory import ComputeInventory
 from .recovery_orchestrator import RecoveryOrchestrator
 from .healing_closure import HealingClosureValidator
@@ -118,11 +122,52 @@ class HealingAuthorityGateway:
             for row in self.inventory.active_path_recovery_actions(path_id=exact_path_id)
         )
 
+        physical_observed_at = float(
+            physical.get("measurement_observed_at")
+            or physical.get("updated_at")
+            or physical.get("created_at")
+            or 0.0
+        )
+        self.evidence_graph.record_observation(
+            scope_id=exact_path_id,
+            entity_type="fabric_path",
+            entity_id=exact_path_id,
+            source_authority="compute_inventory",
+            generation=1,
+            confidence=1.0,
+            observed_at=physical_observed_at,
+            payload=dict(physical),
+        )
+        latest = dict(intelligence.get("latest") or {})
+        if latest.get("observed_at") is not None:
+            self.evidence_graph.record_observation(
+                scope_id=exact_path_id,
+                entity_type="active_path",
+                entity_id=exact_path_id,
+                source_authority="active_path_intelligence",
+                generation=1,
+                confidence=1.0,
+                observed_at=float(latest["observed_at"]),
+                payload=dict(intelligence),
+            )
+        for action in recovery_actions:
+            action_observed_at = float(action.get("updated_at") or action.get("created_at") or 0.0)
+            self.evidence_graph.record_observation(
+                scope_id=exact_path_id,
+                entity_type="recovery_action",
+                entity_id=str(action["action_id"]),
+                source_authority="recovery_orchestrator",
+                generation=int(action.get("generation") or 1),
+                confidence=1.0,
+                observed_at=action_observed_at,
+                payload=dict(action),
+            )
         return {
             "path_id": exact_path_id,
             "physical": physical,
             "active_path": intelligence,
             "recovery_actions": recovery_actions,
+            "evidence": self.evidence_graph.snapshot(exact_path_id),
             "authorities": self.AUTHORITIES,
         }
 
@@ -152,6 +197,13 @@ class HealingIntegrationFabric:
         self.control_plane = control_plane
         self.learning = learning
         self.closure = closure
+        self.evidence_graph = HealingEvidenceGraph(inventory.db_path)
+        self.dependencies = HealingDependencyAnalyzer(self.evidence_graph)
+        self.intelligence = HealingIntelligence(
+            graph=self.evidence_graph,
+            dependencies=self.dependencies,
+            db_path=inventory.db_path,
+        )
 
     def path_evidence(self, path_id: str) -> dict[str, Any]:
         return self.gateway.path(path_id)
