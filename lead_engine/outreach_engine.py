@@ -84,7 +84,12 @@ def _subject(route: str, signal: str) -> str:
     short = signal.rstrip(".!?")
     if len(short) > 72: short = short[:69].rstrip() + "..."
     return f"Re: {short}" if short else f"A possible fit for {route}"
-def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str: return f"Hi {contact_name},\n\nI saw that {signal.strip().rstrip('.!?')}. If that is still a priority at {company}, I may be able to help.\n\nI work with {_offer(route)}. Based on the researched need, it looks worth a quick conversation to see whether there is a real fit.\n\nWould it be useful if I sent over the most relevant option?\n\nBest,\nThorio"
+def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
+    if route == "Astrivon Labs":
+        clean_signal = signal.strip().rstrip(".!?")
+        return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.\n\nI work with Astrivon Labs, whose senior developers handle technical discovery and delivery across AI/ML, computer vision, business automation, product development, and B2B outreach infrastructure. Based on the researched need, it looks worth a brief conversation to see whether there is a real fit.\n\nWould you be open to an introductory meeting with the Astrivon team?\n\nBest,\nThorio"
+    clean_signal = signal.strip().rstrip(".!?")
+    return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.\n\nI work with {_offer(route)}. Based on the researched need, it looks worth a quick conversation to see whether there is a real fit.\n\nWould it be useful if I sent over the most relevant option?\n\nBest,\nThorio"
 def _require_research_contract(lead: Mapping[str, Any]) -> Mapping[str, Any]:
     if _text(lead.get("research_status")).lower() not in {"complete", "research_complete"}: raise OutreachContractError("Completed research is required before outreach")
     research = _research(lead)
