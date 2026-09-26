@@ -1,5 +1,5 @@
 from lead_engine.delivery_manifest import (
-    approved_partner_leads,
+    delivery_ready_partner_leads,
     build_delivery_manifest,
 )
 
