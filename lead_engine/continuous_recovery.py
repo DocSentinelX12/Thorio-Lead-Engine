@@ -122,13 +122,13 @@ class ContinuousRecoveryController:
                 result=dict(self.gateway.recover_path(path_id=ep["scope_id"],owner=self.controller_id,physical_evidence=tuple(payload.get("physical_evidence",())),active_measurement=payload.get("active_measurement"),evidence=payload.get("evidence"),observed_at=payload.get("observed_at",now),now=now))
             except Exception as exc:
                 self.store.update(episode_id=ep["episode_id"],state="RETRY",now=now,error=str(exc)); results.append({"episode_id":ep["episode_id"],"state":"RETRY","error":str(exc)}); continue
-            state="RECOVERED" if result.get("state")=="SUCCEEDED" and result.get("allow_routing") is True else ("REPLAN" if result.get("state")=="CANCELLED" else "RETRY")
-            self.store.update(episode_id=ep["episode_id"],state=state,now=now,payload={"result":result},error=None if state!="RETRY" else str(result.get("error") or "authoritative recovery remains incomplete")); results.append({"episode_id":ep["episode_id"],**result})
+            state="RECOVERED" if result.get("state")=="SUCCEEDED" and result.get("allow_routing") is True else ("REPLAN" if result.get("state")=="CANCELLED" else str(result.get("state") or "RETRY"))
+            self.store.update(episode_id=ep["episode_id"],state=state,now=now,payload={"result":result},error=None if state not in {"RETRY","RETRY_WAIT"} else str(result.get("error") or "authoritative recovery remains incomplete")); results.append({"episode_id":ep["episode_id"],**result})
         return tuple(results)
     def reconcile(self,*,now=None):
         self._assert(now); out=[]
         for ep in self.store.episodes(states=("EXECUTING","SCHEDULED","RETRY","REPLAN","CONTAINED")):
-            path=self.gateway.path(ep["scope_id"]); actions=self.gateway.recovery_orchestrator.active_path_recovery_actions(path_id=ep["scope_id"]); matching=[a for a in actions if int(a["generation"])==int(ep["generation"])]
+            path=self.gateway.path(ep["scope_id"]); actions=self.gateway.inventory.active_path_recovery_actions(path_id=ep["scope_id"]); matching=[a for a in actions if int(a["generation"])==int(ep["generation"])]
             if any(a["state"]=="SUCCEEDED" for a in matching) and bool(path["active_path"].get("allow_routing")): state="RECOVERED"
             elif any(a["state"]=="CANCELLED" for a in matching): state="REPLAN"
             else: state="RETRY"
