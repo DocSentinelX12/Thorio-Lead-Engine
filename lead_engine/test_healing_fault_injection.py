@@ -15,7 +15,7 @@ def test_fault_catalog_is_explicit_and_controller_backed():
 
 def test_fault_injection_rejects_unknown_exact_path():
     with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
-        i=ComputeInventory(db_path=f.name); g=HealingAuthorityGateway(inventory=i,recovery_orchestrator=RecoveryOrchestrator(i)); c=ContinuousRecoveryController(gateway=g,db_path=f.name); c.start(generation=1,now=1)
+        i=ComputeInventory(db_path=f.name); g=HealingAuthorityGateway(inventory=i,recovery_orchestrator=RecoveryOrchestrator(i),fabric_coordinator=FabricCoordinator(f.name + ".coord")); c=ContinuousRecoveryController(gateway=g,db_path=f.name); c.start(generation=1,now=1)
         try: HealingFaultInjection(c).observe_failure(path_id="unknown",generation=1,fingerprint="x",criticality=2,confidence=.9,cascade_risk=.1,now=2)
         except Exception as exc: assert "unknown physical fabric path" in str(exc)
         else: raise AssertionError("unknown path was accepted")
