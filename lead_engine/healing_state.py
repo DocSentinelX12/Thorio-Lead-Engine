@@ -167,8 +167,8 @@ class HealingState:
             return self._row(db, action_id)
 
     def checkpoint(self, *, action_id: str, owner: str, checkpoint: str,
-                   payload: Mapping[str, Any]) -> dict[str, Any]:
-        now = time.time()
+                   payload: Mapping[str, Any], now: float | None = None) -> dict[str, Any]:
+        now = time.time() if now is None else float(now)
         if not checkpoint.strip():
             raise ValueError("checkpoint is required")
         with self._connect() as db:
