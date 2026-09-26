@@ -1,4 +1,4 @@
-from .lead_identity import lead_identity
+from .lead_identity import canonical_opportunity_identity, validate_opportunity_identity
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import re
@@ -59,6 +59,8 @@ class Lead:
 
     possible_duplicate: bool = False
     fingerprint: str = ""
+    identity_version: str = ""
+    identity_derivation: Dict[str, Any] = None
 
     qualified: bool = False
     review_status: str = "Review"
@@ -98,6 +100,8 @@ class Lead:
             self.qualification_results = {}
         if self.evidence_events is None:
             self.evidence_events = []
+        if self.identity_derivation is None:
+            self.identity_derivation = {}
 
     def ensure_timestamp(self):
         if not self.discovered_at:
@@ -108,23 +112,24 @@ class Lead:
     def compute_fingerprint(self):
         self.ensure_timestamp()
 
-        identity_payload = {
+        identity = canonical_opportunity_identity({
             "source": self.source,
             "source_id": self.source_id,
             "url": self.url,
             "company": self.company,
             "person": self.person,
-            "signal": self.signal,
             "job_title": self.job_title,
             "signal_type": self.signal_type,
             "discovered_at": self.discovered_at,
-        }
-
-        self.fingerprint = lead_identity(identity_payload)
-        self.opportunity_id = self.fingerprint
-
+        })
+        self.fingerprint = identity["fingerprint"]
+        self.opportunity_id = identity["opportunity_id"]
+        self.identity_version = identity["identity_version"]
+        self.identity_derivation = identity["derivation"]
         return self.fingerprint
 
     def to_dict(self):
         self.compute_fingerprint()
-        return asdict(self)
+        payload = asdict(self)
+        validate_opportunity_identity(payload)
+        return payload
