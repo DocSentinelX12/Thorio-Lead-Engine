@@ -99,3 +99,7 @@ def test_rejection_helper():
     assert not is_approved_lead(lead)
     assert not needs_lead_review(lead)
     assert is_rejected_lead(lead)
+
+
+def test_astrivon_high_score_is_supported():
+    assert decide_lead(make_lead(route="Astrivon Labs")) == DECISION_APPROVE
