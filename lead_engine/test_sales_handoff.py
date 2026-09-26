@@ -1,4 +1,5 @@
 from .database import LeadDB
+from .research_intelligence import build_research_intelligence
 from .sales_handoff import package_digest, package_is_ready, package_projection, verify_airtable_handoff, verify_lead_radar_record, verify_research_record
 
 
