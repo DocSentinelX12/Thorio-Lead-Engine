@@ -106,7 +106,7 @@ class ContinuousRecoveryController:
                 self.store.update(episode_id=ep["episode_id"],state="CONTAINED",now=now,owner=self.controller_id,fencing_token=int(lease["fencing_token"]),mode="SERIALIZED",payload={"reason":"dependency_or_failure_domain_conflict"}); continue
             evidence=self.gateway.path(ep["scope_id"])
             plan=self.gateway.intelligence.plan(scope_id=ep["scope_id"],generation=int(ep["generation"]),strategy=ep["strategy"],criticality=int(ep["criticality"]),confidence=float(ep["confidence"]),reversible=True,cascade_risk=float(ep["cascade_risk"]),redundant_capacity=True,standby_capacity_available=True,fabric_path_id=str(evidence["path_id"]))
-            self.store.update(episode_id=ep["episode_id"],state="SCHEDULED",now=now,owner=self.controller_id,fencing_token=int(lease["fencing_token"]),mode=str(plan["mode"]),payload={"plan_id":plan["plan_id"]})
+            self.store.update(episode_id=ep["episode_id"],state="SCHEDULED",now=now,owner=self.controller_id,fencing_token=int(lease["fencing_token"]),mode=str(plan["mode"]),payload={"plan_id":plan["plan_id"],"prediction":plan["prediction"],"counterfactual":plan["counterfactual"]})
             scheduled.append(next(x for x in self.store.episodes(states=("SCHEDULED",)) if x["episode_id"]==ep["episode_id"]))
         return tuple(scheduled)
     def run_cycle(self,*,evidence_provider:Callable[[Mapping[str,Any]],Mapping[str,Any]],now=None):
