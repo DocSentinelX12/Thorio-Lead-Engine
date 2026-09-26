@@ -136,3 +136,4 @@ def test_research_payload_rejects_mismatched_opportunity_identity():
 
     with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
         _research_payload({"fingerprint": "opp-1", "opportunity_id": "opp-2", "company": "Acme"})
+\n\ndef test_research_payload_rejects_mismatched_research_intelligence():\n    import pytest\n\n    with pytest.raises(ValueError, match="opportunity"):\n        _research_payload({\n            "fingerprint": "opp-1",\n            "opportunity_id": "opp-1",\n            "company": "Acme",\n            "research_intelligence": {"opportunity_id": "opp-2", "fingerprint": "opp-2", "claims": [], "evidence_graph": {"nodes": {}}},\n        })\n
