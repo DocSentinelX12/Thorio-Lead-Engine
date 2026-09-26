@@ -40,7 +40,7 @@ def test_controller_generation_is_independent_of_path_recovery_generation():
     with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
         g=gateway(f.name); path(g.inventory,"p1")
         c1=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c1")
-        c1.start(generation=1,now=20)
+        c1.start(generation=1,now=20,lease_seconds=2)
         c1.observe(path_id="p1",generation=1,fingerprint="fp-1",criticality=2,confidence=.9,cascade_risk=.1,now=21)
         c2=ContinuousRecoveryController(gateway=g,db_path=f.name,controller_id="c2")
         c2.start(generation=2,now=22)
