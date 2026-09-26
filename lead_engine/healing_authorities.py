@@ -213,7 +213,27 @@ class HealingIntegrationFabric:
 
     def coordinate(self, candidates: tuple[PlacementCandidate, ...] | list[PlacementCandidate]) -> dict[str, Any]:
         """Delegate capacity and placement decisions to the global coordinator."""
-        return self.fabric_coordinator.coordinate(tuple(candidates))
+        result = self.fabric_coordinator.coordinate(tuple(candidates))
+        for allocation in result.get("allocations", ()):
+            path_id = str(allocation["fabric_path_id"]).strip()
+            workload_id = str(allocation["workload_id"]).strip()
+            generation = int(allocation.get("generation") or 1)
+            observed_at = float(allocation.get("updated") or 0.0)
+            self.evidence_graph.record_relationship(
+                scope_id=path_id, source_type="fabric_path", source_id=path_id,
+                relation="supports", target_type="workload", target_id=workload_id,
+                source_authority="self_coordinating_fabric", generation=generation,
+                confidence=1.0, observed_at=observed_at,
+                payload={"fabric_path_id": path_id, "allocation": dict(allocation)},
+            )
+            self.evidence_graph.record_relationship(
+                scope_id=path_id, source_type="workload", source_id=workload_id,
+                relation="allocated_to", target_type="node", target_id=str(allocation["node_id"]),
+                source_authority="self_coordinating_fabric", generation=generation,
+                confidence=1.0, observed_at=observed_at,
+                payload={"fabric_path_id": path_id, "failure_domain": str(allocation["failure_domain"])},
+            )
+        return result
 
     def plan_migration(
         self,
@@ -250,11 +270,19 @@ class HealingIntegrationFabric:
             "failure_domain": str(allocation["failure_domain"]),
             "generation": int(allocation["generation"]),
         }
-        return self.workload_recovery.plan_migration(
+        result = self.workload_recovery.plan_migration(
             workload_id=workload_id,
             execution_id=execution_id,
             destination=destination,
         )
+        self.evidence_graph.record_relationship(
+            scope_id=path_id, source_type="workload", source_id=workload_id,
+            relation="migrates_over", target_type="fabric_path", target_id=path_id,
+            source_authority="workload_recovery", generation=int(allocation["generation"]),
+            confidence=1.0, observed_at=float(allocation.get("updated") or 0.0),
+            payload={"execution_id": execution_id},
+        )
+        return result
 
     def takeover_control_plane(self, controller_id: str, *, generation: int) -> dict[str, Any]:
         return self.control_plane.takeover(controller_id, generation=generation)
@@ -307,4 +335,11 @@ class HealingIntegrationFabric:
             if not success:
                 raise HealingAuthorityError("failed recovery cannot promote a strategy")
             learning = self.learning.promote(strategy, known_good_available=True)
+        observed_at = float(evidence.get("observed_at") or 0.0)
+        self.evidence_graph.record_observation(
+            scope_id=path_id, entity_type="healing_closure",
+            entity_id=f"{path_id}:{strategy}", source_authority="healing_closure",
+            generation=1, confidence=1.0 if success else 0.0, observed_at=observed_at,
+            payload={"path_id": path_id, "strategy": strategy, "success": success, "closure": closure},
+        )
         return {"state": closure["state"], "path_id": path_id, "learning": learning}
