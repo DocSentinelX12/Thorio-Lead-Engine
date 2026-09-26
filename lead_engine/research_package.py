@@ -215,7 +215,7 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
     public_facts = public.get("facts", {}) if isinstance(public, Mapping) else {}
     social = _items(company_research.get("social_findings"))
     business = _items(company_research.get("public_business_need_facts")) + _items(public_facts.get("business_need")) + _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "astrivon_demand_discovery", "social_inquiry_research"))
-    intent = _items(company_research.get("public_hiring_facts")) + _specialist_items(findings, ("recent_inquiry_discovery", "social_hiring_research", "social_inquiry_research", "social_intelligence")) + social
+    intent = _items(company_research.get("public_hiring_facts")) + _specialist_items(findings, ("recent_inquiry_discovery", "astrivon_demand_discovery", "social_hiring_research", "social_inquiry_research", "social_intelligence")) + social
     technical = _items(company_research.get("public_product_facts")) + _items(company_research.get("public_hiring_facts")) + _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "astrivon_demand_discovery", "social_hiring_research", "social_company_context"))
     commercial = _items(company_research.get("public_commercial_facts")) + _specialist_items(findings, ("social_company_context", "social_intelligence"))
     route = _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "astrivon_demand_discovery")) + business + technical
