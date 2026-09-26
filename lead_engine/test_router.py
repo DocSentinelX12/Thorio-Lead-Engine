@@ -138,6 +138,17 @@ def test_score_routes_returns_all_destinations():
     }
 
 
+def test_astrivon_signal_is_scored_independently():
+    scores = score_routes(
+        company="Startup",
+        signal="Looking for a dev agency",
+        evidence="Need an MVP built for my startup.",
+    )
+
+    assert scores["Astrivon Labs"] > 0
+    assert scores["Paxus"] == 0
+
+
 def test_paxus_does_not_match_normal_technology_job_posting():
     routes = potential_routes(
         "TechCo",
