@@ -39,7 +39,7 @@ def test_ingestor_sends_lead_to_pipeline(tmp_path):
     assert result["accepted"] is True
     assert result["sync_status"] == "synced"
     assert result["lead"]["company"] == "Acme"
-    assert result["lead"]["route"] == "Shiftr"
+    assert result["lead"]["route"] == "Thorio"
     assert "Thorio" in result["lead"]["potential_routes"]
 
     assert db.stats()[0] == 1
