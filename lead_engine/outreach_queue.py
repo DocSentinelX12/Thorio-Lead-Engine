@@ -7,6 +7,7 @@ ROUTES = (
     "Shiftr",
     "Paxus",
     "Thorio",
+    "Astrivon Labs",
     "Review",
 )
 
