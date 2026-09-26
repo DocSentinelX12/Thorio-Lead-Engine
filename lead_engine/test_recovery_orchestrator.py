@@ -10,7 +10,7 @@ def _path(path_id: str) -> PhysicalFabricPath:
         path_id=path_id,
         source_gpu=f"gpu:{path_id}:a",
         destination_gpu=f"gpu:{path_id}:b",
-        segments=(f"gpu:{path_id}:a", f"rdma:{path_id}:1"),
+        segments=(f"gpu:{path_id}:a", f"rdma:{path_id}:source:1", f"rdma:{path_id}:remote:1", f"gpu:{path_id}:b"),
         fabric_domains=(f"domain:{path_id}",),
         state=FabricPathState.VERIFIED,
     )
@@ -26,8 +26,11 @@ def _measurement(path_id: str, gpu_uuid: str) -> dict[str, object]:
         "remote_worker_id": f"remote:{path_id}",
         "remote_endpoint": f"endpoint:{path_id}",
         "gpu_uuid": gpu_uuid,
-        "rdma_device": path_id,
+        "remote_gpu_uuid": f"{path_id}:b",
+        "rdma_device": path_id + ":source",
         "rdma_port": 1,
+        "remote_rdma_device": path_id + ":remote",
+        "remote_rdma_port": 1,
         "bandwidth_gbps": 100.0,
     }
 
