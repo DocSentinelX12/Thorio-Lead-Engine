@@ -66,9 +66,6 @@ def check_configuration(config) -> Dict[str, Any]:
         or isinstance(approval_interval, bool)
         or approval_interval < 1
     ):
-        errors.append(
-            "approval_poll_interval_seconds must be at least 1"
-        )
 
     if errors:
         return {
