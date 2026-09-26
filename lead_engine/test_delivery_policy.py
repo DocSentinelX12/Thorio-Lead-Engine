@@ -105,8 +105,8 @@ def test_missing_url_is_rejected():
     assert delivery_rejection_reason(lead) == "missing_url"
 
 
-def test_all_three_partner_routes_are_supported():
-    for route in ("Shiftr", "Paxus", "Thorio"):
+def test_all_four_partner_routes_are_supported():
+    for route in ("Shiftr", "Paxus", "Thorio", "Astrivon Labs"):
         lead = valid_lead()
         lead["route"] = route
 
