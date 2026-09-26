@@ -17,6 +17,7 @@ from .recovery_orchestrator import RecoveryOrchestrator
 from .healing_closure import HealingClosureValidator
 from .healing_control_plane import ControlPlaneRecovery
 from .healing_learning import HealingLearning
+from .healing_experiments import HealingExperimentManager, HealingExperimentError
 from .healing_workloads import WorkloadRecoveryPlanner
 from .self_coordinating_fabric import FabricCoordinator, PlacementCandidate
 
@@ -218,6 +219,7 @@ class HealingIntegrationFabric:
         self.workload_recovery = workload_recovery
         self.control_plane = control_plane
         self.learning = learning
+        self.experiments = HealingExperimentManager(inventory.db_path)
         self.closure = closure
         self.evidence_graph = self.gateway.evidence_graph
         self.dependencies = self.gateway.dependencies
@@ -321,6 +323,54 @@ class HealingIntegrationFabric:
     def activate_control_plane(self, controller_id: str, *, generation: int) -> dict[str, Any]:
         return self.control_plane.activate(controller_id, generation=generation)
 
+    def strategy_context(self, *, path_id: str, failure_domain: str = "", workload_class: str = "") -> str:
+        """Return the durable experiment context for one exact physical path."""
+        self.path_evidence(path_id)
+        return self.experiments.context_key(
+            fabric_path_id=str(path_id).strip(),
+            failure_domain=failure_domain,
+            workload_class=workload_class,
+        )
+
+    def select_recovery_strategy(
+        self, *, path_id: str, known_good_strategy: str = "known_good_recovery",
+        failure_domain: str = "", workload_class: str = "",
+    ) -> dict[str, Any]:
+        context = self.strategy_context(
+            path_id=path_id, failure_domain=failure_domain, workload_class=workload_class
+        )
+        return self.experiments.select(
+            context_key=context, known_good_strategy=known_good_strategy
+        )
+
+    def start_strategy_experiment(
+        self, *, path_id: str, challenger_strategy: str,
+        known_good_strategy: str = "known_good_recovery",
+        failure_domain: str = "", workload_class: str = "",
+        provenance: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        context = self.strategy_context(
+            path_id=path_id, failure_domain=failure_domain, workload_class=workload_class
+        )
+        self.experiments.select(context_key=context, known_good_strategy=known_good_strategy)
+        return self.experiments.start_challenger(
+            context_key=context,
+            challenger_strategy=challenger_strategy,
+            provenance={
+                "fabric_path_id": str(path_id),
+                **dict(provenance or {}),
+            },
+        )
+
+    def evaluate_strategy_experiment(self, *, experiment_id: str) -> dict[str, Any]:
+        return self.experiments.evaluate(experiment_id=experiment_id)
+
+    def promote_strategy_experiment(self, *, experiment_id: str) -> dict[str, Any]:
+        return self.experiments.promote(experiment_id=experiment_id)
+
+    def rollback_strategy_experiment(self, *, experiment_id: str, reason: str) -> dict[str, Any]:
+        return self.experiments.rollback(experiment_id=experiment_id, reason=reason)
+
     def close_recovery(
         self,
         *,
@@ -354,6 +404,26 @@ class HealingIntegrationFabric:
                 raise HealingAuthorityError("failed recovery cannot promote a strategy")
             learning = self.learning.promote(strategy, known_good_available=True)
         observed_at = float(evidence.get("observed_at") or 0.0)
+        experiment_id = str(evidence.get("experiment_id") or "").strip()
+        if experiment_id:
+            try:
+                self.experiments.record_outcome(
+                    experiment_id=experiment_id,
+                    strategy=strategy,
+                    success=bool(success),
+                    safety_violation=bool(secondary_damage),
+                    reversible=bool(evidence.get("reversible", True)),
+                    evidence={
+                        "path_id": path_id,
+                        "closure_state": closure["state"],
+                        "authoritative_verified": bool(authoritative_verified),
+                        "healing_verified": bool(healing_verified),
+                        **dict(evidence),
+                    },
+                    observed_at=observed_at,
+                )
+            except HealingExperimentError as exc:
+                raise HealingAuthorityError(str(exc)) from exc
         self.evidence_graph.record_observation(
             scope_id=path_id, entity_type="healing_closure",
             entity_id=f"{path_id}:{strategy}", source_authority="healing_closure",
