@@ -16,7 +16,7 @@ from lead_engine.compute_provider import ProviderResourceSnapshot
 from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
 from lead_engine.continuous_recovery import ContinuousRecoveryController, ContinuousRecoveryError
 from lead_engine.healing_closure import HealingClosureValidator
-from lead_engine.healing_control_plane import ControlPlaneRecovery
+from lead_engine.healing_control_plane import ControlPlaneRecovery, ControlPlaneRecoveryError
 from lead_engine.healing_learning import HealingLearning
 from lead_engine.healing_replication import ReplicatedHealingState
 from lead_engine.healing_authorities import HealingIntegrationFabric
@@ -423,7 +423,7 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
     first = control.register("controller-a", generation=1)
     takeover = control.takeover("controller-b", generation=2)
     assert takeover["fencing_token"] > first["fencing_token"]
-    with pytest.raises(Exception, match="fenced"):
+    with pytest.raises(ControlPlaneRecoveryError, match="fenced"):
         control.reconcile("controller-a", generation=1, authoritative_state={})
     control.reconcile(
         "controller-b",
