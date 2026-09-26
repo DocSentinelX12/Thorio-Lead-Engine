@@ -156,13 +156,13 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         integration.inventory.record_active_gdrdma_measurement(
             path_id=path_id,
             measurement=_measurement(
-                path_id, 10.0, gpu_uuid=source_gpu, rdma_device=path_id, remote_gpu_uuid=destination_gpu.removeprefix("gpu:"), remote_rdma_device=path_id
+                path_id, 10.0, gpu_uuid=source_gpu, rdma_device=path_id + ":source", remote_gpu_uuid=destination_gpu.removeprefix("gpu:"), remote_rdma_device=path_id + ":remote"
             ),
         )
         integration.inventory.record_active_gdrdma_measurement(
             path_id=path_id,
             measurement=_measurement(
-                path_id, 11.0, gpu_uuid=source_gpu, rdma_device=path_id, remote_gpu_uuid=destination_gpu.removeprefix("gpu:"), remote_rdma_device=path_id
+                path_id, 11.0, gpu_uuid=source_gpu, rdma_device=path_id + ":source", remote_gpu_uuid=destination_gpu.removeprefix("gpu:"), remote_rdma_device=path_id + ":remote"
             ),
         )
         paths[path_id] = path
@@ -179,9 +179,9 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         measurement=_measurement(
             replacement.path_id, 12.0,
             gpu_uuid=gpu_identities[1][0],
-            rdma_device="final-replacement-00",
+            rdma_device="final-replacement-00:source",
             remote_gpu_uuid=gpu_identities[1][1],
-            remote_rdma_device="final-replacement-00",
+            remote_rdma_device="final-replacement-00:remote",
         ),
     )
     integration.inventory.record_active_gdrdma_measurement(
@@ -189,9 +189,9 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         measurement=_measurement(
             replacement.path_id, 13.0,
             gpu_uuid=gpu_identities[1][0],
-            rdma_device="final-replacement-00",
+            rdma_device="final-replacement-00:source",
             remote_gpu_uuid=gpu_identities[1][1],
-            remote_rdma_device="final-replacement-00",
+            remote_rdma_device="final-replacement-00:remote",
         ),
     )
     paths[replacement.path_id] = replacement
