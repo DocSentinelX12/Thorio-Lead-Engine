@@ -116,9 +116,9 @@ def test_package_projection_contains_canonical_identity():
     from .sales_handoff import package_projection
 
     lead = _ready_lead()
-    lead["opportunity_id"] = lead["fingerprint"]
-    lead["identity_version"] = "1"
-    lead["identity_derivation"] = {"source": "linkedin", "source_id": "post-1"}
+    from .lead_identity import canonical_opportunity_identity
+    identity = canonical_opportunity_identity(lead)
+    lead.update(identity)
 
     projection = package_projection(lead)
 
