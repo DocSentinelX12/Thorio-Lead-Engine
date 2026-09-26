@@ -75,9 +75,9 @@ def test_full_exact_path_recovery_closes_and_records_learning(tmp_path):
         path_id=path.path_id,
         owner="healer",
         physical_evidence=tuple({"segment": segment, "result": "pass"} for segment in path.segments),
-        active_measurement=_measurement(path.path_id, 4.0, 210.0),
-        observed_at=4.0,
-        now=4.0,
+        active_measurement=_measurement(path.path_id, 21.0, 210.0),
+        observed_at=21.0,
+        now=21.0,
     )
 
     assert result["state"] == "SUCCEEDED"
