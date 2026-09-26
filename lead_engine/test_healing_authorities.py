@@ -62,7 +62,7 @@ def test_gateway_binds_exact_physical_active_and_recovery_authorities(tmp_path):
     assert evidence["physical"]["path_id"] == path.path_id
     assert evidence["physical"]["source_gpu"] == path.source_gpu
     assert evidence["active_path"]["path_id"] == path.path_id
-    assert evidence["active_path"]["state"] == "failed"
+    assert evidence["active_path"]["state"] == "degrading"
     assert evidence["recovery_actions"][0]["path_id"] == path.path_id
     assert evidence["authorities"] == (
         "compute_inventory",
