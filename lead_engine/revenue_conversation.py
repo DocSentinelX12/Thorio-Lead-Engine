@@ -76,6 +76,55 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
     conversation["outreach_route"] = stored.get("outreach_route"); conversation["next_action"] = "stop" if classified in STOP_STATES or classified == "opted_out" else "closer_follow_up"; conversation["updated_at"] = _now(); _save(db, state)
     return dict(conversation)
 
+def record_commercial_outcome(
+    db: Any,
+    *,
+    opportunity_id: str,
+    conversation_id: str,
+    outcome: str,
+    details: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Persist a commercial outcome and create the final human handoff only after success."""
+    opportunity_id = str(opportunity_id or "").strip()
+    conversation_id = str(conversation_id or "").strip()
+    outcome = str(outcome or "").strip().lower()
+    if not opportunity_id or not conversation_id or not outcome:
+        raise ValueError("opportunity_id, conversation_id, and outcome are required")
+    if outcome not in {"sale", "converted", "closed_won", "qualified_commercial_outcome"}:
+        raise ValueError("unsupported commercial outcome")
+    lead = db.get(opportunity_id)
+    if lead is None:
+        raise ValueError(f"lead not found: {opportunity_id}")
+    now = _now()
+    updated = dict(lead)
+    history = list(updated.get("commercial_outcomes") or []) if isinstance(updated.get("commercial_outcomes"), list) else []
+    event = {
+        "at": now,
+        "opportunity_id": opportunity_id,
+        "conversation_id": conversation_id,
+        "outcome": outcome,
+        "details": dict(details or {}),
+    }
+    history.append(event)
+    updated["commercial_outcomes"] = history
+    updated["revenue_lifecycle_state"] = "closed_won"
+    updated["commercial_outcome"] = outcome
+    updated["final_human_handoff"] = {
+        "ready": True,
+        "created_at": now,
+        "reason": "commercial_outcome_recorded",
+        "opportunity_id": opportunity_id,
+        "conversation_id": conversation_id,
+    }
+    stored = db.update_payload(opportunity_id, updated) or updated
+    return {
+        "opportunity_id": opportunity_id,
+        "conversation_id": conversation_id,
+        "outcome": outcome,
+        "final_human_handoff": dict(stored["final_human_handoff"]),
+    }
+
+
 def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> list[Dict[str, Any]]:
     now = now or datetime.now(timezone.utc); due: list[Dict[str, Any]] = []
     for lead in db.all_leads():
