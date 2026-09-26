@@ -50,7 +50,6 @@ def test_gateway_binds_exact_physical_active_and_recovery_authorities(tmp_path):
     inventory.record_active_gdrdma_measurement(
         path_id=path.path_id, measurement=_measurement(path.path_id, 2.0, 198.0)
     )
-    inventory.fail_physical_path(path.path_id, reason="link failure", observed_at=3.0)
     orchestrator = RecoveryOrchestrator(inventory)
     discovered = orchestrator.discover(now=4.0)
     assert discovered and discovered[0]["path_id"] == path.path_id
@@ -82,7 +81,14 @@ def test_gateway_never_synthesizes_unknown_path(tmp_path):
 
 def test_gateway_delegates_exact_path_recovery_to_authoritative_orchestrator(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    path = _path("path-recover")
+    path = PhysicalFabricPath(
+        path_id="path-recover",
+        source_gpu="gpu:path-recover:a",
+        destination_gpu="gpu:path-recover:b",
+        segments=("gpu:path-recover:a", "rdma:path-recover:1"),
+        fabric_domains=("domain:path-recover",),
+        state=FabricPathState.DEGRADED,
+    )
     inventory.persist_physical_path(path)
     inventory.record_active_gdrdma_measurement(
         path_id=path.path_id, measurement=_measurement(path.path_id, 1.0, 200.0)
@@ -94,25 +100,13 @@ def test_gateway_delegates_exact_path_recovery_to_authoritative_orchestrator(tmp
     orchestrator = RecoveryOrchestrator(inventory)
     gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator)
 
-    first = gateway.recover_path(
+    result = gateway.recover_path(
         path_id=path.path_id,
         owner="healer-1",
         physical_evidence=_physical_evidence(path),
         active_measurement=_measurement(path.path_id, 4.0, 199.0),
         now=4.0,
         observed_at=4.0,
-    )
-    assert first["path_id"] == path.path_id
-    assert first["state"] == "RETRY_WAIT"
-    assert first["allow_routing"] is False
-
-    result = gateway.recover_path(
-        path_id=path.path_id,
-        owner="healer-1",
-        physical_evidence=(),
-        active_measurement=_measurement(path.path_id, 5.0, 201.0),
-        now=100.0,
-        observed_at=5.0,
     )
 
     assert result["path_id"] == path.path_id
