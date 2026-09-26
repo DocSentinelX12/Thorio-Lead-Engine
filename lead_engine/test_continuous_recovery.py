@@ -48,10 +48,10 @@ def test_insufficient_evidence_remains_retryable():
         g=gateway(f.name); path(g.inventory,"p1"); c=ContinuousRecoveryController(gateway=g,db_path=f.name); c.start(generation=1,now=20)
         c.observe(path_id="p1",generation=1,fingerprint="a",criticality=2,confidence=.9,cascade_risk=.1,now=21)
         r=c.run_cycle(evidence_provider=lambda a:{"physical_evidence":({"segment":f"gpu:{a['path_id']}:a","result":"pass"},),"observed_at":21},now=21)
-        assert r[0]["state"]=="RETRY" and c.snapshot()["episodes"][0]["state"]=="RETRY"
+        assert r[0]["state"]=="RETRY_WAIT" and c.snapshot()["episodes"][0]["state"]=="RETRY_WAIT"
 
 def test_restart_reconciles_durable_unfinished_episode():
     with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
         g=gateway(f.name); path(g.inventory,"p1"); c=ContinuousRecoveryController(gateway=g,db_path=f.name); c.start(generation=1,now=20)
         c.observe(path_id="p1",generation=1,fingerprint="a",criticality=2,confidence=.9,cascade_risk=.1,now=21); c.schedule(now=22)
-        r=ContinuousRecoveryController(gateway=g,db_path=f.name); r.start(generation=2,now=23); x=r.reconcile(now=24); assert x[0]["state"] in {"RETRY","REPLAN"}
+        r=ContinuousRecoveryController(gateway=g,db_path=f.name); r.start(generation=2,now=23); x=r.reconcile(now=24); assert x[0]["state"] in {"RETRY","RETRY_WAIT","REPLAN"}
