@@ -51,17 +51,31 @@ def validate_opportunity_identity(payload: Dict[str, Any]) -> str:
     opportunity_id = normalize_identity_value(payload.get("opportunity_id"))
     if fingerprint and opportunity_id and fingerprint != opportunity_id:
         raise ValueError("opportunity_id must match fingerprint.")
-    has_identity_inputs = normalize_identity_value(payload.get("identity_version")) == CANONICAL_IDENTITY_VERSION
+    derivation = payload.get("identity_derivation")
+    has_canonical_derivation = (
+        normalize_identity_value(payload.get("identity_version")) == CANONICAL_IDENTITY_VERSION
+        and isinstance(derivation, dict)
+        and bool(derivation)
+    )
+    if has_canonical_derivation:
+        canonical_input = {
+            "source": derivation.get("source"),
+            "source_id": derivation.get("source_id"),
+            "url": derivation.get("url"),
+            "company": derivation.get("company"),
+            "person": derivation.get("person"),
+            "job_title": derivation.get("job_title"),
+            "signal_type": derivation.get("signal_type"),
+            "discovered_at": derivation.get("discovered_at"),
+        }
+        expected = lead_identity(canonical_input)
+        if fingerprint and expected != fingerprint:
+            raise ValueError("fingerprint does not match canonical opportunity identity.")
+        if opportunity_id and expected != opportunity_id:
+            raise ValueError("opportunity_id does not match canonical opportunity identity.")
+        return fingerprint or opportunity_id or expected
     if fingerprint:
-        if has_identity_inputs:
-            expected = lead_identity(payload)
-            if expected != fingerprint:
-                raise ValueError("fingerprint does not match canonical opportunity identity.")
         return fingerprint
     if opportunity_id:
-        if has_identity_inputs:
-            expected = lead_identity(payload)
-            if expected != opportunity_id:
-                raise ValueError("opportunity_id does not match canonical opportunity identity.")
         return opportunity_id
     return canonical_opportunity_identity(payload)["opportunity_id"]
