@@ -20,9 +20,12 @@ def _upsert(table_key: str, lookup_field: str, lookup_value: Any, fields: Dict[s
     if record is None: raise AirtableSyncError(f"Airtable returned no created record for {table_key}.")
     return {"status": "created", "record": record}
 def _routes(lead: Dict[str, Any]) -> List[str]:
-    value = lead.get("potential_routes", []); value = [value] if isinstance(value, str) else value
-    if not isinstance(value, (list, tuple, set)): return []
-    return list(dict.fromkeys(_text(route) for route in value if _text(route) in {"Paxus", "Shiftr", "Thorio", "Astrivon Labs"}))
+    value = lead.get("potential_routes", [])
+    value = [value] if isinstance(value, str) else value
+    routes = list(dict.fromkeys(_text(route) for route in value if isinstance(value, (list, tuple, set)) and _text(route) in {"Paxus", "Shiftr", "Thorio", "Astrivon Labs"})) if isinstance(value, (list, tuple, set)) else []
+    if routes: return routes
+    route = _text(lead.get("route"))
+    return [route] if route in {"Paxus", "Shiftr", "Thorio", "Astrivon Labs"} else []
 def _company_source(lead: Dict[str, Any]) -> str:
     source = _text(lead.get("source")).lower()
     if source in {"x", "twitter"}: return "X"
