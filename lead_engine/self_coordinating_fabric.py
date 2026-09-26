@@ -89,7 +89,7 @@ class FabricCoordinator:
             "available_nodes": available_nodes,
             "active_allocations": active_allocations,
             "free_capacity": free_capacity,
-            "recovery_capacity_available": free_capacity > self.standby_capacity,
+            "recovery_capacity_available": free_capacity > 0 and free_capacity >= self.standby_capacity,
             "standby_capacity_available": len(protected) >= self.standby_capacity if self.standby_capacity else True,
             "protected_standby_nodes": protected,
         }
