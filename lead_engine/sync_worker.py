@@ -281,43 +281,51 @@ def sync_one(
                 "reason": "research_verification_pending",
             }
 
-        research_result = sync_research(
-            lead
-        )
+        # The dedicated Research table is a completed-research projection.
+        # Discovery and partial research remain durable in LeadDB and Lead Radar.
+        # Never ask the Research projection to accept incomplete intelligence.
+        research_result = None
+        research_record = None
+        research_deferred = not package_is_ready(lead)
 
-        if not isinstance(
-            research_result,
-            dict,
-        ):
-            raise ValueError(
-                "Research synchronization returned an invalid result."
+        if not research_deferred:
+            research_result = sync_research(
+                lead
             )
 
-        if research_result.get(
-            "status"
-        ) not in {
-            "created",
-            "updated",
-            "synced",
-            "already_exists",
-        }:
-            raise ValueError(
-                research_result.get("error")
-                or (
-                    "Research synchronization did not "
-                    "confirm a successful result."
+            if not isinstance(
+                research_result,
+                dict,
+            ):
+                raise ValueError(
+                    "Research synchronization returned an invalid result."
                 )
+
+            if research_result.get(
+                "status"
+            ) not in {
+                "created",
+                "updated",
+                "synced",
+                "already_exists",
+            }:
+                raise ValueError(
+                    research_result.get("error")
+                    or (
+                        "Research synchronization did not "
+                        "confirm a successful result."
+                    )
+                )
+
+            research_record = research_result.get(
+                "record"
             )
 
-        research_record = research_result.get(
-            "record"
-        )
-
-        if research_record is None:
-            raise ValueError(
-                "Research synchronization succeeded without "
-                "returning an Airtable record."
-            )
+            if research_record is None:
+                raise ValueError(
+                    "Research synchronization succeeded without "
+                    "returning an Airtable record."
+                )
 
         outreach_result = None
         followup_result = None
@@ -534,6 +542,7 @@ def sync_one(
             "lead": lead,
             "airtable_record": airtable_record,
             "research_record": research_record,
+            "research_deferred": research_deferred,
             "outreach_record": (
                 outreach_result.get("record")
                 if outreach_result
