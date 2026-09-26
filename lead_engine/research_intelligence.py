@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .opportunity_provenance import canonical_evidence_key, normalize_evidence_event, validate_provenance_scope
-from .research_package import VERIFIABLE_RESEARCH_SECTIONS
+VERIFIABLE_RESEARCH_SECTIONS = (\n    "business_need_research",\n    "current_intent_research",\n    "technical_product_hiring_research",\n    "commercial_research",\n    "route_research",\n)
 
 RESEARCH_INTELLIGENCE_VERSION = "1"
 STALE_AFTER_DAYS = 90
@@ -249,7 +249,7 @@ def _claims_for_section(
     refs = [item for item in _evidence_list(section.get("evidence")) if isinstance(item, Mapping)]
     keys = [str(item.get("canonical_evidence_key") or canonical_evidence_key(item)) for item in refs]
     explicit: list[Dict[str, Any]] = []
-    for item, key in zip(refs, keys):
+    for item, key in zip(normalized_refs, keys):
         claim_type = _text(item.get("claim_type"))
         claim_value = item.get("claim_value")
         if not claim_type or claim_value in (None, ""):
@@ -294,7 +294,7 @@ def _claims_for_section(
     ]
 
 
-def _route_claims(section: Mapping[str, Any]) -> list[Dict[str, Any]]:
+def _route_claims(section: Mapping[str, Any], opportunity_id: str) -> list[Dict[str, Any]]:
     result: list[Dict[str, Any]] = []
     routes = section.get("routes")
     if not isinstance(routes, Mapping):
@@ -434,10 +434,10 @@ def build_research_intelligence(lead: Mapping[str, Any], *, now: datetime | None
     for section_name in VERIFIABLE_RESEARCH_SECTIONS:
         section = lead.get(section_name)
         if isinstance(section, Mapping):
-            claims.extend(_claims_for_section(section_name, section, nodes))
+            claims.extend(_claims_for_section(section_name, section, nodes, opportunity_id))
     route = lead.get("route_research")
     if isinstance(route, Mapping):
-        claims.extend(_route_claims(route))
+        claims.extend(_route_claims(route, opportunity_id))
     claims.extend(_structured_claims(lead, company, decision, nodes))
 
     stale = []
