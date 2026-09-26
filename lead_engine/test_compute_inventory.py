@@ -423,7 +423,7 @@ def test_active_path_reverification_reactivates_only_exact_failed_path_with_comp
 def test_closed_loop_recovery_stops_after_physical_reverification_and_requires_active_measurement(tmp_path):
     from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    path = PhysicalFabricPath(path_id="cycle", source_gpu="gpu:a", destination_gpu="gpu:b", segments=("gpu:a", "rdma:mlx5_0:1"), fabric_domains=("d",), state=FabricPathState.VERIFIED)
+    path = PhysicalFabricPath(path_id="cycle", source_gpu="gpu:a", destination_gpu="gpu:b", segments=("gpu:a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:b"), fabric_domains=("d",), state=FabricPathState.VERIFIED)
     inventory.persist_physical_path(path)
     inventory.fail_physical_path(path.path_id, reason="failure", observed_at=10.0)
     result = inventory.execute_active_path_recovery_cycle(path_id=path.path_id, physical_evidence=tuple({"segment": s, "result": "pass"} for s in path.segments), observed_at=11.0)
@@ -435,7 +435,7 @@ def test_closed_loop_recovery_stops_after_physical_reverification_and_requires_a
 def test_closed_loop_recovery_requires_verified_active_measurement_before_routing(tmp_path):
     from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    path = PhysicalFabricPath(path_id="cycle-active", source_gpu="gpu:a", destination_gpu="gpu:b", segments=("gpu:a", "rdma:mlx5_0:1"), fabric_domains=("d",), state=FabricPathState.VERIFIED)
+    path = PhysicalFabricPath(path_id="cycle-active", source_gpu="gpu:a", destination_gpu="gpu:b", segments=("gpu:a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:b"), fabric_domains=("d",), state=FabricPathState.VERIFIED)
     inventory.persist_physical_path(path)
     inventory.fail_physical_path(path.path_id, reason="failure", observed_at=10.0)
     physical = tuple({"segment": s, "result": "pass"} for s in path.segments)
@@ -454,7 +454,7 @@ def test_recovery_action_is_durable_and_deduplicated_per_exact_path_generation(t
         path_id="recovery-action-path",
         source_gpu="gpu:a",
         destination_gpu="gpu:b",
-        segments=("gpu:a", "rdma:mlx5_0:1"),
+        segments=("gpu:a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:b"),
         fabric_domains=("d",),
         state=FabricPathState.VERIFIED,
     )
@@ -479,7 +479,7 @@ def test_recovery_action_claim_is_single_owner_and_expiry_allows_reclaim(tmp_pat
         path_id="recovery-claim-path",
         source_gpu="gpu:a",
         destination_gpu="gpu:b",
-        segments=("gpu:a", "rdma:mlx5_0:1"),
+        segments=("gpu:a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:b"),
         fabric_domains=("d",),
         state=FabricPathState.VERIFIED,
     )
@@ -505,7 +505,7 @@ def test_recovery_action_closes_only_after_physical_and_stable_active_gates(tmp_
         path_id="recovery-controller-path",
         source_gpu="gpu:a",
         destination_gpu="gpu:b",
-        segments=("gpu:a", "rdma:mlx5_0:1"),
+        segments=("gpu:a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:b"),
         fabric_domains=("d",),
         state=FabricPathState.VERIFIED,
     )
@@ -561,7 +561,7 @@ def test_recovery_action_retries_without_closing_when_active_evidence_is_not_sta
         path_id="recovery-retry-path",
         source_gpu="gpu:a",
         destination_gpu="gpu:b",
-        segments=("gpu:a", "rdma:mlx5_0:1"),
+        segments=("gpu:a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:b"),
         fabric_domains=("d",),
         state=FabricPathState.VERIFIED,
     )
@@ -595,7 +595,7 @@ def test_stale_recovery_action_cannot_reactivate_a_newer_exact_path_generation(t
         path_id="recovery-stale-path",
         source_gpu="gpu:a",
         destination_gpu="gpu:b",
-        segments=("gpu:a", "rdma:mlx5_0:1"),
+        segments=("gpu:a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:b"),
         fabric_domains=("d",),
         state=FabricPathState.VERIFIED,
     )
