@@ -6,9 +6,15 @@ from lead_engine.healing_authorities import HealingAuthorityGateway
 from lead_engine.recovery_orchestrator import RecoveryOrchestrator
 from lead_engine.continuous_recovery import ContinuousRecoveryController, ContinuousRecoveryError
 from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+from lead_engine.self_coordinating_fabric import FabricCoordinator, NodeCapacity
 
 def gateway(db):
-    i=ComputeInventory(db_path=db); return HealingAuthorityGateway(inventory=i,recovery_orchestrator=RecoveryOrchestrator(i))
+    i=ComputeInventory(db_path=db)
+    coordinator=FabricCoordinator(str(db) + ".coordinator", standby_capacity=0)
+    coordinator.bind_physical_path_authority(i)
+    coordinator.register_node(NodeCapacity("recovery-node-a", "recovery-domain-a", 8, 8, 8))
+    coordinator.register_node(NodeCapacity("recovery-node-b", "recovery-domain-b", 8, 8, 8))
+    return HealingAuthorityGateway(inventory=i,recovery_orchestrator=RecoveryOrchestrator(i),fabric_coordinator=coordinator)
 
 def path(i,p):
     x=PhysicalFabricPath(path_id=p,source_gpu=f"gpu:{p}:a",destination_gpu=f"gpu:{p}:b",segments=(f"gpu:{p}:a",f"rdma:{p}:1"),fabric_domains=(f"domain:{p}",),state=FabricPathState.VERIFIED)
