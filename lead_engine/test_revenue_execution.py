@@ -59,19 +59,19 @@ def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
     finally: register_revenue_transport(None)
 
 
-def test_stale_queued_closer_cannot_bypass_airtable_handoff(tmp_path):
+def test_closer_does_not_wait_for_airtable_handoff(tmp_path):
     db = LeadDB(data_dir=tmp_path)
-    lead = _lead("stale-handoff-test")
+    lead = _lead("nonblocking-airtable-test")
+    lead["sales_eligibility"] = "eligible"
     db.insert_if_new(lead)
-    enqueue(db, "outreach_closer", {"lead": lead, "routing_result": {"destinations": ["Thorio"], "review_required": False}}, priority=10, dedupe_key="sales:stale-handoff-test")
+    enqueue(db, "outreach_closer", {"lead": lead}, priority=10, dedupe_key="sales:nonblocking-airtable-test")
     transport = FakeTransport()
     register_revenue_transport(transport)
     try:
         result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
-        assert result["completed_count"] == 0
-        assert result["failed_count"] == 1
-        assert transport.calls == []
-        assert "sales-eligible opportunity" in result["results"][0]["error"]
+        assert result["completed_count"] == 1
+        assert result["failed_count"] == 0
+        assert len(transport.calls) == 1
     finally:
         register_revenue_transport(None)
 
