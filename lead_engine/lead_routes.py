@@ -4,13 +4,14 @@ SUPPORTED_ROUTES = ("Shiftr", "Paxus", "Thorio", "Astrivon Labs")
 
 def _get_routes(lead: Dict[str, Any]) -> List[str]:
     potential = lead.get("potential_routes")
+    if isinstance(potential, str): potential = [potential]
     if isinstance(potential, list):
         routes = [str(route).strip() for route in potential if str(route).strip() in SUPPORTED_ROUTES]
         if routes: return list(dict.fromkeys(routes))
     route = str(lead.get("route", "") or "").strip()
     if route in SUPPORTED_ROUTES: return [route]
     qualification = lead.get("qualification_results")
-    if isinstance(qualification, dict): return [route_name for route_name in SUPPORTED_ROUTES if isinstance(qualification.get(route_name), dict) and qualification[route_name].get("qualified") is True]
+    if isinstance(qualification, dict): return [name for name in SUPPORTED_ROUTES if isinstance(qualification.get(name), dict) and qualification[name].get("qualified") is True]
     return []
 
 def _route_independently_verified(lead: Dict[str, Any], route: str) -> bool:
@@ -26,9 +27,9 @@ def _route_independently_verified(lead: Dict[str, Any], route: str) -> bool:
 
 def _final_routes(lead: Dict[str, Any]) -> List[str]:
     routes = _get_routes(lead)
-    if isinstance(lead.get("potential_routes"), list): routes = [route for route in routes if _route_independently_verified(lead, route)]
-    elif not str(lead.get("route", "") or "").strip(): routes = [route for route in routes if _route_independently_verified(lead, route)]
-    return routes
+    if isinstance(lead.get("potential_routes"), list): return [route for route in routes if _route_independently_verified(lead, route)]
+    if str(lead.get("route", "") or "").strip(): return routes
+    return [route for route in routes if _route_independently_verified(lead, route)]
 
 def route_leads(leads: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     result: Dict[str, List[Dict[str, Any]]] = {route: [] for route in SUPPORTED_ROUTES}; result["Review"] = []
