@@ -93,6 +93,8 @@ def _measurement(
     bandwidth: float = 100.0,
     gpu_uuid: str | None = None,
     rdma_device: str | None = None,
+    remote_gpu_uuid: str | None = None,
+    remote_rdma_device: str | None = None,
 ) -> dict[str, object]:
     return {
         "fabric_path_id": path_id,
@@ -103,8 +105,11 @@ def _measurement(
         "remote_worker_id": f"remote:{path_id}",
         "remote_endpoint": f"endpoint:{path_id}",
         "gpu_uuid": gpu_uuid or f"{path_id}:gpu",
+        "remote_gpu_uuid": remote_gpu_uuid or f"{path_id}:remote-gpu",
         "rdma_device": rdma_device or path_id,
         "rdma_port": 1,
+        "remote_rdma_device": remote_rdma_device or path_id,
+        "remote_rdma_port": 1,
         "bandwidth_gbps": bandwidth,
         "observed_at": observed_at,
     }
@@ -151,13 +156,13 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         integration.inventory.record_active_gdrdma_measurement(
             path_id=path_id,
             measurement=_measurement(
-                path_id, 10.0, gpu_uuid=source_gpu, rdma_device=path_id
+                path_id, 10.0, gpu_uuid=source_gpu, rdma_device=path_id, remote_gpu_uuid=destination_gpu.removeprefix("gpu:"), remote_rdma_device=path_id
             ),
         )
         integration.inventory.record_active_gdrdma_measurement(
             path_id=path_id,
             measurement=_measurement(
-                path_id, 11.0, gpu_uuid=source_gpu, rdma_device=path_id
+                path_id, 11.0, gpu_uuid=source_gpu, rdma_device=path_id, remote_gpu_uuid=destination_gpu.removeprefix("gpu:"), remote_rdma_device=path_id
             ),
         )
         paths[path_id] = path
@@ -175,6 +180,8 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
             replacement.path_id, 12.0,
             gpu_uuid=gpu_identities[1][0],
             rdma_device="final-replacement-00",
+            remote_gpu_uuid=gpu_identities[1][1],
+            remote_rdma_device="final-replacement-00",
         ),
     )
     integration.inventory.record_active_gdrdma_measurement(
@@ -183,6 +190,8 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
             replacement.path_id, 13.0,
             gpu_uuid=gpu_identities[1][0],
             rdma_device="final-replacement-00",
+            remote_gpu_uuid=gpu_identities[1][1],
+            remote_rdma_device="final-replacement-00",
         ),
     )
     paths[replacement.path_id] = replacement
