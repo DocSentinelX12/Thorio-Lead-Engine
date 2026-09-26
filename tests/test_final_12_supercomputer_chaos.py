@@ -16,6 +16,7 @@ from lead_engine.continuous_recovery import ContinuousRecoveryController, Contin
 from lead_engine.healing_closure import HealingClosureValidator
 from lead_engine.healing_control_plane import ControlPlaneRecovery, ControlPlaneRecoveryError
 from lead_engine.healing_learning import HealingLearning
+from lead_engine.healing_fault_injection import HealingFaultInjection
 from lead_engine.healing_replication import ReplicatedHealingState
 from lead_engine.healing_authorities import HealingIntegrationFabric
 from lead_engine.healing_workloads import WorkloadRecoveryPlanner
@@ -258,9 +259,19 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
         gateway=integration.gateway, db_path=controller_db, controller_id="controller-a"
     )
     controller_a.start(generation=1, now=21.0, lease_seconds=5.0)
+    fault_injection = HealingFaultInjection(controller_a)
+    assert {
+        item["name"] for item in fault_injection.scenario_catalog()
+    } == {
+        "isolated_failure",
+        "independent_failures",
+        "controller_restart",
+        "verification_failure",
+        "protected_capacity",
+    }
 
     for path_id in ("final-path-00", "final-path-01"):
-        controller_a.observe(
+        fault_injection.observe_failure(
             path_id=path_id, generation=1, fingerprint=f"failure-{path_id}",
             criticality=3, confidence=0.99, cascade_risk=0.05, now=22.0,
         )
@@ -305,7 +316,7 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
         "final-path-02", reason="second-wave controlled failure", observed_at=30.0,
         evidence={"failure_domain": "final-domain-02"},
     )
-    controller_a.observe(
+    fault_injection.observe_failure(
         path_id="final-path-02", generation=1, fingerprint="failure-final-path-02",
         criticality=3, confidence=0.99, cascade_risk=0.05, now=31.0,
     )
@@ -361,7 +372,7 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
         "final-path-03", reason="post-restart independent failure", observed_at=40.0,
         evidence={"failure_domain": "final-domain-03"},
     )
-    controller_b.observe(
+    HealingFaultInjection(controller_b).observe_failure(
         path_id="final-path-03", generation=2, fingerprint="failure-final-path-03",
         criticality=3, confidence=0.99, cascade_risk=0.05, now=41.0,
     )
