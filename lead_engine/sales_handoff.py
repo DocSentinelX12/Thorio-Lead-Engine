@@ -6,7 +6,7 @@ import json
 from typing import Any, Mapping
 
 from .research_package import research_readiness
-from .lead_identity import validate_opportunity_identity
+from .lead_identity import validate_opportunity_identity\nfrom .research_intelligence import validate_research_intelligence
 
 PACKAGE_KEYS = (
     "opportunity_id",
