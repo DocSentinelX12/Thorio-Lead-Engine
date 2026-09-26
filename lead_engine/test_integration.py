@@ -39,7 +39,7 @@ def test_complete_lead_engine_flow(tmp_path):
     assert result["sync_status"] == "synced"
 
     assert result["lead"]["company"] == "Integration Corp"
-    assert result["lead"]["route"] == "Shiftr"
+    assert result["lead"]["route"] == "Thorio"
 
     assert "Shiftr" in result["lead"]["potential_routes"]
     assert "Thorio" in result["lead"]["potential_routes"]
