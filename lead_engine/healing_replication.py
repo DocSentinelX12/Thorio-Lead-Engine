@@ -56,6 +56,13 @@ class ReplicatedHealingState:
     );
     CREATE INDEX IF NOT EXISTS idx_healing_replication_log_generation
         ON healing_replication_log(generation, log_index);
+    CREATE TABLE IF NOT EXISTS healing_replication_projections(
+        name TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        fencing_token INTEGER NOT NULL,
+        updated_at REAL NOT NULL
+    );
     """
 
     def __init__(self, replica_paths: tuple[str, ...] | list[str], *, cluster_id: str = "healing-cluster"):
@@ -391,6 +398,26 @@ class ReplicatedHealingState:
                 now=float(payload["now"]),
             )
             return
+        if command == "projection":
+            with self._connect(index) as db:
+                db.execute(
+                    """INSERT INTO healing_replication_projections(
+                           name,payload_json,generation,fencing_token,updated_at)
+                       VALUES(?,?,?,?,?)
+                       ON CONFLICT(name) DO UPDATE SET
+                           payload_json=excluded.payload_json,
+                           generation=excluded.generation,
+                           fencing_token=excluded.fencing_token,
+                           updated_at=excluded.updated_at""",
+                    (
+                        str(payload["name"]),
+                        self._canonical_payload(payload["value"]),
+                        int(payload["generation"]),
+                        int(payload["fencing_token"]),
+                        float(payload["updated_at"]),
+                    ),
+                )
+            return
         raise HealingReplicationError(f"unknown replication command: {command}")
 
     def _result(self, commit_index: int) -> dict[str, Any]:
@@ -499,6 +526,49 @@ class ReplicatedHealingState:
             fencing_token=fencing_token,
             now=now,
         )
+
+    def record_projection(
+        self,
+        *,
+        name: str,
+        value: Mapping[str, Any],
+        controller_id: str,
+        fencing_token: int,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        now = time.time() if now is None else float(now)
+        meta = self._assert_leader(controller_id, fencing_token)
+        self._append_and_apply(
+            command="projection",
+            payload={
+                "name": name,
+                "value": dict(value),
+                "generation": int(meta["generation"]),
+                "fencing_token": int(fencing_token),
+                "updated_at": now,
+            },
+            controller_id=controller_id,
+            fencing_token=fencing_token,
+            now=now,
+        )
+        return self.projection(name)
+
+    def projection(self, name: str) -> dict[str, Any] | None:
+        self.reconcile()
+        with self._connect(0) as db:
+            row = db.execute(
+                "SELECT * FROM healing_replication_projections WHERE name=?",
+                (name,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "name": row["name"],
+            "value": json.loads(row["payload_json"]),
+            "generation": int(row["generation"]),
+            "fencing_token": int(row["fencing_token"]),
+            "updated_at": float(row["updated_at"]),
+        }
 
     def action(self, action_id: str) -> dict[str, Any]:
         self.reconcile()
