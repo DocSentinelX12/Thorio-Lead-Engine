@@ -71,7 +71,9 @@ def test_batch_delivery_marks_local_state_only_after_all_downstream_work_succeed
          patch("lead_engine.batch_delivery.sync_followup"), \
          patch("lead_engine.batch_delivery.sync_paxus_referral_state"), \
          patch("lead_engine.batch_delivery.sync_commission", return_value=None), \
-         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}):
+         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}), \
+         patch("lead_engine.batch_delivery.package_is_ready", return_value=True), \
+         patch("lead_engine.sync_worker.sync_one", return_value={"status": "synced", "lead": lead}):
         mock_batch.return_value = None
         result = sync_pending_batched(db, limit=10)
 
@@ -115,7 +117,9 @@ def test_batch_delivery_preserves_large_unsynced_backlog_across_runs(tmp_path):
          patch("lead_engine.batch_delivery.sync_followup"), \
          patch("lead_engine.batch_delivery.sync_paxus_referral_state"), \
          patch("lead_engine.batch_delivery.sync_commission", return_value=None), \
-         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}):
+         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}), \
+         patch("lead_engine.batch_delivery.package_is_ready", return_value=True), \
+         patch("lead_engine.sync_worker.sync_one", side_effect=lambda lead, db: {"status": "synced", "lead": lead}):
         first = sync_pending_batched(db, limit=50)
         assert first["synced_count"] == 50
         assert first["failed_count"] == 0
