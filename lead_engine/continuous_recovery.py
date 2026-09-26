@@ -153,16 +153,22 @@ class ContinuousRecoveryController:
                 )
                 continue
             evidence = self.gateway.path(episode["scope_id"])
+            capacity = self.gateway.capacity_state(path_id=str(evidence["path_id"]))
+            physical = dict(evidence["physical"])
+            reversible = bool(
+                physical.get("state") not in {"FAILED", "QUARANTINED"}
+                and capacity["standby_capacity_available"]
+            )
             plan = self.gateway.intelligence.plan(
                 scope_id=episode["scope_id"],
                 generation=int(episode["generation"]),
                 strategy=episode["strategy"],
                 criticality=int(episode["criticality"]),
                 confidence=float(episode["confidence"]),
-                reversible=True,
+                reversible=reversible,
                 cascade_risk=float(episode["cascade_risk"]),
-                redundant_capacity=True,
-                standby_capacity_available=True,
+                redundant_capacity=bool(capacity["redundant_capacity"]),
+                standby_capacity_available=bool(capacity["standby_capacity_available"]),
                 fabric_path_id=str(evidence["path_id"]),
             )
             updated = self.store.update(
@@ -287,10 +293,19 @@ class ContinuousRecoveryController:
             actions = self.gateway.inventory.active_path_recovery_actions(
                 path_id=episode["scope_id"]
             )
+            action_id = None
+            for event in self.store._connect().execute(
+                "SELECT payload_json FROM recovery_episode_events WHERE episode_id=? ORDER BY created_at DESC",
+                (episode["episode_id"],),
+            ).fetchall():
+                payload = json.loads(event["payload_json"])
+                if payload.get("recovery_action_id"):
+                    action_id = str(payload["recovery_action_id"])
+                    break
             matching = [
-                action
-                for action in actions
-                if int(action["generation"]) == int(episode["generation"])
+                action for action in actions
+                if (action_id is None or str(action["action_id"]) == action_id)
+                and str(action["path_id"]) == episode["scope_id"]
             ]
             if any(action["state"] == "SUCCEEDED" for action in matching) and bool(
                 path["active_path"].get("allow_routing")
