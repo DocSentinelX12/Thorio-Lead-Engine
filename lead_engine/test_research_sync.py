@@ -21,6 +21,9 @@ def test_research_payload_preserves_research_and_raw_lead():
         "unknown_field": "must survive in raw package",
     }
 
+    from .lead_identity import lead_identity
+    lead["fingerprint"] = lead_identity(lead["identity_derivation"])
+    lead["opportunity_id"] = lead["fingerprint"]
     fields = _research_payload(lead)
 
     assert fields["Research Key"] == "research-test-1"
@@ -106,7 +109,7 @@ def test_research_payload_persists_canonical_opportunity_identity():
         "opportunity_id": "opp-1",
         "company": "Acme",
         "identity_version": "1",
-        "identity_derivation": {"source": "linkedin", "source_id": "post-1"},
+        "identity_derivation": {"source": "linkedin", "source_id": "post-1", "url": "https://linkedin.example/post-1", "company": "Acme", "person": "", "job_title": "", "signal_type": "", "discovered_at": ""},
         "business_need_research": {"verified": False, "verification_status": "observed_evidence", "evidence": []},
     }
 
