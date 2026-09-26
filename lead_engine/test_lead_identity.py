@@ -126,6 +126,34 @@ def test_validate_opportunity_identity_rejects_mismatched_ids():
         validate_opportunity_identity(payload)
 
 
+def test_validate_opportunity_identity_rejects_identity_drift():
+    import pytest
+    from .lead_identity import canonical_opportunity_identity, validate_opportunity_identity
+
+    original = {
+        "source": "linkedin",
+        "source_id": "post-1",
+        "url": "https://linkedin.example/post-1",
+        "company": "Acme",
+        "person": "Jane CTO",
+        "job_title": "AI Engineer",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
+    }
+    identity = canonical_opportunity_identity(original)
+    payload = {
+        **original,
+        "fingerprint": identity["fingerprint"],
+        "opportunity_id": identity["opportunity_id"],
+        "identity_version": identity["identity_version"],
+        "identity_derivation": identity["derivation"],
+        "company": "Other Company",
+    }
+
+    with pytest.raises(ValueError, match="canonical opportunity identity"):
+        validate_opportunity_identity(payload)
+
+
 def test_validate_opportunity_identity_accepts_matching_ids():
     from .lead_identity import validate_opportunity_identity
 
