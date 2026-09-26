@@ -18,6 +18,7 @@ ALLOWED_ROUTES = {
     "Paxus",
     "Shiftr",
     "Thorio",
+    "Astrivon Labs",
 }
 
 
