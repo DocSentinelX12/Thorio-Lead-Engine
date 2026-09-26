@@ -88,7 +88,13 @@ def _path(
     )
 
 
-def _measurement(path_id: str, observed_at: float, bandwidth: float = 100.0) -> dict[str, object]:
+def _measurement(
+    path_id: str,
+    observed_at: float,
+    bandwidth: float = 100.0,
+    gpu_uuid: str | None = None,
+    rdma_device: str | None = None,
+) -> dict[str, object]:
     return {
         "fabric_path_id": path_id,
         "measurement_status": "measured",
@@ -97,8 +103,8 @@ def _measurement(path_id: str, observed_at: float, bandwidth: float = 100.0) -> 
         "worker_id": f"worker:{path_id}",
         "remote_worker_id": f"remote:{path_id}",
         "remote_endpoint": f"endpoint:{path_id}",
-        "gpu_uuid": f"{path_id}:gpu",
-        "rdma_device": f"rdma:{path_id}",
+        "gpu_uuid": gpu_uuid or f"{path_id}:gpu",
+        "rdma_device": rdma_device or f"rdma:{path_id}",
         "rdma_port": 1,
         "bandwidth_gbps": bandwidth,
         "observed_at": observed_at,
@@ -144,10 +150,16 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
         path = _path(path_id, f"final-domain-{index:02d}", source_gpu, destination_gpu)
         integration.inventory.persist_physical_path(path)
         integration.inventory.record_active_gdrdma_measurement(
-            path_id=path_id, measurement=_measurement(path_id, 10.0)
+            path_id=path_id,
+            measurement=_measurement(
+                path_id, 10.0, gpu_uuid=source_gpu, rdma_device=f"rdma:{path_id}:1"
+            ),
         )
         integration.inventory.record_active_gdrdma_measurement(
-            path_id=path_id, measurement=_measurement(path_id, 11.0)
+            path_id=path_id,
+            measurement=_measurement(
+                path_id, 11.0, gpu_uuid=source_gpu, rdma_device=f"rdma:{path_id}:1"
+            ),
         )
         paths[path_id] = path
 
@@ -159,10 +171,20 @@ def _prepare_fabric(integration: HealingIntegrationFabric) -> tuple[dict[str, Ph
     )
     integration.inventory.persist_physical_path(replacement)
     integration.inventory.record_active_gdrdma_measurement(
-        path_id=replacement.path_id, measurement=_measurement(replacement.path_id, 12.0)
+        path_id=replacement.path_id,
+        measurement=_measurement(
+            replacement.path_id, 12.0,
+            gpu_uuid=gpu_identities[1][0],
+            rdma_device="rdma:final-replacement-00:1",
+        ),
     )
     integration.inventory.record_active_gdrdma_measurement(
-        path_id=replacement.path_id, measurement=_measurement(replacement.path_id, 13.0)
+        path_id=replacement.path_id,
+        measurement=_measurement(
+            replacement.path_id, 13.0,
+            gpu_uuid=gpu_identities[1][0],
+            rdma_device="rdma:final-replacement-00:1",
+        ),
     )
     paths[replacement.path_id] = replacement
     return paths, gpu_keys
@@ -197,7 +219,12 @@ def _evidence(action):
     required_segments = tuple(action["trigger_snapshot"]["required_segments"])
     return {
         "physical_evidence": tuple({"segment": segment, "result": "pass"} for segment in required_segments),
-        "active_measurement": _measurement(path_id, float(action["updated_at"]) + 1.0),
+        "active_measurement": _measurement(
+            path_id,
+            float(action["updated_at"]) + 1.0,
+            gpu_uuid=required_segments[0],
+            rdma_device=required_segments[1],
+        ),
         "evidence": {
             "proof_phase": "authoritative_recovery",
             "fabric_path_id": path_id,
