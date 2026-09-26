@@ -505,7 +505,7 @@ def test_final_proof_rejects_stale_recovery_and_preserves_authoritative_gates(tm
         action_id=action["action_id"],
         owner="stale-proof",
         physical_evidence=tuple({"segment": segment, "result": "pass"} for segment in paths["final-path-04"].segments),
-        active_measurement=_measurement("final-path-04", 53.0, gpu_uuid=paths["final-path-04"].source_gpu, rdma_device="final-path-04"),
+        active_measurement=_measurement("final-path-04", 53.0, gpu_uuid=paths["final-path-04"].source_gpu.removeprefix("gpu:"), rdma_device="final-path-04", remote_gpu_uuid=paths["final-path-04"].destination_gpu.removeprefix("gpu:"), remote_rdma_device="final-path-04"),
         observed_at=53.0,
         now=53.0,
     )
