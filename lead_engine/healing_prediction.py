@@ -22,7 +22,7 @@ class PredictiveHealingIntelligence:
     MIN_CLASS_SAMPLES = 2
     MIN_TOTAL_SAMPLES = 4
 
-    def __init__(self, *, graph: HealingEvidenceGraph, db_path: str = ":memory__"):
+    def __init__(self, *, graph: HealingEvidenceGraph, db_path: str = ":memory:"):
         self.graph = graph
         self.db_path = db_path
         self._memory = sqlite3.connect(":memory:") if db_path == ":memory:" else None
