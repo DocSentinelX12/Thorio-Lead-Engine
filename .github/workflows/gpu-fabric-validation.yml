@@ -88,6 +88,9 @@ jobs:
       - name: Run predictive healing intelligence tests
         run: |
           python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_prediction.py
+      - name: Run autonomous strategy experimentation tests
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_experiments.py
 
       - name: Run continuous autonomous recovery tests
         run: |
