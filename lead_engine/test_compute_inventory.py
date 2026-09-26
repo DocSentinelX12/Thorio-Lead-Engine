@@ -131,8 +131,12 @@ def test_active_gdrdma_measurement_rejects_unknown_path_without_persistence(tmp_
             measurement={
                 "verified": True,
                 "fabric_path_id": "missing-path",
+                "worker_id": "worker-a",
                 "remote_worker_id": "worker-b",
                 "remote_endpoint": "198.51.100.10",
+                "gpu_uuid": "GPU-a",
+                "rdma_device": "mlx5_0",
+                "rdma_port": 1,
             },
             evidence={},
             observed_at=1000.0,
