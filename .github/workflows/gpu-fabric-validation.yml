@@ -58,6 +58,9 @@ jobs:
       - name: Run unified self-optimizing control plane tests
         run: |
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_unified_control_plane.py
+      - name: Run self-coordinating fabric tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_self_coordinating_fabric.py
 
       - name: Run compute remote and execution fabric regressions
         run: |
