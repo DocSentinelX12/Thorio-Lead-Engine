@@ -95,7 +95,12 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     for section_name in RESEARCH_SECTIONS:
         current_section = lead.get(section_name)
         if isinstance(current_section, Mapping):
-            canonical[section_name] = merge_canonical_section(canonical[section_name], current_section)
+            canonical[section_name] = merge_canonical_section(
+                canonical[section_name],
+                current_section,
+                opportunity_id=str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip(),
+                research_section=section_name,
+            )
     merged = dict(lead); merged["company_research"] = merged_research; merged.update(canonical)
     merged, readiness = finalize_research_readiness(merged)
     stored = _persist_lead(ctx.db, merged)
