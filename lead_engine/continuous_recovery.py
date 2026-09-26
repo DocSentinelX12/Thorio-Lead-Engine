@@ -126,3 +126,189 @@ class ContinuousRecoveryController:
             },
         )
 
+
+    @staticmethod
+    def _conflict(a, b):
+        return bool(
+            set(a["failure_domains"]) & set(b["failure_domains"])
+            or set(a["affected_entities"]) & set(b["affected_entities"])
+            or a["scope_id"] == b["scope_id"]
+        )
+
+    def schedule(self, *, now=None):
+        lease = self._assert(now)
+        scheduled = []
+        for episode in self.store.episodes(
+            states=("OBSERVED", "RETRY", "REPLAN", "CONTAINED")
+        ):
+            if any(self._conflict(episode, existing) for existing in scheduled):
+                self.store.update(
+                    episode_id=episode["episode_id"],
+                    state="CONTAINED",
+                    now=now,
+                    owner=self.controller_id,
+                    fencing_token=int(lease["fencing_token"]),
+                    mode="SERIALIZED",
+                    payload={"reason": "dependency_or_failure_domain_conflict"},
+                )
+                continue
+            evidence = self.gateway.path(episode["scope_id"])
+            plan = self.gateway.intelligence.plan(
+                scope_id=episode["scope_id"],
+                generation=int(episode["generation"]),
+                strategy=episode["strategy"],
+                criticality=int(episode["criticality"]),
+                confidence=float(episode["confidence"]),
+                reversible=True,
+                cascade_risk=float(episode["cascade_risk"]),
+                redundant_capacity=True,
+                standby_capacity_available=True,
+                fabric_path_id=str(evidence["path_id"]),
+            )
+            updated = self.store.update(
+                episode_id=episode["episode_id"],
+                state="SCHEDULED",
+                now=now,
+                owner=self.controller_id,
+                fencing_token=int(lease["fencing_token"]),
+                mode=str(plan["mode"]),
+                payload={"plan_id": plan["plan_id"]},
+            )
+            scheduled.append(updated)
+        return tuple(scheduled)
+
+    def run_cycle(
+        self,
+        *,
+        evidence_provider: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        now=None,
+    ):
+        lease = self._assert(now)
+        now = time.time() if now is None else float(now)
+        self.gateway.recovery_orchestrator.discover(now=now)
+        self.schedule(now=now)
+        results = []
+        for episode in self.store.episodes(
+            states=("SCHEDULED", "EXECUTING", "RETRY", "REPLAN")
+        ):
+            self.store.update(
+                episode_id=episode["episode_id"],
+                state="EXECUTING",
+                now=now,
+                owner=self.controller_id,
+                fencing_token=int(lease["fencing_token"]),
+            )
+            actions = [
+                action
+                for action in self.gateway.recovery_orchestrator.due(now=now)
+                if str(action["path_id"]) == episode["scope_id"]
+            ]
+            if not actions:
+                self.store.update(
+                    episode_id=episode["episode_id"],
+                    state="REPLAN",
+                    now=now,
+                    error="no current authoritative recovery action",
+                )
+                continue
+            payload = dict(evidence_provider(dict(actions[-1])))
+            unsupported = set(payload) - {
+                "physical_evidence",
+                "active_measurement",
+                "evidence",
+                "observed_at",
+            }
+            if unsupported:
+                raise ValueError(
+                    "unsupported evidence fields: " + ", ".join(sorted(unsupported))
+                )
+            try:
+                result = dict(
+                    self.gateway.recover_path(
+                        path_id=episode["scope_id"],
+                        owner=self.controller_id,
+                        physical_evidence=tuple(payload.get("physical_evidence", ())),
+                        active_measurement=payload.get("active_measurement"),
+                        evidence=payload.get("evidence"),
+                        observed_at=payload.get("observed_at", now),
+                        now=now,
+                    )
+                )
+            except Exception as exc:
+                self.store.update(
+                    episode_id=episode["episode_id"],
+                    state="RETRY",
+                    now=now,
+                    error=str(exc),
+                )
+                results.append(
+                    {
+                        "episode_id": episode["episode_id"],
+                        "path_id": episode["scope_id"],
+                        "state": "RETRY",
+                        "error": str(exc),
+                    }
+                )
+                continue
+            state = (
+                "RECOVERED"
+                if result.get("state") == "SUCCEEDED"
+                and result.get("allow_routing") is True
+                else (
+                    "REPLAN"
+                    if result.get("state") == "CANCELLED"
+                    else str(result.get("state") or "RETRY")
+                )
+            )
+            self.store.update(
+                episode_id=episode["episode_id"],
+                state=state,
+                now=now,
+                payload={"result": result},
+                error=(
+                    None
+                    if state not in {"RETRY", "RETRY_WAIT"}
+                    else str(
+                        result.get("error")
+                        or "authoritative recovery remains incomplete"
+                    )
+                ),
+            )
+            results.append({"episode_id": episode["episode_id"], **result})
+        return tuple(results)
+
+    def reconcile(self, *, now=None):
+        self._assert(now)
+        out = []
+        for episode in self.store.episodes(
+            states=("EXECUTING", "SCHEDULED", "RETRY", "REPLAN", "CONTAINED")
+        ):
+            path = self.gateway.path(episode["scope_id"])
+            actions = self.gateway.inventory.active_path_recovery_actions(
+                path_id=episode["scope_id"]
+            )
+            matching = [
+                action
+                for action in actions
+                if int(action["generation"]) == int(episode["generation"])
+            ]
+            if any(action["state"] == "SUCCEEDED" for action in matching) and bool(
+                path["active_path"].get("allow_routing")
+            ):
+                state = "RECOVERED"
+            elif any(action["state"] == "CANCELLED" for action in matching):
+                state = "REPLAN"
+            else:
+                state = "RETRY"
+            out.append(
+                self.store.update(
+                    episode_id=episode["episode_id"],
+                    state=state,
+                    now=now,
+                    payload={"reconciled_from_authoritative_state": True},
+                )
+            )
+        return tuple(out)
+
+    def snapshot(self):
+        return self.store.snapshot()
