@@ -144,7 +144,7 @@ def test_sync_one_requires_successful_lead_radar_record(
     )
 
 
-def test_sync_one_requires_research_record_after_lead_radar(
+def test_sync_one_defers_incomplete_research_projection_after_lead_radar(
     monkeypatch,
 ):
     lead = {
@@ -171,10 +171,6 @@ def test_sync_one_requires_research_record_after_lead_radar(
             "status": "created",
             "record": {
                 "id": "rec_research_required",
-                "fields": {
-                    "Research Status": "research_required",
-                    "Lead Fingerprint": "lead-research-required",
-                },
             },
         }
 
@@ -195,9 +191,9 @@ def test_sync_one_requires_research_record_after_lead_radar(
     )
 
     assert result["status"] == "synced"
-    assert result["research_record"]["id"] == "rec_research_required"
-    assert len(research_calls) == 1
-    assert research_calls[0]["fingerprint"] == "lead-research-required"
+    assert result["research_record"] is None
+    assert result["research_deferred"] is True
+    assert research_calls == []
 
 
 def test_sync_one_fails_and_remains_retryable_when_research_sync_fails(
