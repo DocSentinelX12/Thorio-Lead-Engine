@@ -36,7 +36,7 @@ def test_build_canonical_research_package_materializes_all_sections_without_veri
     route = package["route_research"]
     assert route["verification_status"] == "observed_evidence"
     assert route["verified"] is False
-    assert set(route["routes"]) == {"Shiftr", "Paxus", "Thorio"}
+    assert set(route["routes"]) == {"Shiftr", "Paxus", "Thorio", "Astrivon Labs"}
     assert all(item["verified"] is False for item in route["routes"].values())
 
     gaps = package["research_gaps"]
