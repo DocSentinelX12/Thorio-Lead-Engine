@@ -28,6 +28,8 @@ class Lead:
     job_title: str = ""
     discovered_at: str = ""
 
+    # Explicit business-intent timestamps used by the qualification engine.
+    # Discovery/update timestamps are deliberately separate from intent.
     need_at: str = ""
     current_need_at: str = ""
     hiring_need_at: str = ""
@@ -39,12 +41,18 @@ class Lead:
 
     route: str = "Review"
     potential_routes: List[str] = None
+
+    # Company-specific qualification is authoritative for the three
+    # businesses. The legacy fields remain for backward compatibility.
     qualification_results: Dict[str, Any] = None
     research_status: str = "not_started"
 
     status: str = "Unverified"
     evidence: str = ""
 
+    # Opportunity-level identity. A company/person can have many
+    # opportunities and must never be deduplicated merely because the
+    # company or person has appeared before.
     opportunity_id: str = ""
     review_state: str = "awaiting_review"
     evidence_events: List[Dict[str, Any]] = None
@@ -67,6 +75,8 @@ class Lead:
     company_website: str = ""
     enrichment_status: str = "pending"
 
+    # Paxus referral lifecycle state. These fields mirror the existing
+    # PaxusReferral workflow so Lead records can carry the state durably.
     contact_communicated: bool = False
     contact_consent: bool = False
     warm_referral_ready: bool = False
