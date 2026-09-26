@@ -5,7 +5,6 @@ from .agent_queue import enqueue
 from .agent_stateful_handlers import airtable_integrity as _airtable_integrity
 from .agent_stateful_handlers import routing as _routing
 from .agent_stateful_handlers import verification as _verification
-from .dedupe import Dedupe
 from .research_package import finalize_research_readiness, research_readiness
 from .research_sync import sync_research
 from .sales_handoff import package_digest, package_is_ready
@@ -189,6 +188,6 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
         updated = dict(current_lead); updated["revenue_lifecycle_state"] = "sales_eligible"; updated.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "eligible_routes": list(routing_result.get("destinations", [])), "preserved_routes": list(routing_result.get("destinations", []))}); stored = ctx.db.update_payload(fingerprint, updated) or updated; enqueue(ctx.db, "outreach_closer", {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)}, priority=10, dedupe_key=f"sales:{fingerprint}"); result.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "handoff": "outreach_closer"})
     else:
         updated = dict(current_lead)
-        if current_lead.get("qualified") is True: updated.update({"revenue_lifecycle_state": "qualified" if eligibility_reason not in {"exact_duplicate"} else "closed_lost", "sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason}); ctx.db.update_payload(fingerprint, updated)
+        if current_lead.get("qualified") is True: updated.update({"revenue_lifecycle_state": "qualified", "sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason}); ctx.db.update_payload(fingerprint, updated)
         result.update({"sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason, "handoff": "audit"})
     enqueue(ctx.db, "audit", {"lead": ctx.db.get(fingerprint) or current_lead, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}"); return result
