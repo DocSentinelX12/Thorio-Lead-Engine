@@ -34,3 +34,72 @@ def test_identity_ignores_non_identity_fields():
     first = {"source": "linkedin", "source_id": "ABC-123", "company": "Acme", "route": "Thorio", "lead_score": 50}
     second = {"source": "linkedin", "source_id": "ABC-123", "company": "Acme", "route": "Paxus", "lead_score": 100}
     assert lead_identity(first) == lead_identity(second)
+
+
+def test_canonical_opportunity_identity_exposes_version_and_derivation():
+    from .lead_identity import canonical_opportunity_identity
+
+    lead = {
+        "source": "linkedin",
+        "source_id": "post-1",
+        "url": "https://linkedin.example/post-1",
+        "company": "Acme",
+        "person": "Jane CTO",
+        "job_title": "AI Engineer",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
+        "signal": "first observation",
+    }
+
+    identity = canonical_opportunity_identity(lead)
+
+    assert identity["opportunity_id"] == identity["fingerprint"]
+    assert identity["identity_version"]
+    assert identity["derivation"]["source"] == "linkedin"
+    assert identity["derivation"]["source_id"] == "post-1"
+
+
+def test_canonical_opportunity_identity_ignores_research_mutation():
+    from .lead_identity import canonical_opportunity_identity
+
+    base = {
+        "source": "linkedin",
+        "source_id": "post-1",
+        "url": "https://linkedin.example/post-1",
+        "company": "Acme",
+        "person": "Jane CTO",
+        "job_title": "AI Engineer",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
+    }
+    enriched = {
+        **base,
+        "business_need_research": {"summary": "new evidence"},
+        "evidence_events": [{"evidence": "new evidence"}],
+        "route": "Paxus",
+        "research_status": "complete",
+    }
+
+    assert canonical_opportunity_identity(base)["opportunity_id"] == canonical_opportunity_identity(enriched)["opportunity_id"]
+
+
+def test_validate_opportunity_identity_rejects_mismatched_ids():
+    import pytest
+    from .lead_identity import validate_opportunity_identity
+
+    payload = {
+        "fingerprint": "fingerprint-a",
+        "opportunity_id": "fingerprint-b",
+        "company": "Acme",
+    }
+
+    with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
+        validate_opportunity_identity(payload)
+
+
+def test_validate_opportunity_identity_accepts_matching_ids():
+    from .lead_identity import validate_opportunity_identity
+
+    payload = {"fingerprint": "abc123", "opportunity_id": "abc123"}
+
+    assert validate_opportunity_identity(payload) == "abc123"
