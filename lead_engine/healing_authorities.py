@@ -236,7 +236,7 @@ class HealingIntegrationFabric:
         promote: bool = False,
     ) -> dict[str, Any]:
         """Close only after both authorities agree, then record the verified outcome."""
-        self.path(path_id)
+        self.path_evidence(path_id)
         closure = self.closure.close(
             authoritative_verified=authoritative_verified,
             healing_verified=healing_verified,
