@@ -7,6 +7,7 @@ SUPPORTED_ROUTES = (
     "Shiftr",
     "Paxus",
     "Thorio",
+    "Astrivon Labs",
 )
 
 
