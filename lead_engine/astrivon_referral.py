@@ -175,7 +175,7 @@ class AstrivonReferral:
         revenue_amount: Any,
         received_at: str | None = None,
     ) -> "AstrivonReferral":
-        if not self.referral_id or not self.partner_confirmed:
+        if self.status != "active" or not self.referral_id or not self.partner_confirmed:
             raise AstrivonReferralError(
                 "Astrivon client payment requires a confirmed introduced referral."
             )
@@ -219,6 +219,9 @@ def lead_to_astrivon_referral(lead: Mapping[str, Any]) -> AstrivonReferral:
     services = lead.get("astrivon_services")
     if not isinstance(services, (list, tuple)):
         services = match_astrivon_services(" ".join((str(lead.get("signal") or ""), str(lead.get("evidence") or ""), str(lead.get("current_need") or ""), str(route_item.get("current_need") or ""), str(route_item.get("evidence") or ""))))
+    status = str(lead.get("astrivon_status") or "qualified").strip()
+    if status not in ASTRIVON_STATUSES:
+        raise AstrivonReferralError(f"Unsupported Astrivon referral status: {status}")
     return AstrivonReferral(
         fingerprint=str(lead.get("fingerprint") or "").strip(),
         company=str(lead.get("company") or "").strip(),
@@ -238,7 +241,7 @@ def lead_to_astrivon_referral(lead: Mapping[str, Any]) -> AstrivonReferral:
             or ""
         ).strip(),
         services=tuple(str(item).strip() for item in services if str(item).strip()),
-        status=str(lead.get("astrivon_status") or "qualified").strip(),
+        status=status,
         human_approved=lead.get("human_approved") is True,
         referral_id=str(lead.get("astrivon_referral_id") or "").strip() or None,
         introduced_at=str(lead.get("astrivon_introduced_at") or "").strip() or None,
