@@ -6,6 +6,7 @@ ROUTES = (
     "Shiftr",
     "Paxus",
     "Thorio",
+    "Astrivon Labs",
 )
 
 
@@ -110,6 +111,30 @@ PAXUS_RULES = [
 ]
 
 
+ASTRIVON_RULES = [
+    r"\\blooking for a dev agency\\b",
+    r"\\blooking for a tech partner\\b",
+    r"\\bneed an mvp built\\b",
+    r"\\bmvp built for my startup\\b",
+    r"\\blooking for a b2b outreach expert\\b",
+    r"\\bb2b sales representative\\b",
+    r"\\bhiring lead generation specialist\\b",
+    r"\\bsales automation expert\\b",
+    r"\\bhiring ai(?:/| )ml developer\\b",
+    r"\\bai/ml developer\\b",
+    r"\\bcomputer vision specialist\\b",
+    r"\\blooking to automate business workflow\\b",
+    r"\\bcrm automation\\b",
+    r"\\bhiring full[- ]stack software engineer\\b",
+    r"\\bneed help scaling my web/mobile app\\b",
+    r"\\bseed funding\\b",
+    r"\\braised seed funding\\b",
+    r"\\bnon[- ]technical founder\\b",
+    r"\\boutsource sales pipeline\\b",
+    r"\\breduce in[- ]house dev costs\\b",
+    r"\\breduce in[- ]house sales costs\\b",
+]
+
 THORIO_REMOTE_RULES = [
     r"\bremote\b", r"\bremote[- ]first\b", r"\bfully remote\b", r"\b100% remote\b",
     r"\bremote only\b", r"\bremote position\b", r"\bremote role\b", r"\bremote job\b",
@@ -177,13 +202,14 @@ def _matches(text: str, patterns: List[str]) -> int:
 
 def score_routes(company: str, signal: str, evidence: str) -> Dict[str, int]:
     text = _text(company, signal, evidence)
-    scores = {"Shiftr": 0, "Paxus": 0, "Thorio": 0}
+    scores = {"Shiftr": 0, "Paxus": 0, "Thorio": 0, "Astrivon Labs": 0}
 
     if not (_has_hiring_context(text) or _has_job_role_context(text) or _has_shiftr_service_context(text)):
         return scores
 
     scores["Shiftr"] = _matches(text, SHIFTR_RULES)
     scores["Paxus"] = _matches(text, PAXUS_RULES)
+    scores["Astrivon Labs"] = _matches(text, ASTRIVON_RULES)
 
     # Thorio remains strictly remote. Hybrid/on-site roles are excluded.
     # Part-time remote roles are intentionally NOT excluded because
@@ -201,6 +227,8 @@ def score_routes(company: str, signal: str, evidence: str) -> Dict[str, int]:
 def route(company: str, signal: str, evidence: str) -> str:
     scores = score_routes(company=company, signal=signal, evidence=evidence)
 
+    if scores["Astrivon Labs"] > 0:
+        return "Astrivon Labs"
     if scores["Shiftr"] > 0:
         return "Shiftr"
     if scores["Paxus"] > 0:
