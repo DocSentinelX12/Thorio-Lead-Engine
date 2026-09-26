@@ -21,7 +21,7 @@ class _FakeTransport:
 
 
 def test_every_specialist_has_an_executable_handler():
-    assert set(specialization_registry()) == set(handler_registry()); assert len(handler_registry()) == 34
+    assert set(specialization_registry()) == set(handler_registry()); assert len(handler_registry()) == 35
 
 def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
     db = _db(tmp_path); orchestrator = AgentOrchestrator(db); task = orchestrator.dispatch_discovery("x_signal", {"source": "x", "signal": "Company is hiring a software engineer", "source_id": "1"}); result = run_worker_once(db, "x_signal", worker_id="x-worker")
@@ -75,7 +75,7 @@ def test_qualification_b_materializes_blocked_sales_state_before_airtable_handof
         assert result["failed_count"] == 0, result
         assert stored["qualified"] is True
         assert stored["sales_eligibility"] == "blocked"
-        assert stored["sales_eligibility_reason"] == "airtable_handoff_required"
+        assert stored["sales_eligibility_reason"] == "research_verification_pending"
         assert stored["revenue_lifecycle_state"] == "qualified"
     finally:
         db.close()
