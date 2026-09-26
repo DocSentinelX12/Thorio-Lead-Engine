@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .router import ROUTES, score_routes
+from .opportunity_provenance import normalize_evidence_event, validate_provenance_collection
+from .lead_identity import canonical_opportunity_identity
 
 VERIFIABLE_RESEARCH_SECTIONS = (
     "business_need_research",
@@ -25,10 +27,24 @@ def _items(value: Any) -> list[Dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
-def _refs(items: Iterable[Mapping[str, Any]]) -> list[Dict[str, Any]]:
+def _refs(
+    items: Iterable[Mapping[str, Any]],
+    *,
+    opportunity_id: str | None = None,
+    research_section: str = "research",
+    route: str | None = None,
+) -> list[Dict[str, Any]]:
+    raw_items = [dict(item) for item in items if isinstance(item, Mapping)]
+    if opportunity_id:
+        return validate_provenance_collection(
+            raw_items,
+            opportunity_id=opportunity_id,
+            research_section=research_section,
+            route=route,
+        )
     refs: list[Dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
-    for item in items:
+    for item in raw_items:
         url = str(item.get("url") or item.get("source_url") or item.get("evidence_url") or "").strip()
         evidence = str(item.get("evidence") or item.get("signal") or "").strip()
         observed_at = str(item.get("observed_at") or item.get("collected_at") or "").strip()
@@ -38,12 +54,16 @@ def _refs(items: Iterable[Mapping[str, Any]]) -> list[Dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
-        refs.append({"url": url, "evidence": evidence, "observed_at": observed_at, "verification_status": str(item.get("verification_status") or "observed_evidence").strip() or "observed_evidence"})
+        refs.append({
+            "url": url,
+            "evidence": evidence,
+            "observed_at": observed_at,
+            "verification_status": str(item.get("verification_status") or "observed_evidence").strip() or "observed_evidence",
+        })
     return refs
 
-
-def _section(evidence: list[Dict[str, Any]], summary: str, source_sections: list[str]) -> Dict[str, Any]:
-    refs = _refs(evidence)
+def _section(evidence: list[Dict[str, Any]], summary: str, source_sections: list[str], *, opportunity_id: str | None = None, research_section: str = "research", route: str | None = None) -> Dict[str, Any]:
+    refs = _refs(evidence, opportunity_id=opportunity_id, research_section=research_section, route=route)
     return {"verified": False, "verification_status": "observed_evidence", "researched_at": _now(), "summary": summary, "evidence": refs, "provenance": {"source_sections": list(source_sections), "evidence_count": len(refs)}}
 
 
@@ -58,9 +78,9 @@ def _specialist_items(findings: Mapping[str, Any], agents: Iterable[str]) -> lis
     return items
 
 
-def _route_section(evidence: list[Dict[str, Any]], company: str) -> Dict[str, Any]:
+def _route_section(evidence: list[Dict[str, Any]], company: str, opportunity_id: str | None = None) -> Dict[str, Any]:
     """Keep route evidence independently scoped to the route it actually supports."""
-    section = _section(evidence, "Evidence relevant to matching the opportunity to supported revenue routes.", ["specialist_findings", "business_need_research", "technical_product_hiring_research"])
+    section = _section(evidence, "Evidence relevant to matching the opportunity to supported revenue routes.", ["specialist_findings", "business_need_research", "technical_product_hiring_research"], opportunity_id=opportunity_id, research_section="route_research")
     refs = section["evidence"]
     route_refs: Dict[str, list[Dict[str, Any]]] = {route: [] for route in ROUTES}
     for ref in refs:
@@ -70,7 +90,7 @@ def _route_section(evidence: list[Dict[str, Any]], company: str) -> Dict[str, An
         scores = score_routes(company=company, signal=text, evidence=text)
         for route in ROUTES:
             if int(scores.get(route, 0) or 0) > 0:
-                route_refs[route].append(dict(ref))
+                route_refs[route].append(normalize_evidence_event(ref, opportunity_id=opportunity_id, research_section="route_research", route=route) if opportunity_id else dict(ref))
     section["routes"] = {
         route: {
             "verified": False,
@@ -83,18 +103,18 @@ def _route_section(evidence: list[Dict[str, Any]], company: str) -> Dict[str, An
     return section
 
 
-def _merge_evidence(generated: Iterable[Mapping[str, Any]], existing: Iterable[Mapping[str, Any]]) -> list[Dict[str, Any]]:
-    return _refs(list(generated) + list(existing))
+def _merge_evidence(generated: Iterable[Mapping[str, Any]], existing: Iterable[Mapping[str, Any]], *, opportunity_id: str | None = None, research_section: str = "research") -> list[Dict[str, Any]]:
+    return _refs(list(generated) + list(existing), opportunity_id=opportunity_id, research_section=research_section)
 
 
-def merge_canonical_section(generated: Mapping[str, Any], existing: Mapping[str, Any]) -> Dict[str, Any]:
+def merge_canonical_section(generated: Mapping[str, Any], existing: Mapping[str, Any], *, opportunity_id: str | None = None, research_section: str = "research") -> Dict[str, Any]:
     """Merge newly collected evidence without discarding existing verified or human-reviewed fields."""
     result = dict(generated)
     existing_status = str(existing.get("verification_status") or existing.get("status") or "").strip().lower()
     if existing.get("verified") is True or existing_status in {"verified", "research_verified", "complete"}:
         return dict(existing)
     result.update(dict(existing))
-    result["evidence"] = _merge_evidence(generated.get("evidence", []), existing.get("evidence", []))
+    result["evidence"] = _merge_evidence(generated.get("evidence", []), existing.get("evidence", []), opportunity_id=opportunity_id, research_section=research_section)
     generated_provenance = generated.get("provenance") if isinstance(generated.get("provenance"), Mapping) else {}
     existing_provenance = existing.get("provenance") if isinstance(existing.get("provenance"), Mapping) else {}
     sources = []
@@ -107,7 +127,7 @@ def merge_canonical_section(generated: Mapping[str, Any], existing: Mapping[str,
         for name, value in existing["routes"].items():
             if not isinstance(value, Mapping):
                 continue
-            current = dict(routes.get(str(name), {})); current.update(dict(value)); current["evidence"] = _merge_evidence(routes.get(str(name), {}).get("evidence", []), value.get("evidence", []))
+            current = dict(routes.get(str(name), {})); current.update(dict(value)); current["evidence"] = _merge_evidence(routes.get(str(name), {}).get("evidence", []), value.get("evidence", []), opportunity_id=opportunity_id, research_section="route_research")
             routes[str(name)] = current
         result["routes"] = routes
     return result
@@ -211,6 +231,7 @@ def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any]
 def build_canonical_research_package(lead: Mapping[str, Any], company_research: Mapping[str, Any], specialist_findings: Mapping[str, Any] | None = None) -> Dict[str, Dict[str, Any]]:
     """Materialize canonical research sections without promoting observation to verification."""
     findings = specialist_findings if isinstance(specialist_findings, Mapping) else {}
+    opportunity_id = str(lead.get("opportunity_id") or lead.get("fingerprint") or canonical_opportunity_identity(lead)["opportunity_id"]).strip()
     public = company_research.get("public_web_research")
     public_facts = public.get("facts", {}) if isinstance(public, Mapping) else {}
     social = _items(company_research.get("social_findings"))
@@ -220,16 +241,16 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
     commercial = _items(company_research.get("public_commercial_facts")) + _specialist_items(findings, ("social_company_context", "social_intelligence"))
     route = _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "astrivon_demand_discovery")) + business + technical
     package: Dict[str, Dict[str, Any]] = {
-        "business_need_research": _section(business, "Public and specialist evidence relevant to the observed business need.", ["public_business_need_facts", "specialist_findings"]),
-        "current_intent_research": _section(intent, "Public and specialist evidence relevant to current or recent intent.", ["public_hiring_facts", "social_findings", "specialist_findings"]),
-        "technical_product_hiring_research": _section(technical, "Public and specialist evidence relevant to technical, product, or hiring needs.", ["public_product_facts", "public_hiring_facts", "specialist_findings"]),
-        "commercial_research": _section(commercial, "Public and specialist evidence relevant to commercial context.", ["public_commercial_facts", "specialist_findings"]),
-        "route_research": _route_section(route, str(lead.get("company") or "").strip()),
+        "business_need_research": _section(business, "Public and specialist evidence relevant to the observed business need.", ["public_business_need_facts", "specialist_findings"], opportunity_id=opportunity_id, research_section="business_need_research"),
+        "current_intent_research": _section(intent, "Public and specialist evidence relevant to current or recent intent.", ["public_hiring_facts", "social_findings", "specialist_findings"], opportunity_id=opportunity_id, research_section="current_intent_research"),
+        "technical_product_hiring_research": _section(technical, "Public and specialist evidence relevant to technical, product, or hiring needs.", ["public_product_facts", "public_hiring_facts", "specialist_findings"], opportunity_id=opportunity_id, research_section="technical_product_hiring_research"),
+        "commercial_research": _section(commercial, "Public and specialist evidence relevant to commercial context.", ["public_commercial_facts", "specialist_findings"], opportunity_id=opportunity_id, research_section="commercial_research"),
+        "route_research": _route_section(route, str(lead.get("company") or "").strip(), opportunity_id),
     }
     missing_evidence = [name for name in VERIFIABLE_RESEARCH_SECTIONS if not package[name]["evidence"]]
     has_any_evidence = any(package[name]["evidence"] for name in VERIFIABLE_RESEARCH_SECTIONS)
     missing_sections = [] if has_any_evidence else list(VERIFIABLE_RESEARCH_SECTIONS)
     package["research_gaps"] = {"verified": False, "verification_status": "observed_evidence" if has_any_evidence else "research_required", "researched_at": _now(), "missing_sections": missing_sections, "unknowns": ["company_verification", "decision_maker_verification", "current_need_verification", "route_verification"] + missing_evidence, "provenance": {"source": "canonical_research_sections", "checked_sections": list(VERIFIABLE_RESEARCH_SECTIONS), "missing_count": len(missing_evidence)}}
-    all_refs = _refs(business + intent + technical + commercial + route + _items(company_research.get("public_company_facts")) + _items(company_research.get("public_decision_maker_facts")))
+    all_refs = _refs(business + intent + technical + commercial + route + _items(company_research.get("public_company_facts")) + _items(company_research.get("public_decision_maker_facts")), opportunity_id=opportunity_id, research_section="closer_package")
     package["closer_package"] = {"ready": False, "verification_status": "research_required", "researched_at": _now(), "company": str(lead.get("company") or "").strip(), "contact": str(lead.get("contact_name") or lead.get("person") or "").strip(), "evidence": all_refs, "required_verification": list(VERIFIABLE_RESEARCH_SECTIONS), "provenance": {"source": "canonical_research_sections", "evidence_count": len(all_refs)}, "unknowns": list(package["research_gaps"]["unknowns"])}
     return package
