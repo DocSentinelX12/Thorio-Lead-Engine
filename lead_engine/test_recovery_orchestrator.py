@@ -26,7 +26,7 @@ def _measurement(path_id: str, gpu_uuid: str) -> dict[str, object]:
         "remote_worker_id": f"remote:{path_id}",
         "remote_endpoint": f"endpoint:{path_id}",
         "gpu_uuid": gpu_uuid,
-        "rdma_device": f"rdma:{path_id}",
+        "rdma_device": f"rdma:{path_id}:1",
         "rdma_port": 1,
         "bandwidth_gbps": 100.0,
     }
