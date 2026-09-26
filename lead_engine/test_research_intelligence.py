@@ -246,3 +246,26 @@ def test_research_intelligence_validates_its_canonical_identity():
 
     with pytest.raises(ValueError, match="opportunity"):
         research_package.validate_research_intelligence(intelligence, opportunity_id="opp-intel-1")
+
+
+def test_research_intelligence_merge_preserves_richer_profiles_and_evidence():
+    first = research_package.build_research_intelligence(_lead())
+    second_lead = _lead()
+    second_lead["company_research"]["company_size"] = "201-500"
+    second_lead["decision_maker_research"]["responsibilities"] = ["engineering", "security"]
+    second_lead["business_need_research"]["evidence"].append({
+        "opportunity_id": "opp-intel-1",
+        "fingerprint": "opp-intel-1",
+        "url": "https://acme.example/need-2",
+        "evidence": "The new product requires backend capacity.",
+        "observed_at": "2026-09-26T01:00:00+00:00",
+        "verification_status": "observed_evidence",
+    })
+    second = research_package.build_research_intelligence(second_lead)
+
+    merged = research_package.merge_research_intelligence(first, second, opportunity_id="opp-intel-1")
+
+    assert merged["company"]["known"]["company_size"] == "201-500"
+    assert merged["decision_maker"]["known"]["responsibilities"] == ["engineering", "security"]
+    assert merged["evidence_graph"]["node_count"] >= first["evidence_graph"]["node_count"]
+    assert merged["evidence_graph"]["edge_count"] >= first["evidence_graph"]["edge_count"]
