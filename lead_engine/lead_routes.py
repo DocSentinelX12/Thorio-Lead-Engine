@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
-SUPPORTED_ROUTES = ("Shiftr", "Paxus", "Thorio")
+SUPPORTED_ROUTES = ("Shiftr", "Paxus", "Thorio", "Astrivon Labs")
 
 
 def _get_routes(lead: Dict[str, Any]) -> List[str]:
