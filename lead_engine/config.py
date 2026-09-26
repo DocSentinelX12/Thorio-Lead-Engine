@@ -5,7 +5,6 @@ from typing import Dict
 
 
 DEFAULT_BATCH_SIZE = 50
-DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS = 60
 
 DEFAULT_AIRTABLE_LEAD_TABLE = "Lead Radar"
 DEFAULT_AIRTABLE_RESEARCH_TABLE = "Research"
@@ -47,7 +46,6 @@ class LeadEngineConfig:
 
     batch_size: int = DEFAULT_BATCH_SIZE
     sync_enabled: bool = True
-    approval_poll_interval_seconds: int = DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
 
     @classmethod
     def from_environment(cls):
@@ -99,10 +97,7 @@ class LeadEngineConfig:
             str(DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS),
         )
         try:
-            approval_poll_interval_seconds = int(raw_poll_interval)
         except (TypeError, ValueError):
-            approval_poll_interval_seconds = DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
-        if approval_poll_interval_seconds < 1:
             approval_poll_interval_seconds = DEFAULT_APPROVAL_POLL_INTERVAL_SECONDS
 
         sync_enabled = os.getenv("LEAD_ENGINE_SYNC_ENABLED", "true").strip().lower() in {
