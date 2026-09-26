@@ -25,6 +25,11 @@ def mock_research_sync(monkeypatch):
 
 
 def test_sync_worker_retries_failed_lead(tmp_path):
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.package_is_ready",
+        lambda lead: True,
+    )
+
     db = LeadDB(
         data_dir=str(tmp_path)
     )
@@ -179,26 +184,25 @@ def test_sync_one_defers_incomplete_research_projection_after_lead_radar(
         research_sync,
     )
 
-    monkeypatch.setattr(
-        "lead_engine.sync_worker.sync_master_tracker",
-        lambda lead: {
-            "status": "synced",
-        },
-    )
-
     result = sync_one(
         lead
     )
 
-    assert result["status"] == "synced"
+    assert result["status"] == "deferred_research"
     assert result["research_record"] is None
-    assert result["research_deferred"] is True
+    assert result["airtable_record"]["id"] == "rec_lead_research"
+    assert result["reason"] == "research_verification_pending"
     assert research_calls == []
 
 
 def test_sync_one_fails_and_remains_retryable_when_research_sync_fails(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.package_is_ready",
+        lambda lead: True,
+    )
+
     lead = {
         "fingerprint": "lead-research-failure",
         "company": "Example Corp",
@@ -235,6 +239,11 @@ def test_sync_one_fails_and_remains_retryable_when_research_sync_fails(
 def test_sync_one_requires_valid_master_tracker_result(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.package_is_ready",
+        lambda lead: True,
+    )
+
     lead = {
         "fingerprint": "lead-002",
         "company": "Example Corp",
@@ -274,6 +283,11 @@ def test_sync_one_requires_valid_master_tracker_result(
 def test_sync_one_fails_when_outreach_sync_fails(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.package_is_ready",
+        lambda lead: True,
+    )
+
     lead = {
         "fingerprint": "lead-outreach-failure",
         "company": "Example Corp",
@@ -311,6 +325,11 @@ def test_sync_one_fails_when_outreach_sync_fails(
 def test_sync_one_fails_when_followup_sync_fails(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.package_is_ready",
+        lambda lead: True,
+    )
+
     lead = {
         "fingerprint": "lead-followup-failure",
         "company": "Example Corp",
@@ -359,6 +378,11 @@ def test_sync_one_fails_when_followup_sync_fails(
 def test_sync_one_fails_when_referral_sync_fails(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "lead_engine.sync_worker.package_is_ready",
+        lambda lead: True,
+    )
+
     lead = {
         "fingerprint": "lead-referral-failure",
         "company": "Example Corp",
