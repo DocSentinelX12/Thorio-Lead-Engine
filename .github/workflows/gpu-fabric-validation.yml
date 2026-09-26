@@ -64,7 +64,7 @@ jobs:
 
       - name: Run autonomous healing intelligence tests
         run: |
-          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_evidence.py lead_engine/test_healing_dependencies.py lead_engine/test_healing_intelligence.py
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_evidence.py lead_engine/test_healing_dependencies.py lead_engine/test_healing_intelligence.py lead_engine/test_healing_intelligence_integration.py
 
       - name: Run autonomous healing plane tests
         run: |
