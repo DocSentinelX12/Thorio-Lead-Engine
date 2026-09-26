@@ -79,3 +79,27 @@ def test_evidence_key_keeps_distinct_observations_distinct():
     second = {**first, "observed_at": "2026-09-26T01:00:00+00:00"}
 
     assert canonical_evidence_key(first) != canonical_evidence_key(second)
+
+
+def test_evidence_deduplication_preserves_verified_upgrade():
+    from .opportunity_provenance import validate_provenance_collection
+
+    observed = {
+        "opportunity_id": "opp-1",
+        "fingerprint": "opp-1",
+        "url": "https://example.com/evidence",
+        "evidence": "Need",
+        "observed_at": "2026-09-26T00:00:00+00:00",
+        "verification_status": "observed_evidence",
+    }
+    verified = {**observed, "verification_status": "verified", "verified": True}
+
+    result = validate_provenance_collection(
+        [observed, verified],
+        opportunity_id="opp-1",
+        research_section="business_need_research",
+    )
+
+    assert len(result) == 1
+    assert result[0]["verification_status"] == "verified"
+    assert result[0]["verified"] is True
