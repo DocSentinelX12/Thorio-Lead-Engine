@@ -45,6 +45,10 @@ class PlacementCandidate:
             raise ValueError("fabric_path_id is required")
 
 
+class FabricCoordinatorError(RuntimeError):
+    """Raised when a durable coordination invariant prevents a safe allocation."""
+
+
 class FabricCoordinator:
     """Coordinate competing workloads with durable reservations and recovery."""
 
@@ -137,6 +141,8 @@ class FabricCoordinator:
                     created REAL NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_alloc_node ON allocations(node_id, state);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_active_allocation_node_unique
+                    ON allocations(node_id) WHERE state='active';
                 CREATE INDEX IF NOT EXISTS idx_workload_state ON workloads(state);
                 """
             )
@@ -222,11 +228,16 @@ class FabricCoordinator:
                     "generation": generation,
                     "state": "active",
                 }
-                db.execute(
-                    "INSERT OR REPLACE INTO allocations VALUES(?,?,?,?,?,?,?,?)",
-                    (workload_id, choice.node_id, choice.failure_domain, choice.fabric_path_id,
-                     choice.score, generation, "active", time.time()),
-                )
+                try:
+                    db.execute(
+                        "INSERT INTO allocations VALUES(?,?,?,?,?,?,?,?)",
+                        (workload_id, choice.node_id, choice.failure_domain, choice.fabric_path_id,
+                         choice.score, generation, "active", time.time()),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise FabricCoordinatorError(
+                        f"active allocation conflict for node {choice.node_id} or workload {workload_id}"
+                    ) from exc
                 db.execute("UPDATE workloads SET state='running',updated=? WHERE workload_id=?", (time.time(), workload_id))
                 used_nodes.add(choice.node_id)
                 allocations.append(record)
