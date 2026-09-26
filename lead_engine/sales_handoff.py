@@ -6,9 +6,13 @@ import json
 from typing import Any, Mapping
 
 from .research_package import research_readiness
+from .lead_identity import validate_opportunity_identity
 
 PACKAGE_KEYS = (
+    "opportunity_id",
     "fingerprint",
+    "identity_version",
+    "identity_derivation",
     "company",
     "company_website",
     "source",
@@ -71,6 +75,8 @@ def _canonical(value: Any) -> Any:
     return value
 
 def package_projection(lead: Mapping[str, Any]) -> dict[str, Any]:
+    if lead.get("fingerprint") or lead.get("opportunity_id"):
+        validate_opportunity_identity(dict(lead))
     return {key: _canonical(lead.get(key)) for key in PACKAGE_KEYS if key in lead}
 
 def package_digest(lead: Mapping[str, Any]) -> str:
@@ -100,6 +106,10 @@ def _record_fields(record: Mapping[str, Any]) -> Mapping[str, Any]:
 def verify_lead_radar_record(record: Mapping[str, Any], lead: Mapping[str, Any]) -> bool:
     if not isinstance(record, Mapping):
         return False
+    try:
+        validate_opportunity_identity(dict(lead))
+    except ValueError:
+        return False
     fields = _record_fields(record)
     return (
         str(record.get("id") or "").strip()
@@ -109,6 +119,10 @@ def verify_lead_radar_record(record: Mapping[str, Any], lead: Mapping[str, Any])
 
 def verify_research_record(record: Mapping[str, Any], lead: Mapping[str, Any], expected_digest: str) -> bool:
     if not isinstance(record, Mapping) or not str(record.get("id") or "").strip():
+        return False
+    try:
+        validate_opportunity_identity(dict(lead))
+    except ValueError:
         return False
     fields = _record_fields(record)
     if str(fields.get("Research Key") or "").strip() != str(lead.get("fingerprint") or "").strip():
