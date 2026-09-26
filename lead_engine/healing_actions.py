@@ -43,11 +43,16 @@ class HealingActionExecutor:
                 or float(current["lease_expires_at"]) <= float(now)
             ):
                 raise HealingActionError("fenced")
-            fencing_token = self._replicated_fencing_token(owner)
             completed: list[str] = []
             for name, operation in steps:
                 if not name.strip():
                     raise HealingActionError("checkpoint name is required")
+                current = self.state.action(action_id)
+                if current.get("owner") != owner:
+                    raise HealingActionError("fenced")
+                if now is not None and (current.get("lease_expires_at") is None or float(current["lease_expires_at"]) <= float(now)):
+                    raise HealingActionError("fenced")
+                fencing_token = self._replicated_fencing_token(owner)
                 operation()
                 completed.append(name)
                 if fencing_token is None:
@@ -74,6 +79,12 @@ class HealingActionExecutor:
         except Exception as exc:
             for name, operation in reversed(tuple(compensations)):
                 try:
+                    current = self.state.action(action_id)
+                    if current.get("owner") != owner:
+                        raise HealingActionError("fenced")
+                    if now is not None and (current.get("lease_expires_at") is None or float(current["lease_expires_at"]) <= float(now)):
+                        raise HealingActionError("fenced")
+                    fencing_token = self._replicated_fencing_token(owner)
                     operation()
                     if fencing_token is None:
                         self.state.checkpoint(
