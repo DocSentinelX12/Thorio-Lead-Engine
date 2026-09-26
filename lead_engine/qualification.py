@@ -15,7 +15,7 @@ CURRENT_NEED_DAYS = 30
 RECENT_INQUIRY_DAYS = 30
 
 INQUIRY_CONTEXT = re.compile(r"\b(?:inquir(?:y|ed|ies)|requested information|requested a quote|requested pricing|requested a proposal|asked about|contacted us|reached out|submitted an inquiry|submitted a request|expressed interest|interested in|evaluating|considering|exploring)\b", re.I)
-CURRENT_NEED_CONTEXT = re.compile(r"\b(?:hiring|hire|hiring for|recruiting|recruit|opening|open role|looking to hire|seeking|staffing|recruitment support|technology recruitment|development contractor|staff augmentation|outsourcing|outsource|llm integration|ai agents?|saas development|mobile development|software development|engineering team|development team)\b", re.I)
+CURRENT_NEED_CONTEXT = re.compile(r"\b(?:hiring|hire|hiring for|recruiting|recruit|opening|open role|looking to hire|seeking|staffing|recruitment support|technology recruitment|development contractor|staff augmentation|outsourcing|outsource|llm integration|ai agents?|saas development|mobile development|software development|engineering team|development team|dev agency|tech partner|mvp|b2b outreach|b2b sales|lead generation|sales automation|computer vision|business workflow|crm automation|scaling my web|seed funding|non-technical founder)\b", re.I)
 SHIFTR_SERVICE_NEED_CONTEXT = re.compile(r"\b(?:need(?:s|ed)?|want(?:s|ed)?|looking for|seeking|help with)\b.{0,120}\b(?:build(?:ing)?|develop(?:ing|ment)?|integrat(?:e|ing|ion)|ai agents?|llm(?: integration)?|mobile development|saas development|software development|development team|engineering team|staff augmentation|outsourc(?:e|ed|ing)?)\b", re.I)
 
 
