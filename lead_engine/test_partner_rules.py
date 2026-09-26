@@ -39,6 +39,15 @@ def test_thorio_matches_remote_signal():
     )
 
 
+def test_astrivon_matches_mvp_agency_signal():
+    assert route_matches_partner(
+        route="Astrivon Labs",
+        signal="Looking for a dev agency",
+        evidence="Startup needs an MVP built for its new platform.",
+        company="Acme",
+    )
+
+
 def test_generic_hiring_does_not_match_shiftr():
     assert not route_matches_partner(
         route="Shiftr",
