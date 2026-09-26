@@ -48,7 +48,7 @@ def test_multi_route_lead_preserves_paxus_shiftr_and_thorio():
         "Thorio",
     ]
 
-    assert fields["Recommended Partner"] == "Both"
+    assert fields["Recommended Partner"] == "Multiple"
 
     assert fields["Qualified Lead?"] is True
     assert fields["Evidence Status"] == "Verified"
