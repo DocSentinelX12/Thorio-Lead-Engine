@@ -8,6 +8,7 @@ PARTNER_ROUTES = (
     "Shiftr",
     "Paxus",
     "Thorio",
+    "Astrivon Labs",
 )
 
 
@@ -50,11 +51,13 @@ def build_delivery_manifest(
         "Shiftr": [],
         "Paxus": [],
         "Thorio": [],
+        "Astrivon Labs": [],
         "Review": [],
         "counts": {
             "Shiftr": 0,
             "Paxus": 0,
             "Thorio": 0,
+            "Astrivon Labs": 0,
             "Review": 0,
         },
     }
