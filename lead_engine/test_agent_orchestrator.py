@@ -25,7 +25,7 @@ def test_orchestrator_drains_handoffs_created_by_specialists(tmp_path):
 
     result = AgentOrchestrator(db).run_all_once(limit_per_agent=1)
 
-    assert result["agent_count"] == 34
+    assert result["agent_count"] == 35
     assert result["claimed_count"] >= 1
     assert result["completed_count"] >= 1
     assert result["round_count"] >= 2
