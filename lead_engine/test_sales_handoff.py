@@ -126,7 +126,13 @@ def test_package_projection_contains_canonical_identity():
         "discovered_at": "2026-09-26T00:00:00+00:00",
     })
     from .lead_identity import canonical_opportunity_identity
-    lead.update(canonical_opportunity_identity(lead))
+    identity = canonical_opportunity_identity(lead)
+    lead.update({
+        "opportunity_id": identity["opportunity_id"],
+        "fingerprint": identity["fingerprint"],
+        "identity_version": identity["identity_version"],
+        "identity_derivation": identity["derivation"],
+    })
 
     projection = package_projection(lead)
 
