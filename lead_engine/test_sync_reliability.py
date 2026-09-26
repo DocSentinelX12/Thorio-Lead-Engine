@@ -65,6 +65,9 @@ def test_failed_sync_stays_local_and_can_retry(tmp_path):
     ), patch(
         "lead_engine.sync_worker.verify_airtable_handoff",
         return_value=(True, "test-digest"),
+    ), patch(
+        "lead_engine.sync_worker.sync_one",
+        return_value={"status": "synced", "lead": {"fingerprint": "reliability-001"}},
     ):
 
         mock_sync.return_value = {
