@@ -51,7 +51,7 @@ def test_astrivon_payment_is_20_percent_of_received_revenue():
 
 
 def test_astrivon_recurring_payments_accumulate_independently():
-    referral = _referral().mark_introduced(referral_id="astr-001").confirm_partner()
+    referral = _referral().mark_introduced().confirm_partner(referral_id="astr-001")
     referral = referral.record_client_payment(
         event_id="payment-001",
         revenue_amount="1000.00",
