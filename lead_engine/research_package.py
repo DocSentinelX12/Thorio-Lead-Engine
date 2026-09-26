@@ -27,21 +27,10 @@ def _items(value: Any) -> list[Dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, Mapping)]
 
 
-def _refs(
-    items: Iterable[Mapping[str, Any]],
-    *,
-    opportunity_id: str | None = None,
-    research_section: str = "research",
-    route: str | None = None,
-) -> list[Dict[str, Any]]:
+def _refs(items: Iterable[Mapping[str, Any]], *, opportunity_id: str | None = None, research_section: str = "research", route: str | None = None) -> list[Dict[str, Any]]:
     raw_items = [dict(item) for item in items if isinstance(item, Mapping)]
     if opportunity_id:
-        return validate_provenance_collection(
-            raw_items,
-            opportunity_id=opportunity_id,
-            research_section=research_section,
-            route=route,
-        )
+        return validate_provenance_collection(raw_items, opportunity_id=opportunity_id, research_section=research_section, route=route)
     refs: list[Dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for item in raw_items:
@@ -54,13 +43,9 @@ def _refs(
         if key in seen:
             continue
         seen.add(key)
-        refs.append({
-            "url": url,
-            "evidence": evidence,
-            "observed_at": observed_at,
-            "verification_status": str(item.get("verification_status") or "observed_evidence").strip() or "observed_evidence",
-        })
+        refs.append({"url": url, "evidence": evidence, "observed_at": observed_at, "verification_status": str(item.get("verification_status") or "observed_evidence").strip() or "observed_evidence"})
     return refs
+
 
 def _section(evidence: list[Dict[str, Any]], summary: str, source_sections: list[str], *, opportunity_id: str | None = None, research_section: str = "research", route: str | None = None) -> Dict[str, Any]:
     refs = _refs(evidence, opportunity_id=opportunity_id, research_section=research_section, route=route)
@@ -92,12 +77,7 @@ def _route_section(evidence: list[Dict[str, Any]], company: str, opportunity_id:
             if int(scores.get(route, 0) or 0) > 0:
                 route_refs[route].append(normalize_evidence_event(ref, opportunity_id=opportunity_id, research_section="route_research", route=route) if opportunity_id else dict(ref))
     section["routes"] = {
-        route: {
-            "verified": False,
-            "verification_status": "observed_evidence" if route_refs[route] else "research_required",
-            "evidence": route_refs[route],
-            "provenance": {"source": "route_specific_canonical_evidence", "evidence_count": len(route_refs[route])},
-        }
+        route: {"verified": False, "verification_status": "observed_evidence" if route_refs[route] else "research_required", "evidence": route_refs[route], "provenance": {"source": "route_specific_canonical_evidence", "evidence_count": len(route_refs[route])}}
         for route in ROUTES
     }
     return section
@@ -139,9 +119,8 @@ def _section_has_evidence(value: Any) -> bool:
     if not isinstance(value, Mapping):
         return False
     evidence = value.get("evidence")
-    if isinstance(evidence, Iterable) and not isinstance(evidence, (str, bytes, Mapping)):
-        if any(item for item in evidence):
-            return True
+    if isinstance(evidence, Iterable) and not isinstance(evidence, (str, bytes, Mapping)) and any(item for item in evidence):
+        return True
     routes = value.get("routes")
     if isinstance(routes, Mapping):
         return any(_section_has_evidence(route) for route in routes.values())
@@ -153,7 +132,17 @@ def _explicitly_verified(value: Any) -> bool:
         return False
     if value.get("verified") is True:
         return True
-    return str(value.get("verification_status") or value.get("status") or "").strip().lower() in {"verified", "research_verified", "complete"}
+    status = str(value.get("verification_status") or value.get("status") or "").strip().lower()
+    if status in {"verified", "research_verified", "complete"}:
+        return True
+    # route_research is a container for independently verified route claims. Its
+    # parent intentionally remains observed_evidence, so readiness must inspect
+    # the nested route that actually supports the handoff instead of requiring a
+    # synthetic parent-level verification flag.
+    routes = value.get("routes")
+    if isinstance(routes, Mapping):
+        return any(_explicitly_verified(route) for route in routes.values())
+    return False
 
 
 def _research_intelligence_ready(lead: Mapping[str, Any]) -> bool:
@@ -184,51 +173,27 @@ def _research_intelligence_ready(lead: Mapping[str, Any]) -> bool:
 
 def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
     """Return the single canonical readiness decision for completed research and closer handoff."""
-    missing_sections = [
-        section
-        for section in VERIFIABLE_RESEARCH_SECTIONS
-        if not _explicitly_verified(lead.get(section))
-    ]
+    missing_sections = [section for section in VERIFIABLE_RESEARCH_SECTIONS if not _explicitly_verified(lead.get(section))]
     company_research = lead.get("company_research")
     company_verified = isinstance(company_research, Mapping) and company_research.get("company_verified") is True
-    decision_maker_verified = (
-        isinstance(company_research, Mapping)
-        and bool(str(company_research.get("decision_maker") or "").strip())
-        and bool(str(company_research.get("decision_maker_evidence") or "").strip())
-        and str(company_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"
-    )
+    decision_maker_verified = isinstance(company_research, Mapping) and bool(str(company_research.get("decision_maker") or "").strip()) and bool(str(company_research.get("decision_maker_evidence") or "").strip()) and str(company_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"
     closer = lead.get("closer_package")
     closer_evidence = isinstance(closer, Mapping) and bool(closer.get("evidence"))
     closer_package_ready = isinstance(closer, Mapping) and closer.get("ready") is True
     intelligence_ready = _research_intelligence_ready(lead)
     ready = not missing_sections and company_verified and decision_maker_verified and closer_evidence and intelligence_ready
     blockers = list(missing_sections)
-    if not company_verified:
-        blockers.append("company_verification")
-    if not decision_maker_verified:
-        blockers.append("decision_maker_verification")
-    if not closer_evidence:
-        blockers.append("closer_package_evidence")
-    if not closer_package_ready:
-        blockers.append("closer_package_not_ready")
-    if not intelligence_ready:
-        blockers.append("research_intelligence")
-    return {
-        "ready": ready,
-        "missing_sections": missing_sections,
-        "company_verified": company_verified,
-        "decision_maker_verified": decision_maker_verified,
-        "closer_evidence_present": closer_evidence,
-        "closer_package_ready": closer_package_ready,
-        "blockers": list(dict.fromkeys(blockers)),
-    }
+    if not company_verified: blockers.append("company_verification")
+    if not decision_maker_verified: blockers.append("decision_maker_verification")
+    if not closer_evidence: blockers.append("closer_package_evidence")
+    if not closer_package_ready: blockers.append("closer_package_not_ready")
+    if not intelligence_ready: blockers.append("research_intelligence")
+    return {"ready": ready, "missing_sections": missing_sections, "company_verified": company_verified, "decision_maker_verified": decision_maker_verified, "closer_evidence_present": closer_evidence, "closer_package_ready": closer_package_ready, "blockers": list(dict.fromkeys(blockers))}
 
 
 def finalize_closer_package(lead: Mapping[str, Any], package: Mapping[str, Any] | None = None) -> Dict[str, Any]:
-    """Materialize closer readiness without promoting observed evidence to verification."""
     result = dict(package or (lead.get("closer_package") if isinstance(lead.get("closer_package"), Mapping) else {}))
-    readiness_input = dict(lead)
-    readiness_input["closer_package"] = result
+    readiness_input = dict(lead); readiness_input["closer_package"] = result
     readiness = research_readiness(readiness_input)
     result["ready"] = bool(readiness["ready"])
     result["verification_status"] = "verified" if readiness["ready"] else "research_required"
@@ -238,7 +203,6 @@ def finalize_closer_package(lead: Mapping[str, Any], package: Mapping[str, Any] 
 
 
 def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Apply canonical closer, research-gap, and status state from one readiness decision."""
     updated = dict(lead)
     updated["closer_package"] = finalize_closer_package(updated, updated.get("closer_package"))
     readiness = research_readiness(updated)
@@ -247,37 +211,18 @@ def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any]
     if readiness["ready"]:
         gaps["verification_status"] = "verified"
     else:
-        has_observed_evidence = any(
-            isinstance(updated.get(section), Mapping) and bool(updated.get(section, {}).get("evidence"))
-            for section in VERIFIABLE_RESEARCH_SECTIONS
-        )
+        has_observed_evidence = any(isinstance(updated.get(section), Mapping) and bool(updated.get(section, {}).get("evidence")) for section in VERIFIABLE_RESEARCH_SECTIONS)
         existing_status = str(gaps.get("verification_status") or "").strip().lower()
-        gaps["verification_status"] = (
-            "observed_evidence"
-            if has_observed_evidence or existing_status == "observed_evidence"
-            else "research_required"
-        )
-    has_any_evidence = any(
-        isinstance(updated.get(section), Mapping)
-        and bool(updated.get(section, {}).get("evidence"))
-        for section in VERIFIABLE_RESEARCH_SECTIONS
-    )
-    gaps["missing_sections"] = [
-        section
-        for section in VERIFIABLE_RESEARCH_SECTIONS
-        if not _section_has_evidence(updated.get(section))
-    ]
+        gaps["verification_status"] = "observed_evidence" if has_observed_evidence or existing_status == "observed_evidence" else "research_required"
+    gaps["missing_sections"] = [section for section in VERIFIABLE_RESEARCH_SECTIONS if not _section_has_evidence(updated.get(section))]
     gaps["unknowns"] = list(readiness["blockers"])
     updated["research_gaps"] = gaps
     updated["research_status"] = "complete" if readiness["ready"] else "research_required"
-    updated["research_verified_fields"] = [
-        section for section in VERIFIABLE_RESEARCH_SECTIONS if _explicitly_verified(updated.get(section))
-    ]
+    updated["research_verified_fields"] = [section for section in VERIFIABLE_RESEARCH_SECTIONS if _explicitly_verified(updated.get(section))]
     return updated, readiness
 
 
 def build_canonical_research_package(lead: Mapping[str, Any], company_research: Mapping[str, Any], specialist_findings: Mapping[str, Any] | None = None) -> Dict[str, Dict[str, Any]]:
-    """Materialize canonical research sections without promoting observation to verification."""
     findings = specialist_findings if isinstance(specialist_findings, Mapping) else {}
     supplied_opportunity_id = str(lead.get("opportunity_id") or "").strip()
     supplied_fingerprint = str(lead.get("fingerprint") or "").strip()
@@ -292,28 +237,21 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
     business = _items(company_research.get("public_business_need_facts")) + _items(public_facts.get("business_need")) + _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "astrivon_demand_discovery", "social_inquiry_research"))
     intent = _items(company_research.get("public_hiring_facts")) + _specialist_items(findings, ("recent_inquiry_discovery", "astrivon_demand_discovery", "social_hiring_research", "social_inquiry_research", "social_intelligence")) + social
     technical = _items(company_research.get("public_product_facts")) + _items(company_research.get("public_hiring_facts")) + _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "astrivon_demand_discovery", "social_hiring_research", "social_company_context"))
-    commercial = _items(company_research.get("public_commercial_facts")) + _specialist_items(findings, ("social_company_context", "social_intelligence"))
-    route = _specialist_items(findings, ("engineering_demand_discovery", "ai_demand_discovery", "product_design_demand_discovery", "contract_team_demand_discovery", "astrivon_demand_discovery")) + business + technical
-    package: Dict[str, Dict[str, Any]] = {
-        "business_need_research": _section(business, "Public and specialist evidence relevant to the observed business need.", ["public_business_need_facts", "specialist_findings"], opportunity_id=opportunity_id, research_section="business_need_research"),
-        "current_intent_research": _section(intent, "Public and specialist evidence relevant to current or recent intent.", ["public_hiring_facts", "social_findings", "specialist_findings"], opportunity_id=opportunity_id, research_section="current_intent_research"),
+    commercial = _items(company_research.get("public_commercial_facts")) + _specialist_items(findings, ("commercial_intelligence", "company_commercial_research", "social_company_context", "social_intelligence"))
+    route = business + intent + technical + commercial
+    package = {
+        "business_need_research": _section(business, "Evidence relevant to the company's business need.", ["public_business_need_facts", "specialist_findings", "social_findings"], opportunity_id=opportunity_id, research_section="business_need_research"),
+        "current_intent_research": _section(intent, "Evidence relevant to current hiring or inquiry intent.", ["public_hiring_facts", "specialist_findings", "social_findings"], opportunity_id=opportunity_id, research_section="current_intent_research"),
         "technical_product_hiring_research": _section(technical, "Public and specialist evidence relevant to technical, product, or hiring needs.", ["public_product_facts", "public_hiring_facts", "specialist_findings"], opportunity_id=opportunity_id, research_section="technical_product_hiring_research"),
         "commercial_research": _section(commercial, "Public and specialist evidence relevant to commercial context.", ["public_commercial_facts", "specialist_findings"], opportunity_id=opportunity_id, research_section="commercial_research"),
         "route_research": _route_section(route, str(lead.get("company") or "").strip(), opportunity_id),
     }
     missing_evidence = [name for name in VERIFIABLE_RESEARCH_SECTIONS if not package[name]["evidence"]]
-    missing_sections = list(missing_evidence)
     has_any_evidence = any(bool(package[name].get("evidence")) for name in VERIFIABLE_RESEARCH_SECTIONS)
-    package["research_gaps"] = {"verified": False, "verification_status": "observed_evidence" if has_any_evidence else "research_required", "researched_at": _now(), "missing_sections": missing_sections, "unknowns": ["company_verification", "decision_maker_verification", "current_need_verification", "route_verification"] + missing_evidence, "provenance": {"source": "canonical_research_sections", "checked_sections": list(VERIFIABLE_RESEARCH_SECTIONS), "missing_count": len(missing_evidence)}}
+    package["research_gaps"] = {"verified": False, "verification_status": "observed_evidence" if has_any_evidence else "research_required", "researched_at": _now(), "missing_sections": missing_evidence, "unknowns": ["company_verification", "decision_maker_verification", "current_need_verification", "route_verification"] + missing_evidence, "provenance": {"source": "canonical_research_sections", "checked_sections": list(VERIFIABLE_RESEARCH_SECTIONS), "missing_count": len(missing_evidence)}}
     all_refs = _refs(business + intent + technical + commercial + _items(company_research.get("public_company_facts")) + _items(company_research.get("public_decision_maker_facts")), opportunity_id=opportunity_id, research_section="closer_package")
     package["closer_package"] = {"ready": False, "verification_status": "research_required", "researched_at": _now(), "company": str(lead.get("company") or "").strip(), "contact": str(lead.get("contact_name") or lead.get("person") or "").strip(), "evidence": all_refs, "required_verification": list(VERIFIABLE_RESEARCH_SECTIONS), "provenance": {"source": "canonical_research_sections", "evidence_count": len(all_refs)}, "unknowns": list(package["research_gaps"]["unknowns"])}
     return package
 
 
-# Public research intelligence seam. The intelligence module keeps its own section constants
-# so importing it here does not create a circular dependency.
-from .research_intelligence import (
-    build_research_intelligence,
-    merge_research_intelligence,
-    validate_research_intelligence,
-)
+from .research_intelligence import build_research_intelligence, merge_research_intelligence, validate_research_intelligence
