@@ -261,6 +261,12 @@ def sync_one(
             "record"
         )
 
+        if airtable_record is None:
+            raise ValueError(
+                "Lead Radar synchronization succeeded without "
+                "returning an Airtable record."
+            )
+
         if not package_is_ready(lead):
             return {
                 "status": "deferred_research",
@@ -274,12 +280,6 @@ def sync_one(
                 "error": None,
                 "reason": "research_verification_pending",
             }
-
-        if airtable_record is None:
-            raise ValueError(
-                "Lead Radar synchronization succeeded without "
-                "returning an Airtable record."
-            )
 
         research_result = sync_research(
             lead
