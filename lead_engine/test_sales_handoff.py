@@ -1,5 +1,5 @@
 from .database import LeadDB
-from .sales_handoff import package_digest, verify_airtable_handoff, verify_lead_radar_record, verify_research_record
+from .sales_handoff import package_digest, package_is_ready, package_projection, verify_airtable_handoff, verify_lead_radar_record, verify_research_record
 
 
 def _ready_lead():
@@ -110,6 +110,30 @@ def test_master_tracker_verification_rejects_missing_route_opportunity():
         {"airtable_record": _records(lead)[0], "research_record": _records(lead)[1], "master_tracker": result},
         lead,
     )[0] is False
+
+
+
+def test_package_projection_rejects_unmaterialized_research_intelligence():
+    import pytest
+
+    lead = _ready_lead()
+    lead["research_intelligence"] = {}
+
+    with pytest.raises(ValueError, match="Research intelligence requires an opportunity_id"):
+        package_projection(lead)
+
+
+def test_handoff_is_not_ready_without_materialized_research_intelligence():
+    lead = _ready_lead()
+    lead["research_intelligence"] = {}
+
+    assert package_is_ready(lead) is False
+    confirmed, reason = verify_airtable_handoff(
+        {"airtable_record": {}, "research_record": {}, "master_tracker": {}},
+        lead,
+    )
+    assert confirmed is False
+    assert reason == "research_intelligence_not_ready"
 
 
 def test_package_projection_contains_canonical_identity():
