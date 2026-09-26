@@ -16,7 +16,7 @@ def test_astrivon_qualifies_from_verified_need_and_route_research():
         "current_intent_research": {
             "verified": True,
             "current_need": "Looking for a dev agency now",
-            "observed_at": "2026-09-26T10:00:00+00:00",
+            "observed_at": "2026-09-25T10:00:00+00:00",
         },
         "technical_product_hiring_research": {
             "verified": True,
