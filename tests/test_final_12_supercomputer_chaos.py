@@ -177,10 +177,9 @@ def _prepare_competing_workloads(integration: HealingIntegrationFabric) -> dict[
 
 def _evidence(action):
     path_id = str(action["path_id"])
-    path = action["trigger_snapshot"]["path"]
-    segments = tuple(json.loads(path["segments_json"])) if isinstance(path.get("segments_json"), str) else tuple(path["segments"])
+    required_segments = tuple(action["trigger_snapshot"]["required_segments"])
     return {
-        "physical_evidence": tuple({"segment": segment, "result": "pass"} for segment in segments),
+        "physical_evidence": tuple({"segment": segment, "result": "pass"} for segment in required_segments),
         "active_measurement": _measurement(path_id, float(action["updated_at"]) + 1.0),
         "evidence": {
             "proof_phase": "authoritative_recovery",
@@ -216,7 +215,7 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
     controller_a = ContinuousRecoveryController(
         gateway=integration.gateway, db_path=controller_db, controller_id="controller-a"
     )
-    controller_a.start(generation=1, now=21.0)
+    controller_a.start(generation=1, now=21.0, lease_seconds=5.0)
 
     for path_id in ("final-path-00", "final-path-01"):
         controller_a.observe(
@@ -268,6 +267,7 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
         path_id="final-path-02", generation=1, fingerprint="failure-final-path-02",
         criticality=3, confidence=0.99, cascade_risk=0.05, now=31.0,
     )
+    controller_a.schedule(now=31.5)
 
     controller_b = ContinuousRecoveryController(
         gateway=integration.gateway, db_path=controller_db, controller_id="controller-b"
@@ -375,7 +375,8 @@ def test_final_12_supercomputer_system_proof_survives_two_failures_restart_and_r
     assert len({row["workload_id"] for row in active_allocations}) == len(active_allocations)
     assert len({row["node_id"] for row in active_allocations}) == len(active_allocations)
     assert all(row["fabric_path_id"] != "final-path-00" for row in active_allocations)
-    assert all(row["workload_id"] == expected[row["workload_id"]]["workload_id"] if "workload_id" in expected[row["workload_id"]] else True for row in active_allocations)
+    assert all(row["node_id"] != "final-sc-00-node-00" for row in active_allocations)
+    assert {row["workload_id"] for row in active_allocations} == set(expected)
 
     episodes = controller_b.snapshot()["episodes"]
     assert all(
@@ -394,7 +395,10 @@ def test_final_proof_rejects_stale_recovery_and_preserves_authoritative_gates(tm
         "final-path-04", reason="stale-generation proof", observed_at=50.0,
         evidence={"failure_domain": "final-domain-04"},
     )
-    action = integration.recovery_orchestrator.discover(now=51.0)[4]
+    action = next(
+        item for item in integration.recovery_orchestrator.discover(now=51.0)
+        if item["path_id"] == "final-path-04"
+    )
     assert action["path_id"] == "final-path-04"
 
     # Change the authoritative trigger after the durable action was created.
@@ -412,7 +416,10 @@ def test_final_proof_rejects_stale_recovery_and_preserves_authoritative_gates(tm
     )
     assert stale["state"] == "CANCELLED"
     assert stale["allow_routing"] is False
-    assert integration.inventory.physical_paths()[4]["state"] == "FAILED"
+    assert next(
+        item for item in integration.inventory.physical_paths()
+        if item["path_id"] == "final-path-04"
+    )["state"] == "FAILED"
 
 
 def test_final_proof_preserves_protected_standby_capacity(tmp_path):
