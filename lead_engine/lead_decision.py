@@ -56,6 +56,7 @@ def decide_lead(
         "Shiftr",
         "Paxus",
         "Thorio",
+        "Astrivon Labs",
     }:
         return DECISION_REVIEW
 
