@@ -89,8 +89,7 @@ def package_digest(lead: Mapping[str, Any]) -> str:
     payload = json.dumps(package_projection(lead), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-def package_is_ready(lead: Mapping[str, Any]) -> bool:
-    readiness = research_readiness(lead)
+def _research_intelligence_ready(lead: Mapping[str, Any]) -> bool:
     intelligence = lead.get("research_intelligence")
     if not isinstance(intelligence, Mapping) or not intelligence:
         return False
@@ -113,7 +112,12 @@ def package_is_ready(lead: Mapping[str, Any]) -> bool:
             return False
         if profile_name != "commercial" and not isinstance(profile.get("known"), Mapping):
             return False
-    if not isinstance(intelligence.get("handoff"), Mapping) or intelligence["handoff"].get("ready") is not True:
+    return isinstance(intelligence.get("handoff"), Mapping) and intelligence["handoff"].get("ready") is True
+
+
+def package_is_ready(lead: Mapping[str, Any]) -> bool:
+    readiness = research_readiness(lead)
+    if not _research_intelligence_ready(lead):
         return False
     routing_result = lead.get("routing_result")
     destinations = routing_result.get("destinations") if isinstance(routing_result, Mapping) else None
@@ -221,6 +225,8 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
     return set(observed_routes) == expected_routes
 
 def verify_airtable_handoff(result: Mapping[str, Any], lead: Mapping[str, Any], expected_digest: str | None = None) -> tuple[bool, str]:
+    if not _research_intelligence_ready(lead):
+        return False, "research_intelligence_not_ready"
     if not package_is_ready(lead):
         return False, "research_package_not_ready"
     digest = expected_digest or package_digest(lead)
