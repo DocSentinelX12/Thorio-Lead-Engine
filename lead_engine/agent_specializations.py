@@ -13,7 +13,7 @@ class AgentSpecialization:
     forbidden_actions: Tuple[str, ...]
 
 _SOURCE_ROLES = {"x_signal": "X", "threads_signal": "Threads", "reddit_signal": "Reddit", "linkedin_signal": "LinkedIn", "facebook_signal": "Facebook", "instagram_signal": "Instagram", "hacker_news_signal": "Hacker News", "indie_hackers_signal": "Indie Hackers", "product_hunt_signal": "Product Hunt", "web_job_signal": "web and job sources"}
-_DISCOVERY_INTELLIGENCE = {"engineering_demand_discovery": "engineering demand", "ai_demand_discovery": "AI, ML, data, and automation demand", "product_design_demand_discovery": "product, design, and UX demand", "contract_team_demand_discovery": "contractor, staff augmentation, outsourcing, and team demand", "recent_inquiry_discovery": "recent explicit inquiries and current buying or hiring need"}
+_DISCOVERY_INTELLIGENCE = {"engineering_demand_discovery": "engineering demand", "ai_demand_discovery": "AI, ML, data, and automation demand", "product_design_demand_discovery": "product, design, and UX demand", "contract_team_demand_discovery": "contractor, staff augmentation, outsourcing, and team demand", "recent_inquiry_discovery": "recent explicit inquiries and current buying or hiring need", "astrivon_demand_discovery": "Astrivon-specific agency, MVP, AI/ML, automation, product development, B2B outreach, and funding demand"}
 _SOCIAL_ROLES = {"social_intelligence": "correlate permitted social evidence across sources", "social_hiring_research": "verify current hiring intent and recency from social evidence", "social_decision_maker_research": "resolve decision-maker identity and role from permitted social evidence", "social_inquiry_research": "investigate recent inquiries and explicit need statements", "social_company_context": "build verified company context from social evidence"}
 _SPECIALIZATIONS = []
 
@@ -25,7 +25,7 @@ for agent, mission in _SOCIAL_ROLES.items():
     _SPECIALIZATIONS.append(AgentSpecialization(agent, f"Deeply {mission} using only permitted evidence.", ("correlate observations", "check recency", "resolve identities", "preserve source provenance", "flag uncertainty"), ("lead", "evidence_events"), ("social research", "evidence_events", "research status", "research gaps"), ("unauthorized access", "fabricated identity", "fabricated contact", "fabricated consent", "qualification without evidence")))
 
 _PROCESSING = {
-    "qualification_a": ("Perform the primary independent evidence-based qualification review for Thorio, Shiftr, and Paxus.", ("current need", "recent inquiry", "destination categories", "multi-route qualification")),
+    "qualification_a": ("Perform the primary independent evidence-based qualification review for all four independent partner paths.", ("current need", "recent inquiry", "destination categories", "multi-route qualification", "Astrivon service fit")),
     "qualification_b": ("Independently validate qualification decisions and challenge unsupported conclusions.", ("recheck evidence", "challenge stale evidence", "verify route logic", "flag disagreement")),
     "company_research": ("Resolve company identity, context, people, products, hiring activity, and evidence.", ("verify company", "research decision makers", "enrich context", "record evidence")),
     "paxus_research": ("Resolve unknown Paxus referral requirements without turning unknown into failure or pass.", ("verify company", "find hiring contact", "verify communication evidence", "verify consent evidence")),
@@ -36,7 +36,7 @@ _PROCESSING = {
     "routing": ("Route each verified opportunity to every valid destination without collapsing multi-route matches.", ("evaluate routes", "preserve route evidence", "emit destination set", "block unverified routing")),
     "airtable_integrity": ("Verify durable Airtable synchronization and consistency.", ("check writes", "check identifiers", "detect partial sync", "produce recovery work")),
     "monitoring": ("Continuously detect worker, queue, scheduler, persistence, and delivery anomalies.", ("inspect leases", "detect stalled work", "detect queue growth", "surface failures")),
-    "audit": ("Independently audit decisions, provenance, Paxus gates, and protected business invariants.", ("audit qualification", "audit dedupe", "audit routing", "audit provenance")),
+    "audit": ("Independently audit decisions, provenance, partner gates, and protected business invariants.", ("audit qualification", "audit dedupe", "audit routing", "audit provenance")),
     "outreach_closer": ("Autonomously decide, authorize, and execute evidence-grounded revenue outreach actions.", ("understand prospect", "identify problem and buying signal", "select valid destination", "personalize from verified evidence", "handle objections", "choose cadence", "execute authorized outbound", "record conversion state")),
     "follow_up": ("Process only follow-up tasks explicitly authorized by the high-ticket sales closer; never originate or send revenue communication.", ("review observed engagement", "record objection or response outcomes", "prepare closer-authorized cadence state", "enforce stop states", "preserve conversation provenance")),
 }
@@ -49,7 +49,6 @@ for agent, (mission, responsibilities) in _PROCESSING.items():
     _SPECIALIZATIONS.append(AgentSpecialization(agent, mission, responsibilities, ("lead", "evidence_events"), ("structured result", "provenance", "research or verification state"), forbidden))
 
 SPECIALIZATIONS: Tuple[AgentSpecialization, ...] = tuple(_SPECIALIZATIONS)
-
 def specialization_registry() -> Dict[str, AgentSpecialization]: return {item.agent: item for item in SPECIALIZATIONS}
 def get_specialization(agent: str) -> AgentSpecialization:
     try: return specialization_registry()[agent]
