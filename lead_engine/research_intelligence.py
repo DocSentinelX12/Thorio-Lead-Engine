@@ -539,6 +539,15 @@ def merge_research_intelligence(existing: Mapping[str, Any], incoming: Mapping[s
                 existing_claims[key] = combined
             else:
                 existing_claims[key] = dict(item)
+    for profile_name in ("company", "need", "decision_maker", "commercial", "stakeholders"):
+        prior_profile = existing.get(profile_name) if isinstance(existing.get(profile_name), Mapping) else {}
+        incoming_profile = incoming.get(profile_name) if isinstance(incoming.get(profile_name), Mapping) else {}
+        prior_known = prior_profile.get("known") if isinstance(prior_profile.get("known"), Mapping) else {}
+        incoming_known = incoming_profile.get("known") if isinstance(incoming_profile.get("known"), Mapping) else {}
+        merged[profile_name] = {**dict(prior_profile), **dict(incoming_profile)}
+        if prior_known or incoming_known:
+            merged[profile_name]["known"] = {**dict(prior_known), **dict(incoming_known)}
+
     merged["evidence_graph"] = {
         **dict(existing.get("evidence_graph") or {}),
         **dict(incoming.get("evidence_graph") or {}),
