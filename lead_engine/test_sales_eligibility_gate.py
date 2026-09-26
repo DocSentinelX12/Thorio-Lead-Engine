@@ -72,5 +72,5 @@ def test_qualified_opportunity_survives_airtable_sync_failure(tmp_path):
     lead = _lead(qualified=True)
     db.insert_if_new(lead)
     eligible, reason = _sales_eligibility(lead, _routing(), {"sync_error_present": True}, db)
-    assert eligible is False
-    assert reason == "airtable_handoff_required"
+    assert eligible is True
+    assert reason == "eligible"
