@@ -227,14 +227,14 @@ def score_routes(company: str, signal: str, evidence: str) -> Dict[str, int]:
 def route(company: str, signal: str, evidence: str) -> str:
     scores = score_routes(company=company, signal=signal, evidence=evidence)
 
-    if scores["Astrivon Labs"] > 0:
-        return "Astrivon Labs"
     if scores["Shiftr"] > 0:
         return "Shiftr"
     if scores["Paxus"] > 0:
         return "Paxus"
     if scores["Thorio"] > 0:
         return "Thorio"
+    if scores["Astrivon Labs"] > 0:
+        return "Astrivon Labs"
     return "Review"
 
 
