@@ -6,7 +6,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .opportunity_provenance import canonical_evidence_key, normalize_evidence_event, validate_provenance_scope
-VERIFIABLE_RESEARCH_SECTIONS = (\n    "business_need_research",\n    "current_intent_research",\n    "technical_product_hiring_research",\n    "commercial_research",\n    "route_research",\n)
+VERIFIABLE_RESEARCH_SECTIONS = (
+    "business_need_research",
+    "current_intent_research",
+    "technical_product_hiring_research",
+    "commercial_research",
+    "route_research",
+)
 
 RESEARCH_INTELLIGENCE_VERSION = "1"
 STALE_AFTER_DAYS = 90
