@@ -156,6 +156,12 @@ class HealingIntelligence:
         result["plan_id"] = plan_id
         result.update(result.pop("payload"))
         result["plan_id"] = plan_id
+        result["affected_entities"] = tuple(tuple(item) for item in result["affected_entities"])
+        result["failure_domains"] = tuple(result["failure_domains"])
+        result["steps"] = tuple(
+            {**step, "depends_on": tuple(step["depends_on"])}
+            for step in result["steps"]
+        )
         return result
 
     def reconcile(
