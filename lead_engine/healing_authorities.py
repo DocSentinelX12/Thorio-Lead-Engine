@@ -89,6 +89,11 @@ class HealingAuthorityGateway:
         result = dict(result)
         result["delegated_to"] = "recovery_orchestrator"
         result["authority_path_id"] = exact_path_id
+        result["active_path"] = self.inventory.active_path_intelligence(path_id=exact_path_id)
+        result["physical"] = next(
+            row for row in self.inventory.physical_paths()
+            if str(row.get("path_id") or "").strip() == exact_path_id
+        )
         return result
 
     def path(self, path_id: str) -> dict[str, Any]:
