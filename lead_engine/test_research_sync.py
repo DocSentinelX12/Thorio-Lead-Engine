@@ -9,7 +9,8 @@ def test_research_payload_preserves_research_and_raw_lead():
         "company": "Acme",
         "research_status": "complete",
         "research_verified_fields": ["company_verified", "decision_maker"],
-        "research_intelligence": {"intelligence_version": "1", "opportunity_id": "research-test-1", "claims": [], "evidence_graph": {"nodes": {}}},\n        "company_research": {
+        "research_intelligence": {"intelligence_version": "1", "opportunity_id": "research-test-1", "claims": [], "evidence_graph": {"nodes": {}}},
+        "company_research": {
             "company_verified": True,
             "decision_maker": "Taylor",
             "decision_maker_evidence": "https://example.com/taylor",
@@ -32,7 +33,8 @@ def test_research_payload_preserves_research_and_raw_lead():
         "business_need_research",
         "technical_product_hiring_research",
     ]
-    assert json.loads(fields["Research Intelligence"])["intelligence_version"] == "1"\n    assert json.loads(fields["Company Research"])["decision_maker"] == "Taylor"
+    assert json.loads(fields["Research Intelligence"])["intelligence_version"] == "1"
+    assert json.loads(fields["Company Research"])["decision_maker"] == "Taylor"
     assert "Technical/Product/Hiring Research" not in fields
     assert "Technical Product Hiring Research" in fields
     assert json.loads(fields["Technical Product Hiring Research"])["need"] == "engineering expansion"
@@ -136,4 +138,15 @@ def test_research_payload_rejects_mismatched_opportunity_identity():
 
     with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
         _research_payload({"fingerprint": "opp-1", "opportunity_id": "opp-2", "company": "Acme"})
-\n\ndef test_research_payload_rejects_mismatched_research_intelligence():\n    import pytest\n\n    with pytest.raises(ValueError, match="opportunity"):\n        _research_payload({\n            "fingerprint": "opp-1",\n            "opportunity_id": "opp-1",\n            "company": "Acme",\n            "research_intelligence": {"opportunity_id": "opp-2", "fingerprint": "opp-2", "claims": [], "evidence_graph": {"nodes": {}}},\n        })\n
+
+
+def test_research_payload_rejects_mismatched_research_intelligence():
+    import pytest
+
+    with pytest.raises(ValueError, match="opportunity"):
+        _research_payload({
+            "fingerprint": "opp-1",
+            "opportunity_id": "opp-1",
+            "company": "Acme",
+            "research_intelligence": {"opportunity_id": "opp-2", "fingerprint": "opp-2", "claims": [], "evidence_graph": {"nodes": {}}},
+        })
