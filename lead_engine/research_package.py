@@ -110,6 +110,8 @@ def _merge_evidence(generated: Iterable[Mapping[str, Any]], existing: Iterable[M
 def merge_canonical_section(generated: Mapping[str, Any], existing: Mapping[str, Any], *, opportunity_id: str | None = None, research_section: str = "research") -> Dict[str, Any]:
     """Merge newly collected evidence without discarding existing verified or human-reviewed fields."""
     result = dict(generated)
+    if opportunity_id and isinstance(existing.get("evidence"), Iterable):
+        _refs(existing.get("evidence", []), opportunity_id=opportunity_id, research_section=research_section)
     existing_status = str(existing.get("verification_status") or existing.get("status") or "").strip().lower()
     if existing.get("verified") is True or existing_status in {"verified", "research_verified", "complete"}:
         return dict(existing)
