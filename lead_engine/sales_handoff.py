@@ -80,7 +80,7 @@ def package_projection(lead: Mapping[str, Any]) -> dict[str, Any]:
     if lead.get("fingerprint") or lead.get("opportunity_id"):
         validate_opportunity_identity(dict(lead))
     intelligence = lead.get("research_intelligence")
-    if isinstance(intelligence, Mapping):
+    if isinstance(intelligence, Mapping) and intelligence:
         opportunity_id = str(lead.get("fingerprint") or lead.get("opportunity_id") or "").strip()
         validate_research_intelligence(intelligence, opportunity_id=opportunity_id)
     return {key: _canonical(lead.get(key)) for key in PACKAGE_KEYS if key in lead}
