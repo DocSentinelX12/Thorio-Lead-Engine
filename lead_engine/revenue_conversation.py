@@ -67,6 +67,8 @@ def _route_switch(
         return None, "route_switch_candidate_research_not_verified", None
     if candidate == "Paxus" and route_result.get("true_referral") is not True:
         return None, "route_switch_paxus_true_referral_not_verified", None
+    if candidate == "Astrivon Labs" and route_result.get("service_fit_verified") is not True:
+        return None, "route_switch_astrivon_service_fit_not_verified", None
 
     value = str(text or "").strip().lower()
     route_terms = {
@@ -104,7 +106,13 @@ def _route_switch(
             "technology staffing",
             "technical hiring",
         ),
-    }
+
+        "Astrivon Labs": (
+            "dev agency", "tech partner", "mvp", "b2b outreach", "b2b sales", "lead generation",
+            "sales automation", "ai/ml", "computer vision", "business workflow", "crm automation",
+            "full-stack software engineer", "web/mobile app", "seed funding", "non-technical founder",
+            "outsource sales pipeline", "reduce in-house dev costs", "reduce in-house sales costs",
+        ),    }
     terms = route_terms.get(candidate, ())
     matched = next((term for term in terms if term in value), None)
     if matched is None:
