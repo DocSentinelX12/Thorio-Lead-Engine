@@ -101,3 +101,9 @@ def test_get_route_leads_does_not_return_rejected_lead():
 def test_get_route_leads_unknown_route_returns_empty():
     leads = [make_lead("Thorio", "remote product designer")]
     assert get_route_leads(leads, "NotARoute") == []
+
+
+def test_astrivon_is_exposed_as_an_outreach_queue():
+    lead = make_lead("Astrivon Labs", "Looking for a dev agency", "Acme needs an MVP built for its startup.")
+    queues = build_outreach_queue([lead])
+    assert "Astrivon Labs" in queues
