@@ -10,6 +10,25 @@ ASTRIVON_PARTNER = "Astrivon Labs"
 ASTRIVON_ROUTE = "Astrivon Labs"
 ASTRIVON_COMMISSION_RATE = Decimal("0.20")
 
+ASTRIVON_SERVICE_SIGNALS = {
+    "AI & Machine Learning Solutions": ("ai/ml", "machine learning", "ai developer", "ai engineer", "artificial intelligence"),
+    "Computer Vision Applications": ("computer vision", "vision specialist", "vision developer", "vision engineer"),
+    "Business Automation Systems": ("business workflow", "workflow automation", "crm automation", "sales automation", "automate business"),
+    "End-to-End Product Development": ("mvp", "product development", "web/mobile app", "app build", "startup platform"),
+    "Software Development at any stage, MVP to enterprise": ("dev agency", "tech partner", "full-stack software engineer", "software development", "scaling my web/mobile app"),
+    "B2B Outreach & Lead Generation Infrastructure": ("b2b outreach", "b2b sales", "sales representative", "lead generation", "sales pipeline"),
+}
+
+
+
+def match_astrivon_services(text: str) -> tuple[str, ...]:
+    lowered = str(text or "").lower()
+    matched = []
+    for service, signals in ASTRIVON_SERVICE_SIGNALS.items():
+        if any(signal in lowered for signal in signals):
+            matched.append(service)
+    return tuple(matched)
+
 
 class AstrivonReferralError(ValueError):
     """Raised when an Astrivon referral transition is invalid."""
@@ -180,7 +199,7 @@ def lead_to_astrivon_referral(lead: Mapping[str, Any]) -> AstrivonReferral:
             route_item = routes[ASTRIVON_ROUTE]
     services = lead.get("astrivon_services")
     if not isinstance(services, (list, tuple)):
-        services = []
+        services = match_astrivon_services(" ".join((str(lead.get("signal") or ""), str(lead.get("evidence") or ""), str(lead.get("current_need") or ""), str(route_item.get("current_need") or ""), str(route_item.get("evidence") or ""))))
     return AstrivonReferral(
         fingerprint=str(lead.get("fingerprint") or "").strip(),
         company=str(lead.get("company") or "").strip(),
