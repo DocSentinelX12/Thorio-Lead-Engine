@@ -89,14 +89,13 @@ class AstrivonReferral:
             and (self.contact_name.strip() or self.contact_email.strip())
             and self.current_need.strip()
             and self.verified_evidence.strip()
-            and self.human_approved
             and self.status in {"qualified", "referred"}
         )
 
     def meeting_payload(self) -> dict[str, Any]:
         if not self.is_ready_for_introduction():
             raise AstrivonReferralError(
-                "Astrivon meeting setup requires a human-approved qualified referral, "
+                "Astrivon meeting setup requires a qualified referral, "
                 "verified need, verified evidence, and a named contact."
             )
         return {
@@ -115,12 +114,11 @@ class AstrivonReferral:
     def mark_introduced(
         self,
         *,
-        referral_id: str,
+        referral_id: str | None = None,
         introduced_at: str | None = None,
     ) -> "AstrivonReferral":
-        referral_id = referral_id.strip()
-        if not referral_id:
-            raise AstrivonReferralError("Astrivon introduction requires a real referral ID.")
+        """Record the introduction before Astrivon has issued its referral ID."""
+        normalized_id = referral_id.strip() if referral_id else self.referral_id
         if self.status not in {"qualified", "referred"}:
             raise AstrivonReferralError("Astrivon referral is not in an introducible state.")
         if not self.is_ready_for_introduction():
@@ -134,7 +132,7 @@ class AstrivonReferral:
             **{
                 **self.__dict__,
                 "status": "introduced",
-                "referral_id": referral_id,
+                "referral_id": normalized_id,
                 "introduced_at": timestamp,
             }
         )
@@ -155,15 +153,22 @@ class AstrivonReferral:
             raise AstrivonReferralError("Astrivon referral can only end from active or closed state.")
         return AstrivonReferral(**{**self.__dict__, "status": "ended"})
 
-    def confirm_partner(self) -> "AstrivonReferral":
-        if not self.referral_id:
+    def confirm_partner(self, *, referral_id: str | None = None) -> "AstrivonReferral":
+        """Capture the partner-issued referral ID after the introduction."""
+        if self.status != "introduced":
             raise AstrivonReferralError(
-                "Astrivon partner confirmation requires an introduced referral."
+                "Astrivon partner confirmation requires an existing introduction."
+            )
+        normalized_id = referral_id.strip() if referral_id else self.referral_id
+        if not normalized_id:
+            raise AstrivonReferralError(
+                "Astrivon partner confirmation requires the partner-issued referral ID."
             )
         return AstrivonReferral(
             **{
                 **self.__dict__,
                 "status": "active",
+                "referral_id": normalized_id,
                 "partner_confirmed": True,
             }
         )
