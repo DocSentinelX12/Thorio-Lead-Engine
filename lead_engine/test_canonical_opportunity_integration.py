@@ -1,6 +1,6 @@
 from .lead_identity import canonical_opportunity_identity
 from .models import Lead
-from .research_package import build_canonical_research_package
+from .research_package import build_canonical_research_package, build_research_intelligence
 from .sales_handoff import package_digest, package_projection
 
 
@@ -25,6 +25,7 @@ def test_canonical_opportunity_identity_survives_research_and_handoff_projection
         {},
     )
     enriched = {**payload, **package}
+    enriched["research_intelligence"] = build_research_intelligence(enriched)
     projection = package_projection(enriched)
 
     assert enriched["opportunity_id"] == identity["opportunity_id"]
