@@ -77,6 +77,7 @@ def test_route_counts():
         "Shiftr": 2,
         "Paxus": 1,
         "Thorio": 1,
+        "Astrivon Labs": 0,
         "Review": 1,
     }
 
