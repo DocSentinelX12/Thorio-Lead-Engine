@@ -77,6 +77,8 @@ class HealingActionExecutor:
             return {"action_id": action_id, "state": "SUCCEEDED", "checkpoint": completed[-1] if completed else None}
         except HealingActionError:
             raise
+        except HealingReplicationError as exc:
+            raise HealingActionError("fenced") from exc
         except Exception as exc:
             for name, operation in reversed(tuple(compensations)):
                 try:
