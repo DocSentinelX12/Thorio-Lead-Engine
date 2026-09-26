@@ -71,8 +71,9 @@ def test_full_exact_path_recovery_closes_and_records_learning(tmp_path):
     )
     integration.inventory.fail_physical_path(path.path_id, reason="link failure", observed_at=3.0)
 
-    result = integration.recover_path(
-        path_id=path.path_id,
+    action = integration.recovery_orchestrator.discover(now=20.0)[0]
+    result = integration.recovery_orchestrator.execute(
+        action_id=action["action_id"],
         owner="healer",
         physical_evidence=tuple({"segment": segment, "result": "pass"} for segment in path.segments),
         active_measurement=_measurement(path.path_id, 21.0, 210.0),
@@ -82,7 +83,7 @@ def test_full_exact_path_recovery_closes_and_records_learning(tmp_path):
 
     assert result["state"] == "SUCCEEDED"
     assert result["allow_routing"] is True
-    assert result["authority_path_id"] == path.path_id
+    assert result["path_id"] == path.path_id
     closed = integration.close_recovery(
         path_id=path.path_id,
         authoritative_verified=True,
