@@ -110,3 +110,29 @@ def test_master_tracker_verification_rejects_missing_route_opportunity():
         {"airtable_record": _records(lead)[0], "research_record": _records(lead)[1], "master_tracker": result},
         lead,
     )[0] is False
+
+
+def test_package_projection_contains_canonical_identity():
+    from .sales_handoff import package_projection
+
+    lead = _ready_lead()
+    lead["opportunity_id"] = lead["fingerprint"]
+    lead["identity_version"] = "1"
+    lead["identity_derivation"] = {"source": "linkedin", "source_id": "post-1"}
+
+    projection = package_projection(lead)
+
+    assert projection["opportunity_id"] == lead["fingerprint"]
+    assert projection["identity_version"] == "1"
+    assert projection["identity_derivation"]["source_id"] == "post-1"
+
+
+def test_package_projection_rejects_mismatched_canonical_identity():
+    import pytest
+    from .sales_handoff import package_projection
+
+    lead = _ready_lead()
+    lead["opportunity_id"] = "different-opportunity"
+
+    with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
+        package_projection(lead)
