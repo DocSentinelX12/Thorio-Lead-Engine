@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .router import ROUTES
+from .sales_intelligence import SalesIntelligenceError, build_closer_intelligence
 
 VERIFIABLE_RESEARCH_SECTIONS = (
     "business_need_research",
@@ -70,7 +71,7 @@ def _merge_evidence(generated: Iterable[Mapping[str, Any]], existing: Iterable[M
 
 
 def merge_canonical_section(generated: Mapping[str, Any], existing: Mapping[str, Any]) -> Dict[str, Any]:
-    """Merge newly collected evidence without discarding existing verified or human-reviewed fields."""
+    """Merge newly collected evidence without discarding existing verified or verified fields."""
     result = dict(generated)
     existing_status = str(existing.get("verification_status") or existing.get("status") or "").strip().lower()
     if existing.get("verified") is True or existing_status in {"verified", "research_verified", "complete"}:
@@ -143,7 +144,7 @@ def research_readiness(lead: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def finalize_closer_package(lead: Mapping[str, Any], package: Mapping[str, Any] | None = None) -> Dict[str, Any]:
-    """Materialize closer readiness without promoting observed evidence to verification."""
+    """Materialize the exact opportunity's evidence backed closer intelligence."""
     result = dict(package or (lead.get("closer_package") if isinstance(lead.get("closer_package"), Mapping) else {}))
     readiness_input = dict(lead)
     readiness_input["closer_package"] = result
@@ -152,8 +153,17 @@ def finalize_closer_package(lead: Mapping[str, Any], package: Mapping[str, Any] 
     result["verification_status"] = "verified" if readiness["ready"] else "research_required"
     result["required_verification"] = list(VERIFIABLE_RESEARCH_SECTIONS)
     result["unknowns"] = list(readiness["blockers"])
+    if readiness["ready"]:
+        try:
+            intelligence = build_closer_intelligence(lead)
+        except SalesIntelligenceError as exc:
+            result["ready"] = False
+            result["verification_status"] = "research_required"
+            result["unknowns"] = list(dict.fromkeys([*result["unknowns"], str(exc)]))
+        else:
+            result["sales_intelligence"] = intelligence
+            result["provenance"] = intelligence["provenance"]
     return result
-
 
 def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Apply canonical closer, research-gap, and status state from one readiness decision."""
