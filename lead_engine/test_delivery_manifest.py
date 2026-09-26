@@ -45,7 +45,7 @@ def test_manifest_routes_approved_leads():
     assert len(manifest["Paxus"]) == 1
     assert len(manifest["Thorio"]) == 1
     assert len(manifest["Review"]) == 0
-    assert manifest["counts"] == {"Shiftr": 1, "Paxus": 1, "Thorio": 1, "Review": 0}
+    assert manifest["counts"] == {"Shiftr": 1, "Paxus": 1, "Thorio": 1, "Astrivon Labs": 0, "Review": 0}
 
 
 def test_manifest_sends_invalid_lead_to_review():
