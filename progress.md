@@ -14,3 +14,5 @@ Task 1: complete
 Task 2: complete
 Task 3: complete
 Task 4: in progress
+
+Validation run 965 exposed SQLite read-before-commit snapshots in control-plane and learning transitions, plus one nondeterministic lease test timestamp. Corrected in b76c0e8304fe24136f3d9ed16652b64b0fdd8a5d.
