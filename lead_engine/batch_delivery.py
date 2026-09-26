@@ -206,6 +206,7 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
 
     synced: List[Dict[str, Any]] = []
     already_exists: List[Dict[str, Any]] = []
+    deferred_research: List[Dict[str, Any]] = []
 
     for start in range(0, len(valid), BATCH_SIZE):
         chunk = valid[start:start + BATCH_SIZE]
@@ -216,6 +217,9 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
             from .sync_worker import sync_one
             for fingerprint, lead in chunk:
                 result = sync_one(lead, db=db)
+                if result.get("status") == "deferred_research":
+                    deferred_research.append(result)
+                    continue
                 if result.get("status") in {"synced", "already_exists"}:
                     try:
                         sync_research(lead)
@@ -237,6 +241,14 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
         from .sync_worker import sync_one
         for fingerprint, lead in chunk:
             try:
+                if not package_is_ready(lead):
+                    deferred_research.append({
+                        "status": "deferred_research",
+                        "lead": lead,
+                        "error": None,
+                        "reason": "research_verification_pending",
+                    })
+                    continue
                 if package_is_ready(lead):
                     result = sync_one(lead, db=db)
                     if result.get("status") not in {"synced", "already_exists"}:
@@ -297,6 +309,8 @@ def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
         "synced_count": len(synced),
         "already_exists_count": len(already_exists),
         "failed_count": len(failed),
+        "deferred_research": deferred_research,
+        "deferred_research_count": len(deferred_research),
         "batch_mode": True,
         "batch_size": BATCH_SIZE,
     }
