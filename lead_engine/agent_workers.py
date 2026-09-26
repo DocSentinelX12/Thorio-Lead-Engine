@@ -10,6 +10,7 @@ from .agent_stateful_handlers import identity_resolution
 from .qualification import apply_company_qualification
 from .research_queue import process_paxus_research_queue
 from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, build_canonical_research_package, finalize_research_readiness, merge_canonical_section
+from .opportunity_provenance import normalize_evidence_event, validate_provenance_collection
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .revenue_conversation import objection_reply
 from .revenue_execution import PRIVILEGED_CAPABILITY, RevenueTransportUnavailable, configured_revenue_transport, execute_outbound
@@ -50,6 +51,8 @@ def _discovery_handler_for(agent: str, payload: Mapping[str, Any], ctx: AgentExe
         markers = ("job", "jobs", "career", "careers", "hiring", "greenhouse", "lever", "workable", "ashby", "remote", "jobicy", "himalayas", "remote ok", "remotejobs", "arbeitnow", "muse")
         if not any(marker in source for marker in markers) and not any(key in record for key in ("job_title", "application_url", "apply_url")): raise AgentContractError(f"web_job_signal received evidence that is not identifiable as a job source: {record.get('source')!r}")
     fingerprint = str(record.get("fingerprint") or payload.get("fingerprint") or "").strip(); lead = ctx.db.get(fingerprint) if fingerprint else None; provenance = dict(record.get("provenance") or {}) if isinstance(record.get("provenance"), Mapping) else {}; provenance.update({"collector_agent": agent, "source_lane": agent, "collected_at": datetime.now(timezone.utc).isoformat()}); normalized = dict(record); normalized.update({"source_lane": agent, "observed": True, "qualification_performed": False, "provenance": provenance})
+    if fingerprint:
+        normalized = normalize_evidence_event(normalized, opportunity_id=fingerprint, research_section="evidence_events", collector=agent)
     if fingerprint and lead is not None: enqueue(ctx.db, "company_research", {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, priority=7, dedupe_key=f"company_research:{fingerprint}")
     return {"agent": agent, "role": "discovery", "source": record.get("source") or agent, "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoff": "company_research" if fingerprint and lead is not None else "awaiting_persistence", "provenance": provenance}
 
@@ -91,6 +94,24 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     specialist_findings = lead.get("specialist_findings") if isinstance(lead.get("specialist_findings"), Mapping) else {}
     payload_findings = payload.get("specialist_findings") if isinstance(payload.get("specialist_findings"), Mapping) else {}
     if payload_findings: specialist_findings = {**dict(specialist_findings), **dict(payload_findings)}
+    opportunity_id = str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip()
+    incoming_events = validate_provenance_collection(
+        payload.get("evidence_events", []),
+        opportunity_id=opportunity_id,
+        research_section="evidence_events",
+    )
+    existing_events = validate_provenance_collection(
+        lead.get("evidence_events", []),
+        opportunity_id=opportunity_id,
+        research_section="evidence_events",
+    )
+    merged_events = []
+    seen_event_keys = set()
+    for event in existing_events + incoming_events:
+        key = str(event.get("canonical_evidence_key") or "").strip()
+        if key and key not in seen_event_keys:
+            seen_event_keys.add(key)
+            merged_events.append(event)
     canonical = build_canonical_research_package(lead, merged_research, specialist_findings)
     for section_name in RESEARCH_SECTIONS:
         current_section = lead.get(section_name)
@@ -101,7 +122,7 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
                 opportunity_id=str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip(),
                 research_section=section_name,
             )
-    merged = dict(lead); merged["company_research"] = merged_research; merged.update(canonical)
+    merged = dict(lead); merged["company_research"] = merged_research; merged["evidence_events"] = merged_events; merged.update(canonical)
     merged, readiness = finalize_research_readiness(merged)
     stored = _persist_lead(ctx.db, merged)
     research = stored.get("company_research") if isinstance(stored.get("company_research"), Mapping) else {}
