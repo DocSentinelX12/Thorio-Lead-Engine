@@ -159,7 +159,10 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
     if lead.get("qualified") is not True: return False, "not_qualified"
     if not str(lead.get("business_need") or "").strip(): return False, "missing_exact_opportunity"
     if not _has_verified_need(lead): return False, "missing_verified_researched_need"
-    if db is not None and Dedupe(db).find_exact_duplicate(dict(lead)) is not None: return False, "exact_duplicate"
+    # Deduplication belongs to discovery/qualification, before a revenue
+    # opportunity becomes verified. Once this opportunity has passed the
+    # evidence, research, qualification, route, and decision-maker gates,
+    # duplicate detection must never strand or suppress revenue outreach.
     research = lead.get("company_research")
     if not isinstance(research, Mapping): return False, "missing_company_research"
     if not research.get("company_verified"): return False, "company_not_verified"
