@@ -81,22 +81,42 @@ def validate_opportunity_identity(payload: Dict[str, Any]) -> str:
     )
 
     if has_canonical_derivation:
-        canonical_input = {
-            "source": derivation.get("source"),
-            "source_id": derivation.get("source_id"),
-            "url": derivation.get("url"),
-            "company": derivation.get("company"),
-            "person": derivation.get("person"),
-            "job_title": derivation.get("job_title"),
-            "signal_type": derivation.get("signal_type"),
-            "discovered_at": derivation.get("discovered_at"),
-        }
-        expected = lead_identity(canonical_input)
-        if fingerprint and expected != fingerprint:
+        canonical_keys = (
+            "source",
+            "source_id",
+            "url",
+            "company",
+            "person",
+            "job_title",
+            "signal_type",
+            "discovered_at",
+        )
+        canonical_input = {}
+        for key in canonical_keys:
+            current_value = payload.get(key)
+            if key == "url":
+                current_value = payload.get("url") or payload.get("source_url")
+            if key == "person":
+                current_value = payload.get("person") or payload.get("contact_name")
+            canonical_input[key] = (
+                current_value
+                if normalize_identity_value(current_value)
+                else derivation.get(key)
+            )
+
+        expected_from_derivation = lead_identity({
+            key: derivation.get(key)
+            for key in canonical_keys
+        })
+        expected_from_payload = lead_identity(canonical_input)
+
+        if expected_from_derivation != expected_from_payload:
+            raise ValueError("canonical opportunity identity does not match current identity fields.")
+        if fingerprint and expected_from_derivation != fingerprint:
             raise ValueError("fingerprint does not match canonical opportunity identity.")
-        if opportunity_id and expected != opportunity_id:
+        if opportunity_id and expected_from_derivation != opportunity_id:
             raise ValueError("opportunity_id does not match canonical opportunity identity.")
-        return fingerprint or opportunity_id or expected
+        return fingerprint or opportunity_id or expected_from_derivation
 
     if fingerprint:
         return fingerprint
