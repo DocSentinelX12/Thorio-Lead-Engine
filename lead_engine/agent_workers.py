@@ -71,7 +71,7 @@ def _qualification_b(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
     evaluated = _persist_lead(ctx.db, apply_company_qualification(lead)); fingerprint = str(evaluated.get("fingerprint"))
     if evaluated.get("qualified") is True and not str(evaluated.get("sales_eligibility") or "").strip():
         evaluated["sales_eligibility"] = "blocked"
-        evaluated["sales_eligibility_reason"] = "airtable_handoff_required"
+        evaluated["sales_eligibility_reason"] = "research_verification_pending"
         evaluated["revenue_lifecycle_state"] = "qualified"
         evaluated = _persist_lead(ctx.db, evaluated)
     enqueue(ctx.db, "priority", {"lead": evaluated, "evidence_events": payload.get("evidence_events", [])}, priority=5, dedupe_key=f"priority:{fingerprint}")
