@@ -164,6 +164,7 @@ def test_package_projection_contains_canonical_identity():
         "identity_version": identity["identity_version"],
         "identity_derivation": identity["derivation"],
     })
+    lead["research_intelligence"] = build_research_intelligence(lead)
 
     projection = package_projection(lead)
 
