@@ -34,5 +34,16 @@ Validation run 965 exposed SQLite read-before-commit snapshots in control-plane 
 Plan: hyper-intelligent research and closer intelligence
 Task 1: complete
 Task 2: complete
-Task 3: in progress
-Task 4: in progress
+Task 3: complete
+Task 4: complete
+
+
+Hyper-intelligent research and closer intelligence implementation:
+- canonical opportunity-scoped sales intelligence package added
+- verified facts, evidence, unknowns, persuasion strategy, objection strategy, and discovery questions are separated
+- research evidence carrying another opportunity fingerprint is rejected
+- generated outreach passes copy integrity checks before execution
+- partner export and delivery manifest no longer depend on human approval state
+- obsolete Airtable and delivery human approval execution modules removed
+- final human handoff is created only after a recorded commercial outcome
+- local test execution was attempted but the execution environment could not resolve github.com, so repository-hosted verification remains required
