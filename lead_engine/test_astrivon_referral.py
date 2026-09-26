@@ -100,3 +100,25 @@ def test_lead_conversion_uses_verified_route_research():
     assert referral.current_need == "Build an MVP"
     assert "End-to-End Product Development" in referral.services
     assert referral.verified_evidence.startswith("Acme needs")
+
+
+def test_astrivon_lifecycle_supports_referred_introduced_active_closed_and_ended():
+    from lead_engine.astrivon_referral import AstrivonReferral
+    referral = AstrivonReferral(
+        fingerprint="fp",
+        company="Acme",
+        contact_name="Jane Doe",
+        current_need="Build an MVP",
+        verified_evidence="https://example.com/need",
+        human_approved=True,
+    )
+    referred = referral.mark_referred(referral_id="astr-1")
+    introduced = referred.mark_introduced(referral_id="astr-1", introduced_at="2026-09-26T00:00:00+00:00")
+    active = introduced.confirm_partner()
+    closed = active.mark_closed()
+    ended = closed.mark_ended()
+    assert referred.status == "referred"
+    assert introduced.status == "introduced"
+    assert active.status == "active"
+    assert closed.status == "closed"
+    assert ended.status == "ended"
