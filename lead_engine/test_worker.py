@@ -24,7 +24,7 @@ def mock_research_sync(monkeypatch):
     )
 
 
-def test_sync_worker_retries_failed_lead(tmp_path):
+def test_sync_worker_retries_failed_lead(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "lead_engine.sync_worker.package_is_ready",
         lambda lead: True,
