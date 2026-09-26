@@ -73,14 +73,15 @@ def normalize_evidence_event(
         raise ValueError("Evidence provenance requires a research_section.")
 
     candidate = dict(event)
-    candidate["opportunity_id"] = expected
-    candidate["fingerprint"] = expected
+    validate_provenance_scope(candidate, opportunity_id=expected, route=route)
+    candidate["opportunity_id"] = _text(candidate.get("opportunity_id")) or expected
+    candidate["fingerprint"] = _text(candidate.get("fingerprint")) or expected
     candidate["research_section"] = section
     if route is not None:
         expected_route = _text(route)
         if not expected_route:
             raise ValueError("Route provenance cannot be empty.")
-        candidate["route"] = expected_route
+        candidate["route"] = _text(candidate.get("route")) or expected_route
     elif _text(candidate.get("route")) and section != "route_research":
         raise ValueError("Route-specific evidence must remain in route_research.")
 
