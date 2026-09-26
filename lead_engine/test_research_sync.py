@@ -113,7 +113,13 @@ def test_research_payload_persists_canonical_opportunity_identity():
         "business_need_research": {"verified": False, "verification_status": "observed_evidence", "evidence": []},
     }
     from .lead_identity import canonical_opportunity_identity
-    lead.update(canonical_opportunity_identity(lead))
+    identity = canonical_opportunity_identity(lead)
+    lead.update({
+        "opportunity_id": identity["opportunity_id"],
+        "fingerprint": identity["fingerprint"],
+        "identity_version": identity["identity_version"],
+        "identity_derivation": identity["derivation"],
+    })
 
     fields = _research_payload(lead)
     raw = json.loads(fields["Raw Research Package"])
