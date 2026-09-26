@@ -55,8 +55,8 @@ def test_canonical_opportunity_identity_exposes_version_and_derivation():
 
     assert identity["opportunity_id"] == identity["fingerprint"]
     assert identity["identity_version"]
-    assert identity["identity_derivation"]["source"] == "linkedin"
-    assert identity["identity_derivation"]["source_id"] == "post-1"
+    assert identity["derivation"]["source"] == "linkedin"
+    assert identity["derivation"]["source_id"] == "post-1"
 
 
 def test_canonical_opportunity_identity_ignores_research_mutation():
