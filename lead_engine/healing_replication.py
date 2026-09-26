@@ -237,15 +237,45 @@ class ReplicatedHealingState:
         if generation <= current_generation:
             raise HealingReplicationError("generation is not newer than current authority")
         token = current_token + 1
-        for index in indexes:
-            with self._connect(index) as db:
-                db.execute(
-                    """UPDATE healing_replication_meta
-                       SET generation=?,leader_id=?,fencing_token=?,updated_at=?
-                       WHERE singleton=1""",
-                    (generation, controller_id, token, now),
-                )
-        return self.leadership()
+        previous = {
+            index: {
+                "generation": int(meta["generation"]),
+                "leader_id": str(meta["leader_id"]),
+                "fencing_token": int(meta["fencing_token"]),
+                "updated_at": float(meta["updated_at"]),
+            }
+            for index, meta in ((index, self._meta(index)) for index in indexes)
+        }
+        updated: list[int] = []
+        try:
+            for index in indexes:
+                with self._connect(index) as db:
+                    db.execute(
+                        """UPDATE healing_replication_meta
+                           SET generation=?,leader_id=?,fencing_token=?,updated_at=?
+                           WHERE singleton=1""",
+                        (generation, controller_id, token, now),
+                    )
+                updated.append(index)
+            result = self.leadership()
+            if result["generation"] != generation or result["leader_id"] != controller_id or int(result["fencing_token"]) != token:
+                raise HealingReplicationError("leadership transition did not converge across quorum")
+            return result
+        except Exception as exc:
+            for index in updated:
+                prior = previous[index]
+                with self._connect(index) as db:
+                    db.execute(
+                        """UPDATE healing_replication_meta
+                           SET generation=?,leader_id=?,fencing_token=?,updated_at=?
+                           WHERE singleton=1""",
+                        (prior["generation"], prior["leader_id"], prior["fencing_token"], prior["updated_at"]),
+                    )
+            try:
+                self.leadership()
+            except HealingReplicationError:
+                raise HealingReplicationError("leadership transition failed and quorum remained inconsistent") from exc
+            raise
 
     def _assert_leader(self, controller_id: str, fencing_token: int) -> dict[str, Any]:
         meta = self.leadership()
