@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from .router import ROUTES, score_routes
+from .astrivon_referral import match_astrivon_services
 
 UNVERIFIED = "Unverified"
 IN_REVIEW = "In Review"
@@ -15,7 +16,7 @@ CURRENT_NEED_DAYS = 30
 RECENT_INQUIRY_DAYS = 30
 
 INQUIRY_CONTEXT = re.compile(r"\b(?:inquir(?:y|ed|ies)|requested information|requested a quote|requested pricing|requested a proposal|asked about|contacted us|reached out|submitted an inquiry|submitted a request|expressed interest|interested in|evaluating|considering|exploring)\b", re.I)
-CURRENT_NEED_CONTEXT = re.compile(r"\b(?:hiring|hire|hiring for|recruiting|recruit|opening|open role|looking to hire|seeking|staffing|recruitment support|technology recruitment|development contractor|staff augmentation|outsourcing|outsource|llm integration|ai agents?|saas development|mobile development|software development|engineering team|development team)\b", re.I)
+CURRENT_NEED_CONTEXT = re.compile(r"\b(?:hiring|hire|hiring for|recruiting|recruit|opening|open role|looking to hire|seeking|staffing|recruitment support|technology recruitment|development contractor|staff augmentation|outsourcing|outsource|llm integration|ai agents?|saas development|mobile development|software development|engineering team|development team|dev agency|tech partner|mvp|b2b outreach|b2b sales|lead generation|sales automation|computer vision|business workflow|crm automation|automate business workflow|seed funding|non-technical founder|web/mobile app|product development|software development)\b", re.I)
 SHIFTR_SERVICE_NEED_CONTEXT = re.compile(r"\b(?:need(?:s|ed)?|want(?:s|ed)?|looking for|seeking|help with)\b.{0,120}\b(?:build(?:ing)?|develop(?:ing|ment)?|integrat(?:e|ing|ion)|ai agents?|llm(?: integration)?|mobile development|saas development|software development|development team|engineering team|staff augmentation|outsourc(?:e|ed|ing)?)\b", re.I)
 
 
@@ -60,7 +61,6 @@ def _section_verified(section: Dict[str, Any]) -> bool:
 
 
 def _verified_research_text(lead: Dict[str, Any], route: str | None = None) -> str:
-    """Return verified research text without leaking another route's evidence."""
     sections = _research_sections(lead)
     verified_parts: list[str] = []
     for key, section in sections.items():
@@ -159,8 +159,11 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
         category_score = int(category_scores.get(route, 0) or 0)
         if route == "Shiftr" and SHIFTR_SERVICE_NEED_CONTEXT.search(route_text):
             category_score = max(category_score, 1)
+        service_fit = list(match_astrivon_services(route_text)) if route == "Astrivon Labs" else []
+        if route == "Astrivon Labs" and service_fit:
+            category_score = max(category_score, 1)
         qualified = category_score > 0 and intent["qualified"] and route_research["verified"]
-        results[route] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": intent, "recent_inquiry": intent, "route_research": route_research, "reason": "Verified research supports this route and recent intent." if qualified else "Route-specific verified research and recent intent are incomplete.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
+        results[route] = {"qualified": qualified, "category_score": category_score, "matched_category": category_score > 0, "current_need": intent, "recent_inquiry": intent, "route_research": route_research, "service_fit": service_fit, "service_fit_verified": bool(service_fit and route_research["verified"]), "reason": "Verified research supports this route and recent intent." if qualified else "Route-specific verified research and recent intent are incomplete.", "qualification_timestamp": datetime.now(timezone.utc).isoformat()}
     paxus = results["Paxus"]
     paxus_referral = _paxus_referral_checks(lead, paxus["qualified"])
     paxus["true_referral"] = paxus_referral["passed"]
@@ -168,123 +171,3 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     paxus["referral_checklist"] = paxus_referral
     qualified_routes = [route for route in ROUTES if results[route]["qualified"]]
     return {"companies": results, "qualified_companies": qualified_routes, "paxus_true_referral": paxus_referral["passed"], "research_status": "complete" if qualified_routes else "research_required"}
-
-
-def _apply_primary_result(updated: Dict[str, Any], evaluation: Dict[str, Any]) -> Dict[str, Any]:
-    updated["qualification_results"] = evaluation["companies"]
-    updated["research_status"] = evaluation["research_status"]
-    updated["potential_routes"] = list(evaluation["qualified_companies"])
-    updated["qualified"] = bool(evaluation["qualified_companies"])
-    updated["qualification_review_stage"] = "primary"
-    updated["qualification_primary_routes"] = list(evaluation["qualified_companies"])
-    if updated["qualified"]:
-        updated["status"] = QUALIFIED
-        updated["review_status"] = "Qualified"
-        updated["qualification_status"] = "qualified"
-        updated["review_state"] = "qualified"
-        updated["reason_not_qualified"] = ""
-    else:
-        updated["status"] = IN_REVIEW
-        updated["review_status"] = "Review"
-        updated["qualification_status"] = "in_review"
-        updated["review_state"] = "review"
-        updated["reason_not_qualified"] = "Verified research is incomplete or no route currently satisfies all gates."
-    return updated
-
-
-def _independent_review(lead: Dict[str, Any]) -> Dict[str, Any]:
-    prior = lead.get("qualification_results")
-    if not isinstance(prior, dict):
-        return {"qualified_companies": [], "disagreements": ["missing_primary_qualification_results"], "checked_routes": []}
-    independent = []
-    disagreements = []
-    checked = []
-    general_text = _verified_research_text(lead)
-    for route in [str(item) for item in lead.get("potential_routes", []) if str(item).strip()]:
-        checked.append(route)
-        result = prior.get(route)
-        if not isinstance(result, dict) or result.get("qualified") is not True:
-            disagreements.append(f"{route}:primary_claim_not_qualified")
-            continue
-        route_research = result.get("route_research") if isinstance(result.get("route_research"), dict) else {}
-        if route_research.get("verified") is not True:
-            disagreements.append(f"{route}:route_research_not_verified")
-            continue
-        intent = result.get("current_need") if isinstance(result.get("current_need"), dict) else {}
-        if not (intent.get("qualified") is True and intent.get("observed_at") and intent.get("evidence")):
-            disagreements.append(f"{route}:intent_research_not_verified")
-            continue
-        route_text = f"{general_text} {route_research.get('evidence') or ''}".strip()
-        independent_category_score = int(score_routes(company=str(lead.get("company") or ""), signal=route_text, evidence=route_text).get(route, 0) or 0)
-        if route == "Shiftr" and SHIFTR_SERVICE_NEED_CONTEXT.search(route_text):
-            independent_category_score = max(independent_category_score, 1)
-        if independent_category_score <= 0:
-            disagreements.append(f"{route}:category_evidence_failed")
-            continue
-        independent.append(route)
-    return {"qualified_companies": independent, "disagreements": disagreements, "checked_routes": checked}
-
-
-def _apply_independent_result(updated: Dict[str, Any]) -> Dict[str, Any]:
-    review = _independent_review(updated)
-    routes = review["qualified_companies"]
-    updated["qualification_b_result"] = {"qualified_companies": list(routes), "disagreements": list(review["disagreements"]), "checked_routes": list(review["checked_routes"],), "independent": True, "reviewed_at": datetime.now(timezone.utc).isoformat()}
-    updated["potential_routes"] = list(routes)
-    updated["qualified"] = bool(routes)
-    updated["qualification_review_stage"] = "validated"
-    if routes:
-        updated["status"] = QUALIFIED
-        updated["review_status"] = "Qualified"
-        updated["qualification_status"] = "qualified"
-        updated["review_state"] = "qualified"
-        updated["reason_not_qualified"] = ""
-    else:
-        updated["status"] = IN_REVIEW
-        updated["review_status"] = "Review"
-        updated["qualification_status"] = "in_review"
-        updated["review_state"] = "review"
-        updated["reason_not_qualified"] = "Qualification B rejected all route claims."
-    return updated
-
-
-def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
-    updated = dict(lead)
-    if updated.get("qualification_review_stage") == "primary":
-        return _apply_independent_result(updated)
-    return _apply_primary_result(updated, evaluate_company_qualification(updated))
-
-
-def qualify_lead(lead: Dict[str, object], *, qualified: bool, reason: str = "", business_need: str = "") -> Dict[str, object]:
-    if not isinstance(qualified, bool):
-        raise ValueError("qualified must be explicitly True or False.")
-    updated = dict(lead)
-    if business_need:
-        updated["business_need"] = str(business_need).strip()
-    if qualified:
-        updated["qualified"] = True
-        updated["status"] = QUALIFIED
-        updated["review_status"] = "Qualified"
-        updated["qualification_status"] = "qualified"
-        updated["review_state"] = "qualified"
-        updated["reason_not_qualified"] = ""
-    else:
-        updated["qualified"] = False
-        updated["status"] = NOT_QUALIFIED
-        updated["review_status"] = "Not Qualified"
-        updated["qualification_status"] = "not_qualified"
-        updated["review_state"] = "rejected"
-        updated["reason_not_qualified"] = reason
-    return updated
-
-
-def begin_review(lead: Dict[str, object]) -> Dict[str, object]:
-    updated = dict(lead)
-    updated["status"] = IN_REVIEW
-    updated["review_status"] = "Review"
-    updated["qualification_status"] = "in_review"
-    updated["review_state"] = "review"
-    return updated
-
-
-if __name__ == "__main__":
-    print("Qualification module loaded.")
