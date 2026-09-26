@@ -38,6 +38,8 @@ def test_astrivon_commissions_are_recorded_per_received_payment_event():
         "fingerprint": "fp-astrivon",
         "company": "Acme",
         "potential_routes": ["Astrivon Labs"],
+        "astrivon_status": "active",
+        "astrivon_partner_confirmed": True,
         "astrivon_payment_events": [
             {
                 "event_id": "payment-001",
