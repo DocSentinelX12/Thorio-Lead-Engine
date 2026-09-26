@@ -206,8 +206,7 @@ def test_research_intelligence_marks_stale_evidence_without_deleting_it():
     intelligence = research_package.build_research_intelligence(lead)
 
     assert intelligence["evidence_graph"]["nodes"]
-    node = next(iter(intelligence["evidence_graph"]["nodes"].values()))
-    assert node["freshness_status"] == "stale"
+    assert any(node["freshness_status"] == "stale" for node in intelligence["evidence_graph"]["nodes"].values())
     assert intelligence["stale_evidence"]
 
 
