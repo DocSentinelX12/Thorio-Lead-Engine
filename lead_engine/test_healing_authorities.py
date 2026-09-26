@@ -5,6 +5,7 @@ import pytest
 from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
 from lead_engine.recovery_orchestrator import RecoveryOrchestrator
+from lead_engine.self_coordinating_fabric import FabricCoordinator
 from lead_engine.healing_authorities import HealingAuthorityError, HealingAuthorityGateway
 
 
@@ -54,7 +55,7 @@ def test_gateway_binds_exact_physical_active_and_recovery_authorities(tmp_path):
     discovered = orchestrator.discover(now=4.0)
     assert discovered and discovered[0]["path_id"] == path.path_id
 
-    gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator)
+    gateway = HealingAuthorityGateway(inventory=inventory, recovery_orchestrator=orchestrator, fabric_coordinator=FabricCoordinator(str(tmp_path / "coord.sqlite3")))
     evidence = gateway.path(path.path_id)
 
     assert evidence["path_id"] == path.path_id
