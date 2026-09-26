@@ -78,7 +78,13 @@ def test_sync_worker_retries_failed_lead(tmp_path, monkeypatch):
         "lead_engine.sync_worker.sync_followup"
     ) as mock_followup, patch(
         "lead_engine.sync_worker.sync_master_tracker"
-    ) as mock_master_tracker:
+    ) as mock_master_tracker, patch(
+        "lead_engine.sync_worker.package_digest",
+        return_value="test-digest",
+    ), patch(
+        "lead_engine.sync_worker.verify_airtable_handoff",
+        return_value=(True, "test-digest"),
+    ):
 
         mock_sync.return_value = {
             "status": "created",
