@@ -92,6 +92,10 @@ jobs:
         run: |
           python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_experiments.py
 
+      - name: Run final 12-supercomputer chaos proof
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 tests/test_final_12_supercomputer_chaos.py
+
       - name: Run continuous autonomous recovery tests
         run: |
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_continuous_recovery.py lead_engine/test_healing_fault_injection.py
