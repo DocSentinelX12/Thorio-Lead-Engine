@@ -72,11 +72,9 @@ def _verified_research_text(lead: Dict[str, Any], route: str | None = None) -> s
                 verified_parts.append(value.strip())
         if key == "route_research":
             routes = section.get("routes")
-            if isinstance(routes, dict):
-                route_items = [(route, routes.get(route))] if route else []
-                for route_name, route_item in route_items:
-                    if not isinstance(route_item, dict) or not _section_verified(route_item):
-                        continue
+            if isinstance(routes, dict) and route:
+                route_item = routes.get(route)
+                if isinstance(route_item, dict) and _section_verified(route_item):
                     for field in ("evidence", "business_need", "current_need", "need", "service_need", "requirement", "description"):
                         value = route_item.get(field)
                         if isinstance(value, str) and value.strip():
@@ -171,3 +169,37 @@ def evaluate_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
     paxus["referral_checklist"] = paxus_referral
     qualified_routes = [route for route in ROUTES if results[route]["qualified"]]
     return {"companies": results, "qualified_companies": qualified_routes, "paxus_true_referral": paxus_referral["passed"], "research_status": "complete" if qualified_routes else "research_required"}
+
+
+def apply_company_qualification(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply the canonical qualification result without collapsing independent routes.
+
+    This adapter is the stable contract consumed by the discovery gate and agent workers.
+    It preserves the complete lead payload and derives lifecycle fields only from the
+    evidence-backed evaluator above. A partner route may qualify independently of every
+    other route; missing downstream verification must never erase a valid qualification.
+    """
+    if not isinstance(lead, dict):
+        raise ValueError("lead must be a dictionary")
+    evaluated = evaluate_company_qualification(dict(lead))
+    companies = evaluated.get("companies") if isinstance(evaluated.get("companies"), dict) else {}
+    potential_routes = [route for route in ROUTES if isinstance(companies.get(route), dict) and companies[route].get("qualified") is True]
+    result = dict(lead)
+    result["qualification_results"] = companies
+    result["potential_routes"] = potential_routes
+    result["qualified_companies"] = list(potential_routes)
+    result["qualified"] = bool(potential_routes)
+    result["route"] = potential_routes[0] if len(potential_routes) == 1 else ("Review" if not potential_routes else "Multi-route")
+    result["research_status"] = evaluated.get("research_status", result.get("research_status", "research_required"))
+    result["qualification_status"] = QUALIFIED if result["qualified"] else NOT_QUALIFIED
+    result["qualification_review_stage"] = "validated"
+    result["qualification_timestamp"] = datetime.now(timezone.utc).isoformat()
+    result["paxus_true_referral"] = bool(evaluated.get("paxus_true_referral"))
+    if "Paxus" in companies:
+        result["paxus_referral_status"] = companies["Paxus"].get("referral_status", "not_ready")
+        result["paxus_referral_checklist"] = companies["Paxus"].get("referral_checklist", {})
+    astrivon = companies.get("Astrivon Labs")
+    if isinstance(astrivon, dict):
+        result["astrivon_service_fit"] = list(astrivon.get("service_fit") or [])
+        result["astrivon_service_fit_verified"] = bool(astrivon.get("service_fit_verified"))
+    return result
