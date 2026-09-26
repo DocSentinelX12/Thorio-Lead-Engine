@@ -109,9 +109,7 @@ class ContinuousRecoveryController:
         )
         durable_actions = self.gateway.recovery_orchestrator.discover(now=now)
         matching_actions = tuple(
-            action
-            for action in durable_actions
-            if str(action["path_id"]) == exact and int(action["generation"]) == int(generation)
+            action for action in durable_actions if str(action["path_id"]) == exact
         )
         if not matching_actions:
             raise ContinuousRecoveryError(
