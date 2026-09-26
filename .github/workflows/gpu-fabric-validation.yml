@@ -55,6 +55,9 @@ jobs:
       - name: Run recovery orchestrator tests
         run: |
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_recovery_orchestrator.py
+      - name: Run unified self-optimizing control plane tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_unified_control_plane.py
 
       - name: Run compute remote and execution fabric regressions
         run: |
