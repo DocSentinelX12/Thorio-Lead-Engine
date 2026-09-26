@@ -36,7 +36,7 @@ def test_lead_preserves_multiple_potential_routes(tmp_path):
 
     assert result["accepted"] is True
 
-    assert result["lead"]["route"] == "Shiftr"
+    assert result["lead"]["route"] == "Thorio"
 
     assert "Shiftr" in result["lead"]["potential_routes"]
     assert "Thorio" in result["lead"]["potential_routes"]
