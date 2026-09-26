@@ -8,14 +8,7 @@ def _coordinator(tmp_path):
 
 
 def _candidate(workload, node, domain, path, score=1.0, *, independent=True):
-    return PlacementCandidate(
-        workload_id=workload,
-        node_id=node,
-        failure_domain=domain,
-        fabric_path_id=path,
-        score=score,
-        independent=independent,
-    )
+    return PlacementCandidate(workload, node, domain, path, score, independent)
 
 
 def test_global_allocator_handles_competing_workloads_without_double_booking(tmp_path):
@@ -24,10 +17,9 @@ def test_global_allocator_handles_competing_workloads_without_double_booking(tmp
     c.register_node(NodeCapacity("n2", "d2", 8, 4, 1))
     c.submit_workload("w1", criticality=2)
     c.submit_workload("w2", criticality=2)
-    result = c.coordinate(
-        candidates=[_candidate("w1", "n1", "d1", "p1", 10), _candidate("w1", "n2", "d2", "p2", 9),
-                    _candidate("w2", "n1", "d1", "p3", 10), _candidate("w2", "n2", "d2", "p4", 9)]
-    )
+    result = c.coordinate([
+        _candidate("w1", "n1", "d1", "p1", 10), _candidate("w1", "n2", "d2", "p2", 9),
+        _candidate("w2", "n1", "d1", "p3", 10), _candidate("w2", "n2", "d2", "p4", 9)])
     assert {x["workload_id"] for x in result["allocations"]} == {"w1", "w2"}
     assert {x["node_id"] for x in result["allocations"]} == {"n1", "n2"}
 
@@ -85,18 +77,17 @@ def test_control_plane_checkpoint_survives_restart(tmp_path):
     c.submit_workload("w1", criticality=2)
     c.coordinate([_candidate("w1", "n1", "d1", "p1", 5)])
     restored = FabricCoordinator(path)
-    state = restored.snapshot()
-    assert state["allocations"][0]["workload_id"] == "w1"
+    assert restored.snapshot()["allocations"][0]["workload_id"] == "w1"
 
 
-def test_experiment_budget_cannot_starve_production_reserve(tmp_path):
+def test_experiment_budget_preserves_standby_reserve(tmp_path):
     c = _coordinator(tmp_path)
     c.register_node(NodeCapacity("n1", "d1", 8, 4, 1))
     c.register_node(NodeCapacity("n2", "d2", 8, 4, 1))
     assert c.can_experiment(required_nodes=1) is False
     c.submit_workload("w1", criticality=3)
     c.coordinate([_candidate("w1", "n1", "d1", "p1", 10)])
-    assert c.can_experiment(required_nodes=1) is True
+    assert c.can_experiment(required_nodes=1) is False
 
 
 def test_global_decision_is_deterministic_for_equal_candidates(tmp_path):
