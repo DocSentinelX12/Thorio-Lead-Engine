@@ -10,6 +10,7 @@ def test_supported_routes_are_defined():
         "Shiftr",
         "Paxus",
         "Thorio",
+        "Astrivon Labs",
     )
 
 
