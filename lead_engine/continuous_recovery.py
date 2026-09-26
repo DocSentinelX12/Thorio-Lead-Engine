@@ -93,7 +93,7 @@ class ContinuousRecoveryController:
         if self._lease is None: self._lease=self.store.lease()
         self.store.assert_controller(controller_id=self.controller_id,generation=int(self._lease["generation"]),fencing_token=int(self._lease["fencing_token"]),now=now); return self._lease
     def observe(self,*,path_id,generation,fingerprint,criticality,confidence,cascade_risk,strategy="known_good_recovery",now=None):
-        self._assert(now); evidence=self.gateway.path(path_id); impact=self.gateway.dependencies.impact(path_id); exact=str(evidence["path_id"])
+        self._assert(now); evidence=self.gateway.path(path_id); impact=self.gateway.dependencies.impact(path_id); prediction=self.gateway.intelligence.predictor.predict(scope_id=path_id, observed_at=now); exact=str(evidence["path_id"])
         if exact!=str(path_id).strip(): raise ContinuousRecoveryError("authoritative path identity changed")
         episode=self.store.upsert_episode(scope_id=exact,generation=generation,fingerprint=fingerprint,criticality=criticality,confidence=confidence,cascade_risk=cascade_risk,failure_domains=tuple(impact["failure_domains"]),affected_entities=tuple(tuple(x) for x in impact["affected_entities"]),strategy=strategy,now=now); return self.store.update(episode_id=episode["episode_id"],state="OBSERVED",now=now,payload={"prediction":prediction})
     @staticmethod
