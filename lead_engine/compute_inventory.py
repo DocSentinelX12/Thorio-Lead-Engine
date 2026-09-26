@@ -716,6 +716,10 @@ class ComputeInventory:
         required = ("worker_id", "remote_worker_id", "remote_endpoint", "gpu_uuid", "rdma_device", "rdma_port")
         if any(not str(measurement.get(field) or "").strip() for field in required):
             raise ValueError("active measurement is missing required endpoint or device identity")
+        if status == "measured":
+            remote_required = ("remote_gpu_uuid", "remote_rdma_device", "remote_rdma_port")
+            if any(not str(measurement.get(field) or "").strip() for field in remote_required):
+                raise ValueError("measured active GPU Direct RDMA evidence is missing remote GPU or RDMA identity")
         try:
             rdma_port = int(measurement["rdma_port"])
         except (TypeError, ValueError):
@@ -745,6 +749,17 @@ class ComputeInventory:
             segments = json.loads(row["segments_json"] or "[]")
             if source_port not in {str(segment).strip() for segment in segments}:
                 raise ValueError("active measurement RDMA endpoint is not a segment of the exact fabric path")
+            if status == "measured":
+                remote_gpu_uuid = str(measurement["remote_gpu_uuid"]).strip()
+                expected_remote_gpu = destination_gpu.removeprefix("gpu:")
+                if remote_gpu_uuid != expected_remote_gpu:
+                    raise ValueError("active measurement remote GPU identity does not match path destination")
+                remote_rdma_port = int(measurement["remote_rdma_port"])
+                if remote_rdma_port < 1:
+                    raise ValueError("active measurement remote rdma_port must be positive")
+                remote_port = f"rdma:{str(measurement['remote_rdma_device']).strip()}:{remote_rdma_port}"
+                if remote_port not in {str(segment).strip() for segment in segments}:
+                    raise ValueError("active measurement remote RDMA endpoint is not a segment of the exact fabric path")
             measurement_payload = dict(measurement)
             measurement_payload["observed_at"] = when
             evidence_payload = dict(evidence or {})
