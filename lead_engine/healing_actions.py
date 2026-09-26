@@ -42,6 +42,7 @@ class HealingActionExecutor:
                     owner=owner,
                     checkpoint=name,
                     payload={"completed_steps": tuple(completed)},
+                    now=now,
                 )
             return {"action_id": action_id, "state": "SUCCEEDED", "checkpoint": completed[-1] if completed else None}
         except HealingActionError:
@@ -55,6 +56,7 @@ class HealingActionExecutor:
                         owner=owner,
                         checkpoint=f"compensated:{name}",
                         payload={"compensation": name},
+                        now=now,
                     )
                 except Exception:
                     self.state.enter_degraded(
