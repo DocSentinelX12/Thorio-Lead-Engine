@@ -86,6 +86,43 @@ def test_active_gdrdma_measurement_is_durable_and_tied_to_exact_fabric_path(tmp_
     assert history[0]["measurement"]["remote_worker_id"] == "worker-b"
 
 
+def test_active_gdrdma_measurement_rejects_remote_identity_mismatch(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, PhysicalFabricPath
+
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(
+        path_id="remote-identity",
+        source_gpu="gpu:GPU-a",
+        destination_gpu="gpu:GPU-b",
+        segments=("gpu:GPU-a", "rdma:mlx5_0:1", "rdma:mlx5_1:1", "gpu:GPU-b"),
+        fabric_domains=("fabric:domain-1",),
+        state=FabricPathState.VERIFIED,
+    )
+    inventory.persist_physical_path(path)
+    measurement = {
+        "measurement_status": "measured",
+        "verified": True,
+        "remote_test_server_verified": True,
+        "fabric_path_id": path.path_id,
+        "worker_id": "worker-a",
+        "remote_worker_id": "worker-b",
+        "remote_endpoint": "endpoint-b",
+        "gpu_uuid": "GPU-a",
+        "remote_gpu_uuid": "GPU-wrong",
+        "rdma_device": "mlx5_0",
+        "rdma_port": 1,
+        "remote_rdma_device": "mlx5_1",
+        "remote_rdma_port": 1,
+    }
+    with pytest.raises(ValueError, match="remote GPU identity"):
+        inventory.record_active_gdrdma_measurement(path_id=path.path_id, measurement=measurement, observed_at=1.0)
+
+    measurement["remote_gpu_uuid"] = "GPU-b"
+    measurement["remote_rdma_device"] = "mlx5_wrong"
+    with pytest.raises(ValueError, match="remote RDMA endpoint"):
+        inventory.record_active_gdrdma_measurement(path_id=path.path_id, measurement=measurement, observed_at=2.0)
+
+
 def test_active_gdrdma_measurement_rejects_unknown_path_without_persistence(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     with pytest.raises(ValueError, match="fabric path does not exist"):
