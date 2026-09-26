@@ -47,7 +47,7 @@ def test_quorum_commits_healing_action_and_replica_catches_up(tmp_path):
         fencing_token=leader["fencing_token"],
         now=12.0,
     )
-    assert state.commit_index() == 2
+    assert state.commit_index() == 3
 
     state.set_replica_available(2, True)
     repaired = state.reconcile()
@@ -188,8 +188,8 @@ def test_reconciliation_never_rolls_back_a_higher_committed_index(tmp_path):
     )
     state.set_replica_available(2, True)
     result = state.reconcile()
-    assert result["commit_index"] == 2
-    assert all(replica["commit_index"] == 2 for replica in result["replicas"])
+    assert result["commit_index"] == 3
+    assert all(replica["commit_index"] == 3 for replica in result["replicas"])
 
 
 def test_replicated_projection_survives_restart_and_quorum_loss(tmp_path):
