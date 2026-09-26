@@ -36,3 +36,10 @@ def test_astrivon_discovery_specialist_is_registered_for_execution():
     from lead_engine.agent_specializations import get_specialization
     assert get_specialization("astrivon_demand_discovery").agent == "astrivon_demand_discovery"
     assert "astrivon_demand_discovery" in advanced_handler_registry()
+
+
+def test_all_discovery_intelligence_specialists_have_workforce_roles():
+    from lead_engine.agent_registry import agent_registry
+    from lead_engine.advanced_agent_logic import DISCOVERY_TARGETS
+    roles = agent_registry()
+    assert set(DISCOVERY_TARGETS).issubset(roles)
