@@ -17,13 +17,13 @@ def gateway(db):
     return HealingAuthorityGateway(inventory=i,recovery_orchestrator=RecoveryOrchestrator(i),fabric_coordinator=coordinator)
 
 def path(i,p):
-    x=PhysicalFabricPath(path_id=p,source_gpu=f"gpu:{p}:a",destination_gpu=f"gpu:{p}:b",segments=(f"gpu:{p}:a",f"rdma:{p}:1"),fabric_domains=(f"domain:{p}",),state=FabricPathState.VERIFIED)
+    x=PhysicalFabricPath(path_id=p,source_gpu=f"gpu:{p}:a",destination_gpu=f"gpu:{p}:b",segments=(f"gpu:{p}:a",f"rdma:{p}:source:1",f"rdma:{p}:remote:1",f"gpu:{p}:b"),fabric_domains=(f"domain:{p}",),state=FabricPathState.VERIFIED)
     i.persist_physical_path(x)
-    m={"fabric_path_id":p,"measurement_status":"measured","verified":True,"remote_test_server_verified":True,"worker_id":f"worker:{p}","remote_worker_id":f"remote:{p}","remote_endpoint":f"endpoint:{p}","gpu_uuid":f"{p}:a","rdma_device":p,"rdma_port":1,"bandwidth_gbps":100.0}
+    m={"fabric_path_id":p,"measurement_status":"measured","verified":True,"remote_test_server_verified":True,"worker_id":f"worker:{p}","remote_worker_id":f"remote:{p}","remote_endpoint":f"endpoint:{p}","gpu_uuid":f"{p}:a","rdma_device":p + ":source","rdma_port":1,"remote_gpu_uuid":f"{p}:b","remote_rdma_device":p + ":remote","remote_rdma_port":1,"bandwidth_gbps":100.0}
     i.record_active_gdrdma_measurement(path_id=p,measurement=m,observed_at=1.0); i.record_active_gdrdma_measurement(path_id=p,measurement=m,observed_at=2.0); i.fail_physical_path(p,reason="injected failure",observed_at=10.0)
 
 def evidence(a):
-    p=a["path_id"]; return {"physical_evidence":({"segment":f"gpu:{p}:a","result":"pass"},{"segment":f"rdma:{p}:1","result":"pass"}),"active_measurement":{"fabric_path_id":p,"measurement_status":"measured","verified":True,"remote_test_server_verified":True,"worker_id":f"worker:{p}","remote_worker_id":f"remote:{p}","remote_endpoint":f"endpoint:{p}","gpu_uuid":f"{p}:a","rdma_device":p,"rdma_port":1,"bandwidth_gbps":100.0},"observed_at":21.0}
+    p=a["path_id"]; return {"physical_evidence":({"segment":f"gpu:{p}:a","result":"pass"},{"segment":f"rdma:{p}:source:1","result":"pass"},{"segment":f"rdma:{p}:remote:1","result":"pass"},{"segment":f"gpu:{p}:b","result":"pass"}),"active_measurement":{"fabric_path_id":p,"measurement_status":"measured","verified":True,"remote_test_server_verified":True,"worker_id":f"worker:{p}","remote_worker_id":f"remote:{p}","remote_endpoint":f"endpoint:{p}","gpu_uuid":f"{p}:a","rdma_device":p + ":source","rdma_port":1,"remote_gpu_uuid":f"{p}:b","remote_rdma_device":p + ":remote","remote_rdma_port":1,"bandwidth_gbps":100.0},"observed_at":21.0}
 
 def test_durable_idempotent_episode():
     with tempfile.NamedTemporaryFile(suffix=".sqlite") as f:
