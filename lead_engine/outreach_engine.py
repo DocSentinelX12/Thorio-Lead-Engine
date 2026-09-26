@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 STOP_STATES = frozenset({"declined", "opted_out", "irrelevant", "exhausted", "converted"})
 ACTIVE_STATES = frozenset({"ready", "drafted", "sent", "replied", "interested", "objection"})
 CADENCE_DAYS = (0, 3, 7, 14)
-ROUTES = frozenset({"Thorio", "Shiftr", "Paxus"})
+ROUTES = frozenset({"Thorio", "Shiftr", "Paxus", "Astrivon Labs"})
 @dataclass(frozen=True)
 class OutreachDecision:
     route: str
@@ -79,7 +79,7 @@ def choose_route(lead: Mapping[str, Any]) -> str:
     for route in routes:
         if _route_verified(lead, route): return route
     raise OutreachContractError("No route has an independently verified qualification result")
-def _offer(route: str) -> str: return {"Thorio": "a verified remote tech hiring channel", "Shiftr": "AI, software, engineering, or dedicated-team support through the appropriate partner", "Paxus": "vetted remote technology talent through the appropriate referral process"}[route]
+def _offer(route: str) -> str: return {"Astrivon Labs": "AI/ML, computer vision, business automation, product development, and B2B outreach and lead-generation infrastructure", "Thorio": "a verified remote tech hiring channel", "Shiftr": "AI, software, engineering, or dedicated-team support through the appropriate partner", "Paxus": "vetted remote technology talent through the appropriate referral process"}[route]
 def _subject(route: str, signal: str) -> str:
     short = signal.rstrip(".!?")
     if len(short) > 72: short = short[:69].rstrip() + "..."
