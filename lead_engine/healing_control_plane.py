@@ -52,7 +52,8 @@ class ControlPlaneRecovery:
                 "UPDATE control_plane_recovery SET controller_id=?,generation=?,fencing_token=?,state='ACTIVE',reconciled=1 WHERE singleton=1",
                 (controller_id, generation, generation),
             )
-            return self.snapshot()
+            result = dict(db.execute("SELECT * FROM control_plane_recovery WHERE singleton=1").fetchone())
+        return result
 
     def mark_partition(self) -> None:
         with self._connect() as db:
@@ -74,7 +75,8 @@ class ControlPlaneRecovery:
                    WHERE singleton=1""",
                 (controller_id, generation, token),
             )
-            return self.snapshot()
+            result = dict(db.execute("SELECT * FROM control_plane_recovery WHERE singleton=1").fetchone())
+        return result
 
     def is_fenced(self, controller_id: str) -> bool:
         with self._connect() as db:
@@ -92,7 +94,8 @@ class ControlPlaneRecovery:
                 "UPDATE control_plane_recovery SET reconciled=1,authoritative_state_json=? WHERE singleton=1",
                 (json.dumps(authoritative_state, sort_keys=True),),
             )
-            return self.snapshot()
+            result = dict(db.execute("SELECT * FROM control_plane_recovery WHERE singleton=1").fetchone())
+        return result
 
     def activate(self, controller_id: str, *, generation: int) -> dict[str, Any]:
         with self._connect() as db:
@@ -104,7 +107,8 @@ class ControlPlaneRecovery:
             if not row["reconciled"]:
                 raise ControlPlaneRecoveryError("reconciliation is required before activation")
             db.execute("UPDATE control_plane_recovery SET state='ACTIVE' WHERE singleton=1")
-            return self.snapshot()
+            result = dict(db.execute("SELECT * FROM control_plane_recovery WHERE singleton=1").fetchone())
+        return result
 
     def snapshot(self) -> dict[str, Any]:
         with self._connect() as db:

@@ -25,6 +25,7 @@ def test_healing_state_persists_action_lease_checkpoint_and_reconciliation(tmp_p
         owner="controller-a",
         checkpoint="physical_reverify",
         payload={"path_id": "path-a"},
+        now=11.0,
     )
     state.record_reconciliation(
         action_id=action["action_id"],

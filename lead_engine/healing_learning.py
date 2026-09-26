@@ -50,7 +50,8 @@ class HealingLearning:
                 (strategy, successes, failures, row["state"] if row else "EXPERIMENTAL",
                  json.dumps(provenance, sort_keys=True), time.time()),
             )
-            return self.status(strategy)
+            result = dict(db.execute("SELECT * FROM healing_learning WHERE strategy=?", (strategy,)).fetchone())
+        return result
 
     def status(self, strategy: str) -> dict[str, Any]:
         with self._connect() as db:
@@ -67,7 +68,8 @@ class HealingLearning:
             if not known_good_available or int(row["successes"]) < 3 or int(row["failures"]) != 0:
                 raise ValueError("promotion evidence or known-good continuity requirement not satisfied")
             db.execute("UPDATE healing_learning SET state='PROMOTED',updated_at=? WHERE strategy=?", (time.time(), strategy))
-            return self.status(strategy)
+            result = dict(db.execute("SELECT * FROM healing_learning WHERE strategy=?", (strategy,)).fetchone())
+        return result
 
     def demote_on_regression(self, strategy: str) -> dict[str, Any]:
         with self._connect() as db:
@@ -77,4 +79,5 @@ class HealingLearning:
             if int(row["failures"]) < 2:
                 raise ValueError("regression evidence is insufficient")
             db.execute("UPDATE healing_learning SET state='DEMOTED',updated_at=? WHERE strategy=?", (time.time(), strategy))
-            return self.status(strategy)
+            result = dict(db.execute("SELECT * FROM healing_learning WHERE strategy=?", (strategy,)).fetchone())
+        return result
