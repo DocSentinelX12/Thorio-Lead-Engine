@@ -63,17 +63,17 @@ def build_delivery_manifest(
     }
 
     for lead in leads:
-        approved_routes = lead.get("eligible_routes")
-        if approved_routes is None:
-            approved_routes = lead.get("preserved_routes")
+        eligible_routes = lead.get("eligible_routes")
+        if eligible_routes is None:
+            eligible_routes = lead.get("preserved_routes")
 
-        if isinstance(approved_routes, str):
-            approved_routes = [approved_routes]
+        if isinstance(eligible_routes, str):
+            eligible_routes = [eligible_routes]
 
-        if isinstance(approved_routes, (list, tuple, set)):
+        if isinstance(eligible_routes, (list, tuple, set)):
             candidate_routes = [
                 str(route).strip()
-                for route in approved_routes
+                for route in eligible_routes
                 if str(route).strip()
             ]
         else:
