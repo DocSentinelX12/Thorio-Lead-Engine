@@ -24,7 +24,16 @@ def _verified_research_mapping(lead: Mapping[str, Any], key: str) -> Mapping[str
 def _research_ref(mapping: Mapping[str, Any]) -> str:
     for key in ("evidence_url", "source_url", "evidence_ref", "source_id"):
         ref = _text(mapping.get(key))
-        if ref: return ref
+        if ref:
+            return ref
+    evidence = mapping.get("evidence")
+    if isinstance(evidence, Iterable) and not isinstance(evidence, (str, bytes, Mapping)):
+        for item in evidence:
+            if isinstance(item, Mapping):
+                for key in ("url", "evidence_url", "source_url", "evidence_ref", "source_id"):
+                    ref = _text(item.get(key))
+                    if ref:
+                        return ref
     return ""
 def _section_verified(mapping: Mapping[str, Any]) -> bool:
     status = _text(mapping.get("verification_status") or mapping.get("status")).lower()
