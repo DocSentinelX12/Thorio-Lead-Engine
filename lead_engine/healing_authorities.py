@@ -44,6 +44,12 @@ class HealingAuthorityGateway:
             raise ValueError("recovery orchestrator must use the same compute inventory authority")
         self.inventory = inventory
         self.recovery_orchestrator = recovery_orchestrator
+        self.evidence_graph = HealingEvidenceGraph(inventory.db_path)
+        self.dependencies = HealingDependencyAnalyzer(self.evidence_graph)
+        self.intelligence = HealingIntelligence(
+            graph=self.evidence_graph, dependencies=self.dependencies,
+            db_path=inventory.db_path,
+        )
 
 
     def recover_path(
@@ -213,13 +219,9 @@ class HealingIntegrationFabric:
         self.control_plane = control_plane
         self.learning = learning
         self.closure = closure
-        self.evidence_graph = HealingEvidenceGraph(inventory.db_path)
-        self.dependencies = HealingDependencyAnalyzer(self.evidence_graph)
-        self.intelligence = HealingIntelligence(
-            graph=self.evidence_graph,
-            dependencies=self.dependencies,
-            db_path=inventory.db_path,
-        )
+        self.evidence_graph = self.gateway.evidence_graph
+        self.dependencies = self.gateway.dependencies
+        self.intelligence = self.gateway.intelligence
 
     def path_evidence(self, path_id: str) -> dict[str, Any]:
         return self.gateway.path(path_id)
