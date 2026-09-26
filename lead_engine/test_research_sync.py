@@ -95,3 +95,33 @@ def test_sync_research_rejects_missing_fingerprint():
         assert "fingerprint" in str(exc).lower()
     else:
         raise AssertionError("Expected missing fingerprint to be rejected")
+
+
+def test_research_payload_persists_canonical_opportunity_identity():
+    import json
+    from .research_sync import _research_payload
+
+    lead = {
+        "fingerprint": "opp-1",
+        "opportunity_id": "opp-1",
+        "company": "Acme",
+        "identity_version": "1",
+        "identity_derivation": {"source": "linkedin", "source_id": "post-1"},
+        "business_need_research": {"verified": False, "verification_status": "observed_evidence", "evidence": []},
+    }
+
+    fields = _research_payload(lead)
+    raw = json.loads(fields["Raw Research Package"])
+
+    assert raw["opportunity_id"] == "opp-1"
+    assert raw["fingerprint"] == "opp-1"
+    assert raw["identity_version"] == "1"
+    assert raw["identity_derivation"]["source_id"] == "post-1"
+
+
+def test_research_payload_rejects_mismatched_opportunity_identity():
+    import pytest
+    from .research_sync import _research_payload
+
+    with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
+        _research_payload({"fingerprint": "opp-1", "opportunity_id": "opp-2", "company": "Acme"})
