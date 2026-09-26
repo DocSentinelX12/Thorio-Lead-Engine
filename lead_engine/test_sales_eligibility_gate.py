@@ -6,6 +6,7 @@ from lead_engine.sales_handoff import package_digest
 def _lead(qualified=True):
     return {
         "fingerprint": "sales-gate-test",
+        "opportunity_id": "sales-gate-test",
         "company": "Acme",
         "person": "Alex CTO",
         "business_need": "remote software engineer hiring",
@@ -15,6 +16,7 @@ def _lead(qualified=True):
         "preserved_routes": ["thorio"],
         "routing_result": {"destinations": ["thorio"], "review_required": False},
         "research_status": "complete",
+        "research_intelligence": {"intelligence_version": "1", "opportunity_id": "sales-gate-test", "fingerprint": "sales-gate-test", "claims": [], "evidence_graph": {"nodes": {}}},
         "current_intent_research": {
             "verified": True,
             "verification_status": "verified",
