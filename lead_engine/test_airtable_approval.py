@@ -246,3 +246,12 @@ def test_fetch_approval_candidates_skips_invalid_records():
 
     assert len(result) == 1
     assert result[0]["record_id"] == "rec_valid"
+
+
+def test_astrivon_route_is_approved_independently():
+    from lead_engine.airtable_approval import build_approved_lead
+    lead = {"company": "Acme", "potential_routes": ["Astrivon Labs"]}
+    fields = {"Applicable Routes": ["Astrivon Labs"], "Review Status": "Qualified"}
+    result = build_approved_lead(lead, fields)
+    assert result is not None
+    assert result["approved_routes"] == ["Astrivon Labs"]
