@@ -8,7 +8,7 @@ import pytest
 
 def _complete_lead() -> dict:
     now = datetime.now(timezone.utc).isoformat()
-    return {
+    lead = {
         "fingerprint": "handoff-materialization-test",
         "opportunity_id": "handoff-materialization-test",
         "source": "test",
