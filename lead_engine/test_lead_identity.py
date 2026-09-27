@@ -160,3 +160,46 @@ def test_validate_opportunity_identity_accepts_matching_ids():
     payload = {"fingerprint": "abc123", "opportunity_id": "abc123"}
 
     assert validate_opportunity_identity(payload) == "abc123"
+
+
+def test_validate_materialized_identity_rejects_unknown_version():
+    import pytest
+    from .lead_identity import canonical_opportunity_identity, validate_materialized_opportunity_identity
+
+    lead = {
+        "source": "linkedin", "source_id": "post-1", "url": "https://linkedin.example/post-1",
+        "company": "Acme", "person": "Jane CTO", "job_title": "AI Engineer",
+        "signal_type": "hiring", "discovered_at": "2026-09-26T00:00:00+00:00",
+    }
+    identity = canonical_opportunity_identity(lead)
+    payload = {**lead, **identity, "identity_version": "999"}
+
+    with pytest.raises(ValueError, match="Unsupported canonical opportunity identity version"):
+        validate_materialized_opportunity_identity(payload)
+
+
+def test_validate_materialized_identity_rejects_tampered_derivation_context():
+    import pytest
+    from .lead_identity import canonical_opportunity_identity, validate_materialized_opportunity_identity
+
+    lead = {
+        "source": "linkedin", "source_id": "post-1", "url": "https://linkedin.example/post-1",
+        "company": "Acme", "company_website": "https://acme.example", "person": "Jane CTO",
+        "contact_name": "Jane CTO", "contact_title": "Chief Technology Officer",
+        "contact_email": "jane@example.com", "linkedin_url": "https://linkedin.example/in/jane",
+        "job_title": "AI Engineer", "signal_type": "hiring", "discovered_at": "2026-09-26T00:00:00+00:00",
+    }
+    identity = canonical_opportunity_identity(lead)
+    payload = {**lead, **identity}
+    payload["identity_derivation"] = {**payload["identity_derivation"], "contact_email": "other@example.com"}
+
+    with pytest.raises(ValueError, match="identity_derivation"):
+        validate_materialized_opportunity_identity(payload)
+
+
+def test_validate_materialized_identity_requires_complete_contract():
+    import pytest
+    from .lead_identity import validate_materialized_opportunity_identity
+
+    with pytest.raises(ValueError, match="incomplete"):
+        validate_materialized_opportunity_identity({"opportunity_id": "abc", "fingerprint": "abc"})
