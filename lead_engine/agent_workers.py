@@ -116,6 +116,13 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     merged["research_intelligence"] = build_research_intelligence(merged)
     merged, readiness = finalize_research_readiness(merged)
     merged["research_intelligence"] = build_research_intelligence(merged)
+    # Re-validate after every canonical package transformation so a stronger
+    # verification state cannot be lost before the durable lead write.
+    merged["evidence_events"] = validate_provenance_collection(
+        merged.get("evidence_events", []),
+        opportunity_id=opportunity_id,
+        research_section="evidence_events",
+    )
     stored = _persist_lead(ctx.db, merged)
     research = stored.get("company_research") if isinstance(stored.get("company_research"), Mapping) else {}
     specialist = stored.get("specialist_findings") if isinstance(stored.get("specialist_findings"), Mapping) else {}
