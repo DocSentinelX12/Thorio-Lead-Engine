@@ -18,6 +18,26 @@ import requests
 STATE_KEY = "revenue_execution"
 PRIVILEGED_CAPABILITY = "high_ticket_sales_closer"
 _RUNTIME_TRANSPORT: "RevenueTransport | None" = None
+_CAPABILITY_SECRET = object()
+
+
+class CloserExecutionCapability:
+    """Opaque capability issued only by the trusted specialist execution boundary."""
+
+    __slots__ = ("_secret", "task_id", "worker_id")
+
+    def __init__(self, secret: object, *, task_id: str, worker_id: str) -> None:
+        if secret is not _CAPABILITY_SECRET:
+            raise TypeError("CloserExecutionCapability cannot be constructed directly")
+        self._secret = secret
+        self.task_id = str(task_id)
+        self.worker_id = str(worker_id)
+
+
+def _issue_closer_capability(*, task_id: str, worker_id: str) -> CloserExecutionCapability:
+    if not task_id or not worker_id:
+        raise RevenueAuthorizationError("closer execution capability requires task and worker identity")
+    return CloserExecutionCapability(_CAPABILITY_SECRET, task_id=task_id, worker_id=worker_id)
 
 
 class RevenueExecutionError(RuntimeError):
@@ -147,15 +167,16 @@ def _save(db, state: dict[str, Any]) -> None:
     db.set_state(STATE_KEY, state)
 
 
-def _authorized(worker_capability: str) -> None:
-    if worker_capability != PRIVILEGED_CAPABILITY:
-        raise RevenueAuthorizationError("outbound sales transport requires the privileged high-ticket closer capability")
+def _authorized(worker_capability: object) -> CloserExecutionCapability:
+    if not isinstance(worker_capability, CloserExecutionCapability) or worker_capability._secret is not _CAPABILITY_SECRET:
+        raise RevenueAuthorizationError("outbound sales transport requires a trusted high-ticket closer execution capability")
+    return worker_capability
 
 
 def execute_outbound(
     db: Any,
     *,
-    worker_capability: str,
+    worker_capability: object,
     opportunity_id: str,
     conversation_id: str,
     channel: str,
