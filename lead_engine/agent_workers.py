@@ -97,42 +97,17 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     payload_findings = payload.get("specialist_findings") if isinstance(payload.get("specialist_findings"), Mapping) else {}
     if payload_findings: specialist_findings = {**dict(specialist_findings), **dict(payload_findings)}
     opportunity_id = str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip()
-    merged_events = validate_provenance_collection(
-        list(lead.get("evidence_events", []))
-        + list(payload.get("evidence_events", [])),
-        opportunity_id=opportunity_id,
-        research_section="evidence_events",
-    )
+    merged_events = validate_provenance_collection(list(lead.get("evidence_events", [])) + list(payload.get("evidence_events", [])), opportunity_id=opportunity_id, research_section="evidence_events")
     canonical = build_canonical_research_package(lead, merged_research, specialist_findings)
     for section_name in RESEARCH_SECTIONS:
         current_section = lead.get(section_name)
-        if isinstance(current_section, Mapping):
-            canonical[section_name] = merge_canonical_section(
-                canonical[section_name],
-                current_section,
-                opportunity_id=str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip(),
-                research_section=section_name,
-            )
-    merged = dict(lead); merged["company_research"] = merged_research; merged["evidence_events"] = merged_events; merged.update(canonical)
-    merged["research_intelligence"] = build_research_intelligence(merged)
-    merged, readiness = finalize_research_readiness(merged)
-    merged["research_intelligence"] = build_research_intelligence(merged)
-    # Re-validate after every canonical package transformation so a stronger
-    # verification state cannot be lost before the durable lead write.
-    merged["evidence_events"] = validate_provenance_collection(
-        merged.get("evidence_events", []),
-        opportunity_id=opportunity_id,
-        research_section="evidence_events",
-    )
+        if isinstance(current_section, Mapping): canonical[section_name] = merge_canonical_section(canonical[section_name], current_section, opportunity_id=str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip(), research_section=section_name)
+    merged = dict(lead); merged["company_research"] = merged_research; merged["evidence_events"] = merged_events; merged.update(canonical); merged["research_intelligence"] = build_research_intelligence(merged); merged, readiness = finalize_research_readiness(merged); merged["research_intelligence"] = build_research_intelligence(merged)
+    merged["evidence_events"] = validate_provenance_collection(merged.get("evidence_events", []), opportunity_id=opportunity_id, research_section="evidence_events")
     stored = _persist_lead(ctx.db, merged)
-    research = stored.get("company_research") if isinstance(stored.get("company_research"), Mapping) else {}
-    specialist = stored.get("specialist_findings") if isinstance(stored.get("specialist_findings"), Mapping) else {}
-    dm_findings = specialist.get("social_decision_maker_research")
-    has_dm_candidate = bool(str(research.get("decision_maker") or research.get("observed_decision_maker") or "").strip())
-    if isinstance(dm_findings, Mapping) and isinstance(dm_findings.get("findings"), list) and dm_findings.get("findings"):
-        has_dm_candidate = True
-    if research.get("company_verified") is True and has_dm_candidate:
-        enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
+    research = stored.get("company_research") if isinstance(stored.get("company_research"), Mapping) else {}; specialist = stored.get("specialist_findings") if isinstance(stored.get("specialist_findings"), Mapping) else {}; dm_findings = specialist.get("social_decision_maker_research"); has_dm_candidate = bool(str(research.get("decision_maker") or research.get("observed_decision_maker") or "").strip())
+    if isinstance(dm_findings, Mapping) and isinstance(dm_findings.get("findings"), list) and dm_findings.get("findings"): has_dm_candidate = True
+    if research.get("company_verified") is True and has_dm_candidate: enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
     if readiness["ready"]: enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
     return {"role": "company_research", "lead": stored, "research": merged_research, "research_status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", []), "canonical_sections": list(RESEARCH_SECTIONS), "decision_maker_verified": str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified", "fabricated_fields": list(merged_research.get("fabricated_fields") or []), "handoff": "qualification_a" if readiness["ready"] else "research_required"}
 
@@ -152,78 +127,26 @@ def _priority(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) ->
 
 def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     research = lead.get("company_research")
-    if not isinstance(research, Mapping):
-        raise AgentContractError("outreach_closer follow-up requires company research")
-    contact_name = str(research.get("decision_maker") or lead.get("contact_name") or "").strip()
-    contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or lead.get("contact_email") or "").strip()
-    if not contact_name or not contact_email:
-        raise AgentContractError("outreach_closer follow-up requires verified contact details")
+    if not isinstance(research, Mapping): raise AgentContractError("outreach_closer follow-up requires company research")
+    contact_name = str(research.get("decision_maker") or lead.get("contact_name") or "").strip(); contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or lead.get("contact_email") or "").strip()
+    if not contact_name or not contact_email: raise AgentContractError("outreach_closer follow-up requires verified contact details")
     route = str(lead.get("outreach_route") or "").strip()
-    if not route:
-        raise AgentContractError("outreach_closer follow-up requires an active revenue route")
-    objection = str(payload.get("objection") or "").strip()
-    signal = str(lead.get("current_need") or lead.get("business_need") or lead.get("signal") or lead.get("evidence") or "the need you described").strip()
-    if objection:
-        body = objection_response(objection, route)
-        subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
-    else:
-        body = f"Hi {contact_name},\\n\\nJust following up on my earlier note about {signal.rstrip('.!?')}. If this is still a priority, I can send the most relevant {route} option.\\n\\nBest,\\nThorio"
-        subject = str(lead.get("outreach_draft_subject") or f"Re: {signal[:72]}")
+    if not route: raise AgentContractError("outreach_closer follow-up requires an active revenue route")
+    objection = str(payload.get("objection") or "").strip(); signal = str(lead.get("current_need") or lead.get("business_need") or lead.get("signal") or lead.get("evidence") or "the need you described").strip()
+    if objection: body = objection_response(objection, route); subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
+    else: body = f"Hi {contact_name},\n\nJust following up on my earlier note about {signal.rstrip('.!?')}. If this is still a priority, I can send the most relevant {route} option.\n\nBest,\nThorio"; subject = str(lead.get("outreach_draft_subject") or f"Re: {signal[:72]}")
     conversation_id = str(lead.get("conversation_id") or f"conversation:{lead['fingerprint']}:{route}")
-    attempt = int(lead.get("outreach_attempt", 0) or 0) + 1
+    # apply_outcome() has already advanced the durable outreach attempt for the observed outcome. The closer must execute that exact scheduled attempt, not increment the cadence a second time.
+    attempt = int(lead.get("outreach_attempt", 0) or 0)
+    if attempt <= 0: raise AgentContractError("outreach_closer follow-up requires an already advanced outreach attempt")
     cadence = build_outreach_decision({**lead, "outreach_state": "ready", "outreach_attempt": attempt})
     transport = ctx.revenue_transport if ctx.revenue_transport is not None else configured_revenue_transport()
-    action = execute_outbound(
-        ctx.db,
-        worker_capability=ctx.revenue_capability,
-        opportunity_id=str(lead["fingerprint"]),
-        conversation_id=conversation_id,
-        channel=str(lead.get("outreach_channel") or "email"),
-        recipient={"name": contact_name, "email": contact_email},
-        subject=subject,
-        body=body,
-        transport=transport,
-        idempotency_key=f"followup:{lead['fingerprint']}:{conversation_id}:{attempt}",
-    )
+    action = execute_outbound(ctx.db, worker_capability=ctx.revenue_capability, opportunity_id=str(lead["fingerprint"]), conversation_id=conversation_id, channel=str(lead.get("outreach_channel") or "email"), recipient={"name": contact_name, "email": contact_email}, subject=subject, body=body, transport=transport, idempotency_key=f"followup:{lead['fingerprint']}:{conversation_id}:{attempt}")
     history = list(lead.get("outreach_history") or []) if isinstance(lead.get("outreach_history") or [], list) else []
-    history.append({
-        "action_id": action.action_id,
-        "conversation_id": conversation_id,
-        "route": route,
-        "channel": action.channel,
-        "status": action.status,
-        "kind": "follow_up",
-        "provider_result": dict(action.provider_result or {}),
-    })
+    history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "kind": "follow_up", "provider_result": dict(action.provider_result or {})})
     next_follow_up = cadence.next_follow_up_at
-    stored = _persist_lead(ctx.db, {
-        **lead,
-        "conversation_id": conversation_id,
-        "revenue_lifecycle_state": "conversation_active",
-        "outreach_state": "awaiting_response",
-        "outreach_attempt": attempt,
-        "follow_up_due": bool(next_follow_up),
-        "outreach_draft_subject": subject,
-        "outreach_draft_body": body,
-        "outreach_history": history,
-        "last_outreach_action_id": action.action_id,
-        "last_outreach_delivery": dict(action.provider_result or {}),
-        "next_follow_up_at": next_follow_up,
-    })
-    return {
-        "role": "outreach_closer",
-        "lead": stored,
-        "autonomous": True,
-        "approval_required": False,
-        "action": "send_follow_up",
-        "route": route,
-        "next_follow_up_at": next_follow_up,
-        "delivery": dict(action.provider_result or {}),
-        "action_id": action.action_id,
-        "conversation_id": conversation_id,
-        "objection_response": objection_reply(objection, route) if objection else None,
-    }
-
+    stored = _persist_lead(ctx.db, {**lead, "conversation_id": conversation_id, "revenue_lifecycle_state": "conversation_active", "outreach_state": "awaiting_response", "outreach_attempt": attempt, "follow_up_due": bool(next_follow_up), "outreach_draft_subject": subject, "outreach_draft_body": body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {}), "next_follow_up_at": next_follow_up})
+    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_follow_up", "route": route, "next_follow_up_at": next_follow_up, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None}
 
 def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload); fingerprint = str(lead.get("fingerprint") or "").strip()
@@ -239,9 +162,6 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
         lead = current
     if str(lead.get("sales_eligibility") or "").strip().lower() != "eligible": raise AgentContractError("outreach_closer requires a sales-eligible opportunity")
     if not package_is_ready(lead): raise AgentContractError("outreach_closer requires a complete verified research package")
-    # Airtable synchronization is deliberately non-blocking. The closer
-    # acts from the durable verified lead package and writes the result back
-    # after execution, so no human or Airtable confirmation can stall outreach.
     if str(lead.get("research_status") or "").strip().lower() not in {"complete", "research_complete"}: raise AgentContractError("outreach_closer requires completed company research")
     research = lead.get("company_research")
     if not isinstance(research, Mapping) or not research.get("company_verified"): raise AgentContractError("outreach_closer requires verified company research")
