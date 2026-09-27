@@ -44,7 +44,7 @@ def _records(lead):
     raw["__thorio_package_digest"] = digest
     return (
         {"id": "recLead", "fields": {"Duplicate Key": lead["fingerprint"], "Company": lead["company"]}},
-        {"id": "recResearch", "fields": {"Research Key": lead["fingerprint"], "Lead Fingerprint": lead["fingerprint"], "Raw Research Package": __import__("json").dumps(raw, sort_keys=True)}},
+        {"id": "recResearch", "fields": {"Research Key": lead["fingerprint"], "Lead Fingerprint": lead["fingerprint"], "Research Intelligence": __import__("json").dumps(lead["research_intelligence"], sort_keys=True), "Package Digest": digest, "Raw Research Package": __import__("json").dumps(raw, sort_keys=True)}},
         {"status": "synced", "company": {"status": "created", "record": {"id": "recCompany", "fields": {"Company": lead["company"]}}}, "opportunities": []},
     )
 
