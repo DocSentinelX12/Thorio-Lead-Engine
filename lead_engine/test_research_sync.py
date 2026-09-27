@@ -59,6 +59,7 @@ def test_research_payload_preserves_complete_research_and_raw_lead():
     assert json.loads(fields["Technical Product Hiring Research"])["evidence"]
     raw = json.loads(fields["Raw Research Package"])
     assert raw["unknown_field"] == "must survive in raw package"
+    assert fields["Package Digest"] == raw["__thorio_package_digest"]
 
 
 def test_research_table_url_uses_dedicated_research_configuration(monkeypatch):
