@@ -6,7 +6,7 @@ from .agent_queue import pending
 from .agent_workers import run_worker_once
 from .agent_queue import enqueue
 from .database import LeadDB
-from .revenue_execution import RevenueActionInProgress, RevenueAuthorizationError, execute_outbound, register_revenue_transport
+from .revenue_execution import RevenueActionInProgress, RevenueAuthorizationError, _issue_closer_capability, execute_outbound, register_revenue_transport
 from .sales_handoff import package_digest
 from .research_intelligence import build_research_intelligence
 
@@ -45,7 +45,7 @@ def test_general_capability_cannot_send_outbound(tmp_path):
 def test_privileged_closer_sends_once_and_persists_delivery(tmp_path):
     db = LeadDB(data_dir=tmp_path); transport = FakeTransport(); register_revenue_transport(transport)
     try:
-        result = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1"); replay = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1")
+        result = execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1"); replay = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1")
         assert result.status == "sent" and replay.action_id == result.action_id and len(transport.calls) == 1 and db.get_state("revenue_execution")["actions"]["outreach:opportunity-1:conversation-1:1"]["status"] == "sent"
     finally: register_revenue_transport(None)
 
