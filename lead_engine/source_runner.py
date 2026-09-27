@@ -132,9 +132,9 @@ class SourceRunner:
                 if result.get("paxus_research_status") == "research_required":
                     research_queued += 1
 
-        if queue_tasks:
-            enqueue_many(self.pipeline.db, queue_tasks)
-            agent_tasks_queued = len(queue_tasks)
+            if queue_tasks:
+                enqueue_many(self.pipeline.db, queue_tasks)
+                agent_tasks_queued = len(queue_tasks)
 
         summary = {
             "discovered_count": discovered,
