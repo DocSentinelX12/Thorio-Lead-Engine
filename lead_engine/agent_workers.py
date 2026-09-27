@@ -14,7 +14,7 @@ from .research_intelligence import build_research_intelligence
 from .opportunity_provenance import normalize_evidence_event, validate_provenance_collection
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .revenue_conversation import objection_reply
-from .revenue_execution import PRIVILEGED_CAPABILITY, RevenueTransportUnavailable, configured_revenue_transport, execute_outbound
+from .revenue_execution import RevenueTransportUnavailable, _issue_closer_capability, configured_revenue_transport, execute_outbound
 from .sales_handoff import package_digest, package_is_ready
 
 class AgentContractError(ValueError): pass
@@ -23,6 +23,7 @@ class AgentExecutionContext:
     db: Any
     worker_id: str
     revenue_transport: Any = None
+    revenue_capability: Any = None
 @dataclass(frozen=True)
 class AgentExecutionResult:
     agent: str
@@ -170,7 +171,7 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
     except OutreachContractError as exc: raise AgentContractError(str(exc)) from exc
     route = str(decision.route or "").strip().lower()
     if not route: raise AgentContractError("outreach_closer requires a selected revenue route")
-    conversation_id = str(lead.get("conversation_id") or f"conversation:{lead['fingerprint']}:{route}"); transport = ctx.revenue_transport if ctx.revenue_transport is not None else configured_revenue_transport(); action = execute_outbound(ctx.db, worker_capability=PRIVILEGED_CAPABILITY, opportunity_id=str(lead["fingerprint"]), conversation_id=conversation_id, channel=str(lead.get("outreach_channel") or "email"), recipient={"name": decision.contact_name, "email": decision.contact_email}, subject=decision.subject, body=decision.body, transport=transport, idempotency_key=f"outreach:{lead['fingerprint']}:{route}:{int(lead.get('outreach_attempt', 0) or 0) + 1}")
+    conversation_id = str(lead.get("conversation_id") or f"conversation:{lead['fingerprint']}:{route}"); transport = ctx.revenue_transport if ctx.revenue_transport is not None else configured_revenue_transport(); action = execute_outbound(ctx.db, worker_capability=ctx.revenue_capability, opportunity_id=str(lead["fingerprint"]), conversation_id=conversation_id, channel=str(lead.get("outreach_channel") or "email"), recipient={"name": decision.contact_name, "email": decision.contact_email}, subject=decision.subject, body=decision.body, transport=transport, idempotency_key=f"outreach:{lead['fingerprint']}:{route}:{int(lead.get('outreach_attempt', 0) or 0) + 1}")
     updated = dict(lead); history = list(lead.get("outreach_history") or []) if isinstance(lead.get("outreach_history") or [], list) else []; history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "provider_result": dict(action.provider_result or {})}); updated.update({"conversation_id": conversation_id, "revenue_lifecycle_state": "outreach_sent", "outreach_route": route, "outreach_state": "awaiting_response", "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0) + 1, "next_follow_up_at": decision.next_follow_up_at, "follow_up_due": bool(decision.next_follow_up_at), "outreach_draft_subject": decision.subject, "outreach_draft_body": decision.body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {})}); stored = _persist_lead(ctx.db, updated)
     return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_outreach", "route": route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": "awaiting_response", "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "truthfulness_guard": "evidence_only"}
 
@@ -240,7 +241,7 @@ def _validate_specialization(agent: str, handler: Callable[..., Dict[str, Any]])
 def execute_task(db, task: Mapping[str, Any], *, worker_id: str, heartbeat_before: bool = True) -> AgentExecutionResult:
     task_data = _require_mapping(task, "task"); agent = str(task_data.get("agent") or "").strip(); task_id = str(task_data.get("task_id") or "").strip()
     if not agent or not task_id: raise AgentContractError("task requires agent and task_id")
-    handler = handler_registry().get(agent); specialization = _validate_specialization(agent, handler); payload = _require_mapping(task_data.get("payload", {}), "payload"); ctx = AgentExecutionContext(db=db, worker_id=worker_id)
+    handler = handler_registry().get(agent); specialization = _validate_specialization(agent, handler); payload = _require_mapping(task_data.get("payload", {}), "payload"); capability = _issue_closer_capability(task_id=task_id, worker_id=worker_id) if agent == "outreach_closer" else None; ctx = AgentExecutionContext(db=db, worker_id=worker_id, revenue_capability=capability)
     if heartbeat_before: heartbeat(db, task_id, worker_id=worker_id)
     try:
         result = _require_mapping(handler(agent, payload, ctx), "handler result"); result.setdefault("agent", agent); result.setdefault("specialization", specialization.mission); result.setdefault("forbidden_actions", list(specialization.forbidden_actions)); completed = complete(db, task_id, worker_id=worker_id, result=result); return AgentExecutionResult(agent=agent, task_id=task_id, status=completed["status"], result=result)
