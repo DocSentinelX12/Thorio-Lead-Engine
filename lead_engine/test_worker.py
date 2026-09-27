@@ -427,6 +427,13 @@ def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkey
     lead = {
         "fingerprint": "worker-handoff-ready",
         "opportunity_id": "worker-handoff-ready",
+        "source": "test",
+        "source_id": "worker-handoff-ready",
+        "url": "https://example.com/opportunities/worker-handoff-ready",
+        "person": "Taylor",
+        "job_title": "Software Engineer",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
         "company": "Acme",
         "contact_email": "taylor@example.com",
         "qualified": True,
@@ -447,6 +454,8 @@ def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkey
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Acme needs engineering expansion.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
         "potential_routes": ["Thorio"], "eligible_routes": ["Thorio"], "preserved_routes": ["Thorio"], "routing_result": {"destinations": ["Thorio"], "review_required": False},
     }
+    from .lead_identity import canonical_opportunity_identity
+    lead.update(canonical_opportunity_identity(lead))
     lead["research_intelligence"] = build_research_intelligence(lead)
     db.insert_if_new(lead)
     digest = package_digest(lead)
