@@ -294,3 +294,32 @@ def test_batch_limit_does_not_discard_durable_backlog(tmp_path):
     created = enqueue_many(db, tasks)
     assert len(created) == 200
     assert len(pending(db, "paxus_research")) == 200
+
+
+def test_concurrent_enqueue_with_same_dedupe_key_creates_one_active_task(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    seed = _db(tmp_path)
+    seed.close()
+    start = Barrier(16)
+
+    def enqueue_once(index):
+        db = _db(tmp_path)
+        try:
+            start.wait(timeout=10)
+            return enqueue(
+                db,
+                "paxus_research",
+                {"id": "concurrent-dedupe"},
+                dedupe_key="paxus_research:concurrent-dedupe",
+            )
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        results = list(executor.map(enqueue_once, range(16)))
+
+    active = pending(_db(tmp_path), "paxus_research")
+    assert len(active) == 1
+    assert len({task["task_id"] for task in results}) == 1
