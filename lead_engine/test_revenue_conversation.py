@@ -152,3 +152,43 @@ def test_astrivon_route_switch_requires_verified_service_fit():
     assert route is None
     assert reason == "route_switch_astrivon_service_fit_not_verified"
     assert evidence is None
+
+
+def test_stale_follow_up_cannot_send_after_terminal_revenue_state(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("terminal-followup-race-test")
+    lead.update({
+        "revenue_lifecycle_state": "converted",
+        "outreach_state": "converted",
+        "outreach_stop_reason": "converted",
+        "next_follow_up_at": None,
+        "follow_up_due": False,
+    })
+    db.insert_if_new(lead)
+    transport = FakeTransport()
+    register_revenue_transport(transport)
+    try:
+        enqueue(
+            db,
+            "outreach_closer",
+            {
+                "lead": lead,
+                "execution_kind": "follow_up",
+                "outcome": "no_response",
+                "inbound_event_id": "stale-followup-event",
+            },
+            priority=10,
+            dedupe_key="revenue_followup:terminal-followup-race-test:stale-followup-event",
+        )
+        result = run_worker_once(db, "outreach_closer", worker_id="terminal-followup-worker")
+        stored = db.get(lead["fingerprint"])
+        assert result["completed_count"] == 1
+        assert result["failed_count"] == 0
+        assert result["results"][0]["action"] == "stop"
+        assert result["results"][0]["stop_reason"] == "converted"
+        assert transport.calls == []
+        assert stored["revenue_lifecycle_state"] == "converted"
+        assert stored["outreach_state"] == "converted"
+    finally:
+        register_revenue_transport(None)
+        db.close()
