@@ -207,6 +207,7 @@ def test_validate_materialized_identity_requires_complete_contract():
 
 
 def test_lead_to_dict_materializes_complete_canonical_identity():
+    from .lead_identity import canonical_opportunity_identity
     from .models import Lead
 
     lead = Lead(
@@ -221,8 +222,8 @@ def test_lead_to_dict_materializes_complete_canonical_identity():
     )
 
     payload = lead.to_dict()
+    expected = canonical_opportunity_identity(payload)
 
-    assert payload["opportunity_id"] == payload["fingerprint"]
+    assert payload["opportunity_id"] == payload["fingerprint"] == expected["opportunity_id"]
     assert payload["identity_version"] == "1"
-    assert payload["identity_derivation"]
-    assert payload["identity_derivation"] == payload["identity_derivation"]
+    assert payload["identity_derivation"] == expected["identity_derivation"]
