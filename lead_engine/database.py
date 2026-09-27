@@ -173,8 +173,12 @@ class LeadDB:
             "disqualified": 200,
             "stopped": 200,
         }
-        current_rank = lifecycle_order.get(current_state, 0)
-        incoming_rank = lifecycle_order.get(incoming_state, 0) if incoming_state else 0
+        if current_state and current_state not in lifecycle_order:
+            raise ValueError(f"Unknown persisted revenue lifecycle state: {current_state}")
+        if incoming_state and incoming_state not in lifecycle_order:
+            raise ValueError(f"Unknown revenue lifecycle state: {incoming_state}")
+        current_rank = lifecycle_order[current_state]
+        incoming_rank = lifecycle_order[incoming_state] if incoming_state else 0
         terminal_lifecycle_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
         # Terminal revenue states are immutable. A later worker snapshot or inbound event
         # must never rewrite one terminal business outcome into another terminal outcome.
