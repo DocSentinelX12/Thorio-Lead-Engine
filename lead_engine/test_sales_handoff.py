@@ -183,3 +183,30 @@ def test_package_projection_rejects_mismatched_canonical_identity():
 
     with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
         package_projection(lead)
+
+
+def test_package_projection_requires_materialized_canonical_identity():
+    import pytest
+
+    lead = _ready_lead()
+    lead["opportunity_id"] = lead["fingerprint"]
+    with pytest.raises(ValueError, match="Canonical opportunity identity is incomplete"):
+        package_projection(lead)
+
+
+def test_package_projection_rejects_tampered_identity_version():
+    import pytest
+    from .lead_identity import canonical_opportunity_identity
+
+    lead = _ready_lead()
+    lead.update({
+        "source": "linkedin", "source_id": "post-1", "url": "https://linkedin.example/post-1",
+        "person": "Taylor", "job_title": "CTO", "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
+    })
+    lead.update(canonical_opportunity_identity(lead))
+    lead["identity_version"] = "999"
+    lead["research_intelligence"] = build_research_intelligence(lead)
+
+    with pytest.raises(ValueError, match="Unsupported canonical opportunity identity version"):
+        package_projection(lead)
