@@ -116,9 +116,13 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
     verified_lead = ctx.db.get(fingerprint) or validation_lead
     verified_research = verified_lead.get("company_research"); company_verified = isinstance(verified_research, Mapping) and verified_research.get("company_verified") is True; dm_verified = isinstance(verified_research, Mapping) and bool(verified_research.get("decision_maker")) and bool(verified_research.get("decision_maker_evidence")) and str(verified_research.get("decision_maker_verification_status") or "").strip().lower() == "verified"; research_status = str(verified_lead.get("research_status") or "").strip().lower(); research_complete = research_status in {"complete", "research_complete"}; research_readiness_result = research_readiness(verified_lead)
     if result.get("verified") is True and research_complete and research_readiness_result["ready"] and company_verified and dm_verified:
-        if research_status == "research_complete":
-            normalized = dict(verified_lead); normalized["research_status"] = "complete"; verified_lead = ctx.db.update_payload(fingerprint, normalized) or normalized
-        enqueue(ctx.db, "routing", {"lead": verified_lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}"); result["handoff"] = "routing"
+        with ctx.db.batch_writes():
+            if research_status == "research_complete":
+                normalized = dict(verified_lead)
+                normalized["research_status"] = "complete"
+                verified_lead = ctx.db.update_payload(fingerprint, normalized) or normalized
+            enqueue(ctx.db, "routing", {"lead": verified_lead, "verified": True}, priority=7, dedupe_key=f"routing:{fingerprint}")
+        result["handoff"] = "routing"
     elif result.get("decision_maker_verification") == "verified": result["handoff"] = "qualification_a"
     else: result["handoff"] = "review_required"
     return result
@@ -137,8 +141,9 @@ def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
             stored["sales_eligibility"] = "blocked"
             stored["sales_eligibility_reason"] = "research_verification_pending"
             stored["revenue_lifecycle_state"] = "qualified"
-        stored = ctx.db.update_payload(lead["fingerprint"], stored) or stored
-        enqueue(ctx.db, "airtable_integrity", {"lead": stored, "routing_result": dict(result)}, priority=6, dedupe_key=f"airtable_integrity:{lead['fingerprint']}")
+        with ctx.db.batch_writes():
+            stored = ctx.db.update_payload(lead["fingerprint"], stored) or stored
+            enqueue(ctx.db, "airtable_integrity", {"lead": stored, "routing_result": dict(result)}, priority=6, dedupe_key=f"airtable_integrity:{lead['fingerprint']}")
     result["handoff"] = "airtable_integrity" if result.get("destinations") else "review_required"
     return result
 
@@ -190,9 +195,22 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
         return result
     eligible, eligibility_reason = _sales_eligibility(current_lead, routing_result, result, ctx.db)
     if eligible:
-        updated = dict(current_lead); updated["revenue_lifecycle_state"] = "sales_eligible"; updated.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "eligible_routes": list(routing_result.get("destinations", [])), "preserved_routes": list(routing_result.get("destinations", []))}); stored = ctx.db.update_payload(fingerprint, updated) or updated; enqueue(ctx.db, "outreach_closer", {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)}, priority=10, dedupe_key=f"sales:{fingerprint}"); result.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "handoff": "outreach_closer"})
+        updated = dict(current_lead)
+        updated["revenue_lifecycle_state"] = "sales_eligible"
+        updated.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "eligible_routes": list(routing_result.get("destinations", [])), "preserved_routes": list(routing_result.get("destinations", []))})
+        with ctx.db.batch_writes():
+            stored = ctx.db.update_payload(fingerprint, updated) or updated
+            enqueue(ctx.db, "outreach_closer", {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)}, priority=10, dedupe_key=f"sales:{fingerprint}")
+            enqueue(ctx.db, "audit", {"lead": stored, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}")
+        result.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "handoff": "outreach_closer"})
     else:
         updated = dict(current_lead)
-        if current_lead.get("qualified") is True: updated.update({"revenue_lifecycle_state": "qualified", "sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason}); ctx.db.update_payload(fingerprint, updated)
-        result.update({"sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason, "handoff": "audit"})
-    enqueue(ctx.db, "audit", {"lead": ctx.db.get(fingerprint) or current_lead, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}"); return result
+        with ctx.db.batch_writes():
+            if current_lead.get("qualified") is True:
+                updated.update({"revenue_lifecycle_state": "qualified", "sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason})
+                stored = ctx.db.update_payload(fingerprint, updated) or updated
+            else:
+                stored = current_lead
+            result.update({"sales_eligibility": "blocked", "sales_eligibility_reason": eligibility_reason, "handoff": "audit"})
+            enqueue(ctx.db, "audit", {"lead": stored, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}")
+        return result

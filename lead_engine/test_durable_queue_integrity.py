@@ -108,3 +108,70 @@ def test_source_runner_rolls_back_accepted_lead_when_discovery_queue_fails(tmp_p
 
     assert db.get(fingerprint) is None
     assert pending(db) == []
+
+
+def test_routing_state_and_airtable_task_roll_back_together(tmp_path, monkeypatch):
+    from . import active_processing
+
+    db = _db(tmp_path)
+    lead = _lead("routing-atomicity")
+    lead["qualified"] = True
+    assert db.insert_if_new(lead) is True
+    monkeypatch.setattr(active_processing, "_routing", lambda agent, payload, ctx: {"destinations": ["Thorio"], "review_required": False})
+
+    def fail_queue_insert(rows):
+        raise RuntimeError("airtable queue persistence failed")
+
+    monkeypatch.setattr(db, "queue_insert_many", fail_queue_insert)
+
+    with pytest.raises(RuntimeError, match="airtable queue persistence failed"):
+        active_processing.routing(
+            "routing",
+            {"lead": lead},
+            type("Ctx", (), {"db": db})(),
+        )
+
+    stored = db.get(lead["fingerprint"])
+    assert stored["routing_result"] is None if "routing_result" in stored else True
+    assert stored.get("sales_eligibility") is None
+    assert pending(db) == []
+
+
+def test_sales_eligibility_and_closer_task_roll_back_together(tmp_path, monkeypatch):
+    from . import active_processing
+
+    db = _db(tmp_path)
+    lead = _lead("sales-handoff-atomicity")
+    lead.update({
+        "qualified": True,
+        "business_need": "Remote engineering hiring",
+        "business_need_research": {"verified": True, "business_need": "Remote engineering hiring"},
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Jane Doe",
+            "decision_maker_evidence": "Verified company leadership page",
+            "decision_maker_verification_status": "verified",
+            "decision_maker_email": "jane@example.com",
+        },
+    })
+    assert db.insert_if_new(lead) is True
+    monkeypatch.setattr(active_processing, "_airtable_integrity", lambda agent, payload, ctx: {"integrity": "verified"})
+    monkeypatch.setattr(active_processing, "_sales_eligibility", lambda lead, routing_result, integrity_result, db: (True, "eligible"))
+    monkeypatch.setattr(active_processing, "package_is_ready", lambda lead: True)
+
+    def fail_queue_insert(rows):
+        raise RuntimeError("closer queue persistence failed")
+
+    monkeypatch.setattr(db, "queue_insert_many", fail_queue_insert)
+
+    with pytest.raises(RuntimeError, match="closer queue persistence failed"):
+        active_processing.airtable_integrity(
+            "airtable_integrity",
+            {"lead": lead, "routing_result": {"destinations": ["Thorio"], "review_required": False}},
+            type("Ctx", (), {"db": db})(),
+        )
+
+    stored = db.get(lead["fingerprint"])
+    assert stored.get("sales_eligibility") is None
+    assert stored.get("revenue_lifecycle_state") is None
+    assert pending(db) == []
