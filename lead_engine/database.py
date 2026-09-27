@@ -97,17 +97,20 @@ class LeadDB:
 
     @contextmanager
     def batch_writes(self):
+        outermost = self._batch_write_depth == 0
+        if outermost:
+            self.conn.execute("BEGIN IMMEDIATE")
         self._batch_write_depth += 1
         try:
             yield self
         except Exception:
             self._batch_write_depth -= 1
-            if self._batch_write_depth == 0:
+            if outermost:
                 self.conn.rollback()
             raise
         else:
             self._batch_write_depth -= 1
-            if self._batch_write_depth == 0:
+            if outermost:
                 self.conn.commit()
 
     def insert_if_new(self, payload: Dict[str, Any]) -> bool:
