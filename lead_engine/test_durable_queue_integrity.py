@@ -184,7 +184,7 @@ def test_remote_result_next_task_and_completion_roll_back_together(tmp_path, mon
     lead = _lead("remote-handoff-atomicity")
     assert db.insert_if_new(lead) is True
     task = enqueue(db, "engineering_demand_discovery", {"lead": lead})
-    claimed = claim(db, "engineering_demand_discovery", worker_id="remote-worker-1", limit=1, lease_seconds=300)
+    claimed = claim(db, "engineering_demand_discovery", worker_id="remote-compute:worker-1", limit=1, lease_seconds=300)
     assert claimed[0]["task_id"] == task["task_id"]
 
     class FakeRemote:
@@ -213,4 +213,4 @@ def test_remote_result_next_task_and_completion_roll_back_together(tmp_path, mon
     rows = pending(db, "engineering_demand_discovery")
     assert len(rows) == 1
     assert rows[0]["status"] == RUNNING
-    assert rows[0]["worker_id"] == "remote-worker-1"
+    assert rows[0]["worker_id"] == "remote-compute:worker-1"
