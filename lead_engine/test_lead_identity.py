@@ -55,6 +55,7 @@ def test_canonical_opportunity_identity_exposes_version_and_derivation():
 
     assert identity["opportunity_id"] == identity["fingerprint"]
     assert identity["identity_version"]
+    assert identity["identity_derivation"] == identity["derivation"]
     assert identity["derivation"]["source"] == "linkedin"
     assert identity["derivation"]["source_id"] == "post-1"
 
@@ -203,3 +204,25 @@ def test_validate_materialized_identity_requires_complete_contract():
 
     with pytest.raises(ValueError, match="incomplete"):
         validate_materialized_opportunity_identity({"opportunity_id": "abc", "fingerprint": "abc"})
+
+
+def test_lead_to_dict_materializes_complete_canonical_identity():
+    from .models import Lead
+
+    lead = Lead(
+        source="linkedin",
+        source_id="post-1",
+        url="https://linkedin.example/post-1",
+        company="Acme",
+        person="Jane CTO",
+        job_title="AI Engineer",
+        signal_type="hiring",
+        discovered_at="2026-09-26T00:00:00+00:00",
+    )
+
+    payload = lead.to_dict()
+
+    assert payload["opportunity_id"] == payload["fingerprint"]
+    assert payload["identity_version"] == "1"
+    assert payload["identity_derivation"]
+    assert payload["identity_derivation"] == payload["identity_derivation"]
