@@ -94,6 +94,11 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
     company_record = company_result["record"]; company_fields = _record_fields(company_record)
     if not str(company_record.get("id") or "").strip() or str(company_fields.get("Company") or "").strip() != str(lead.get("company") or "").strip(): return False
     routes = lead.get("potential_routes") or []; expected_routes = {str(route).strip() for route in routes if str(route).strip() in {"Paxus", "Shiftr"}}
+    routing_result = lead.get("routing_result")
+    destinations = {str(route).strip() for route in (routing_result.get("destinations") or [])} if isinstance(routing_result, Mapping) else set()
+    eligible = {str(route).strip() for route in (lead.get("eligible_routes") or [])}
+    preserved = {str(route).strip() for route in (lead.get("preserved_routes") or [])}
+    if destinations and (not destinations.issubset({"Paxus", "Shiftr", "Thorio", "Astrivon Labs"}) or not destinations.issubset(set(str(route).strip() for route in routes)) or not destinations.issubset(eligible) or not destinations.issubset(preserved)): return False
     opportunities = result.get("opportunities")
     if not isinstance(opportunities, list): return not expected_routes
     observed_routes: dict[str, dict[str, Any]] = {}
