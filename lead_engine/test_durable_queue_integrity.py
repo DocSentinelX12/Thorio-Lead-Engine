@@ -223,8 +223,7 @@ def test_completed_work_cannot_be_claimed_or_completed_again(tmp_path):
     assert claimed[0]["task_id"] == task["task_id"]
     complete(db, task["task_id"], worker_id="worker-terminal", result={"ok": True})
 
-    with pytest.raises(ValueError, match="Task is not queued"):
-        claim(db, "paxus_research", worker_id="worker-terminal", limit=1, lease_seconds=300)
+    assert claim(db, "paxus_research", worker_id="worker-terminal", limit=1, lease_seconds=300) == []
     with pytest.raises(ValueError, match="Task is not leased to this worker"):
         complete(db, task["task_id"], worker_id="worker-terminal", result={"ok": False})
 
