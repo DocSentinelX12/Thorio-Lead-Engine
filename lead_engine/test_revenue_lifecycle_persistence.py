@@ -62,3 +62,23 @@ def test_revenue_fields_cannot_regress_from_qualified_same_stage_stale_snapshot(
     assert updated["preserved_routes"] == ["Thorio"]
     assert updated["revenue_lifecycle_state"] == "qualified"
     db.close()
+
+
+def test_terminal_revenue_lifecycle_state_cannot_change_to_another_terminal_state(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    for terminal_state, attempted_state in (("converted", "closed_lost"), ("referred", "converted"), ("closed_lost", "stopped"), ("disqualified", "converted"), ("stopped", "referred")):
+        fingerprint = f"terminal-{terminal_state}-{attempted_state}"
+        lead = {
+            "fingerprint": fingerprint,
+            "company": "Acme",
+            "revenue_lifecycle_state": terminal_state,
+            "outreach_state": terminal_state,
+        }
+        assert db.insert_if_new(lead) is True
+        updated = db.update_payload(fingerprint, {
+            "revenue_lifecycle_state": attempted_state,
+            "outreach_state": attempted_state,
+        })
+        assert updated["revenue_lifecycle_state"] == terminal_state
+        assert db.get(fingerprint)["revenue_lifecycle_state"] == terminal_state
+    db.close()

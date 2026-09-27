@@ -175,6 +175,12 @@ class LeadDB:
         }
         current_rank = lifecycle_order.get(current_state, 0)
         incoming_rank = lifecycle_order.get(incoming_state, 0) if incoming_state else 0
+        terminal_lifecycle_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
+        # Terminal revenue states are immutable. A later worker snapshot or inbound event
+        # must never rewrite one terminal business outcome into another terminal outcome.
+        if current_state in terminal_lifecycle_states and incoming_state and incoming_state != current_state:
+            current["revenue_lifecycle_state"] = before["revenue_lifecycle_state"]
+            updates = {key: value for key, value in updates.items() if key != "revenue_lifecycle_state"}
         protected_revenue_fields = ("revenue_lifecycle_state", "sales_eligibility", "sales_eligibility_reason", "eligible_routes", "preserved_routes", "outreach_state", "outreach_attempt", "next_follow_up_at", "follow_up_due", "conversation_id", "outreach_route", "active_route", "outreach_history", "conversation_events", "response_count", "last_response_at", "last_outreach_action_id", "last_outreach_delivery", "route_switch_history", "outreach_stop_reason")
         current.update(updates)
         validate_opportunity_identity(current)
