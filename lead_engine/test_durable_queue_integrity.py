@@ -175,3 +175,42 @@ def test_sales_eligibility_and_closer_task_roll_back_together(tmp_path, monkeypa
     assert stored.get("sales_eligibility") is None
     assert stored.get("revenue_lifecycle_state") is None
     assert pending(db) == []
+
+
+def test_remote_result_next_task_and_completion_roll_back_together(tmp_path, monkeypatch):
+    from .compute_bridge import reconcile_remote_work
+
+    db = _db(tmp_path)
+    lead = _lead("remote-handoff-atomicity")
+    assert db.insert_if_new(lead) is True
+    task = enqueue(db, "company_research", {"lead": lead})
+    claimed = claim(db, "company_research", worker_id="remote-worker-1", limit=1, lease_seconds=300)
+    assert claimed[0]["task_id"] == task["task_id"]
+
+    class FakeRemote:
+        def status(self, task_id):
+            return {
+                "status": "completed",
+                "payload": {"agent": "company_research"},
+                "result": {
+                    "result": {
+                        "fingerprint": lead["fingerprint"],
+                        "findings": [{"source": "verified-source", "evidence": "Observed research result"}],
+                    }
+                },
+            }
+
+    def fail_queue_insert(rows):
+        raise RuntimeError("next research queue persistence failed")
+
+    monkeypatch.setattr(db, "queue_insert_many", fail_queue_insert)
+
+    with pytest.raises(RuntimeError, match="next research queue persistence failed"):
+        reconcile_remote_work(db, FakeRemote(), limit=1)
+
+    stored = db.get(lead["fingerprint"])
+    assert "specialist_findings" not in stored
+    rows = pending(db, "company_research")
+    assert len(rows) == 1
+    assert rows[0]["status"] == RUNNING
+    assert rows[0]["worker_id"] == "remote-worker-1"

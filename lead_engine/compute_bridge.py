@@ -85,8 +85,9 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
                 raise ComputeWorkerError(f"remote task {task['task_id']} completed without a result")
             agent = str(remote.get("payload", {}).get("agent") or task.get("agent") or "")
             inner = result.get("result") if isinstance(result.get("result"), Mapping) else result
-            _persist_remote_result(db, agent, inner)
-            complete(db, task["task_id"], worker_id=task["worker_id"], result=dict(result))
+            with db.batch_writes():
+                _persist_remote_result(db, agent, inner)
+                complete(db, task["task_id"], worker_id=task["worker_id"], result=dict(result))
             completed.append(task["task_id"])
         elif status == "queued":
             retry(db, task["task_id"], worker_id=task["worker_id"], error=str(remote.get("error") or "remote task returned to queue"))
