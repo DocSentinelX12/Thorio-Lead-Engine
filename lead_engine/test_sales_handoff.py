@@ -85,6 +85,25 @@ def test_exact_handoff_verification_rejects_stale_research_package():
     assert reason == "research_record_package_mismatch"
 
 
+def test_research_record_verification_rejects_mutated_explicit_digest():
+    lead = _ready_lead()
+    lead_record, research_record, master_tracker = _records(lead)
+    raw = __import__("json").loads(research_record["fields"]["Raw Research Package"])
+    research_record["fields"]["Package Digest"] = "tampered"
+    confirmed, reason = verify_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, lead, readback=False)
+    assert confirmed is False
+    assert reason == "research_record_package_mismatch"
+
+
+def test_research_record_verification_rejects_mutated_research_intelligence_field():
+    lead = _ready_lead()
+    lead_record, research_record, master_tracker = _records(lead)
+    research_record["fields"]["Research Intelligence"] = "{\\"tampered\\":true}"
+    confirmed, reason = verify_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, lead, readback=False)
+    assert confirmed is False
+    assert reason == "research_record_package_mismatch"
+
+
 def test_handoff_confirmation_is_durable_and_digest_bound(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _ready_lead()
