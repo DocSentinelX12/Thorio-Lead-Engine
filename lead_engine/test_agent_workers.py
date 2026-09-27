@@ -99,7 +99,7 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
         assert result["results"][0]["action"] == "handoff_to_closer"
         closer = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
     finally: register_revenue_transport(None)
-    output = closer["results"][0]; stored = db.get(lead["fingerprint"]); assert closer["completed_count"] == 1 and closer["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_follow_up"; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["outreach_attempt"] == 2 and stored["next_follow_up_at"] is not None and stored["follow_up_due"] is True and len(stored["outreach_history"]) == 2 and stored["outreach_history"][-1]["kind"] == "follow_up" and stored["outreach_history"][-1]["status"] == "sent"
+    output = closer["results"][0]; stored = db.get(lead["fingerprint"]); assert closer["completed_count"] == 1 and closer["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_follow_up"; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["outreach_attempt"] == 2 and stored["next_follow_up_at"] is not None and stored["follow_up_due"] is True and len(stored["outreach_history"]) == 3 and stored["outreach_history"][-1]["kind"] == "follow_up" and stored["outreach_history"][-1]["status"] == "sent"
 
 def test_company_research_persists_research_intelligence_handoff(tmp_path):
     db = _db(tmp_path)
