@@ -4,6 +4,7 @@ from .active_processing import _sales_eligibility
 from .database import LeadDB
 from .research_intelligence import build_research_intelligence
 from .sales_handoff import package_digest
+from .lead_identity import canonical_opportunity_identity
 
 
 def _lead(fingerprint, business_need="remote software engineer hiring"):
@@ -11,6 +12,12 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
     lead = {
         "fingerprint": fingerprint,
         "opportunity_id": fingerprint,
+        "source": "test",
+        "source_id": fingerprint,
+        "url": f"https://example.com/opportunities/{fingerprint}",
+        "job_title": "Software Engineer",
+        "signal_type": "hiring",
+        "discovered_at": now,
         "company": "Acme",
         "person": "Taylor",
         "business_need": business_need,
@@ -31,6 +38,7 @@ def _lead(fingerprint, business_need="remote software engineer hiring"):
         "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/route", "evidence": "Current need", "observed_at": now, "verification_status": "verified"}]}}},
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": business_need, "observed_at": now, "verification_status": "verified"}]},
     }
+    lead.update(canonical_opportunity_identity(lead))
     lead["research_intelligence"] = build_research_intelligence(lead)
     return lead
 
