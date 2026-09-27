@@ -183,6 +183,36 @@ def test_inbound_follow_up_queue_rolls_back_with_failed_conversation_persistence
         db.close()
 
 
+def test_inbound_event_after_terminal_state_is_audited_but_cannot_reopen_or_queue_follow_up(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("terminal-inbound-race-test")
+    lead.update({
+        "revenue_lifecycle_state": "converted",
+        "outreach_state": "converted",
+        "outreach_stop_reason": "converted",
+        "next_follow_up_at": None,
+        "follow_up_due": False,
+    })
+    db.insert_if_new(lead)
+    before = db.get(lead["fingerprint"])
+
+    result = record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="late-inbound-event",
+        text="Yes, I am interested",
+        outcome="interested",
+    )
+
+    stored = db.get(lead["fingerprint"])
+    assert stored == before
+    assert pending(db, "follow_up") == []
+    assert result["events"][-1]["event_id"] == "late-inbound-event"
+    assert result["events"][-1]["ignored_after_terminal_state"] == "converted"
+    assert result["next_action"] == "stop"
+
+
 def test_stale_follow_up_cannot_send_after_terminal_revenue_state(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("terminal-followup-race-test")
