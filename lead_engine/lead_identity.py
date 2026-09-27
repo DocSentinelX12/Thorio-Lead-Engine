@@ -59,6 +59,7 @@ def canonical_opportunity_identity(lead: Dict[str, Any]) -> Dict[str, Any]:
         "fingerprint": fingerprint,
         "identity_version": CANONICAL_IDENTITY_VERSION,
         "derivation": derivation,
+        "identity_derivation": dict(derivation),
     }
 
 
@@ -82,7 +83,7 @@ def validate_materialized_opportunity_identity(payload: Dict[str, Any]) -> str:
         raise ValueError("opportunity_id does not match canonical opportunity identity.")
     if normalize_identity_value(payload.get("fingerprint")) != canonical["fingerprint"]:
         raise ValueError("fingerprint does not match canonical opportunity identity.")
-    if derivation != canonical["derivation"]:
+    if derivation != canonical["identity_derivation"]:
         raise ValueError("identity_derivation does not match canonical opportunity identity.")
     validate_opportunity_identity(payload)
     return canonical["opportunity_id"]
