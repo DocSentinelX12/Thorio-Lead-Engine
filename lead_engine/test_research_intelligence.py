@@ -196,7 +196,7 @@ def test_research_intelligence_public_seam_exists():
 def test_research_intelligence_preserves_company_need_decision_maker_and_commercial_context():
     intelligence = research_package.build_research_intelligence(_lead())
 
-    assert intelligence["opportunity_id"] == "opp-intel-1"
+    assert intelligence["opportunity_id"] == _lead()["opportunity_id"]
     assert intelligence["company"]["name"] == "Acme"
     assert intelligence["company"]["known"]["industry"] == "B2B software"
     assert intelligence["need"]["known"]["business_need"] == "Acme needs an engineering team for its new product."
@@ -225,8 +225,8 @@ def test_research_intelligence_preserves_conflicting_claims_without_collapsing_t
     lead = _lead()
     lead["business_need_research"]["evidence"].append(
         {
-            "opportunity_id": "opp-intel-1",
-            "fingerprint": "opp-intel-1",
+            "opportunity_id": lead["opportunity_id"],
+            "fingerprint": lead["fingerprint"],
             "url": "https://acme.example/status",
             "evidence": "Acme says the engineering project is paused.",
             "observed_at": "2026-09-26T00:30:00+00:00",
@@ -303,8 +303,8 @@ def test_research_intelligence_merge_preserves_richer_profiles_and_evidence():
     second_lead["company_research"]["company_size"] = "201-500"
     second_lead["decision_maker_research"]["responsibilities"] = ["engineering", "security"]
     second_lead["business_need_research"]["evidence"].append({
-        "opportunity_id": "opp-intel-1",
-        "fingerprint": "opp-intel-1",
+        "opportunity_id": second_lead["opportunity_id"],
+        "fingerprint": second_lead["fingerprint"],
         "url": "https://acme.example/need-2",
         "evidence": "The new product requires backend capacity.",
         "observed_at": "2026-09-26T01:00:00+00:00",
@@ -312,7 +312,7 @@ def test_research_intelligence_merge_preserves_richer_profiles_and_evidence():
     })
     second = research_package.build_research_intelligence(second_lead)
 
-    merged = research_package.merge_research_intelligence(first, second, opportunity_id="opp-intel-1")
+    merged = research_package.merge_research_intelligence(first, second, opportunity_id=second_lead["opportunity_id"])
 
     assert merged["company"]["known"]["company_size"] == "201-500"
     assert merged["decision_maker"]["known"]["responsibilities"] == ["engineering", "security"]
