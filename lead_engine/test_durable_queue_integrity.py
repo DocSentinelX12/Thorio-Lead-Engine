@@ -4,6 +4,7 @@ import pytest
 
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim, complete, enqueue, pending
 from .database import LeadDB
+from .source_runner import SourceRunner
 
 
 def _db(tmp_path):
@@ -20,7 +21,6 @@ def _lead(fingerprint="queue-integrity-lead"):
 
 def test_batch_write_rolls_back_lead_when_queue_admission_fails(tmp_path, monkeypatch):
     db = _db(tmp_path)
-    original_insert = db.queue_insert_many
 
     def fail_queue_insert(rows):
         raise RuntimeError("queue persistence failed")
@@ -34,7 +34,6 @@ def test_batch_write_rolls_back_lead_when_queue_admission_fails(tmp_path, monkey
 
     assert db.get("queue-integrity-lead") is None
     assert pending(db) == []
-    monkeypatch.setattr(db, "queue_insert_many", original_insert)
 
 
 def test_expired_lease_is_recovered_before_capacity_is_calculated(tmp_path):
@@ -82,3 +81,30 @@ def test_stale_worker_cannot_complete_after_lease_reassignment(tmp_path):
     finished = complete(db, task["task_id"], worker_id="worker-b", result={"status": "ok"})
     assert finished["status"] == COMPLETE
     assert finished["worker_id"] is None
+
+
+def test_source_runner_rolls_back_accepted_lead_when_discovery_queue_fails(tmp_path, monkeypatch):
+    db = _db(tmp_path)
+    fingerprint = "source-runner-atomic-lead"
+    lead = _lead(fingerprint)
+
+    class FakePipeline:
+        def __init__(self, database):
+            self.db = database
+
+        def process(self, **normalized_record):
+            assert self.db.insert_if_new(lead) is True
+            return {"accepted": True, "fingerprint": fingerprint, "lead": lead, "priority": "high"}
+
+    monkeypatch.setattr("lead_engine.source_runner.normalize_lead_input", lambda record: dict(record))
+
+    def fail_queue_insert(rows):
+        raise RuntimeError("discovery queue persistence failed")
+
+    monkeypatch.setattr(db, "queue_insert_many", fail_queue_insert)
+
+    with pytest.raises(RuntimeError, match="discovery queue persistence failed"):
+        SourceRunner(FakePipeline(db)).process([{"fingerprint": fingerprint, "company": lead["company"], "signal": lead["signal"], "source": "x"}])
+
+    assert db.get(fingerprint) is None
+    assert pending(db) == []
