@@ -3,12 +3,20 @@ import pytest
 
 from .research_sync import _research_payload, _research_table_url, sync_research
 from .research_intelligence import build_research_intelligence
+from .lead_identity import canonical_opportunity_identity
 
 
 def _complete_lead(fingerprint: str = "research-test") -> dict:
     lead = {
         "fingerprint": fingerprint,
         "opportunity_id": fingerprint,
+        "source": "test",
+        "source_id": fingerprint,
+        "url": f"https://example.com/opportunities/{fingerprint}",
+        "person": "Taylor",
+        "job_title": "Software Engineer",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
         "company": "Acme",
         "contact_name": "Taylor",
         "contact_email": "taylor@example.com",
@@ -33,13 +41,14 @@ def _complete_lead(fingerprint: str = "research-test") -> dict:
         "evidence_events": [{"source": "https://example.com", "evidence": "Acme is actively hiring engineers.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}],
         "unknown_field": "must survive in raw package",
     }
+    lead.update(canonical_opportunity_identity(lead))
     lead["research_intelligence"] = build_research_intelligence(lead)
     return lead
 
 
 def test_research_payload_preserves_complete_research_and_raw_lead():
     fields = _research_payload(_complete_lead("research-test-1"))
-    assert fields["Research Key"] == "research-test-1"
+    assert fields["Research Key"] == _complete_lead("research-test-1")["fingerprint"]
     assert fields["Company"] == "Acme"
     assert fields["Research Status"] == "complete"
     intelligence = json.loads(fields["Research Intelligence"])
@@ -70,7 +79,8 @@ def test_sync_research_updates_existing_complete_record_without_dropping_fields(
 
 
 def test_sync_research_rejects_incomplete_research_before_airtable(monkeypatch):
-    lead = {"fingerprint": "research-test-3", "opportunity_id": "research-test-3", "company": "Acme", "research_status": "research_required"}
+    lead = {"fingerprint": "research-test-3", "opportunity_id": "research-test-3", "company": "Acme", "source": "test", "source_id": "research-test-3", "url": "https://example.com/opportunities/research-test-3", "person": "Taylor", "job_title": "Software Engineer", "signal_type": "hiring", "discovered_at": "2026-09-26T00:00:00+00:00", "research_status": "research_required"}
+    lead.update(canonical_opportunity_identity(lead))
     monkeypatch.setattr("lead_engine.research_sync.find_master_records", lambda *args: (_ for _ in ()).throw(AssertionError("Airtable lookup must not occur for incomplete research")))
     with pytest.raises(ValueError, match="Research intelligence"):
         sync_research(lead)
