@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Mapping
+import urllib.parse
 
 from .research_package import research_readiness
 from .lead_identity import validate_materialized_opportunity_identity, validate_opportunity_identity
@@ -96,7 +97,136 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
         observed_routes[partner] = dict(record)
     return set(observed_routes) == expected_routes
 
-def verify_airtable_handoff(result: Mapping[str, Any], lead: Mapping[str, Any], expected_digest: str | None = None) -> tuple[bool, str]:
+def _record_id(record: Any) -> str:
+    if not isinstance(record, Mapping):
+        return ""
+    return str(record.get("id") or "").strip()
+
+
+def _read_airtable_record(table_key: str, record_id: str) -> Mapping[str, Any]:
+    """Read one persisted record back from Airtable for production handoff verification."""
+    record_id = str(record_id or "").strip()
+    if not record_id:
+        raise ValueError(f"Airtable readback requires a record ID for {table_key}.")
+    from .airtable_sync import _master_table_url, _request
+    if table_key == "research":
+        from .research_sync import _research_table_url
+        table_url = _research_table_url()
+    else:
+        table_url = _master_table_url(table_key)
+    encoded = urllib.parse.quote(record_id, safe="")
+    record = _request("GET", f"{table_url}/{encoded}")
+    if not isinstance(record, Mapping):
+        raise ValueError(f"Airtable returned an invalid {table_key} record for {record_id}.")
+    return record
+
+
+def reconstruct_airtable_handoff(result: Mapping[str, Any], *, readback: bool = True) -> dict[str, Any]:
+    """Reconstruct the persisted handoff boundary from Airtable record IDs.
+
+    Production verification reads the records back from Airtable rather than trusting
+    the response objects returned by the preceding writes. Unit tests may explicitly
+    disable readback because they do not have an Airtable boundary.
+    """
+    if not isinstance(result, Mapping):
+        raise ValueError("Airtable handoff result must be an object.")
+
+    def resolve(table_key: str, record: Any) -> Mapping[str, Any] | None:
+        if not isinstance(record, Mapping):
+            return None
+        record_id = _record_id(record)
+        if not record_id:
+            raise ValueError(f"Airtable {table_key} result is missing its record ID.")
+        return _read_airtable_record(table_key, record_id) if readback else record
+
+    reconstructed: dict[str, Any] = {
+        "airtable_record": resolve("lead_radar", result.get("airtable_record")),
+        "research_record": resolve("research", result.get("research_record")),
+        "master_tracker": result.get("master_tracker"),
+        "referral_record": resolve("referrals", result.get("referral_record")),
+        "outreach_record": resolve("outreach", result.get("outreach_record")),
+        "followup_record": resolve("followups", result.get("followup_record")),
+    }
+
+    master = result.get("master_tracker")
+    if isinstance(master, Mapping):
+        master_copy = dict(master)
+        company = master_copy.get("company")
+        if isinstance(company, Mapping) and isinstance(company.get("record"), Mapping):
+            master_copy["company"] = dict(company)
+            master_copy["company"]["record"] = resolve("companies", company["record"])
+        opportunities = master_copy.get("opportunities")
+        if isinstance(opportunities, list):
+            rebuilt = []
+            for item in opportunities:
+                if not isinstance(item, Mapping) or not isinstance(item.get("record"), Mapping):
+                    raise ValueError("Master Tracker opportunity result is malformed.")
+                rebuilt_item = dict(item)
+                rebuilt_item["record"] = resolve("opportunities", item["record"])
+                rebuilt.append(rebuilt_item)
+            master_copy["opportunities"] = rebuilt
+        astrivon_referral = master_copy.get("astrivon_referral")
+        if isinstance(astrivon_referral, Mapping) and isinstance(astrivon_referral.get("record"), Mapping):
+            master_copy["astrivon_referral"] = dict(astrivon_referral)
+            master_copy["astrivon_referral"]["record"] = resolve("referrals", astrivon_referral["record"])
+        astrivon_commissions = master_copy.get("astrivon_commissions")
+        if isinstance(astrivon_commissions, list):
+            rebuilt_commissions = []
+            for item in astrivon_commissions:
+                if not isinstance(item, Mapping) or not isinstance(item.get("record"), Mapping):
+                    raise ValueError("Master Tracker commission result is malformed.")
+                rebuilt_item = dict(item)
+                rebuilt_item["record"] = resolve("commissions", item["record"])
+                rebuilt_commissions.append(rebuilt_item)
+            master_copy["astrivon_commissions"] = rebuilt_commissions
+        commission = master_copy.get("commission")
+        if isinstance(commission, Mapping) and isinstance(commission.get("record"), Mapping):
+            master_copy["commission"] = dict(commission)
+            master_copy["commission"]["record"] = resolve("commissions", commission["record"])
+        reconstructed["master_tracker"] = master_copy
+
+    return reconstructed
+
+
+def _verify_optional_lifecycle_record(record: Any, lead: Mapping[str, Any], *, kind: str) -> bool:
+    if record is None:
+        return True
+    if not isinstance(record, Mapping) or not _record_id(record):
+        return False
+    fields = _record_fields(record)
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    company = str(lead.get("company") or "").strip()
+    if str(fields.get("Company") or "").strip() != company:
+        return False
+    if kind == "outreach":
+        expected_prefix = fingerprint + ":"
+        return str(fields.get("Outreach") or "").strip().startswith(expected_prefix) and str(fields.get("Opportunity") or "").strip().startswith(expected_prefix)
+    if kind == "followup":
+        expected_prefix = fingerprint + ":"
+        return str(fields.get("Follow-up") or "").strip().startswith(expected_prefix) and str(fields.get("Opportunity") or "").strip().startswith(expected_prefix)
+    return True
+
+
+def verify_airtable_handoff(result: Mapping[str, Any], lead: Mapping[str, Any], expected_digest: str | None = None, *, readback: bool = True) -> tuple[bool, str]:
+    if not package_is_ready(lead): return False, "research_intelligence_not_ready"
+    try: digest = expected_digest or package_digest(lead)
+    except ValueError: return False, "research_intelligence_not_ready"
+    try:
+        persisted = reconstruct_airtable_handoff(result, readback=readback)
+    except (TypeError, ValueError, KeyError, Exception) as exc:
+        return False, f"airtable_readback_failed:{exc}"
+    if not verify_lead_radar_record(persisted.get("airtable_record"), lead): return False, "lead_radar_record_not_confirmed"
+    if not verify_research_record(persisted.get("research_record"), lead, digest): return False, "research_record_package_mismatch"
+    if not verify_master_tracker(persisted.get("master_tracker"), lead): return False, "master_tracker_not_confirmed"
+    if not _verify_optional_lifecycle_record(persisted.get("outreach_record"), lead, kind="outreach"): return False, "outreach_record_not_confirmed"
+    if not _verify_optional_lifecycle_record(persisted.get("followup_record"), lead, kind="followup"): return False, "followup_record_not_confirmed"
+    referral = persisted.get("referral_record")
+    if referral is not None:
+        if not isinstance(referral, Mapping) or not _record_id(referral): return False, "referral_record_not_confirmed"
+        fields = _record_fields(referral)
+        if str(fields.get("Company") or "").strip() != str(lead.get("company") or "").strip(): return False, "referral_company_mismatch"
+        if str(fields.get("Referral") or "").strip() != str(lead.get("fingerprint") or "").strip(): return False, "referral_fingerprint_mismatch"
+    return True, digest
     if not package_is_ready(lead): return False, "research_intelligence_not_ready"
     try: digest = expected_digest or package_digest(lead)
     except ValueError: return False, "research_intelligence_not_ready"
