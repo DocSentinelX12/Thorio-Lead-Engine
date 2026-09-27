@@ -154,6 +154,34 @@ def test_astrivon_route_switch_requires_verified_service_fit():
     assert evidence is None
 
 
+def test_inbound_follow_up_queue_rolls_back_with_failed_conversation_persistence(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("inbound-atomicity-test")
+    db.insert_if_new(lead)
+    original_update = db.update_payload
+
+    def fail_update(fingerprint, updates):
+        raise RuntimeError("simulated lead persistence failure")
+
+    db.update_payload = fail_update
+    try:
+        with pytest.raises(RuntimeError, match="simulated lead persistence failure"):
+            record_inbound_event(
+                db,
+                opportunity_id=lead["fingerprint"],
+                conversation_id=lead["conversation_id"],
+                event_id="evt-atomicity-failure",
+                text="Yes, I am interested",
+                outcome="interested",
+            )
+        assert pending(db, "follow_up") == []
+        assert db.get(lead["fingerprint"])["response_count"] == 0
+        assert db.get_state("revenue_conversations") is None
+    finally:
+        db.update_payload = original_update
+        db.close()
+
+
 def test_stale_follow_up_cannot_send_after_terminal_revenue_state(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("terminal-followup-race-test")
