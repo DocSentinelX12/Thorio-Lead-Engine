@@ -133,7 +133,7 @@ class Lead:
         self.fingerprint = identity["fingerprint"]
         self.opportunity_id = identity["opportunity_id"]
         self.identity_version = identity["identity_version"]
-        self.identity_derivation = identity["derivation"]
+        self.identity_derivation = identity["identity_derivation"]
         return self.fingerprint
 
     def to_dict(self):
