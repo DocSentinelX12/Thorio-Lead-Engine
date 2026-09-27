@@ -32,6 +32,8 @@ def _ready_lead():
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Acme needs engineering capacity for expansion.", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
         "potential_routes": ["Thorio"], "eligible_routes": ["Thorio"], "preserved_routes": ["Thorio"], "routing_result": {"destinations": ["Thorio"], "review_required": False},
     }
+    from .lead_identity import canonical_opportunity_identity
+    lead.update(canonical_opportunity_identity(lead))
     lead["research_intelligence"] = build_research_intelligence(lead)
     return lead
 
