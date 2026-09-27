@@ -191,7 +191,7 @@ def test_remote_result_next_task_and_completion_roll_back_together(tmp_path, mon
         def status(self, task_id):
             return {
                 "status": "completed",
-                "payload": {"agent": "company_research"},
+                "payload": {"agent": "engineering_demand_discovery"},
                 "result": {
                     "result": {
                         "fingerprint": lead["fingerprint"],
