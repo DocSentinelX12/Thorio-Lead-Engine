@@ -52,7 +52,7 @@ def _records(lead):
 def test_exact_handoff_verification_accepts_matching_records():
     lead = _ready_lead()
     lead_record, research_record, master_tracker = _records(lead)
-    confirmed, value = verify_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, lead)
+    confirmed, value = verify_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, lead, readback=False)
     assert confirmed is True
     assert value == package_digest(lead)
 
