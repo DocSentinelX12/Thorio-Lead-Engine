@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from .airtable_sync import AirtableSyncError, AIRTABLE_API_URL, _request, _text
 from .config import LeadEngineConfig
 from .sales_handoff import package_digest
-from .lead_identity import validate_opportunity_identity
+from .lead_identity import validate_materialized_opportunity_identity
 from .research_intelligence import validate_research_intelligence
 
 _RESEARCH_FIELD_MAP = {
@@ -69,7 +69,7 @@ def _research_payload(lead: Dict[str, Any]) -> Dict[str, Any]:
     company = _text(lead.get("company"))
     if not fingerprint and not _text(lead.get("opportunity_id")):
         raise ValueError("Research synchronization requires a canonical opportunity identity (fingerprint or opportunity_id).")
-    validate_opportunity_identity(dict(lead))
+    validate_materialized_opportunity_identity(dict(lead))
     fingerprint = fingerprint or _text(lead.get("opportunity_id"))
     intelligence = lead.get("research_intelligence")
     if isinstance(intelligence, dict):
