@@ -93,24 +93,19 @@ def test_sync_research_rejects_missing_fingerprint():
 
 def test_research_payload_persists_canonical_opportunity_identity():
     lead = _complete_lead("canonical-identity")
-    lead.update({
-        "source": "linkedin",
-        "source_id": "post-1",
-        "url": "https://linkedin.example/post-1",
-        "person": "Jane CTO",
-        "job_title": "AI Engineer",
-        "signal_type": "hiring",
-        "discovered_at": "2026-09-26T00:00:00+00:00",
-    })
     fields = _research_payload(lead)
     raw = json.loads(fields["Raw Research Package"])
-    assert raw["opportunity_id"] == lead["fingerprint"]
+    assert raw["opportunity_id"] == lead["opportunity_id"]
     assert raw["fingerprint"] == lead["fingerprint"]
+    assert raw["identity_version"] == lead["identity_version"]
+    assert raw["identity_derivation"] == lead["identity_derivation"]
 
 
 def test_research_payload_rejects_mismatched_opportunity_identity():
-    with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
-        _research_payload({"fingerprint": "opp-1", "opportunity_id": "opp-2", "company": "Acme"})
+    lead = _complete_lead("opp-1")
+    lead["opportunity_id"] = "opp-2"
+    with pytest.raises(ValueError, match="opportunity_id does not match canonical opportunity identity"):
+        _research_payload(lead)
 
 
 def test_research_payload_rejects_mismatched_research_intelligence():
