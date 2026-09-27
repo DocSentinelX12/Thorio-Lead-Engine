@@ -150,9 +150,88 @@ def _priority(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) ->
     enqueue(ctx.db, "verification", {"lead": lead, "evidence_events": payload.get("evidence_events", [])}, priority=8, dedupe_key=f"verification:{fingerprint}")
     return {"role": "priority", "priority_score": score, "lead": lead, "research_ready": research_ready, "decision_maker_ready": decision_maker_ready, "actionability": "ready" if research_ready and decision_maker_ready else "research_required", "inputs_used": ["evidence", "qualification", "freshness", "research", "decision_maker"], "handoff": "verification"}
 
+def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
+    research = lead.get("company_research")
+    if not isinstance(research, Mapping):
+        raise AgentContractError("outreach_closer follow-up requires company research")
+    contact_name = str(research.get("decision_maker") or lead.get("contact_name") or "").strip()
+    contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or lead.get("contact_email") or "").strip()
+    if not contact_name or not contact_email:
+        raise AgentContractError("outreach_closer follow-up requires verified contact details")
+    route = str(lead.get("outreach_route") or "").strip()
+    if not route:
+        raise AgentContractError("outreach_closer follow-up requires an active revenue route")
+    objection = str(payload.get("objection") or "").strip()
+    signal = str(lead.get("current_need") or lead.get("business_need") or lead.get("signal") or lead.get("evidence") or "the need you described").strip()
+    if objection:
+        body = objection_response(objection, route)
+        subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
+    else:
+        body = f"Hi {contact_name},\\n\\nJust following up on my earlier note about {signal.rstrip('.!?')}. If this is still a priority, I can send the most relevant {route} option.\\n\\nBest,\\nThorio"
+        subject = str(lead.get("outreach_draft_subject") or f"Re: {signal[:72]}")
+    conversation_id = str(lead.get("conversation_id") or f"conversation:{lead['fingerprint']}:{route}")
+    attempt = int(lead.get("outreach_attempt", 0) or 0) + 1
+    cadence = build_outreach_decision({**lead, "outreach_state": "ready", "outreach_attempt": attempt})
+    transport = ctx.revenue_transport if ctx.revenue_transport is not None else configured_revenue_transport()
+    action = execute_outbound(
+        ctx.db,
+        worker_capability=ctx.revenue_capability,
+        opportunity_id=str(lead["fingerprint"]),
+        conversation_id=conversation_id,
+        channel=str(lead.get("outreach_channel") or "email"),
+        recipient={"name": contact_name, "email": contact_email},
+        subject=subject,
+        body=body,
+        transport=transport,
+        idempotency_key=f"followup:{lead['fingerprint']}:{conversation_id}:{attempt}",
+    )
+    history = list(lead.get("outreach_history") or []) if isinstance(lead.get("outreach_history") or [], list) else []
+    history.append({
+        "action_id": action.action_id,
+        "conversation_id": conversation_id,
+        "route": route,
+        "channel": action.channel,
+        "status": action.status,
+        "kind": "follow_up",
+        "provider_result": dict(action.provider_result or {}),
+    })
+    next_follow_up = cadence.next_follow_up_at
+    stored = _persist_lead(ctx.db, {
+        **lead,
+        "conversation_id": conversation_id,
+        "revenue_lifecycle_state": "conversation_active",
+        "outreach_state": "awaiting_response",
+        "outreach_attempt": attempt,
+        "follow_up_due": bool(next_follow_up),
+        "outreach_draft_subject": subject,
+        "outreach_draft_body": body,
+        "outreach_history": history,
+        "last_outreach_action_id": action.action_id,
+        "last_outreach_delivery": dict(action.provider_result or {}),
+        "next_follow_up_at": next_follow_up,
+    })
+    return {
+        "role": "outreach_closer",
+        "lead": stored,
+        "autonomous": True,
+        "approval_required": False,
+        "action": "send_follow_up",
+        "route": route,
+        "next_follow_up_at": next_follow_up,
+        "delivery": dict(action.provider_result or {}),
+        "action_id": action.action_id,
+        "conversation_id": conversation_id,
+        "objection_response": objection_reply(objection, route) if objection else None,
+    }
+
+
 def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload); fingerprint = str(lead.get("fingerprint") or "").strip()
     if not fingerprint: raise AgentContractError("outreach_closer requires lead fingerprint")
+    if str(payload.get("execution_kind") or "").strip().lower() == "follow_up":
+        current = ctx.db.get(fingerprint)
+        if current is None: raise AgentContractError(f"outreach_closer lead not found: {fingerprint}")
+        return _send_follow_up_as_closer(dict(current), payload, ctx)
     current = ctx.db.get(fingerprint)
     if isinstance(current, Mapping):
         current = dict(current)
@@ -199,7 +278,20 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         result = {"role": "follow_up", "lead": dict(lead), "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
         if objection: result["objection_response"] = objection_response(objection, str(lead.get("outreach_route") or "the selected service"))
         return result
-    research = updated.get("company_research")
+    if not execute:
+        result = {"role": "follow_up", "lead": dict(lead), "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
+        if objection: result["objection_response"] = objection_response(objection, str(lead.get("outreach_route") or "the selected service"))
+        return result
+    stored = _persist_lead(ctx.db, updated)
+    event_id = str(payload.get("inbound_event_id") or f"followup:{fingerprint}:{int(lead.get('outreach_attempt', 0) or 0) + 1}")
+    task = enqueue(
+        ctx.db,
+        "outreach_closer",
+        {"lead": stored, "execution_kind": "follow_up", "outcome": outcome, "objection": objection, "inbound_event_id": event_id},
+        priority=10,
+        dedupe_key=f"revenue_followup:{fingerprint}:{event_id}",
+    )
+    return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "handoff_to_closer", "outcome_recorded": True, "closer_task_id": task.get("task_id")}    research = updated.get("company_research")
     if not isinstance(research, Mapping): raise AgentContractError("follow_up requires company research")
     contact_name = str(research.get("decision_maker") or updated.get("contact_name") or "").strip(); contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or updated.get("contact_email") or "").strip()
     if not contact_name or not contact_email: raise AgentContractError("follow_up requires verified contact details")
