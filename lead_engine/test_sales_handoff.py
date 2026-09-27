@@ -62,7 +62,7 @@ def test_exact_handoff_verification_rejects_stale_research_package():
     lead_record, research_record, master_tracker = _records(lead)
     changed = dict(lead)
     changed["business_need"] = "different current need"
-    confirmed, reason = verify_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, changed)
+    confirmed, reason = verify_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, changed, readback=False)
     assert confirmed is False
     assert reason == "research_record_package_mismatch"
 
@@ -96,6 +96,7 @@ def test_master_tracker_verification_requires_exact_route_bound_opportunities():
     assert verify_airtable_handoff(
         {"airtable_record": _records(lead)[0], "research_record": _records(lead)[1], "master_tracker": result},
         lead,
+        readback=False,
     )[0] is True
 
 
