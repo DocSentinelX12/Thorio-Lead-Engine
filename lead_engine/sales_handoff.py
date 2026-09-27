@@ -74,6 +74,15 @@ def verify_research_record(record: Mapping[str, Any], lead: Mapping[str, Any], e
     try: stored = json.loads(raw)
     except (TypeError, ValueError): return False
     if not isinstance(stored, Mapping) or str(stored.get("__thorio_package_digest") or "").strip() != expected_digest: return False
+    persisted_digest = str(fields.get("Package Digest") or "").strip()
+    if persisted_digest and persisted_digest != expected_digest: return False
+    raw_intelligence = stored.get("research_intelligence")
+    persisted_intelligence = fields.get("Research Intelligence")
+    if raw_intelligence is not None:
+        if not isinstance(persisted_intelligence, str) or not persisted_intelligence.strip(): return False
+        try:
+            if json.loads(persisted_intelligence) != raw_intelligence: return False
+        except (TypeError, ValueError): return False
     try: _require_materialized_intelligence(stored)
     except ValueError: return False
     return package_digest(stored) == expected_digest
@@ -95,7 +104,20 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
         fields = _record_fields(record); partner = str(fields.get("Partner") or "").strip(); opportunity = str(fields.get("Opportunity") or "").strip(); company = str(fields.get("Company") or "").strip(); expected_key = f"{lead.get('fingerprint', '').strip()}:{partner}" if partner else ""
         if partner not in {"Paxus", "Shiftr"} or partner in observed_routes or partner not in expected_routes or opportunity != expected_key or company != str(lead.get("company") or "").strip(): return False
         observed_routes[partner] = dict(record)
-    return set(observed_routes) == expected_routes
+    if set(observed_routes) != expected_routes: return False
+    astrivon_expected = "Astrivon Labs" in {str(route).strip() for route in (lead.get("potential_routes") or [])}
+    astrivon_result = result.get("astrivon_referral")
+    if astrivon_expected:
+        if not isinstance(astrivon_result, Mapping) or not isinstance(astrivon_result.get("record"), Mapping): return False
+        record = astrivon_result["record"]
+        fields = _record_fields(record)
+        if not _record_id(record): return False
+        if str(fields.get("Partner") or "").strip() != "Astrivon Labs": return False
+        if str(fields.get("Company") or "").strip() != str(lead.get("company") or "").strip(): return False
+        if str(fields.get("Opportunity") or "").strip() != f"{lead.get('fingerprint', '').strip()}:Astrivon Labs": return False
+    elif astrivon_result is not None:
+        return False
+    return True
 
 def _record_id(record: Any) -> str:
     if not isinstance(record, Mapping):
