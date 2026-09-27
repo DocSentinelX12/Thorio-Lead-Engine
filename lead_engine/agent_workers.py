@@ -65,21 +65,32 @@ def _make_discovery_handler(agent: str) -> Callable[..., Dict[str, Any]]:
 def _qualification_a(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
     if str(lead.get("research_status") or "").strip().lower() != "complete": raise AgentContractError("qualification_a requires completed company research")
-    evaluated = _persist_lead(ctx.db, apply_company_qualification(lead)); fingerprint = str(evaluated.get("fingerprint")); evidence_events = payload.get("evidence_events", []); paxus = (evaluated.get("qualification_results") or {}).get("Paxus", {}); handoffs = ["qualification_b"]
-    if paxus.get("qualified") and not paxus.get("true_referral"): enqueue(ctx.db, "paxus_research", {"lead": evaluated, "paxus_qualification": paxus}, priority=10, dedupe_key=f"paxus_research:{fingerprint}"); handoffs.append("paxus_research")
-    enqueue(ctx.db, "qualification_b", {"lead": evaluated, "prior_result": {"agent": "qualification_a", "qualified_companies": evaluated.get("potential_routes", [])}, "evidence_events": evidence_events, "research_result": {"status": "complete", "verified_fields": evaluated.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_b:{fingerprint}")
+    evaluated = apply_company_qualification(lead)
+    fingerprint = str(evaluated.get("fingerprint"))
+    evidence_events = payload.get("evidence_events", [])
+    paxus = (evaluated.get("qualification_results") or {}).get("Paxus", {})
+    handoffs = ["qualification_b"]
+    with ctx.db.batch_writes():
+        evaluated = _persist_lead(ctx.db, evaluated)
+        if paxus.get("qualified") and not paxus.get("true_referral"):
+            enqueue(ctx.db, "paxus_research", {"lead": evaluated, "paxus_qualification": paxus}, priority=10, dedupe_key=f"paxus_research:{fingerprint}")
+            handoffs.append("paxus_research")
+        enqueue(ctx.db, "qualification_b", {"lead": evaluated, "prior_result": {"agent": "qualification_a", "qualified_companies": evaluated.get("potential_routes", [])}, "evidence_events": evidence_events, "research_result": {"status": "complete", "verified_fields": evaluated.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_b:{fingerprint}")
     return {"role": "qualification_a", "lead": evaluated, "qualification_results": evaluated.get("qualification_results", {}), "qualified_companies": evaluated.get("potential_routes", []), "independent_review": "primary", "handoffs": handoffs}
 
 def _qualification_b(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload)
     if str(lead.get("research_status") or "").strip().lower() != "complete": raise AgentContractError("qualification_b requires completed company research")
-    evaluated = _persist_lead(ctx.db, apply_company_qualification(lead)); fingerprint = str(evaluated.get("fingerprint"))
-    if evaluated.get("qualified") is True and not str(evaluated.get("sales_eligibility") or "").strip():
-        evaluated["sales_eligibility"] = "blocked"
-        evaluated["sales_eligibility_reason"] = "research_verification_pending"
-        evaluated["revenue_lifecycle_state"] = "qualified"
+    evaluated = apply_company_qualification(lead)
+    fingerprint = str(evaluated.get("fingerprint"))
+    with ctx.db.batch_writes():
         evaluated = _persist_lead(ctx.db, evaluated)
-    enqueue(ctx.db, "priority", {"lead": evaluated, "evidence_events": payload.get("evidence_events", [])}, priority=5, dedupe_key=f"priority:{fingerprint}")
+        if evaluated.get("qualified") is True and not str(evaluated.get("sales_eligibility") or "").strip():
+            evaluated["sales_eligibility"] = "blocked"
+            evaluated["sales_eligibility_reason"] = "research_verification_pending"
+            evaluated["revenue_lifecycle_state"] = "qualified"
+            evaluated = _persist_lead(ctx.db, evaluated)
+        enqueue(ctx.db, "priority", {"lead": evaluated, "evidence_events": payload.get("evidence_events", [])}, priority=5, dedupe_key=f"priority:{fingerprint}")
     return {"role": "qualification_b", "lead": evaluated, "qualification_results": evaluated.get("qualification_results", {}), "qualified_companies": evaluated.get("potential_routes", []), "independent_review": "validation", "challenged_prior_result": payload.get("prior_result") is not None}
 
 def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
@@ -104,11 +115,18 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
         if isinstance(current_section, Mapping): canonical[section_name] = merge_canonical_section(canonical[section_name], current_section, opportunity_id=str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip(), research_section=section_name)
     merged = dict(lead); merged["company_research"] = merged_research; merged["evidence_events"] = merged_events; merged.update(canonical); merged["research_intelligence"] = build_research_intelligence(merged); merged, readiness = finalize_research_readiness(merged); merged["research_intelligence"] = build_research_intelligence(merged)
     merged["evidence_events"] = validate_provenance_collection(merged.get("evidence_events", []), opportunity_id=opportunity_id, research_section="evidence_events")
-    stored = _persist_lead(ctx.db, merged)
-    research = stored.get("company_research") if isinstance(stored.get("company_research"), Mapping) else {}; specialist = stored.get("specialist_findings") if isinstance(stored.get("specialist_findings"), Mapping) else {}; dm_findings = specialist.get("social_decision_maker_research"); has_dm_candidate = bool(str(research.get("decision_maker") or research.get("observed_decision_maker") or "").strip())
-    if isinstance(dm_findings, Mapping) and isinstance(dm_findings.get("findings"), list) and dm_findings.get("findings"): has_dm_candidate = True
-    if research.get("company_verified") is True and has_dm_candidate: enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
-    if readiness["ready"]: enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
+    research = merged.get("company_research") if isinstance(merged.get("company_research"), Mapping) else {}
+    specialist = merged.get("specialist_findings") if isinstance(merged.get("specialist_findings"), Mapping) else {}
+    dm_findings = specialist.get("social_decision_maker_research")
+    has_dm_candidate = bool(str(research.get("decision_maker") or research.get("observed_decision_maker") or "").strip())
+    if isinstance(dm_findings, Mapping) and isinstance(dm_findings.get("findings"), list) and dm_findings.get("findings"):
+        has_dm_candidate = True
+    with ctx.db.batch_writes():
+        stored = _persist_lead(ctx.db, merged)
+        if research.get("company_verified") is True and has_dm_candidate:
+            enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
+        if readiness["ready"]:
+            enqueue(ctx.db, "qualification_a", {"lead": stored, "evidence_events": payload.get("evidence_events", []), "research_result": {"status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", [])}}, priority=9, dedupe_key=f"qualification_a:{fingerprint}")
     return {"role": "company_research", "lead": stored, "research": merged_research, "research_status": stored.get("research_status"), "verified_fields": stored.get("research_verified_fields", []), "canonical_sections": list(RESEARCH_SECTIONS), "decision_maker_verified": str(merged_research.get("decision_maker_verification_status") or "").lower() == "verified", "fabricated_fields": list(merged_research.get("fabricated_fields") or []), "handoff": "qualification_a" if readiness["ready"] else "research_required"}
 
 def _paxus_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
