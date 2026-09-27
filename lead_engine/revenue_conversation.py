@@ -142,7 +142,24 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
             raise ValueError("converted outcome requires commercial evidence")
     else:
         commercial_evidence_value = str(commercial_evidence or "").strip()
+
+    terminal_lifecycle_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
+    current_lifecycle_state = str(lead.get("revenue_lifecycle_state") or "").strip().lower()
     event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified}
+    if current_lifecycle_state in terminal_lifecycle_states:
+        event["ignored_after_terminal_state"] = current_lifecycle_state
+        if objection:
+            event["objection"] = str(objection)
+        conversation["events"].append(event)
+        conversation["processed_event_ids"].append(event_id)
+        conversation["last_inbound_at"] = event["at"]
+        conversation["response_count"] = int(conversation.get("response_count", 0) or 0) + 1
+        conversation["outreach_route"] = lead.get("outreach_route")
+        conversation["next_action"] = "stop"
+        conversation["updated_at"] = _now()
+        with db.batch_writes():
+            _save(db, state)
+        return dict(conversation)
     if objection: event["objection"] = str(objection)
     conversation["events"].append(event); conversation["processed_event_ids"].append(event_id); conversation["last_inbound_at"] = event["at"]; conversation["response_count"] = int(conversation.get("response_count", 0) or 0) + 1
     switched_route, switch_evidence, switch_evidence_text = _route_switch(lead, suggested_route, text)
