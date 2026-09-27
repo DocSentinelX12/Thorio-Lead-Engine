@@ -183,7 +183,7 @@ def test_package_projection_rejects_mismatched_canonical_identity():
     lead = _ready_lead()
     lead["opportunity_id"] = "different-opportunity"
 
-    with pytest.raises(ValueError, match="opportunity_id.*fingerprint"):
+    with pytest.raises(ValueError, match="opportunity_id does not match canonical opportunity identity"):
         package_projection(lead)
 
 
@@ -191,7 +191,8 @@ def test_package_projection_requires_materialized_canonical_identity():
     import pytest
 
     lead = _ready_lead()
-    lead["opportunity_id"] = lead["fingerprint"]
+    for field in ("opportunity_id", "fingerprint", "identity_version", "identity_derivation"):
+        lead.pop(field, None)
     with pytest.raises(ValueError, match="Canonical opportunity identity is incomplete"):
         package_projection(lead)
 
