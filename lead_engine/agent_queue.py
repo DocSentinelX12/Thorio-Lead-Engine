@@ -91,17 +91,44 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
         if own_transaction:
             db.conn.execute("BEGIN IMMEDIATE")
         try:
-            now = _iso(_now()); created: List[Dict[str, Any]] = []; rows = []
+            now = _iso(_now())
+            created: List[Dict[str, Any]] = []
+            rows = []
             for specification in tasks:
-            agent = specification.get("agent"); payload = specification.get("payload"); priority = specification.get("priority", 0); dedupe_key = specification.get("dedupe_key")
-            duplicate_row = db.queue_find_duplicate(agent, dedupe_key) if dedupe_key else None
-            if duplicate_row is not None:
-                duplicate_task = _row_to_task(duplicate_row)
-                if not (agent == "verification" and not _same_verification_stage(duplicate_task, {"agent": agent, "payload": payload})):
-                    created.append(duplicate_task); continue
-            task = {"task_id": uuid4().hex, "agent": agent, "queue": registry[agent].queue, "status": QUEUED, "priority": int(priority), "payload": dict(payload), "dedupe_key": dedupe_key, "created_at": now, "updated_at": now, "attempts": 0, "lease_until": None, "worker_id": None, "last_error": None, "result": None}
-            rows.append((task["task_id"], task["agent"], task["queue"], task["status"], task["priority"], json.dumps(task["payload"], ensure_ascii=False), task["dedupe_key"], task["created_at"], task["updated_at"], task["attempts"], task["lease_until"], task["worker_id"], task["last_error"], None))
-            created.append(task)
+                agent = specification.get("agent")
+                payload = specification.get("payload")
+                priority = specification.get("priority", 0)
+                dedupe_key = specification.get("dedupe_key")
+                duplicate_row = db.queue_find_duplicate(agent, dedupe_key) if dedupe_key else None
+                if duplicate_row is not None:
+                    duplicate_task = _row_to_task(duplicate_row)
+                    if not (agent == "verification" and not _same_verification_stage(duplicate_task, {"agent": agent, "payload": payload})):
+                        created.append(duplicate_task)
+                        continue
+                task = {
+                    "task_id": uuid4().hex,
+                    "agent": agent,
+                    "queue": registry[agent].queue,
+                    "status": QUEUED,
+                    "priority": int(priority),
+                    "payload": dict(payload),
+                    "dedupe_key": dedupe_key,
+                    "created_at": now,
+                    "updated_at": now,
+                    "attempts": 0,
+                    "lease_until": None,
+                    "worker_id": None,
+                    "last_error": None,
+                    "result": None,
+                }
+                rows.append((
+                    task["task_id"], task["agent"], task["queue"], task["status"],
+                    task["priority"], json.dumps(task["payload"], ensure_ascii=False),
+                    task["dedupe_key"], task["created_at"], task["updated_at"],
+                    task["attempts"], task["lease_until"], task["worker_id"],
+                    task["last_error"], None,
+                ))
+                created.append(task)
             if rows:
                 db.queue_insert_many(rows)
             if own_transaction:
