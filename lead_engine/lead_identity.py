@@ -62,6 +62,32 @@ def canonical_opportunity_identity(lead: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def validate_materialized_opportunity_identity(payload: Dict[str, Any]) -> str:
+    """Require and validate the complete canonical identity contract used by handoff."""
+    if not isinstance(payload, dict):
+        raise ValueError("Opportunity identity validation requires an object.")
+
+    required_fields = ("opportunity_id", "fingerprint", "identity_version", "identity_derivation")
+    missing = [field for field in required_fields if field not in payload or payload.get(field) in (None, "")]
+    if missing:
+        raise ValueError(f"Canonical opportunity identity is incomplete; missing {', '.join(missing)}.")
+    if normalize_identity_value(payload.get("identity_version")) != CANONICAL_IDENTITY_VERSION:
+        raise ValueError("Unsupported canonical opportunity identity version.")
+    derivation = payload.get("identity_derivation")
+    if not isinstance(derivation, dict) or not derivation:
+        raise ValueError("Canonical opportunity identity requires identity_derivation.")
+
+    canonical = canonical_opportunity_identity(payload)
+    if normalize_identity_value(payload.get("opportunity_id")) != canonical["opportunity_id"]:
+        raise ValueError("opportunity_id does not match canonical opportunity identity.")
+    if normalize_identity_value(payload.get("fingerprint")) != canonical["fingerprint"]:
+        raise ValueError("fingerprint does not match canonical opportunity identity.")
+    if derivation != canonical["derivation"]:
+        raise ValueError("identity_derivation does not match canonical opportunity identity.")
+    validate_opportunity_identity(payload)
+    return canonical["opportunity_id"]
+
+
 def validate_opportunity_identity(payload: Dict[str, Any]) -> str:
     """Validate that stored identity fields are internally consistent."""
     if not isinstance(payload, dict):
