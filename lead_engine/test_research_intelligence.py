@@ -6,11 +6,11 @@ import pytest
 
 from lead_engine import research_package
 from lead_engine.sales_handoff import package_digest, package_projection
+from lead_engine.lead_identity import canonical_opportunity_identity
 
 
 def _lead() -> dict:
-    return {
-        "opportunity_id": "opp-intel-1",
+    lead = {
         "fingerprint": "opp-intel-1",
         "identity_version": "1",
         "identity_derivation": {},
@@ -142,6 +142,19 @@ def _lead() -> dict:
         "research_gaps": {"unknowns": ["budget"]},
         "evidence_events": [],
     }
+    identity = canonical_opportunity_identity(lead)
+    lead.update(identity)
+
+    def replace_identity(value):
+        if isinstance(value, dict):
+            return {key: replace_identity(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [replace_identity(item) for item in value]
+        if value == "opp-intel-1":
+            return identity["opportunity_id"]
+        return value
+
+    return replace_identity(lead)
 
 
 
@@ -281,7 +294,7 @@ def test_research_intelligence_validates_its_canonical_identity():
     intelligence["opportunity_id"] = "wrong"
 
     with pytest.raises(ValueError, match="opportunity"):
-        research_package.validate_research_intelligence(intelligence, opportunity_id="opp-intel-1")
+        research_package.validate_research_intelligence(intelligence, opportunity_id=_lead()["opportunity_id"])
 
 
 def test_research_intelligence_merge_preserves_richer_profiles_and_evidence():
