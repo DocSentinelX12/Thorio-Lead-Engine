@@ -54,7 +54,15 @@ class LeadDB:
         )""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
-        self.conn.execute("""CREATE TABLE IF NOT EXISTS airtable_handoffs (\n            fingerprint TEXT PRIMARY KEY,\n            package_digest TEXT NOT NULL,\n            lead_radar_record_id TEXT NOT NULL,\n            research_record_id TEXT NOT NULL,\n            master_tracker_record_ids TEXT NOT NULL,\n            confirmed_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n        )""")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS airtable_handoffs (
+            fingerprint TEXT PRIMARY KEY,
+            package_digest TEXT NOT NULL,
+            lead_radar_record_id TEXT NOT NULL,
+            research_record_id TEXT NOT NULL,
+            master_tracker_record_ids TEXT NOT NULL,
+            confirmed_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_airtable_handoffs_digest ON airtable_handoffs(package_digest)")
         self.conn.commit()
         self._migrate_agent_queue_state()
@@ -92,7 +100,12 @@ class LeadDB:
         self._batch_write_depth += 1
         try:
             yield self
-        finally:
+        except Exception:
+            self._batch_write_depth -= 1
+            if self._batch_write_depth == 0:
+                self.conn.rollback()
+            raise
+        else:
             self._batch_write_depth -= 1
             if self._batch_write_depth == 0:
                 self.conn.commit()
@@ -252,7 +265,8 @@ class LeadDB:
         if not all(values[:4]) or not values[5]:
             raise ValueError("Airtable handoff confirmation requires fingerprint, package digest, record IDs, and confirmation time.")
         self.conn.execute("INSERT INTO airtable_handoffs (fingerprint, package_digest, lead_radar_record_id, research_record_id, master_tracker_record_ids, confirmed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(fingerprint) DO UPDATE SET package_digest = excluded.package_digest, lead_radar_record_id = excluded.lead_radar_record_id, research_record_id = excluded.research_record_id, master_tracker_record_ids = excluded.master_tracker_record_ids, confirmed_at = excluded.confirmed_at, updated_at = CURRENT_TIMESTAMP", values)
-        self.conn.commit()
+        if self._batch_write_depth == 0:
+            self.conn.commit()
         return self.get_airtable_handoff(fingerprint) or {}
 
     def get_airtable_handoff(self, fingerprint: str) -> Optional[Dict[str, Any]]:
@@ -313,7 +327,8 @@ class LeadDB:
         if not isinstance(value, dict):
             raise ValueError("State value must be an object.")
         self.conn.execute("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", (key, json.dumps(value, ensure_ascii=False)))
-        self.conn.commit()
+        if self._batch_write_depth == 0:
+            self.conn.commit()
 
     def claim_revenue_action(self, idempotency_key: str, action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Atomically claim one outbound revenue action identity.
@@ -386,7 +401,8 @@ class LeadDB:
 
     def queue_insert_many(self, rows):
         self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-        self.conn.commit()
+        if self._batch_write_depth == 0:
+            self.conn.commit()
 
     def queue_find_duplicate(self, agent, dedupe_key):
         if not dedupe_key:
@@ -398,7 +414,8 @@ class LeadDB:
 
     def queue_recover_stale(self, now_iso):
         cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
-        self.conn.commit()
+        if self._batch_write_depth == 0:
+            self.conn.commit()
         return cursor.rowcount > 0
 
     def queue_claim(self, agent, worker_id, limit, capacity, lease_until, now_iso):
@@ -408,6 +425,7 @@ class LeadDB:
         role_capacity = int(role.max_concurrency) if role is not None else int(capacity)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
             running = int(self.conn.execute("SELECT COUNT(*) FROM agent_queue WHERE agent = ? AND status = 'running'", (agent,)).fetchone()[0])
             available = min(int(limit), int(capacity), max(0, role_capacity - running))
             if available <= 0:
@@ -426,17 +444,27 @@ class LeadDB:
             self.conn.rollback()
             raise
 
-    def queue_update(self, task_id, **updates):
+    def queue_update(self, task_id, *, expected_status=None, expected_worker_id=None, **updates):
         allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result"}
         unknown = set(updates) - allowed
         if unknown:
             raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
         if not updates:
-            return
+            return 0
+        conditions = ["task_id = ?"]
+        values = list(updates.values())
+        values.append(task_id)
+        if expected_status is not None:
+            conditions.append("status = ?")
+            values.append(expected_status)
+        if expected_worker_id is not None:
+            conditions.append("worker_id = ?")
+            values.append(expected_worker_id)
         assignments = ", ".join(f"{field} = ?" for field in updates)
-        values = list(updates.values()) + [task_id]
-        self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE task_id = ?", values)
-        self.conn.commit()
+        cursor = self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE {' AND '.join(conditions)}", values)
+        if self._batch_write_depth == 0:
+            self.conn.commit()
+        return cursor.rowcount
 
     def queue_all_rows(self):
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
