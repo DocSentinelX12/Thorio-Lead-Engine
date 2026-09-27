@@ -323,3 +323,57 @@ def test_concurrent_enqueue_with_same_dedupe_key_creates_one_active_task(tmp_pat
     active = pending(_db(tmp_path), "paxus_research")
     assert len(active) == 1
     assert len({task["task_id"] for task in results}) == 1
+
+
+def test_worker_crash_before_persistence_recovers_claimed_task(tmp_path):
+    db = _db(tmp_path)
+    lead = _lead("crash-before-persist")
+    assert db.insert_if_new(lead) is True
+    task = enqueue(db, "paxus_research", {"lead": lead})
+    claimed = claim(db, "paxus_research", worker_id="crash-worker-a", limit=1, lease_seconds=300)
+    assert claimed[0]["task_id"] == task["task_id"]
+    db.close()
+
+    reopened = LeadDB(data_dir=tmp_path)
+    try:
+        expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        assert reopened.queue_update(
+            task["task_id"],
+            expected_status=RUNNING,
+            expected_worker_id="crash-worker-a",
+            lease_until=expired,
+        ) == 1
+        recovered = claim(reopened, "paxus_research", worker_id="crash-worker-b", limit=1, lease_seconds=300)
+        assert recovered[0]["task_id"] == task["task_id"]
+        assert reopened.get(lead["fingerprint"]) == lead
+        assert recovered[0]["attempts"] == 2
+    finally:
+        reopened.close()
+
+
+def test_worker_crash_after_persistence_recovers_without_losing_persisted_result(tmp_path):
+    db = _db(tmp_path)
+    lead = _lead("crash-after-persist")
+    assert db.insert_if_new(lead) is True
+    task = enqueue(db, "paxus_research", {"lead": lead})
+    claimed = claim(db, "paxus_research", worker_id="crash-worker-a", limit=1, lease_seconds=300)
+    assert claimed[0]["task_id"] == task["task_id"]
+    persisted = {"specialist_findings": {"paxus_research": {"verified": True}}}
+    assert db.update_payload(lead["fingerprint"], persisted) is not None
+    db.close()
+
+    reopened = LeadDB(data_dir=tmp_path)
+    try:
+        expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        assert reopened.queue_update(
+            task["task_id"],
+            expected_status=RUNNING,
+            expected_worker_id="crash-worker-a",
+            lease_until=expired,
+        ) == 1
+        recovered = claim(reopened, "paxus_research", worker_id="crash-worker-b", limit=1, lease_seconds=300)
+        assert recovered[0]["task_id"] == task["task_id"]
+        assert reopened.get(lead["fingerprint"])["specialist_findings"] == persisted["specialist_findings"]
+        assert recovered[0]["attempts"] == 2
+    finally:
+        reopened.close()
