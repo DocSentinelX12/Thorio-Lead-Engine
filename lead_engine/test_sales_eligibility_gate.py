@@ -2,12 +2,19 @@ from lead_engine.active_processing import _sales_eligibility
 from lead_engine.database import LeadDB
 from lead_engine.research_intelligence import build_research_intelligence
 from lead_engine.sales_handoff import package_digest
+from lead_engine.lead_identity import canonical_opportunity_identity
 
 
 def _lead(qualified=True):
     lead = {
         "fingerprint": "sales-gate-test",
         "opportunity_id": "sales-gate-test",
+        "source": "test",
+        "source_id": "sales-gate-test",
+        "url": "https://example.com/opportunities/sales-gate-test",
+        "job_title": "Software Engineer",
+        "signal_type": "hiring",
+        "discovered_at": "2026-09-26T00:00:00+00:00",
         "company": "Acme",
         "person": "Alex CTO",
         "contact_email": "alex@example.com",
@@ -27,6 +34,7 @@ def _lead(qualified=True):
         "route_research": {"verified": True, "verification_status": "verified", "routes": {"thorio": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/route", "evidence": "Current remote software engineering need", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]}}},
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Current engineering need", "observed_at": "2026-09-26T00:00:00+00:00", "verification_status": "verified"}]},
     }
+    lead.update(canonical_opportunity_identity(lead))
     lead["research_intelligence"] = build_research_intelligence(lead)
     return lead
 
