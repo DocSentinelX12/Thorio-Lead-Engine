@@ -31,9 +31,9 @@ def test_inbound_response_is_durable_and_idempotent(tmp_path):
 def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead("objection-test"); db.insert_if_new(lead); transport = FakeTransport(); register_revenue_transport(transport)
     try:
-        record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-2", text="What does this cost?", outcome="objection", objection="What does this cost?"); result = run_worker_once(db, "follow_up", worker_id="followup-worker")
-        assert result["completed_count"] == 1 and result["failed_count"] == 0 and len(transport.calls) == 1
-        stored = db.get(lead["fingerprint"]); assert stored["revenue_lifecycle_state"] == "conversation_active" and stored["outreach_state"] == "awaiting_response" and stored["follow_up_due"] is True and stored["next_follow_up_at"] and len(stored["outreach_history"]) == 3
+        record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-2", text="What does this cost?", outcome="objection", objection="What does this cost?"); follow_up_result = run_worker_once(db, "follow_up", worker_id="followup-worker"); closer_result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
+        assert follow_up_result["completed_count"] == 1 and follow_up_result["failed_count"] == 0 and closer_result["completed_count"] == 1 and closer_result["failed_count"] == 0 and len(transport.calls) == 1
+        stored = db.get(lead["fingerprint"]); assert stored["revenue_lifecycle_state"] == "conversation_active" and stored["outreach_state"] == "awaiting_response" and stored["follow_up_due"] is True and stored["next_follow_up_at"] and len(stored["outreach_history"]) == 2
     finally: register_revenue_transport(None)
 
 def test_opt_out_is_terminal_and_never_sends(tmp_path):
