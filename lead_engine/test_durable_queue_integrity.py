@@ -214,3 +214,84 @@ def test_remote_result_next_task_and_completion_roll_back_together(tmp_path, mon
     assert len(rows) == 1
     assert rows[0]["status"] == RUNNING
     assert rows[0]["worker_id"] == "remote-compute:worker-1"
+
+
+def test_completed_work_cannot_be_claimed_or_completed_again(tmp_path):
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"id": "terminal"})
+    claimed = claim(db, "paxus_research", worker_id="worker-terminal", limit=1, lease_seconds=300)
+    assert claimed[0]["task_id"] == task["task_id"]
+    complete(db, task["task_id"], worker_id="worker-terminal", result={"ok": True})
+
+    with pytest.raises(ValueError, match="Task is not queued"):
+        claim(db, "paxus_research", worker_id="worker-terminal", limit=1, lease_seconds=300)
+    with pytest.raises(ValueError, match="Task is not leased to this worker"):
+        complete(db, task["task_id"], worker_id="worker-terminal", result={"ok": False})
+
+    row = db.queue_get(task["task_id"])
+    assert row is not None
+    assert row[3] == COMPLETE
+    assert pending(db, "paxus_research") == []
+
+
+def test_failed_work_remains_inspectable_and_is_not_silently_dropped(tmp_path):
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"id": "failed"})
+    claimed = claim(db, "paxus_research", worker_id="worker-failed", limit=1, lease_seconds=300)
+    fail_result = __import__("lead_engine.agent_queue", fromlist=["fail"]).fail(
+        db,
+        task["task_id"],
+        worker_id="worker-failed",
+        error="provider failure",
+    )
+    assert fail_result["status"] == "failed"
+    assert pending(db, "paxus_research") == []
+
+    row = db.queue_get(task["task_id"])
+    assert row is not None
+    assert row[3] == "failed"
+    assert row[12] == "provider failure"
+
+
+def test_retry_preserves_task_identity_and_records_attempts(tmp_path):
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"id": "retry"})
+    first = claim(db, "paxus_research", worker_id="worker-retry", limit=1, lease_seconds=300)[0]
+    assert first["attempts"] == 1
+    from .agent_queue import retry
+    retried = retry(db, task["task_id"], worker_id="worker-retry", error="temporary provider failure")
+    assert retried["task_id"] == task["task_id"]
+    assert retried["status"] == QUEUED
+    assert retried["last_error"] == "temporary provider failure"
+
+    second = claim(db, "paxus_research", worker_id="worker-retry-2", limit=1, lease_seconds=300)[0]
+    assert second["task_id"] == task["task_id"]
+    assert second["attempts"] == 2
+    assert second["worker_id"] == "worker-retry-2"
+
+
+def test_queued_work_survives_database_restart(tmp_path):
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"id": "restart"})
+    db.close()
+
+    reopened = LeadDB(data_dir=tmp_path)
+    try:
+        queued = pending(reopened, "paxus_research")
+        assert len(queued) == 1
+        assert queued[0]["task_id"] == task["task_id"]
+        assert queued[0]["status"] == QUEUED
+    finally:
+        reopened.close()
+
+
+def test_batch_limit_does_not_discard_durable_backlog(tmp_path):
+    db = _db(tmp_path)
+    tasks = [
+        {"agent": "paxus_research", "payload": {"id": str(index)}, "priority": index}
+        for index in range(200)
+    ]
+    from .agent_queue import enqueue_many
+    created = enqueue_many(db, tasks)
+    assert len(created) == 200
+    assert len(pending(db, "paxus_research")) == 200
