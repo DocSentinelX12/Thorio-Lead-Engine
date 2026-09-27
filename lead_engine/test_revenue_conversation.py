@@ -213,6 +213,24 @@ def test_inbound_event_after_terminal_state_is_audited_but_cannot_reopen_or_queu
     assert result["next_action"] == "stop"
 
 
+def test_due_followups_rejects_terminal_revenue_state_even_if_stale_due_fields_exist(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from .revenue_conversation import due_followups
+
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("terminal-due-followup-race-test")
+    lead.update({
+        "revenue_lifecycle_state": "converted",
+        "outreach_state": "awaiting_response",
+        "follow_up_due": True,
+        "next_follow_up_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    })
+    db.insert_if_new(lead)
+
+    assert due_followups(db, now=datetime.now(timezone.utc), limit=100) == []
+    db.close()
+
+
 def test_stale_follow_up_cannot_send_after_terminal_revenue_state(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("terminal-followup-race-test")
