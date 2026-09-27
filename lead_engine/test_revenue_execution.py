@@ -45,14 +45,14 @@ def test_general_capability_cannot_send_outbound(tmp_path):
 def test_privileged_closer_sends_once_and_persists_delivery(tmp_path):
     db = LeadDB(data_dir=tmp_path); transport = FakeTransport(); register_revenue_transport(transport)
     try:
-        result = execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1"); replay = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1")
+        result = execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1"); replay = execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="opportunity-1", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key="outreach:opportunity-1:conversation-1:1")
         assert result.status == "sent" and replay.action_id == result.action_id and len(transport.calls) == 1 and db.get_state("revenue_execution")["actions"]["outreach:opportunity-1:conversation-1:1"]["status"] == "sent"
     finally: register_revenue_transport(None)
 
 def test_provider_acceptance_is_reconciled_without_duplicate_send(tmp_path):
     db = LeadDB(data_dir=tmp_path); transport = CrashAfterAcceptanceTransport(); key = "outreach:crash-safe:conversation-1:1"
-    with pytest.raises(RuntimeError): execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key)
-    result = execute_outbound(db, worker_capability="high_ticket_sales_closer", opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key); assert result.status == "sent" and len(transport.calls) == 1 and db.get_state("revenue_execution")["actions"][key]["status"] == "sent"
+    with pytest.raises(RuntimeError): execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key)
+    result = execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key); assert result.status == "sent" and len(transport.calls) == 1 and db.get_state("revenue_execution")["actions"][key]["status"] == "sent"
 
 def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
     db = LeadDB(data_dir=tmp_path); lead = _lead("production-closer-test"); db.insert_if_new(lead); _confirm_handoff(db, lead); transport = FakeTransport(); register_revenue_transport(transport)
@@ -115,7 +115,7 @@ def test_existing_inflight_idempotency_claim_blocks_duplicate_send(tmp_path):
         with pytest.raises(RevenueActionInProgress):
             execute_outbound(
                 db,
-                worker_capability="high_ticket_sales_closer",
+                worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"),
                 opportunity_id="concurrent",
                 conversation_id="conversation-1",
                 channel="email",
@@ -149,7 +149,7 @@ def test_uncertain_send_without_provider_reconciliation_never_resends(tmp_path):
     with pytest.raises(RuntimeError):
         execute_outbound(
             db,
-            worker_capability="high_ticket_sales_closer",
+            worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"),
             opportunity_id="uncertain",
             conversation_id="conversation-1",
             channel="email",
@@ -163,7 +163,7 @@ def test_uncertain_send_without_provider_reconciliation_never_resends(tmp_path):
     with pytest.raises(RevenueActionInProgress):
         execute_outbound(
             db,
-            worker_capability="high_ticket_sales_closer",
+            worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"),
             opportunity_id="uncertain",
             conversation_id="conversation-1",
             channel="email",
