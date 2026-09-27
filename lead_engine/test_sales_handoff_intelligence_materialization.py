@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from .sales_handoff import package_is_ready, package_projection
 from .research_intelligence import build_research_intelligence
+from .lead_identity import canonical_opportunity_identity
 import pytest
 
 
@@ -10,6 +11,12 @@ def _complete_lead() -> dict:
     return {
         "fingerprint": "handoff-materialization-test",
         "opportunity_id": "handoff-materialization-test",
+        "source": "test",
+        "source_id": "handoff-materialization-test",
+        "url": "https://example.com/opportunities/handoff-materialization-test",
+        "job_title": "Software Engineer",
+        "signal_type": "hiring",
+        "discovered_at": now,
         "company": "Acme",
         "person": "Taylor",
         "contact_email": "taylor@example.com",
@@ -29,6 +36,8 @@ def _complete_lead() -> dict:
         "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/route", "evidence": "Current remote engineering need", "observed_at": now}]}}},
         "closer_package": {"ready": True, "verification_status": "verified", "evidence": [{"url": "https://example.com/need", "evidence": "Current hiring need", "observed_at": now}]},
     }
+    lead.update(canonical_opportunity_identity(lead))
+    return lead
 
 
 def test_complete_canonical_research_requires_materialized_intelligence_at_handoff_boundary():
