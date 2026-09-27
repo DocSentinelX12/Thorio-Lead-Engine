@@ -96,23 +96,12 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     payload_findings = payload.get("specialist_findings") if isinstance(payload.get("specialist_findings"), Mapping) else {}
     if payload_findings: specialist_findings = {**dict(specialist_findings), **dict(payload_findings)}
     opportunity_id = str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip()
-    incoming_events = validate_provenance_collection(
-        payload.get("evidence_events", []),
+    merged_events = validate_provenance_collection(
+        list(lead.get("evidence_events", []))
+        + list(payload.get("evidence_events", [])),
         opportunity_id=opportunity_id,
         research_section="evidence_events",
     )
-    existing_events = validate_provenance_collection(
-        lead.get("evidence_events", []),
-        opportunity_id=opportunity_id,
-        research_section="evidence_events",
-    )
-    merged_events = []
-    seen_event_keys = set()
-    for event in existing_events + incoming_events:
-        key = str(event.get("canonical_evidence_key") or "").strip()
-        if key and key not in seen_event_keys:
-            seen_event_keys.add(key)
-            merged_events.append(event)
     canonical = build_canonical_research_package(lead, merged_research, specialist_findings)
     for section_name in RESEARCH_SECTIONS:
         current_section = lead.get(section_name)
