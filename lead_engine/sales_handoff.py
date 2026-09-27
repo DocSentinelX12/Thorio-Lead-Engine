@@ -34,7 +34,7 @@ def _require_materialized_intelligence(lead: Mapping[str, Any]) -> Mapping[str, 
 
 def package_projection(lead: Mapping[str, Any]) -> dict[str, Any]:
     candidate = dict(lead)
-    if candidate.get("fingerprint") or candidate.get("opportunity_id"): validate_opportunity_identity(candidate)
+    validate_materialized_opportunity_identity(candidate)
     _require_materialized_intelligence(candidate)
     return {key: _canonical(candidate.get(key)) for key in PACKAGE_KEYS if key in candidate}
 
