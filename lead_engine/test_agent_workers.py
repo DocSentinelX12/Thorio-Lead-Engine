@@ -125,3 +125,33 @@ def test_unknown_worker_role_is_rejected(tmp_path):
 
 def test_invalid_discovery_evidence_isolated_to_worker(tmp_path):
     db = _db(tmp_path); enqueue(db, "reddit_signal", {"record": {"source": "reddit"}}); result = run_worker_once(db, "reddit_signal", worker_id="reddit-worker"); assert result["failed_count"] == 1 and result["completed_count"] == 0
+
+
+def test_company_research_preserves_verified_upgrade_for_existing_evidence(tmp_path):
+    db = _db(tmp_path)
+    fingerprint = "provenance-upgrade"
+    observed = {
+        "opportunity_id": fingerprint,
+        "fingerprint": fingerprint,
+        "source": "linkedin",
+        "source_id": "post-1",
+        "url": "https://example.com/post-1",
+        "evidence": "Acme is hiring an AI engineer",
+        "observed_at": "2026-09-26T00:00:00+00:00",
+        "verification_status": "observed_evidence",
+    }
+    verified = {**observed, "verification_status": "verified", "verified": True}
+    lead = {
+        "fingerprint": fingerprint,
+        "opportunity_id": fingerprint,
+        "company": "Acme",
+        "evidence_events": [observed],
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "company_research", {"lead": lead, "evidence_events": [verified]}, priority=7)
+    result = run_worker_once(db, "company_research", worker_id="provenance-upgrade-worker")
+    assert result["completed_count"] == 1, result
+    stored = db.get(fingerprint)
+    assert len(stored["evidence_events"]) == 1
+    assert stored["evidence_events"][0]["verification_status"] == "verified"
+    assert stored["evidence_events"][0]["verified"] is True
