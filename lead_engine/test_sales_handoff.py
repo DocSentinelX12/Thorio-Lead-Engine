@@ -49,6 +49,24 @@ def _records(lead):
     )
 
 
+def test_reconstruct_airtable_handoff_reads_back_record_ids(monkeypatch):
+    from .sales_handoff import reconstruct_airtable_handoff
+    lead = _ready_lead()
+    lead_record, research_record, master_tracker = _records(lead)
+    calls = []
+    def fake_read(table_key, record_id):
+        calls.append((table_key, record_id))
+        return {"id": record_id, "fields": {"Company": lead["company"]}}
+    monkeypatch.setattr("lead_engine.sales_handoff._read_airtable_record", fake_read)
+    result = reconstruct_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, readback=True)
+    assert result["airtable_record"]["id"] == "recLead"
+    assert result["research_record"]["id"] == "recResearch"
+    assert result["master_tracker"]["company"]["record"]["id"] == "recCompany"
+    assert ("lead_radar", "recLead") in calls
+    assert ("research", "recResearch") in calls
+    assert ("companies", "recCompany") in calls
+
+
 def test_exact_handoff_verification_accepts_matching_records():
     lead = _ready_lead()
     lead_record, research_record, master_tracker = _records(lead)
