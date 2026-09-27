@@ -175,10 +175,34 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         updated["next_follow_up_at"] = None
         updated["follow_up_due"] = False
     elif classified in {"interested", "replied", "objection"}:
-        updated["next_follow_up_at"] = _now(); updated["follow_up_due"] = True; updated["outreach_state"] = "awaiting_response"
-        enqueue(db, "follow_up", {"lead": updated, "outcome": classified, "objection": objection or (text if classified == "objection" else ""), "conversation_id": conversation_id, "inbound_event_id": event_id, "execute": True}, priority=10, dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}")
-    stored = db.update_payload(opportunity_id, updated) or updated
-    conversation["outreach_route"] = stored.get("outreach_route"); conversation["next_action"] = "stop" if classified in STOP_STATES or classified == "opted_out" else "closer_follow_up"; conversation["updated_at"] = _now(); _save(db, state)
+        updated["next_follow_up_at"] = _now()
+        updated["follow_up_due"] = True
+        updated["outreach_state"] = "awaiting_response"
+
+    # The lead transition, conversation state, and any resulting follow-up task are
+    # one durable state transition. A queue admission must never survive a failed
+    # lead or conversation persistence operation.
+    with db.batch_writes():
+        stored = db.update_payload(opportunity_id, updated) or updated
+        if classified in {"interested", "replied", "objection"}:
+            enqueue(
+                db,
+                "follow_up",
+                {
+                    "lead": stored,
+                    "outcome": classified,
+                    "objection": objection or (text if classified == "objection" else ""),
+                    "conversation_id": conversation_id,
+                    "inbound_event_id": event_id,
+                    "execute": True,
+                },
+                priority=10,
+                dedupe_key=f"conversation_followup:{opportunity_id}:{event_id}",
+            )
+        conversation["outreach_route"] = stored.get("outreach_route")
+        conversation["next_action"] = "stop" if classified in STOP_STATES or classified == "opted_out" else "closer_follow_up"
+        conversation["updated_at"] = _now()
+        _save(db, state)
     return dict(conversation)
 
 def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> list[Dict[str, Any]]:
