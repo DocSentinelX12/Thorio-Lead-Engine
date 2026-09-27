@@ -84,3 +84,21 @@ def test_terminal_revenue_lifecycle_state_cannot_change_to_another_terminal_stat
         assert db.get(fingerprint)["revenue_lifecycle_state"] == terminal_state
         assert db.get(fingerprint)["outreach_state"] == terminal_state
     db.close()
+
+
+def test_unknown_revenue_lifecycle_state_is_rejected(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    fingerprint = "unknown-lifecycle-state"
+    db.insert_if_new({
+        "fingerprint": fingerprint,
+        "company": "Acme",
+        "qualified": True,
+        "revenue_lifecycle_state": "qualified",
+    })
+    try:
+        import pytest
+        with pytest.raises(ValueError, match="Unknown revenue lifecycle state"):
+            db.update_payload(fingerprint, {"revenue_lifecycle_state": "invented_state"})
+        assert db.get(fingerprint)["revenue_lifecycle_state"] == "qualified"
+    finally:
+        db.close()
