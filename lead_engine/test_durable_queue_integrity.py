@@ -75,7 +75,7 @@ def test_stale_worker_cannot_complete_after_lease_reassignment(tmp_path):
     reassigned = claim(db, "paxus_research", worker_id="worker-b", limit=1, lease_seconds=300)
     assert reassigned[0]["worker_id"] == "worker-b"
 
-    with pytest.raises(ValueError, match="lease ownership changed"):
+    with pytest.raises(ValueError, match="Task is not leased to this worker"):
         complete(db, task["task_id"], worker_id="worker-a", result={"status": "stale"})
 
     finished = complete(db, task["task_id"], worker_id="worker-b", result={"status": "ok"})
