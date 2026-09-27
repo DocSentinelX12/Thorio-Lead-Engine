@@ -9,8 +9,10 @@ def _safe_state(
 ) -> Dict[str, Any]:
     try:
         value = db.get_state(key)
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise RuntimeError(
+            f"Unable to read database state for key '{key}'."
+        ) from exc
 
     if isinstance(value, dict):
         return value
@@ -34,14 +36,10 @@ def _pending_details(
             WHERE synced = 0
             """
         ).fetchone()
-    except Exception:
-        return {
-            "pending_count": 0,
-            "total_attempts": 0,
-            "max_attempts": 0,
-            "oldest_pending_created_at": None,
-            "oldest_pending_updated_at": None,
-        }
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to read pending lead details from the database."
+        ) from exc
 
     return {
         "pending_count": int(rows[0] or 0),
@@ -67,12 +65,10 @@ def _failed_sync_details(
               AND attempts > 0
             """
         ).fetchone()
-    except Exception:
-        return {
-            "failed_sync_leads": 0,
-            "failed_sync_attempts": 0,
-            "last_sync_failure": None,
-        }
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to read failed synchronization details from the database."
+        ) from exc
 
     return {
         "failed_sync_leads": int(row[0] or 0),
@@ -221,13 +217,10 @@ def get_engine_status(
     )
 
     return {
-        # Existing public status contract.
         "total_leads": total,
         "synced_leads": synced,
         "pending_leads": pending,
         "healthy": healthy,
-
-        # Pending queue observability.
         "pending_count": pending_details[
             "pending_count"
         ],
@@ -247,8 +240,6 @@ def get_engine_status(
                 "oldest_pending_updated_at"
             ]
         ),
-
-        # Airtable synchronization failures.
         "failed_sync_leads": failed_details[
             "failed_sync_leads"
         ],
@@ -259,11 +250,7 @@ def get_engine_status(
             sync_details["last_sync_failure"]
             or failed_details["last_sync_failure"]
         ),
-
-        # Source observability.
         **source_details,
-
-        # Sync observability.
         **sync_details,
     }
 
@@ -282,12 +269,9 @@ def get_sync_status(
     sync_details = _sync_observability(db)
 
     return {
-        # Existing contract.
         "total": total,
         "synced": synced,
         "pending": pending,
-
-        # Operational information.
         "failed_leads": failed_details[
             "failed_sync_leads"
         ],
