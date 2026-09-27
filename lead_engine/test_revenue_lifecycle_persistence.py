@@ -80,5 +80,7 @@ def test_terminal_revenue_lifecycle_state_cannot_change_to_another_terminal_stat
             "outreach_state": attempted_state,
         })
         assert updated["revenue_lifecycle_state"] == terminal_state
+        assert updated["outreach_state"] == terminal_state
         assert db.get(fingerprint)["revenue_lifecycle_state"] == terminal_state
+        assert db.get(fingerprint)["outreach_state"] == terminal_state
     db.close()
