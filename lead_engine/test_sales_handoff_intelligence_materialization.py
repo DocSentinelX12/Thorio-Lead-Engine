@@ -43,7 +43,7 @@ def _complete_lead() -> dict:
 def test_complete_canonical_research_requires_materialized_intelligence_at_handoff_boundary():
     lead = _complete_lead()
     assert "research_intelligence" not in lead
-    with pytest.raises(ValueError, match="Research intelligence requires an opportunity_id"):
+    with pytest.raises(ValueError, match="Research intelligence requires an opportunity_id and complete researched intelligence"):
         package_projection(lead)
 
     lead["research_intelligence"] = build_research_intelligence(lead)
