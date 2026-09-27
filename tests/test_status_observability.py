@@ -49,6 +49,6 @@ def test_failed_sync_details_does_not_convert_database_failure_to_zero_counts():
 def test_engine_status_surfaces_database_read_failure():
     with pytest.raises(
         RuntimeError,
-        match="Unable to read database state for key 'source_observability'",
+        match="Unable to read pending lead details from the database",
     ):
         get_engine_status(BrokenStateDB())
