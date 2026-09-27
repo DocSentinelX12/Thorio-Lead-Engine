@@ -203,6 +203,7 @@ def airtable_integrity(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict
             enqueue(ctx.db, "outreach_closer", {"lead": stored, "routing_result": dict(routing_result), "integrity_result": dict(result)}, priority=10, dedupe_key=f"sales:{fingerprint}")
             enqueue(ctx.db, "audit", {"lead": stored, "integrity_result": result, "routing_result": routing_result}, priority=4, dedupe_key=f"audit:{fingerprint}")
         result.update({"sales_eligibility": "eligible", "sales_eligibility_reason": eligibility_reason, "handoff": "outreach_closer"})
+        return result
     else:
         updated = dict(current_lead)
         with ctx.db.batch_writes():
