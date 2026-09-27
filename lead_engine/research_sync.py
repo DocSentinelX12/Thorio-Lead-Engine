@@ -102,6 +102,7 @@ def _research_payload(lead: Dict[str, Any]) -> Dict[str, Any]:
     if raw_package is None:
         raise ValueError("Research synchronization requires a serializable lead payload.")
     fields["Raw Research Package"] = raw_package
+    fields["Package Digest"] = raw_payload["__thorio_package_digest"]
     return fields
 
 
