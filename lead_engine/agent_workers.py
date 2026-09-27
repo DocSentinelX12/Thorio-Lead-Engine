@@ -144,6 +144,21 @@ def _priority(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) ->
     return {"role": "priority", "priority_score": score, "lead": lead, "research_ready": research_ready, "decision_maker_ready": decision_maker_ready, "actionability": "ready" if research_ready and decision_maker_ready else "research_required", "inputs_used": ["evidence", "qualification", "freshness", "research", "decision_maker"], "handoff": "verification"}
 
 def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
+    terminal_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
+    lifecycle_state = str(lead.get("revenue_lifecycle_state") or "").strip().lower()
+    if lifecycle_state in terminal_states:
+        return {
+            "role": "outreach_closer",
+            "lead": dict(lead),
+            "autonomous": True,
+            "approval_required": False,
+            "action": "stop",
+            "outcome_recorded": False,
+            "stop_reason": lifecycle_state,
+            "delivery": {},
+            "action_id": lead.get("last_outreach_action_id"),
+            "conversation_id": lead.get("conversation_id"),
+        }
     research = lead.get("company_research")
     if not isinstance(research, Mapping): raise AgentContractError("outreach_closer follow-up requires company research")
     contact_name = str(research.get("decision_maker") or lead.get("contact_name") or "").strip(); contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or lead.get("contact_email") or "").strip()
