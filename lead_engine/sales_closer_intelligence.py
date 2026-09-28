@@ -552,6 +552,48 @@ def _apply_confirmed_concern_state(lead: Mapping[str, Any], concern: Mapping[str
             return {"status": "confirmed", "confirmed_by": ref or f"conversation_event:{index}"}
     return {"status": "unconfirmed", "confirmed_by": ""}
 
+def _confirmed_concern_next_action(concern: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate only a buyer-confirmed concern into a targeted, evidence-safe next move."""
+    if _text(concern.get("status")).lower() != "confirmed":
+        return {"applied": False, "next_best_action": "", "next_best_question": "", "reason": "The concern is not buyer-confirmed, so it remains a validation hypothesis."}
+    actions = {
+        "economic_risk": (
+            "clarify_economic_criteria",
+            "Which economic outcome or constraint should we evaluate first so we can determine whether the investment makes sense?",
+            "The buyer-confirmed economic concern is addressed through explicit evaluation criteria, without assuming ROI or affordability.",
+        ),
+        "capability_or_displacement_risk": (
+            "de_risk_augmentation_fit",
+            "What would need to be true for an additional capability to fit alongside the current team without creating the disruption you want to avoid?",
+            "The buyer-confirmed displacement or disruption concern is addressed by defining a non-disruptive fit condition.",
+        ),
+        "timing_or_resource_constraint": (
+            "map_timing_constraint",
+            "Which timing or resource constraint would need to change before this could become actionable?",
+            "The buyer-confirmed constraint is mapped without manufacturing urgency.",
+        ),
+        "internal_decision_risk": (
+            "map_internal_decision_risk",
+            "What internal approval or alignment point is creating the remaining decision risk?",
+            "The buyer-confirmed internal decision concern is mapped to its actual approval or alignment requirement.",
+        ),
+        "proof_or_delivery_risk": (
+            "provide_verified_proof_or_offer_discovery",
+            "What specific evidence about delivery would you need to verify before evaluating the fit?",
+            "The buyer-confirmed proof concern is handled with verified evidence rather than unsupported reassurance.",
+        ),
+        "fit_or_understanding_risk": (
+            "clarify_fit_requirements",
+            "What specific requirement would you need clarified to determine whether the approach fits?",
+            "The buyer-confirmed fit concern is handled by identifying the concrete evaluation requirement.",
+        ),
+    }
+    action = actions.get(_text(concern.get("concern_type")))
+    if not action:
+        return {"applied": False, "next_best_action": "", "next_best_question": "", "reason": "The confirmed concern type has no defined safe action."}
+    return {"applied": True, "next_best_action": action[0], "next_best_question": action[1], "reason": action[2]}
+
+
 def _research_reentry_intelligence(strategy_inputs: Mapping[str, Any], state: str, next_best_action: str) -> dict[str, Any]:
     """Identify when research should be revisited instead of filling evidence gaps with persuasion."""
     unknowns = [str(item).strip() for item in strategy_inputs.get("unknowns", []) if str(item).strip()] if isinstance(strategy_inputs.get("unknowns"), (list, tuple)) else []
@@ -669,6 +711,17 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     concern_confirmation = _apply_confirmed_concern_state(lead, underlying_concern)
     if concern_confirmation["status"] == "confirmed":
         underlying_concern = {**underlying_concern, "status": "confirmed", "confirmation_evidence_ref": concern_confirmation["confirmed_by"]}
+    confirmed_concern_action = _confirmed_concern_next_action(underlying_concern)
+    if confirmed_concern_action["applied"]:
+        conversation_intelligence = {
+            **conversation_intelligence,
+            "next_best_action": confirmed_concern_action["next_best_action"],
+            "next_best_question": confirmed_concern_action["next_best_question"],
+            "advance_condition": confirmed_concern_action["reason"],
+            "action_basis": "buyer_confirmed_underlying_concern",
+        }
+    else:
+        conversation_intelligence = {**conversation_intelligence, "action_basis": "observed_conversation_context"}
     state_transition = _conversation_state_transition(lead, state, buying_signal_intelligence, conversation_memory)
 
     objectives = {
@@ -729,6 +782,7 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "conversation_memory": conversation_memory,
         "buying_signal_intelligence": buying_signal_intelligence,
         "underlying_concern": underlying_concern,
+        "confirmed_concern_action": confirmed_concern_action,
         "state_transition": state_transition,
         "research_reentry": research_reentry,
         "persuasion_quality": persuasion_quality,
