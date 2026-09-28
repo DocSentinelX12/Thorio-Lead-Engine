@@ -424,6 +424,105 @@ def _conversation_intelligence(lead: Mapping[str, Any], state: str, objection_ca
         "advance_condition": "The need is confirmed as active and the desired outcome is understood.",
     }
 
+
+def _conversation_memory(lead: Mapping[str, Any]) -> dict[str, Any]:
+    """Aggregate conversation facts across events, with the latest observation winning."""
+    events = lead.get("conversation_events")
+    events = events if isinstance(events, list) else []
+    fields = ("priority", "timing", "decision_process", "budget", "authority", "desired_outcome", "success_metric")
+    memory: dict[str, Any] = {field: {"value": "", "event_index": None, "evidence_ref": ""} for field in fields}
+    observed_events = []
+    for index, event in enumerate(events):
+        if not isinstance(event, Mapping):
+            continue
+        event_ref = _text(event.get("evidence_ref") or event.get("source_id") or event.get("source_url") or event.get("event_id"))
+        observed = {}
+        for field in fields:
+            value = _text(event.get(field))
+            if value:
+                memory[field] = {"value": value, "event_index": index, "evidence_ref": event_ref}
+                observed[field] = value
+        if observed or _text(event.get("text")):
+            observed_events.append({"event_index": index, "outcome": _text(event.get("outcome")).lower(), "observed_fields": observed, "evidence_ref": event_ref})
+    known = {field: item for field, item in memory.items() if item["value"]}
+    return {"event_count": len(events), "known_context": known, "observed_events": observed_events, "latest_event_index": len(events) - 1 if events else None}
+
+
+def _buying_signal_intelligence(lead: Mapping[str, Any], state: str) -> dict[str, Any]:
+    """Classify observed buying intent without treating generic positive language as commitment."""
+    events = lead.get("conversation_events")
+    latest = events[-1] if isinstance(events, list) and events and isinstance(events[-1], Mapping) else {}
+    text = _text(latest.get("text")).lower()
+    explicit = any(token in text for token in ("send the agreement", "send contract", "start the contract", "ready to sign", "let's move forward", "lets move forward", "book the kickoff", "start next week"))
+    evaluation = any(token in text for token in ("compare", "evaluate", "review", "proposal", "quote", "pricing", "procurement", "who needs to approve"))
+    interested = any(token in text for token in ("interested", "tell me more", "sounds good", "let's talk", "lets talk", "schedule", "book"))
+    objection = _objection_category(text) if text else ""
+    if explicit:
+        category, confidence = "explicit_commitment", "high"
+    elif evaluation:
+        category, confidence = "active_evaluation", "high"
+    elif objection and objection != "unspecified":
+        category, confidence = "objection", "high"
+    elif interested or state == "interested":
+        category, confidence = "interest", "medium"
+    elif text:
+        category, confidence = "engagement", "low"
+    else:
+        category, confidence = "no_signal", "none"
+    return {
+        "category": category,
+        "confidence": confidence,
+        "evidence_text": _text(latest.get("text")),
+        "evidence_ref": _text(latest.get("evidence_ref") or latest.get("source_id") or latest.get("source_url") or latest.get("event_id")),
+        "do_not_overstate": category not in {"explicit_commitment", "active_evaluation"},
+    }
+
+
+def _conversation_state_transition(lead: Mapping[str, Any], state: str, buying_signal: Mapping[str, Any], memory: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe an evidence-based transition without silently mutating lifecycle state."""
+    category = _text(buying_signal.get("category"))
+    if state in {"converted", "referred", "closed_lost", "disqualified", "stopped"}:
+        return {"from_state": state, "candidate_state": state, "transition": "terminal", "required_evidence": [], "reason": "Terminal state requires no further persuasion."}
+    if category == "explicit_commitment":
+        return {"from_state": state, "candidate_state": "decision", "transition": "advance", "required_evidence": ["explicit commitment or concrete commercial action"], "reason": "The buyer has expressed a concrete commitment signal."}
+    if category == "active_evaluation":
+        return {"from_state": state, "candidate_state": "evaluation", "transition": "advance", "required_evidence": ["documented evaluation activity"], "reason": "The buyer is actively evaluating fit, economics, process, or approval."}
+    if category == "interest":
+        return {"from_state": state, "candidate_state": "interested", "transition": "advance", "required_evidence": ["explicit interest or request for a next conversation"], "reason": "Interest is present but does not establish purchase intent."}
+    if state in {"replied", "interested"} and memory.get("known_context"):
+        return {"from_state": state, "candidate_state": "discovery", "transition": "hold_and_discover", "required_evidence": ["desired outcome", "material business consequence"], "reason": "Conversation context exists, but the evidence required for a stronger commercial state is incomplete."}
+    return {"from_state": state, "candidate_state": "discovery", "transition": "hold_and_discover", "required_evidence": ["active need", "desired outcome"], "reason": "The conversation needs evidence before a stronger state can be justified."}
+
+
+def _research_reentry_intelligence(strategy_inputs: Mapping[str, Any], state: str, next_best_action: str) -> dict[str, Any]:
+    """Identify when research should be revisited instead of filling evidence gaps with persuasion."""
+    unknowns = [str(item).strip() for item in strategy_inputs.get("unknowns", []) if str(item).strip()] if isinstance(strategy_inputs.get("unknowns"), (list, tuple)) else []
+    required = []
+    if next_best_action in {"clarify_business_impact", "establish_value_and_fit_before_price", "diagnose_capacity_gap"}:
+        required.append("verified business impact or buyer-stated consequence")
+    if next_best_action == "map_decision_process":
+        required.append("verified decision participants or buyer-stated process")
+    if next_best_action == "provide_verified_proof_or_offer_discovery":
+        required.append("verified evidence matching the buyer's proof requirement")
+    reentry = bool(required and unknowns)
+    return {"recommended": reentry, "required_evidence": required, "reason": "Re-enter research before making a factual claim if the required evidence cannot be obtained from the conversation." if reentry else "Current evidence is sufficient for the defined next discovery action.", "unknowns": unknowns}
+
+
+def _persuasion_quality(strategy: Mapping[str, Any], conversation_intelligence: Mapping[str, Any], buying_signal: Mapping[str, Any], research_reentry: Mapping[str, Any]) -> dict[str, Any]:
+    """Evaluate strategy quality before a message is drafted, without optimizing for pressure."""
+    violations: list[str] = []
+    action = _text(strategy.get("next_best_action"))
+    question = _text(conversation_intelligence.get("next_best_question"))
+    if not action:
+        violations.append("missing_next_best_action")
+    if action != "stop_outreach" and not question:
+        violations.append("missing_discovery_question")
+    if research_reentry.get("recommended") and action in {"claim_value", "claim_urgency", "claim_outcome"}:
+        violations.append("evidence_insufficient_for_persuasion_claim")
+    if buying_signal.get("do_not_overstate") and _text(strategy.get("psychological_objective")) in {"close", "force_decision"}:
+        violations.append("psychological_objective_exceeds_signal")
+    return {"passed": not violations, "violations": violations, "next_best_action_supported": bool(action), "question_supported": bool(question) or action == "stop_outreach", "pressure_free": not any(item in violations for item in ("psychological_objective_exceeds_signal",))}
+
 def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -> dict[str, Any]:
     verified_facts: list[str] = []
     evidence_refs: list[str] = []
@@ -501,6 +600,9 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     state = _conversation_state(lead)
     objection_category = _objection_category(objection) if objection else ""
     conversation_intelligence = _conversation_intelligence(lead, state, objection_category)
+    conversation_memory = _conversation_memory(lead)
+    buying_signal_intelligence = _buying_signal_intelligence(lead, state)
+    state_transition = _conversation_state_transition(lead, state, buying_signal_intelligence, conversation_memory)
 
     objectives = {
         "new": ("diagnose", "ask_one_high_value_question"),
@@ -536,6 +638,14 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         next_best_action = "answer_and_advance"
         psychological_objective = "increase_clarity"
 
+    research_reentry = _research_reentry_intelligence({"unknowns": unknowns}, state, conversation_intelligence["next_best_action"])
+    persuasion_quality = _persuasion_quality(
+        {"next_best_action": conversation_intelligence["next_best_action"], "psychological_objective": psychological_objective},
+        conversation_intelligence,
+        buying_signal_intelligence,
+        research_reentry,
+    )
+
     return {
         "conversation_state": state,
         "objection_category": objection_category,
@@ -549,6 +659,11 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "psychological_objective": psychological_objective,
         "next_best_action": conversation_intelligence["next_best_action"],
         "conversation_intelligence": conversation_intelligence,
+        "conversation_memory": conversation_memory,
+        "buying_signal_intelligence": buying_signal_intelligence,
+        "state_transition": state_transition,
+        "research_reentry": research_reentry,
+        "persuasion_quality": persuasion_quality,
         "commercial_psychology_profile": commercial_psychology_profile,
         "ethical_constraints": [
             "Never convert inference into fact.",
