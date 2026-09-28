@@ -3,13 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
+from .sales_closer_intelligence import build_commercial_strategy, build_objection_response
 STOP_STATES = frozenset({"declined", "opted_out", "irrelevant", "exhausted", "converted"})
 ACTIVE_STATES = frozenset({"ready", "drafted", "sent", "replied", "interested", "objection"})
 CADENCE_DAYS = (0, 3, 7, 14)
 ROUTES = frozenset({"Thorio", "Shiftr", "Paxus", "Astrivon Labs"})
 @dataclass(frozen=True)
 class OutreachDecision:
-    route: str; contact_name: str; contact_email: str; subject: str; body: str; evidence_refs: tuple[str, ...]; buying_signal: str; next_state: str; next_follow_up_at: Optional[str]; stop_reason: Optional[str]
+    route: str; contact_name: str; contact_email: str; subject: str; body: str; evidence_refs: tuple[str, ...]; buying_signal: str; next_state: str; next_follow_up_at: Optional[str]; stop_reason: Optional[str]; commercial_strategy: Mapping[str, Any]
 class OutreachContractError(ValueError): pass
 def _text(value: Any) -> str: return str(value or "").strip()
 def _research(lead: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -24,16 +25,14 @@ def _verified_research_mapping(lead: Mapping[str, Any], key: str) -> Mapping[str
 def _research_ref(mapping: Mapping[str, Any]) -> str:
     for key in ("evidence_url", "source_url", "evidence_ref", "source_id"):
         ref = _text(mapping.get(key))
-        if ref:
-            return ref
+        if ref: return ref
     evidence = mapping.get("evidence")
     if isinstance(evidence, Iterable) and not isinstance(evidence, (str, bytes, Mapping)):
         for item in evidence:
             if isinstance(item, Mapping):
                 for key in ("url", "evidence_url", "source_url", "evidence_ref", "source_id"):
                     ref = _text(item.get(key))
-                    if ref:
-                        return ref
+                    if ref: return ref
     return ""
 def _section_verified(mapping: Mapping[str, Any]) -> bool:
     status = _text(mapping.get("verification_status") or mapping.get("status")).lower()
@@ -81,11 +80,16 @@ def _subject(route: str, signal: str) -> str:
     short = signal.rstrip(".!?")
     if len(short) > 72: short = short[:69].rstrip() + "..."
     return f"Re: {short}" if short else f"A possible fit for {route}"
-def _sales_body(route: str, contact_name: str, company: str, signal: str) -> str:
+def _sales_body(route: str, contact_name: str, company: str, signal: str, strategy: Mapping[str, Any]) -> str:
     clean_signal = signal.strip().rstrip(".!?")
+    state = _text(strategy.get("conversation_state")).lower()
+    if state == "interested":
+        return f"Hi {contact_name},\n\nThanks for the interest. Based on the researched need around {clean_signal}, the useful next question is what outcome matters most to your team and what would make a solution worth pursuing.\n\nI can walk through the relevant {route} option and keep the discussion focused on fit, expected value, and what would need to be true for it to make sense.\n\nWould a brief conversation be useful?\n\nBest,\nThorio"
+    if state == "awaiting_response":
+        return f"Hi {contact_name},\n\nFollowing up on the researched need around {clean_signal}. I do not want to assume the priority is still active. If it is, what is the main outcome you are trying to achieve?\n\nBest,\nThorio"
     if route == "Astrivon Labs":
         return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.\n\nI work with Astrivon Labs, whose senior developers handle technical discovery and delivery across AI/ML, computer vision, business automation, product development, and B2B outreach infrastructure. Based on the researched need, it looks worth a brief conversation to see whether there is a real fit.\n\nWould you be open to an introductory meeting with the Astrivon team?\n\nBest,\nThorio"
-    return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.\n\nI work with {_offer(route)}. Based on the researched need, it looks worth a quick conversation to see whether there is a real fit.\n\nWould it be useful if I sent over the most relevant option?\n\nBest,\nThorio"
+    return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.\n\nI work with {_offer(route)}. Based on the researched need, it looks worth a quick conversation to understand the desired outcome and see whether there is a real fit.\n\nWould it be useful if I sent over the most relevant option?\n\nBest,\nThorio"
 def _require_research_contract(lead: Mapping[str, Any]) -> Mapping[str, Any]:
     if _text(lead.get("research_status")).lower() not in {"complete", "research_complete"}: raise OutreachContractError("Completed research is required before outreach")
     research = _research(lead)
@@ -99,16 +103,13 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
     if not contact_email: raise OutreachContractError("Verified decision-maker contact email is required")
     signal = _verified_buying_signal(lead); route = choose_route(lead); company = _text(lead.get("company"))
     if not company: raise OutreachContractError("Verified company identity is required")
-    body = _sales_body(route, contact_name, company, signal); current = _text(lead.get("outreach_state") or "ready").lower()
-    if current in STOP_STATES: return OutreachDecision(route, contact_name, contact_email, "", "", _evidence_refs(lead), signal, current, None, current)
+    strategy = build_commercial_strategy(lead)
+    body = _sales_body(route, contact_name, company, signal, strategy); current = _text(lead.get("outreach_state") or "ready").lower()
+    if current in STOP_STATES: return OutreachDecision(route, contact_name, contact_email, "", "", _evidence_refs(lead), signal, current, None, current, strategy)
     now = now or datetime.now(timezone.utc); attempt = int(lead.get("outreach_attempt", 0) or 0); next_at = None if attempt >= len(CADENCE_DAYS) - 1 else (now + timedelta(days=CADENCE_DAYS[attempt + 1])).isoformat()
-    return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None)
+    return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None, strategy)
 def objection_response(objection: str, route: str) -> str:
-    text = _text(objection).lower()
-    if any(token in text for token in ("not interested", "no thanks", "stop", "remove me")): return "Understood. I will not follow up further."
-    if "price" in text or "cost" in text: return f"Understood. I do not want to guess at fit or pricing. I can share the {route} option only if it matches the researched need."
-    if any(token in text for token in ("later", "not now", "timing")): return "Understood. I can leave this here and follow up later rather than assume the timing is right."
-    return "Thanks for the context. I will keep the response grounded in the verified research rather than make assumptions."
+    return build_objection_response(objection, route)
 def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     outcome = _text(outcome).lower(); allowed = STOP_STATES | ACTIVE_STATES | {"no_response"}
     if outcome not in allowed: raise OutreachContractError(f"Unsupported outreach outcome: {outcome}")
