@@ -191,7 +191,7 @@ def test_closer_message_never_uses_unverified_business_impact_as_fact():
     )
     assert "revenue will increase by 30 percent" not in decision.body
     assert "the company will lose customers" not in decision.body
-    assert "Business impact research exists but is not verified" in decision.commercial_strategy["unknowns"]
+    assert "Business impact research exists but is not verified, so its impact cannot be used as fact." in decision.commercial_strategy["unknowns"]
 
 
 def test_closer_message_uses_discovery_unknown_instead_of_fabricating_business_impact():
