@@ -93,7 +93,7 @@ def _hypothesis_for(state: str, text: str) -> tuple[str, str, str]:
             "The buyer may need the commercial value, economics, or constraint to be clearer before evaluating the option.",
             "clarify_economic_criteria",
         )
-    if any(token in value for token in ("already have", "in-house", "in house", "internal team", "existing provider")):
+    if any(token in value for token in ("already have", "in-house", "in house", "internal team", "internal engineering", "existing provider")):
         return (
             "existing_solution",
             "The buyer may believe the current team or provider already satisfies the relevant need.",
