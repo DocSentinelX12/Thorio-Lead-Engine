@@ -466,6 +466,16 @@ def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkey
     monkeypatch.setattr("lead_engine.sync_worker.sync_research", lambda payload: {"status": "created", "record": {"id": "recResearch", "fields": {"Research Key": payload["fingerprint"], "Lead Fingerprint": payload["fingerprint"], "Research Intelligence": json.dumps(payload["research_intelligence"], sort_keys=True), "Package Digest": digest, "Raw Research Package": json.dumps(raw, sort_keys=True)}}})
     monkeypatch.setattr("lead_engine.sync_worker.sync_master_tracker", lambda payload: {"status": "synced", "company": {"status": "created", "record": {"id": "recCompany", "fields": {"Company": payload["company"]}}}, "opportunities": []})
 
+    readback_records = {
+        "recLead": {"id": "recLead", "fields": {"Duplicate Key": lead["fingerprint"], "Company": lead["company"]}},
+        "recResearch": {"id": "recResearch", "fields": {"Research Key": lead["fingerprint"], "Lead Fingerprint": lead["fingerprint"], "Research Intelligence": json.dumps(lead["research_intelligence"], sort_keys=True), "Package Digest": digest, "Raw Research Package": json.dumps(raw, sort_keys=True)}},
+        "recCompany": {"id": "recCompany", "fields": {"Company": lead["company"]}},
+    }
+    monkeypatch.setattr(
+        "lead_engine.sales_handoff._read_airtable_record",
+        lambda table_key, record_id: readback_records[record_id],
+    )
+
     result = sync_one(lead, db=db)
 
     assert result["status"] == "synced"
