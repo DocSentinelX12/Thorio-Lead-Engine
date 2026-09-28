@@ -135,8 +135,8 @@ def build_buyer_intent_advancement(
     missing_value = not _known_value(known, missing_dimension) if missing_dimension else False
 
     if state == "commercial_commitment":
-        commitment = _known_value(known, "commitment_details") or _known_value(known, "active_need")
-        advance_allowed = bool(commitment)
+        commitment = _known_value(known, "commitment_details")
+        advance_allowed = bool(commitment) and not (required and missing_value)
         blocked_reason = (
             ""
             if advance_allowed
