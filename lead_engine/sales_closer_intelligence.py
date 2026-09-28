@@ -119,6 +119,21 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         if ref:
             evidence_refs.append(ref)
 
+    impact_research = lead.get("business_impact_research")
+    verified_impact = _research_value(lead, "business_impact_research", "business_impact")
+    cost_of_inaction = _research_value(lead, "business_impact_research", "cost_of_inaction")
+    if verified_impact:
+        verified_facts.append(f"Verified business impact: {verified_impact}.")
+        value_hypotheses.append(f"Test whether addressing the need changes the verified impact: {verified_impact.rstrip('.!?')}.")
+        ref = _evidence_ref(impact_research)
+        if ref:
+            evidence_refs.append(ref)
+    if cost_of_inaction:
+        verified_facts.append(f"Verified cost of inaction: {cost_of_inaction}.")
+        value_hypotheses.append(f"Determine whether the verified cost of inaction, {cost_of_inaction.rstrip('.!?')}, is material enough to justify action.")
+    elif impact_research and not _verified(impact_research):
+        unknowns.append("Business impact research exists but is not verified, so its impact cannot be used as fact.")
+
     timing = _text(
         lead.get("current_need_at")
         or lead.get("last_inquiry_at")
@@ -173,7 +188,7 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "value_hypotheses": list(dict.fromkeys(value_hypotheses)),
         "unknowns": list(dict.fromkeys(unknowns)),
         "evidence_refs": list(dict.fromkeys(evidence_refs)),
-        "urgency_basis": urgency_basis,
+        "urgency_basis": urgency_basis,\n        "verified_business_impact": verified_impact,\n        "verified_cost_of_inaction": cost_of_inaction,
         "psychological_objective": psychological_objective,
         "next_best_action": next_best_action,
         "ethical_constraints": [
