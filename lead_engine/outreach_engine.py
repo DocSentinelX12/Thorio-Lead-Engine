@@ -87,19 +87,28 @@ def _sales_body(route: str, contact_name: str, company: str, signal: str, strate
     cost_of_inaction = _text(strategy.get("verified_cost_of_inaction")).rstrip(".!?")
     unknowns = strategy.get("unknowns")
     unknown_list = [str(item).strip() for item in unknowns if str(item).strip()] if isinstance(unknowns, (list, tuple)) else []
-    discovery_question = unknown_list[0] if unknown_list else "What is the main outcome you would want to improve?"
+    conversation_intelligence = strategy.get("conversation_intelligence")
+    selected_question = _text(conversation_intelligence.get("next_best_question")) if isinstance(conversation_intelligence, Mapping) else ""
+    discovery_question = selected_question or (unknown_list[0] if unknown_list else "What is the main outcome you would want to improve?")
+    selected_action = _text(conversation_intelligence.get("next_best_action")) if isinstance(conversation_intelligence, Mapping) else ""
+    research_reentry = strategy.get("research_reentry")
+    reentry_required = isinstance(research_reentry, Mapping) and research_reentry.get("recommended") is True
     if state == "interested":
         evidence_line = f" The research also identifies this business impact: {impact}." if impact else ""
-        return f"Hi {contact_name},\n\nThanks for the interest. Based on the researched need around {clean_signal}.{evidence_line} The useful next step is to clarify the outcome that matters most and whether there is a real fit.\n\nWhat outcome matters most to your team, and how would you measure whether solving this was worthwhile?\n\nI can walk through the relevant {route} option and keep the discussion focused on fit, evidence, expected value, and what would need to be true for it to make sense.\n\nWould a brief conversation be useful?\n\nBest,\nThorio"
+        action_line = f" The next step is to {selected_action.replace('_', ' ')}." if selected_action else ""
+        return f"Hi {contact_name},\n\nThanks for the interest. Based on the researched need around {clean_signal}.{evidence_line}{action_line} The useful next step is to clarify the outcome that matters most and whether there is a real fit.\n\n{discovery_question}\n\nI can walk through the relevant {route} option and keep the discussion focused on fit, evidence, expected value, and what would need to be true for it to make sense.\n\nWould a brief conversation be useful?\n\nBest,\nThorio"
     if state == "awaiting_response":
         impact_line = f" The researched impact is {impact}." if impact else ""
-        return f"Hi {contact_name},\n\nFollowing up on the researched need around {clean_signal}.{impact_line} I do not want to assume the priority is still active. {discovery_question}\n\nIf it is still relevant, would it be useful to compare the desired outcome with the most appropriate {route} option?\n\nBest,\nThorio"
+        reentry_line = " I will keep this to discovery rather than make an unsupported factual claim." if reentry_required else ""
+        return f"Hi {contact_name},\n\nFollowing up on the researched need around {clean_signal}.{impact_line} I do not want to assume the priority is still active.{reentry_line} {discovery_question}\n\nIf it is still relevant, would it be useful to compare the desired outcome with the most appropriate {route} option?\n\nBest,\nThorio"
     if state in {"replied", "objection", "timing"}:
         impact_line = f" The verified business impact is {impact}." if impact else ""
-        return f"Hi {contact_name},\n\nThanks for the context. I want to keep this grounded in what is actually true for {company}. The researched need is {clean_signal}.{impact_line}\n\n{discovery_question}\n\nIf the need is still active, would it be useful to take a short look at fit and the decision process before discussing a solution?\n\nBest,\nThorio"
+        reentry_line = " I will keep this to discovery until the missing evidence is established." if reentry_required else ""
+        return f"Hi {contact_name},\n\nThanks for the context. I want to keep this grounded in what is actually true for {company}. The researched need is {clean_signal}.{impact_line}{reentry_line}\n\n{discovery_question}\n\nIf the need is still active, would it be useful to take a short look at fit and the decision process before discussing a solution?\n\nBest,\nThorio"
     impact_line = f" Research also verifies this business impact: {impact}." if impact else ""
     inaction_line = f" Research also documents this cost of inaction: {cost_of_inaction}." if cost_of_inaction else ""
-    return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.{impact_line}{inaction_line}\n\nRather than assume what matters commercially, I would like to understand the outcome you need and whether the researched issue is creating a meaningful business consequence. {discovery_question}\n\nI work with {_offer(route)}. If there is a genuine fit, would it be useful if I sent over the most relevant option or arranged a brief introductory conversation?\n\nBest,\nThorio"
+    reentry_line = " I will keep this to discovery rather than fill that evidence gap with an assumption." if reentry_required else ""
+    return f"Hi {contact_name},\n\nI saw that {clean_signal}. If that is still a priority at {company}, I may be able to help.{impact_line}{inaction_line}\n\nRather than assume what matters commercially, I would like to understand the outcome you need and whether the researched issue is creating a meaningful business consequence.{reentry_line} {discovery_question}\n\nI work with {_offer(route)}. If there is a genuine fit, would it be useful if I sent over the most relevant option or arranged a brief introductory conversation?\n\nBest,\nThorio"
 def _require_research_contract(lead: Mapping[str, Any]) -> Mapping[str, Any]:
     if _text(lead.get("research_status")).lower() not in {"complete", "research_complete"}: raise OutreachContractError("Completed research is required before outreach")
     research = _research(lead)
