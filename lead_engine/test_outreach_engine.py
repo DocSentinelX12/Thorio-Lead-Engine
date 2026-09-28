@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response, choose_route
+from .sales_closer_intelligence import build_commercial_strategy
 
 
 def lead(**overrides):
