@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 from .sales_closer_intelligence import build_commercial_strategy, build_objection_response, evaluate_closer_message
 from .buyer_signal_intelligence import enrich_commercial_strategy
 STOP_STATES = frozenset({"declined", "opted_out", "irrelevant", "exhausted", "converted"})
@@ -133,7 +133,7 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
     current = _text(lead.get("outreach_state") or "ready").lower()
     if current in STOP_STATES: return OutreachDecision(route, contact_name, contact_email, "", "", _evidence_refs(lead), signal, current, None, current, strategy)
     now = now or datetime.now(timezone.utc); attempt = int(lead.get("outreach_attempt", 0) or 0); next_at = None if attempt >= len(CADENCE_DAYS) - 1 else (now + timedelta(days=CADENCE_DAYS[attempt + 1])).isoformat()
-    return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None, strategy
+    return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None, strategy)
 def objection_response(objection: str, route: str, *, lead: Mapping[str, Any] | None = None) -> str:
     return build_objection_response(objection, route, lead=lead)
 def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
