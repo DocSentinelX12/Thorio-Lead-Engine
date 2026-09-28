@@ -197,7 +197,7 @@ def build_objection_response(objection: str, route: str, *, lead: Mapping[str, A
 
     if category == "price":
         return (
-            f"I understand the concern. I do not want to defend a price before establishing whether "
+            f"I understand the concern. I do not want to make assumptions or defend a price before establishing whether "
             f"{route} is actually a fit. If useful, I can first clarify the outcome you need and then "
             "we can determine whether the economics make sense."
         )
