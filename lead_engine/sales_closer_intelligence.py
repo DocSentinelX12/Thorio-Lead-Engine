@@ -454,7 +454,8 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     elif _text(underlying_concern.get("status")).lower() in {"rejected", "resolved", "superseded"}:
         conversation_intelligence = {**conversation_intelligence, "action_basis": "concern_state_evolution"}
     if (
-        objection_constraint_diagnosis.get("status") not in {"not_applicable", ""}
+        not objection_category
+        and objection_constraint_diagnosis.get("status") in {"hypothesis", "unconfirmed"}
         and not confirmed_concern_action["applied"]
     ):
         conversation_intelligence = {
