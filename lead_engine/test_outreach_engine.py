@@ -260,3 +260,42 @@ def test_commercial_psychology_profile_separates_fact_inference_and_unknown_with
     assert any("decision-maker" in item.lower() or "buyer" in item.lower() for item in profile["unknowns"])
     assert profile["why_now"]["evidence_refs"]
     assert profile["why_now"]["statement"] == "A verified timing signal exists; the commercial reason for urgency remains to be discovered."
+
+
+def test_closer_conversation_intelligence_uses_latest_buyer_context_to_choose_one_next_question():
+    value = lead(
+        outreach_state="interested",
+        conversation_events=[
+            {
+                "outcome": "interested",
+                "text": "This is interesting. What would the process look like, and who would need to approve it?",
+                "decision_process": "Needs internal approval",
+            }
+        ],
+    )
+    decision = build_outreach_decision(value)
+    intelligence = decision.commercial_strategy["conversation_intelligence"]
+    assert intelligence["state"] == "interested"
+    assert intelligence["known_buyer_context"] == ["Needs internal approval"]
+    assert intelligence["next_best_action"] == "map_decision_process"
+    assert "decision process" in intelligence["next_best_question"].lower()
+    assert intelligence["advance_condition"]
+
+
+def test_closer_conversation_intelligence_does_not_reask_known_timing_or_priority():
+    value = lead(
+        outreach_state="replied",
+        conversation_events=[
+            {
+                "outcome": "replied",
+                "text": "We need engineering capacity for the October launch.",
+                "priority": "October launch",
+                "timing": "October launch",
+            }
+        ],
+    )
+    decision = build_outreach_decision(value)
+    intelligence = decision.commercial_strategy["conversation_intelligence"]
+    assert "October launch" in intelligence["known_buyer_context"]
+    assert "timing" not in intelligence["next_best_question"].lower()
+    assert "priority" not in intelligence["next_best_question"].lower()
