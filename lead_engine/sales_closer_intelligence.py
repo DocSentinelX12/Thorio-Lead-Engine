@@ -326,6 +326,42 @@ def _conversation_intelligence(lead: Mapping[str, Any], state: str, objection_ca
             "advance_condition": "The conversation is terminal or the prospect has opted out.",
         }
 
+    if objection_category == "existing_solution":
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "diagnose_capacity_gap",
+            "next_best_question": "Where, if anywhere, is there still a capacity, specialization, speed, or delivery gap?",
+            "advance_condition": "A concrete gap is either confirmed or ruled out without disparaging the existing team or provider.",
+        }
+
+    if objection_category == "price":
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "establish_value_and_fit_before_price",
+            "next_best_question": "Which outcome would need to justify the investment for this to be worth considering?",
+            "advance_condition": "The relevant outcome and fit are understood well enough to discuss economics honestly.",
+        }
+
+    if objection_category == "trust":
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "provide_verified_proof_or_offer_discovery",
+            "next_best_question": "What would you need to verify before deciding whether a conversation is worthwhile?",
+            "advance_condition": "The buyer's evidence requirement is known and can be answered with verified proof.",
+        }
+
+    if objection_category == "information":
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "answer_and_advance",
+            "next_best_question": "What part of the process would you like clarified before deciding whether to continue?",
+            "advance_condition": "The requested information is answered accurately and the next step is clear.",
+        }
+
     if objection_category == "decision_process" or (
         state == "interested" and _text(latest.get("decision_process"))
     ):
@@ -369,7 +405,7 @@ def _conversation_intelligence(lead: Mapping[str, Any], state: str, objection_ca
                 "state": state,
                 "known_buyer_context": known_context,
                 "next_best_action": "clarify_business_impact",
-                "next_best_question": "What outcome would make addressing this priority worthwhile?",
+                "next_best_question": "What outcome would make addressing this matter worthwhile?",
                 "advance_condition": "The desired outcome and material business consequence are clear.",
             }
         return {
