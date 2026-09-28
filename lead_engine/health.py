@@ -292,6 +292,7 @@ def health_report(
     checks = [
         check_database(db),
         check_configuration(config),
+        check_airtable_configuration(config),
     ]
 
     if sources is not None:
