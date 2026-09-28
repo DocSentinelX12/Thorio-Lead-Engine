@@ -527,3 +527,95 @@ def test_closer_underlying_concern_does_not_leak_inference_into_message_as_fact(
     decision = build_outreach_decision(value)
     assert "disruption" not in decision.body.lower()
     assert decision.commercial_strategy["underlying_concern"]["status"] == "hypothesis"
+
+
+def test_closer_selected_confirmed_concern_question_reaches_final_outreach_body():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {
+                "outcome": "replied",
+                "text": "Yes, avoiding disruption is the concern.",
+                "underlying_concern_confirmation": "capability_or_displacement_risk",
+                "evidence_ref": "evt-2",
+            },
+        ],
+    )
+    decision = build_outreach_decision(value)
+    question = decision.commercial_strategy["conversation_intelligence"]["next_best_question"]
+    assert question in decision.body
+    assert "disruption" in decision.body.lower()
+
+
+def test_closer_unconfirmed_objection_validation_question_reaches_final_outreach_body():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    strategy = decision.commercial_strategy
+    assert strategy["underlying_concern"]["status"] == "hypothesis"
+    question = strategy["conversation_intelligence"]["next_best_question"]
+    assert question in decision.body
+    assert "disruption" not in decision.body.lower()
+
+
+def test_closer_trust_objection_proof_question_reaches_final_outreach_body():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "Our concern is whether your team can deliver reliably.", "evidence_ref": "evt-1"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    strategy = decision.commercial_strategy
+    assert strategy["objection_category"] == "trust"
+    question = strategy["conversation_intelligence"]["next_best_question"]
+    assert question in decision.body
+    assert strategy["research_reentry"]["recommended"] is True
+
+
+def test_closer_resolved_concern_removes_stale_action_from_final_outreach():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {
+                "outcome": "replied",
+                "text": "Yes, avoiding disruption is the concern.",
+                "underlying_concern_confirmation": "capability_or_displacement_risk",
+                "evidence_ref": "evt-2",
+            },
+            {
+                "outcome": "replied",
+                "text": "We have resolved that concern.",
+                "underlying_concern_resolution": "capability_or_displacement_risk",
+                "evidence_ref": "evt-3",
+            },
+        ],
+    )
+    decision = build_outreach_decision(value)
+    strategy = decision.commercial_strategy
+    assert strategy["underlying_concern"]["status"] == "resolved"
+    assert strategy["confirmed_concern_action"]["applied"] is False
+    assert strategy["conversation_intelligence"]["next_best_action"] == "diagnose_capacity_gap"
+    assert strategy["conversation_intelligence"]["next_best_question"] in decision.body
+
+
+def test_closer_research_reentry_question_reaches_final_outreach_body_without_unsupported_claim():
+    value = lead(
+        outreach_state="replied",
+        conversation_events=[
+            {"outcome": "replied", "text": "We need this for the October launch.", "priority": "October launch"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    strategy = decision.commercial_strategy
+    question = strategy["conversation_intelligence"]["next_best_question"]
+    assert strategy["research_reentry"]["recommended"] is True
+    assert question in decision.body
+    assert "guaranteed" not in decision.body.lower()
+    assert "increase revenue" not in decision.body.lower()
