@@ -44,11 +44,11 @@ def _explicit(text: str, phrases: tuple[str, ...]) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
-def _event_signal(event: Mapping[str, Any]) -> dict[str, Any]:
+def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
     text = _text(event.get("text")).lower()
     outcome = _text(event.get("outcome")).lower()
     signal = classify_buyer_signal({"conversation_events": [event]})
-    ref = _event_ref(event, 0)
+    ref = _event_ref(event, index)
 
     if outcome in {"converted", "conversion"}:
         return {"state": "conversion", "reason": "explicit conversion event", "ref": ref}
@@ -77,11 +77,11 @@ def _event_signal(event: Mapping[str, Any]) -> dict[str, Any]:
     ):
         return {"state": "re_engagement", "reason": "explicit re-engagement evidence", "ref": ref}
 
+    if _explicit(text, ("who needs to approve", "approval process", "legal review", "security review", "needs to approve", "need to approve")):
+        return {"state": "decision_process", "reason": "explicit decision-process language", "ref": ref}
     if signal["category"] == "explicit_commitment":
         return {"state": "commercial_commitment", "reason": "explicit commercial commitment language", "ref": ref}
     if signal["category"] == "active_evaluation":
-        if _explicit(text, ("who needs to approve", "approval process", "legal review", "security review")):
-            return {"state": "decision_process", "reason": "explicit decision-process language", "ref": ref}
         return {"state": "evaluation", "reason": "explicit evaluation activity", "ref": ref}
     if _explicit(
         text,
@@ -199,7 +199,7 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
     for index, event in enumerate(events):
         if not isinstance(event, Mapping):
             continue
-        evidence = _event_signal(event)
+        evidence = _event_signal(event, index)
         candidate = evidence["state"]
         if candidate == "unknown":
             continue
@@ -212,7 +212,11 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
                     "evidence_ref": _event_ref(event, index),
                 }
 
-        if candidate == "re_engagement":
+        if candidate == "conversion":
+            transition_type = "advanced" if current != candidate else "confirmed"
+            current = candidate
+            active_terminal = True
+        elif candidate == "re_engagement":
             if active_terminal:
                 transition_type = "reengaged"
                 current = "re_engagement"
