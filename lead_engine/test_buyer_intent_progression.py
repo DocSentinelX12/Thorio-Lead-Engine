@@ -166,3 +166,16 @@ def test_non_contradictory_lower_ranked_event_does_not_replace_active_state():
     assert result["current_state"] == "evaluation"
     assert result["history"][-1]["current_state"] == "evaluation"
     assert result["active_state_supersession"]["status"] == "none"
+
+
+def test_contradiction_to_terminal_no_need_stays_terminal_until_reengagement():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event("We have a problem with engineering capacity.", evidence_ref="evt-problem"),
+            event("We solved the problem.", evidence_ref="evt-resolved"),
+            event("We are interested in comparing options again.", evidence_ref="evt-reopen"),
+        ]}
+    )
+    assert result["current_state"] == "no_need"
+    assert result["history"][1]["transition_type"] == "contradicted"
+    assert len(result["history"]) == 2
