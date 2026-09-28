@@ -20,7 +20,8 @@ def test_application_uses_configured_database(tmp_path):
 
 def test_application_reports_health(tmp_path):
     config = LeadEngineConfig(
-        database_dir=str(tmp_path)
+        database_dir=str(tmp_path),
+        airtable_base_id="appTestHealthFixture",
     )
 
     application = LeadEngineApplication(
