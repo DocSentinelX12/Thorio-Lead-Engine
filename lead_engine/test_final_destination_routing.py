@@ -28,6 +28,27 @@ def test_paxus_true_referral_reaches_human_action():
     assert route_state(lead)["destinations"]["Paxus"]["state"] == "ready_for_human_action"
 
 
+def test_astrivon_route_requires_verified_service_fit():
+    lead = {
+        "fingerprint": "astrivon-service-fit-gate",
+        "potential_routes": ["Astrivon Labs"],
+        "qualification_results": {
+            "Astrivon Labs": {
+                "qualified": True,
+                "route_research": {
+                    "verified": True,
+                    "evidence": "Verified route evidence.",
+                },
+                "service_fit_verified": False,
+            }
+        },
+    }
+    routed = route_leads([lead])
+    assert routed["Astrivon Labs"] == []
+    assert routed["Review"] == [lead]
+    assert route_state(lead)["destinations"]["Astrivon Labs"]["state"] == "route_research_required"
+
+
 def test_verified_qualified_route_reaches_handoff_without_raw_route_hint():
     lead = {"fingerprint": "verified-route-without-hint", "qualification_results": {"Thorio": _route_result()}}
     routed = route_leads([lead])
