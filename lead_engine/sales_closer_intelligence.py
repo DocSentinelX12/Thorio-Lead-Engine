@@ -128,7 +128,7 @@ def build_commercial_psychology_profile(lead: Mapping[str, Any]) -> dict[str, An
     if not impact:
         profile_unknowns.append("The business consequence of the problem is not established.")
     timing = _text(lead.get("current_need_at") or lead.get("last_inquiry_at") or lead.get("inquiry_at") or lead.get("intent_at"))
-    timing_refs = current_refs or business_refs or ([ _evidence_ref(current_section) ] if _evidence_ref(current_section) else []) if timing else []
+    timing_refs = current_refs or business_refs or ([_evidence_ref(current_section)] if _evidence_ref(current_section) else []) if timing else []
     why_now = _profile_entry("A verified timing signal exists; the commercial reason for urgency remains to be discovered.", timing_refs) if timing else _profile_entry("No verified timing signal exists; urgency remains unknown.", [], status="unknown")
     if not timing:
         profile_unknowns.append("Why this matters now is not established.")
@@ -215,29 +215,8 @@ def _conversation_memory(lead: Mapping[str, Any]) -> dict[str, Any]:
                 memory[field] = {"value": value, "event_index": index, "evidence_ref": event_ref}
                 observed[field] = value
         if observed or _text(event.get("text")):
-            observed_events.append({"event_index": index, "outcome": _text(event.get("outcome")).lower(), "observed_fields": observed, "evidence_ref": event_ref})
-    known = {field: item for field, item in memory.items() if item["value"]}
-    return {"event_count": len(events), "known_context": known, "observed_events": observed_events, "latest_event_index": len(events) - 1 if events else None}
-
-
-def _buying_signal_intelligence(lead: Mapping[str, Any], state: str) -> dict[str, Any]:
-    signal = classify_buyer_signal(lead)
-    return {"category": _text(signal.get("category")), "confidence": _text(signal.get("confidence")), "evidence_text": _text(signal.get("evidence_text")), "evidence_ref": _text(signal.get("evidence_ref")), "do_not_overstate": bool(signal.get("do_not_overstate", True))}
-
-
-def _conversation_state_transition(lead: Mapping[str, Any], state: str, buying_signal: Mapping[str, Any], memory: Mapping[str, Any]) -> dict[str, Any]:
-    category = _text(buying_signal.get("category"))
-    if state in {"converted", "referred", "closed_lost", "disqualified", "stopped"}:
-        return {"from_state": state, "candidate_state": state, "transition": "terminal", "required_evidence": [], "reason": "Terminal state requires no further persuasion."}
-    if category == "explicit_commitment":
-        return {"from_state": state, "candidate_state": "decision", "transition": "advance", "required_evidence": ["explicit commitment or concrete commercial action"], "reason": "The buyer has expressed a concrete commitment signal."}
-    if category == "active_evaluation":
-        return {"from_state": state, "candidate_state": "evaluation", "transition": "advance", "required_evidence": ["documented evaluation activity"], "reason": "The buyer is actively evaluating fit, economics, process, or approval."}
-    if category == "interest":
-        return {"from_state": state, "candidate_state": "interested", "transition": "advance", "required_evidence": ["explicit interest or request for a next conversation"], "reason": "Interest is present but does not establish purchase intent."}
-    if state in {"replied", "interested"} and memory.get("known_context"):
-        return {"from_state": state, "candidate_state": "discovery", "transition": "hold_and_discover", "required_evidence": ["desired outcome", "material business consequence"], "reason": "Conversation context exists, but the evidence required for a stronger commercial state is incomplete."}
-    return {"from_state": state, "candidate_state": "discovery", "transition": "hold_and_discover", "required_evidence": ["active need", "desired outcome"], "reason": "The conversation needs evidence before a stronger state can be justified."}
+            observed_events.append({"event_index": index, "outcome": _text(event.get("outcome")), "text": _text(event.get("text")), "evidence_ref": event_ref})
+    return {"event_count": len(events), "known_context": memory, "observed_events": observed_events}
 
 
 def _latest_objection_event(lead: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -245,9 +224,7 @@ def _latest_objection_event(lead: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(events, list):
         return {}
     for event in reversed(events):
-        if not isinstance(event, Mapping):
-            continue
-        if _text(event.get("outcome")).lower() == "objection" or _text(event.get("objection")):
+        if isinstance(event, Mapping) and (_text(event.get("outcome")).lower() == "objection" or _text(event.get("objection"))):
             return event
     return {}
 
@@ -280,10 +257,7 @@ def _concern_state_evolution(lead: Mapping[str, Any], concern: Mapping[str, Any]
         return {"status": "unconfirmed", "evidence_ref": "", "event_index": None, "transition": "none"}
     concern_type = _text(concern.get("concern_type"))
     origin_index = concern.get("origin_event_index") if isinstance(concern.get("origin_event_index"), int) else -1
-    state = "unconfirmed"
-    evidence_ref = ""
-    event_index = None
-    transition = "none"
+    state, evidence_ref, event_index, transition = "unconfirmed", "", None, "none"
     for index, event in enumerate(events):
         if not isinstance(event, Mapping) or index <= origin_index:
             continue
@@ -419,6 +393,8 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     observed_objection = (objection or _text(objection_event.get("objection")) or _text(objection_event.get("text"))) if state == "objection" else objection
     objection_category = _objection_category(observed_objection) if observed_objection else ""
     conversation_intelligence = _conversation_intelligence(lead, state, objection_category)
+    if objection_category and not _text(conversation_intelligence.get("action_basis")):
+        conversation_intelligence = {**conversation_intelligence, "action_basis": "observed_conversation_context"}
     conversation_memory = _conversation_memory(lead)
     buying_signal_intelligence = _buying_signal_intelligence(lead, state)
     buyer_intent_progression = build_buyer_intent_progression(lead)
