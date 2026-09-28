@@ -206,10 +206,10 @@ def get_engine_status(
 
     has_pending_leads = pending > 0
 
-    has_sync_failures = (
-        failed_details["failed_sync_leads"] > 0
-        or sync_details["failed_sync_runs"] > 0
-    )
+    # failed_sync_runs is cumulative historical telemetry. It must not
+    # permanently poison current health after a later successful recovery.
+    # Current delivery health is determined by durable pending/failed work.
+    has_sync_failures = failed_details["failed_sync_leads"] > 0
 
     healthy = not (
         has_pending_leads
