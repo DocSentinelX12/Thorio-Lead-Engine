@@ -133,6 +133,31 @@ No action may claim that an unknown condition is already true.
 
 If progression requires evidence that the conversation cannot establish and verified research can legitimately provide it, the strategy may request research re-entry. Research re-entry must not be used to manufacture buyer intent. Research can establish company facts and documented context; buyer intent still requires buyer evidence unless a clearly documented external event is explicitly modeled as a separate research signal.
 
+## Layer 1A: Active-State Supersession
+
+Layer 1A hardens the active state model against stale progression evidence. When a later buyer event explicitly contradicts the currently active progression state, the later evidence may supersede that active state without deleting or rewriting historical progression.
+
+The implementation records:
+
+- transition_type: contradicted
+- prior active state
+- replacement active state
+- contradiction evidence reference
+- event index and evidence text
+- active_state_supersession metadata
+
+Only explicit buyer language can trigger this path. A lower-ranked event that merely lacks the evidence for the current state does not count as a contradiction and therefore cannot regress the active state. Terminal rejection and conversion behavior remains protected by the existing terminal controls.
+
+This distinction is intentional:
+
+progression = later explicit evidence establishes a stronger state.
+
+interruption = an explicit non-linear condition changes the current conversation condition.
+
+contradiction = later explicit buyer evidence says the active state is no longer true and establishes a bounded replacement state.
+
+superseded = historical evidence remains preserved but no longer controls the active state.
+
 ## Testing
 
 Regression tests will cover:
