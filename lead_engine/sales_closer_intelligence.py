@@ -72,11 +72,239 @@ def _objection_category(text: str) -> str:
     return "unspecified"
 
 
+
+def _profile_entry(statement: str, evidence_refs: list[str], *, status: str = "verified") -> dict[str, Any]:
+    return {
+        "statement": statement,
+        "status": status,
+        "evidence_refs": list(dict.fromkeys(ref for ref in evidence_refs if ref)),
+    }
+
+
+def _verified_field(mapping: Any, *keys: str) -> tuple[str, list[str]]:
+    if not _verified(mapping):
+        return "", []
+    value = next((_text(mapping.get(key)) for key in keys if _text(mapping.get(key))), "")
+    ref = _evidence_ref(mapping)
+    return value, [ref] if ref else []
+
+
+def build_commercial_psychology_profile(lead: Mapping[str, Any]) -> dict[str, Any]:
+    """Build an evidence-linked buyer profile without promoting inference to fact."""
+    profile_unknowns: list[str] = []
+
+    current_section = lead.get("current_intent_research")
+    business_section = lead.get("business_need_research")
+    impact_section = lead.get("business_impact_research")
+    commercial_section = lead.get("commercial_research")
+    company_section = lead.get("company_research")
+    decision_section = lead.get("decision_maker_research")
+
+    current_need, current_refs = _verified_field(current_section, "current_need", "business_need")
+    business_need, business_refs = _verified_field(business_section, "business_need", "current_need")
+    impact, impact_refs = _verified_field(impact_section, "business_impact")
+    cost_of_inaction, cost_refs = _verified_field(impact_section, "cost_of_inaction")
+
+    objective_value = current_need or business_need
+    objective_refs = current_refs or business_refs
+    if objective_value:
+        observed_fact = _profile_entry(
+            f"The researched commercial objective is {objective_value}.",
+            objective_refs,
+        )
+    else:
+        observed_fact = _profile_entry(
+            "The company's immediate commercial objective is not established by verified research.",
+            [],
+            status="unknown",
+        )
+        profile_unknowns.append("The company's immediate objective is not established.")
+
+    if business_need:
+        inference = _profile_entry(
+            f"The verified need suggests that {business_need.rstrip('.!?')} is commercially relevant; the material business consequence still requires validation.",
+            business_refs,
+            status="inference",
+        )
+    elif current_need:
+        inference = _profile_entry(
+            f"The verified current need suggests that {current_need.rstrip('.!?')} is commercially relevant; the material business consequence still requires validation.",
+            current_refs,
+            status="inference",
+        )
+    else:
+        inference = _profile_entry(
+            "No evidence-backed commercial inference can be made until a verified need is established.",
+            [],
+            status="unknown",
+        )
+
+    recent_change_value = ""
+    recent_change_refs: list[str] = []
+    for section in (current_section, business_section, commercial_section, company_section):
+        value, refs = _verified_field(
+            section,
+            "recent_change",
+            "changed_recently",
+            "change",
+            "trigger",
+            "recent_trigger",
+        )
+        if value:
+            recent_change_value, recent_change_refs = value, refs
+            break
+    recent_change = (
+        _profile_entry(f"Verified recent change: {recent_change_value}.", recent_change_refs)
+        if recent_change_value
+        else _profile_entry(
+            "No verified recent change has been established.",
+            [],
+            status="unknown",
+        )
+    )
+    if not recent_change_value:
+        profile_unknowns.append("What changed recently remains unknown.")
+
+    observable_problem = (
+        _profile_entry(f"The observable business problem is {business_need}.", business_refs)
+        if business_need
+        else _profile_entry(
+            f"The observable current need is {current_need}.",
+            current_refs,
+        )
+        if current_need
+        else _profile_entry(
+            "No verified observable business problem has been established.",
+            [],
+            status="unknown",
+        )
+    )
+    if not business_need and not current_need:
+        profile_unknowns.append("The observable business problem is not established.")
+
+    likely_consequence = (
+        _profile_entry(f"The verified business consequence is {impact}.", impact_refs)
+        if impact
+        else _profile_entry(
+            "The likely business consequence is not established and must be discovered.",
+            [],
+            status="unknown",
+        )
+    )
+    if not impact:
+        profile_unknowns.append("The business consequence of the problem is not established.")
+
+    timing = _text(
+        lead.get("current_need_at")
+        or lead.get("last_inquiry_at")
+        or lead.get("inquiry_at")
+        or lead.get("intent_at")
+    )
+    timing_refs = []
+    if timing:
+        timing_refs = current_refs or business_refs or _evidence_ref(current_section) and [_evidence_ref(current_section)] or []
+    why_now = (
+        _profile_entry(
+            "A verified timing signal exists; the commercial reason for urgency remains to be discovered.",
+            timing_refs,
+        )
+        if timing
+        else _profile_entry(
+            "No verified timing signal exists; urgency remains unknown.",
+            [],
+            status="unknown",
+        )
+    )
+    if not timing:
+        profile_unknowns.append("Why this matters now is not established.")
+
+    owner_name = ""
+    owner_refs: list[str] = []
+    if _verified(company_section):
+        owner_name = _text(company_section.get("decision_maker"))
+        ref = _text(company_section.get("decision_maker_evidence"))
+        if ref:
+            owner_refs.append(ref)
+    if not owner_name and _verified(decision_section):
+        owner_name = _text(decision_section.get("name") or decision_section.get("decision_maker"))
+        ref = _evidence_ref(decision_section)
+        if ref:
+            owner_refs.append(ref)
+    problem_owner = (
+        _profile_entry(f"Verified problem owner candidate: {owner_name}.", owner_refs)
+        if owner_name and _text(company_section.get("decision_maker_verification_status")).lower() == "verified"
+        else _profile_entry(
+            "The person who owns the business problem is not established beyond the verified contact.",
+            owner_refs,
+            status="unknown",
+        )
+    )
+    if problem_owner["status"] == "unknown":
+        profile_unknowns.append("The problem owner's specific responsibility is not established.")
+
+    priority_value = ""
+    priority_refs: list[str] = []
+    for section in (decision_section, company_section):
+        if not _verified(section):
+            continue
+        value, refs = _verified_field(
+            section,
+            "buyer_priorities",
+            "priorities",
+            "strategic_priorities",
+            "goals",
+            "success_metrics",
+            "evaluation_criteria",
+            "decision_criteria",
+            "responsibilities",
+        )
+        if value:
+            priority_value, priority_refs = value, refs
+            break
+    buyer_priorities = (
+        _profile_entry(f"Verified buyer priority or evaluation criterion: {priority_value}.", priority_refs)
+        if priority_value
+        else _profile_entry(
+            "The decision-maker's specific priorities and evaluation criteria are not established.",
+            [],
+            status="unknown",
+        )
+    )
+    if not priority_value:
+        profile_unknowns.append("The decision-maker's priorities and evaluation criteria are unknown.")
+
+    if cost_of_inaction:
+        cost_entry = _profile_entry(f"The verified cost of inaction is {cost_of_inaction}.", cost_refs)
+    else:
+        cost_entry = _profile_entry(
+            "The cost of waiting is not established and must not be invented.",
+            [],
+            status="unknown",
+        )
+        profile_unknowns.append("The cost of waiting is not established.")
+
+    return {
+        "observed_fact": observed_fact,
+        "sales_inference": inference,
+        "recent_change": recent_change,
+        "observable_problem": observable_problem,
+        "likely_consequence": likely_consequence,
+        "why_now": why_now,
+        "problem_owner": problem_owner,
+        "buyer_priorities": buyer_priorities,
+        "cost_of_inaction": cost_entry,
+        "unknowns": list(dict.fromkeys(profile_unknowns)),
+        "evidence_policy": "Each verified or inferred statement must retain the evidence references that support it; unknowns remain explicitly unknown.",
+    }
+
+
 def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -> dict[str, Any]:
     verified_facts: list[str] = []
     evidence_refs: list[str] = []
     unknowns: list[str] = []
     value_hypotheses: list[str] = []
+    commercial_psychology_profile = build_commercial_psychology_profile(lead)
+    unknowns.extend(commercial_psychology_profile["unknowns"])
 
     company = _text(lead.get("company"))
     research = lead.get("company_research")
@@ -193,6 +421,7 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "verified_cost_of_inaction": cost_of_inaction,
         "psychological_objective": psychological_objective,
         "next_best_action": next_best_action,
+        "commercial_psychology_profile": commercial_psychology_profile,
         "ethical_constraints": [
             "Never convert inference into fact.",
             "Never manufacture urgency, scarcity, social proof, pain, pricing, or outcomes.",
