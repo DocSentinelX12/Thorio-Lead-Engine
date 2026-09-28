@@ -498,6 +498,10 @@ def verify_persisted_airtable_handoff(
         ):
             return False, f"opportunity_not_confirmed:{route}"
 
+    downstream_ok, downstream_reason = _verify_downstream_lifecycle_records(lead)
+    if not downstream_ok:
+        return False, downstream_reason
+
     return True, digest
 
 def verify_airtable_handoff(result: Mapping[str, Any], lead: Mapping[str, Any], expected_digest: str | None = None, *, readback: bool = True) -> tuple[bool, str]:
