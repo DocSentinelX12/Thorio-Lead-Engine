@@ -57,9 +57,9 @@ def test_astrivon_commissions_are_recorded_per_received_payment_event():
         "lead_engine.master_tracker_sync.find_master_records",
         return_value=[],
     ), patch(
-        "lead_engine.master_tracker_sync.create_master_record",
+        "lead_engine.master_tracker_sync.atomic_upsert_master_record",
         return_value={"records": [{"id": "rec-commission"}]},
-    ) as create:
+    ) as upsert:
         results = sync_astrivon_commissions(lead)
 
     assert len(results) == 2
