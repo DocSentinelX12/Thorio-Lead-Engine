@@ -234,6 +234,7 @@ class LeadScheduler:
             self._run_sources_sequential(due_sources, results, failed)
 
         db = self.runner.pipeline.db
+        sync_started_at = datetime.now(timezone.utc).isoformat()
         remote_before = self._bridge_remote()
         due_followups = enqueue_due_followups(db)
         revenue_inbound_health = db.get_state("revenue_inbound_health") if hasattr(db, "get_state") else None
@@ -298,7 +299,7 @@ class LeadScheduler:
                 "sync_runs": int(sync_state.get("sync_runs", 0) or 0) + 1,
                 "successful_sync_runs": int(sync_state.get("successful_sync_runs", 0) or 0) + (1 if sync_failed == 0 else 0),
                 "failed_sync_runs": int(sync_state.get("failed_sync_runs", 0) or 0) + (1 if sync_failed > 0 else 0),
-                "last_sync_started_at": checked_at,
+                "last_sync_started_at": sync_started_at,
                 "last_sync_completed_at": checked_at,
                 "last_successful_sync": checked_at if sync_failed == 0 else sync_state.get("last_successful_sync"),
                 "last_sync_failure": checked_at if sync_failed > 0 else sync_state.get("last_sync_failure"),
@@ -350,7 +351,37 @@ class LeadScheduler:
                 "remote_compute_after": [cycle["remote_compute_after"] for cycle in cycle_results],
                 "paxus_research": [cycle["paxus_research"] for cycle in cycle_results],
             }
-        result["status"] = "completed"
+        sync_failures = sum(
+            int(cycle.get("sync", {}).get("failed_count", 0) or 0)
+            if isinstance(cycle.get("sync"), dict)
+            else sum(int(item.get("failed_count", 0) or 0) for item in cycle.get("sync", []) if isinstance(item, dict))
+            for cycle in cycle_results
+        )
+        agent_failures = sum(
+            int(cycle.get("agents", {}).get("failed_count", 0) or 0)
+            if isinstance(cycle.get("agents"), dict)
+            else sum(int(item.get("failed_count", 0) or 0) for item in cycle.get("agents", []) if isinstance(item, dict))
+            for cycle in cycle_results
+        )
+        post_sync_agent_failures = sum(
+            int(cycle.get("post_sync_agents", {}).get("failed_count", 0) or 0)
+            if isinstance(cycle.get("post_sync_agents"), dict)
+            else sum(int(item.get("failed_count", 0) or 0) for item in cycle.get("post_sync_agents", []) if isinstance(item, dict))
+            for cycle in cycle_results
+            if cycle.get("post_sync_agents") is not None
+        )
+        result["sync_failed_count"] = sync_failures
+        result["agent_failed_count"] = agent_failures
+        result["post_sync_agent_failed_count"] = post_sync_agent_failures
+        result["status"] = (
+            "failed"
+            if int(result.get("failed_count", 0) or 0)
+            or int(result.get("processing_failed_count", 0) or 0)
+            or sync_failures
+            or agent_failures
+            or post_sync_agent_failures
+            else "completed"
+        )
         result["cycles"] = max_cycles
         return result
 
