@@ -87,6 +87,35 @@ def test_advancement_requires_execution_details_after_explicit_commitment():
     assert result["mode"] == "confirm_execution"
 
 
+def test_advancement_allows_evidence_bounded_discovery_after_no_need_statement():
+    progression = {
+        "current_state": "no_need",
+        "history": [
+            {
+                "current_state": "no_need",
+                "evidence_ref": "evt-no-need",
+                "evidence_text": "We do not need this.",
+                "event_index": 4,
+            }
+        ],
+        "known_qualification": {},
+        "missing_qualification": {
+            "dimension": "no_need_reason",
+            "required": True,
+        },
+        "next_best_action": "diagnose_no_need",
+        "next_best_question": "What specifically makes this unnecessary right now?",
+    }
+    result = build_buyer_intent_advancement(
+        progression,
+        buying_signal={"category": "general_engagement", "do_not_overstate": True},
+    )
+    assert result["advance_allowed"] is False
+    assert result["mode"] == "resolve_interruption"
+    assert result["allowed_persuasion"] == "evidence_bounded_discovery"
+    assert result["next_best_action"] == "diagnose_no_need"
+
+
 def test_advancement_stops_on_terminal_rejection():
     progression = {
         "current_state": "rejected",
