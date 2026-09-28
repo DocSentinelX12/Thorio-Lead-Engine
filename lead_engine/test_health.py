@@ -87,9 +87,11 @@ def test_health_report_is_healthy(tmp_path):
 
     assert result["ok"] is True
     assert result["status"] == "healthy"
-    assert len(result["checks"]) == 3
+    assert len(result["checks"]) == 4
     assert result["checks"][2]["name"] == "airtable_configuration"
     assert result["checks"][2]["ok"] is True
+    assert result["checks"][3]["name"] == "operational_status"
+    assert result["checks"][3]["ok"] is True
 
 
 def test_configuration_health_rejects_invalid_batch_size(
@@ -104,3 +106,20 @@ def test_configuration_health_rejects_invalid_batch_size(
 
     assert result["ok"] is False
     assert result["status"] == "unhealthy"
+
+
+def test_health_report_is_unhealthy_when_durable_delivery_is_pending(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    db.insert_if_new({"fingerprint": "health-pending", "company": "Pending Corp"})
+
+    config = LeadEngineConfig(
+        database_dir=str(tmp_path),
+        airtable_base_id="appTestHealthFixture",
+    )
+
+    result = health_report(db, config)
+
+    operational = next(check for check in result["checks"] if check["name"] == "operational_status")
+    assert result["ok"] is False
+    assert operational["ok"] is False
+    assert operational["engine_status"]["pending_leads"] == 1
