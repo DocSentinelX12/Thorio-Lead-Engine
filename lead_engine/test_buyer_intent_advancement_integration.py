@@ -83,7 +83,7 @@ def test_commercial_strategy_stops_advancement_after_explicit_rejection():
             ]
         )
     )
-    advancement = strategy["buyer_intent_advancement"]
+    advancement = strategy["buyer_intent_progression"]["advancement"]
     assert advancement["current_state"] == "no_need"
     assert advancement["advance_allowed"] is False
     assert advancement["allowed_persuasion"] == "none"
