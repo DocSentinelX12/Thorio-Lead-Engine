@@ -643,7 +643,10 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         unknowns.append("Timing and urgency have not been independently established.")
 
     state = _conversation_state(lead)
-    objection_category = _objection_category(objection) if objection else ""
+    latest_events = lead.get("conversation_events")
+    latest_event = latest_events[-1] if isinstance(latest_events, list) and latest_events and isinstance(latest_events[-1], Mapping) else {}
+    observed_objection = objection or _text(latest_event.get("objection")) or _text(latest_event.get("text")) if state == "objection" else objection
+    objection_category = _objection_category(observed_objection) if observed_objection else ""
     conversation_intelligence = _conversation_intelligence(lead, state, objection_category)
     conversation_memory = _conversation_memory(lead)
     buying_signal_intelligence = _buying_signal_intelligence(lead, state)
