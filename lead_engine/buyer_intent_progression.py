@@ -115,6 +115,7 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
             "we're struggling",
             "we are struggling",
             "we need help",
+            "we need this",
             "we need to solve",
             "we need to address",
             "this is causing a problem",
@@ -130,6 +131,8 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
             "costs us",
             "causes delays",
             "causing delays",
+            "release delays",
+            "causing release delays",
             "hurts revenue",
             "losing revenue",
             "business impact",
@@ -142,7 +145,7 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
         ),
     ):
         return {"state": "impact_acknowledged", "reason": "buyer explicitly stated a business consequence", "ref": ref}
-    if signal["category"] == "qualified_interest":
+    if signal["category"] == "interest":
         return {"state": "engaged", "reason": "explicit interest without evaluation or commitment", "ref": ref}
     if signal["category"] in {"commercial_engagement", "general_engagement"} or _text(event.get("text")):
         return {"state": "engaged", "reason": "buyer replied without stronger progression evidence", "ref": ref}
@@ -254,6 +257,8 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
             active_terminal = candidate in {"rejected", "no_need"}
         else:
             if active_terminal:
+                continue
+            if current in NON_LINEAR_STATES and candidate == "engaged":
                 continue
             rank = {state: index for index, state in enumerate(PROGRESSION_STATES)}
             if rank[candidate] >= rank.get(current, 0):
