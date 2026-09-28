@@ -130,7 +130,7 @@ def test_sync_research_uses_atomic_upsert_when_lookup_is_empty(monkeypatch):
     assert result["record"] == raced
     assert captured["method"] == "PATCH"
     assert captured["payload"]["performUpsert"]["fieldsToMergeOn"] == ["Research Key"]
-    assert captured["payload"]["records"][0]["fields"]["Research Key"] == "research-race"
+    assert captured["payload"]["records"][0]["fields"]["Research Key"] == lead["fingerprint"]
 
 def test_sync_research_uses_atomic_upsert_when_lookup_is_empty(monkeypatch):
     lead = _complete_lead("research-race")
