@@ -110,3 +110,47 @@ def test_commercial_commitment_progression_selects_execution_question():
     assert strategy["buyer_intent_progression"]["current_state"] == "commercial_commitment"
     assert strategy["conversation_intelligence"]["next_best_action"] == "confirm_commitment_details"
     assert "specific next step" in strategy["conversation_intelligence"]["next_best_question"].lower()
+
+
+def test_commercial_strategy_exposes_objection_constraint_diagnosis_for_no_need():
+    from .sales_closer_intelligence import build_commercial_strategy
+
+    strategy = build_commercial_strategy(
+        {
+            "conversation_events": [
+                {
+                    "outcome": "declined",
+                    "text": "We do not need this because our internal engineering team handles it.",
+                    "evidence_ref": "evt-no-need-team",
+                }
+            ]
+        }
+    )
+    diagnosis = strategy["objection_constraint_diagnosis"]
+    assert diagnosis["interruption_type"] == "no_need"
+    assert diagnosis["status"] == "hypothesis"
+    assert diagnosis["hypothesis_type"] == "existing_solution"
+    assert diagnosis["next_best_action"] == "diagnose_capacity_gap"
+    assert diagnosis["permitted_persuasion"] == "evidence_bounded_discovery"
+    assert strategy["conversation_intelligence"]["next_best_action"] == "diagnose_capacity_gap"
+
+
+def test_commercial_strategy_preserves_terminal_rejection_over_diagnosis():
+    from .sales_closer_intelligence import build_commercial_strategy
+
+    strategy = build_commercial_strategy(
+        {
+            "revenue_lifecycle_state": "closed_lost",
+            "conversation_events": [
+                {
+                    "outcome": "replied",
+                    "text": "We decided not to pursue this. Please stop.",
+                    "evidence_ref": "evt-rejected",
+                }
+            ],
+        }
+    )
+    diagnosis = strategy["objection_constraint_diagnosis"]
+    assert diagnosis["status"] == "terminal"
+    assert diagnosis["permitted_persuasion"] == "none"
+    assert diagnosis["next_best_action"] == "stop_outreach"
