@@ -32,6 +32,8 @@ def _route_independently_verified(lead: Dict[str, Any], route: str) -> bool:
         return False
     if route == "Paxus" and result.get("true_referral") is not True:
         return False
+    if route == "Astrivon Labs" and result.get("service_fit_verified") is not True:
+        return False
     return True
 
 
@@ -68,6 +70,8 @@ def route_state(lead: Dict[str, Any]) -> Dict[str, Any]:
         if route in potential and route not in final:
             if route == "Paxus" and result.get("qualified") is True and result.get("true_referral") is not True:
                 state = "paxus_research_required"
+            elif route == "Astrivon Labs" and result.get("qualified") is True and result.get("service_fit_verified") is not True:
+                state = "astrivon_service_fit_required"
             else:
                 state = "route_research_required" if result.get("qualified") is True else "not_qualified"
         elif route in final:
