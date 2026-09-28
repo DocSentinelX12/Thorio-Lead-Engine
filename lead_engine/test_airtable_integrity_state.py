@@ -31,7 +31,9 @@ def test_airtable_integrity_reads_real_durable_sync_state(monkeypatch):
         monkeypatch.setattr(
             "lead_engine.sales_handoff.verify_persisted_airtable_handoff",
             lambda db, lead: (True, package_digest(lead)),
-        )\n        synced = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)\n        assert synced["sync_status"] == "synced"
+        )
+        synced = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)
+        assert synced["sync_status"] == "synced"
         assert synced["airtable_verified"] is True
         assert synced["sync_error_present"] is False
         assert synced["verification_error"] == ""
