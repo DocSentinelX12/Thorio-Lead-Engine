@@ -619,3 +619,41 @@ def test_closer_research_reentry_question_reaches_final_outreach_body_without_un
     assert question in decision.body
     assert "guaranteed" not in decision.body.lower()
     assert "increase revenue" not in decision.body.lower()
+
+
+def test_closer_objection_response_uses_strategy_selected_question():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+        ],
+    )
+    strategy = build_commercial_strategy(value, objection="We already have an internal engineering team.")
+    response = objection_response("We already have an internal engineering team.", "Thorio", lead=value)
+    assert strategy["conversation_intelligence"]["next_best_question"] in response
+
+
+def test_closer_confirmed_concern_objection_response_uses_confirmed_action_and_question():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {
+                "outcome": "replied",
+                "text": "Yes, avoiding disruption is the concern.",
+                "underlying_concern_confirmation": "capability_or_displacement_risk",
+                "evidence_ref": "evt-2",
+            },
+        ],
+    )
+    strategy = build_commercial_strategy(value, objection="We already have an internal engineering team.")
+    response = objection_response("We already have an internal engineering team.", "Thorio", lead=value)
+    assert strategy["conversation_intelligence"]["next_best_action"] == "de_risk_augmentation_fit"
+    assert strategy["conversation_intelligence"]["next_best_question"] in response
+    assert "de risk augmentation fit" in response
+
+
+def test_closer_objection_response_preserves_opt_out_terminal_behavior():
+    value = lead(outreach_state="objection")
+    response = objection_response("Please unsubscribe me and do not follow up.", "Thorio", lead=value)
+    assert response == "Understood. I will not follow up further."
