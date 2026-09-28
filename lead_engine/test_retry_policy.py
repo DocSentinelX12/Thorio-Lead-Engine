@@ -60,3 +60,22 @@ def test_lead_error_retries_are_durably_bounded_and_quarantined(tmp_path):
     assert state["synced"] is False
     assert state["attempts"] == 5
     assert state["last_error"] == "failure-5"
+
+
+def test_quarantined_lead_requires_deliberate_requeue_and_gets_a_fresh_bounded_cycle(tmp_path):
+    from .database import LeadDB
+    from .retry_policy import DEFAULT_MAX_ATTEMPTS
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {"fingerprint": "quarantine-requeue-001", "company": "Recovery Corp"}
+    assert db.insert_if_new(lead)
+    for index in range(DEFAULT_MAX_ATTEMPTS):
+        result = db.mark_error(lead["fingerprint"], f"failure-{index + 1}")
+    assert result["quarantined"] is True
+    assert db.pending(limit=50) == []
+    with __import__("pytest").raises(ValueError, match="not quarantined"):
+        db.requeue_quarantined(lead["fingerprint"], "should not be early")
+    state = db.requeue_quarantined(lead["fingerprint"], "operator verified Airtable availability")
+    assert state["synced"] is False
+    assert state["attempts"] == 0
+    assert "Quarantine requeued:" in state["last_error"]
+    assert len(db.pending(limit=50)) == 1
