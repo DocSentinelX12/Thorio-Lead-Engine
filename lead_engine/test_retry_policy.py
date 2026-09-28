@@ -40,3 +40,23 @@ def test_retry_state_contains_operational_metadata():
     assert result["max_attempts"] == 5
     assert result["retryable"] is True
     assert result["delay_seconds"] == 120
+
+
+def test_lead_error_retries_are_durably_bounded_and_quarantined(tmp_path):
+    from .database import LeadDB
+
+    db = LeadDB(data_dir=str(tmp_path))
+    db.insert_if_new({"fingerprint": "retry-bound-001", "company": "Retry Corp"})
+
+    for attempt in range(5):
+        result = db.mark_error("retry-bound-001", f"failure-{attempt + 1}")
+
+    assert result["attempts"] == 5
+    assert result["retryable"] is False
+    assert result["quarantined"] is True
+    assert db.pending(limit=50) == []
+
+    state = db.get_sync_state("retry-bound-001")
+    assert state["synced"] is False
+    assert state["attempts"] == 5
+    assert state["last_error"] == "failure-5"
