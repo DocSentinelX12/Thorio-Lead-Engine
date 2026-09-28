@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from .agent_stateful_handlers import routing
+from .agent_stateful_handlers import routing, verification
 from .agent_workers import execute_task
 from .database import LeadDB
 from .lead_routes import route_leads
@@ -32,6 +32,39 @@ def test_routing_requires_final_verification():
     try:
         with pytest.raises(ValueError, match="verified=True"):
             routing("routing", {"lead": {"fingerprint": "unverified", "potential_routes": ["Thorio"]}}, SimpleNamespace(db=db))
+    finally:
+        db.close()
+        directory.cleanup()
+
+
+def test_verification_rejects_astrivon_without_verified_service_fit():
+    directory, db = _db()
+    try:
+        lead = {
+            "fingerprint": "astrivon-verification-gate",
+            "research_status": "complete",
+            "company_research": {
+                "company_verified": True,
+                "decision_maker": "Jane Doe",
+                "decision_maker_evidence": "https://example.com/jane",
+                "decision_maker_verification_status": "verified",
+            },
+            "potential_routes": ["Astrivon Labs"],
+            "qualification_results": {
+                "Astrivon Labs": {
+                    "qualified": True,
+                    "route_research": {"verified": True, "evidence": "Verified route evidence."},
+                    "service_fit_verified": False,
+                }
+            },
+            "evidence_events": [{
+                "url": "https://example.com/evidence",
+                "evidence": "Current verified opportunity evidence.",
+            }],
+        }
+        result = verification("verification", {"lead": lead, "evidence_events": lead["evidence_events"]}, SimpleNamespace(db=db))
+        assert result["verified"] is False
+        assert "astrivon_service_fit_not_verified" in result["errors"]
     finally:
         db.close()
         directory.cleanup()
