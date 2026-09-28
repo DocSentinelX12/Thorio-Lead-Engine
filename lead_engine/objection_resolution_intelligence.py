@@ -39,7 +39,23 @@ def _ref(event: Mapping[str, Any], index: int) -> str:
 
 def _is_polite_only(text: str) -> bool:
     value = text.lower().strip().rstrip(".!?")
-    return not value or value in _POLITE
+    return (
+        not value
+        or value in _POLITE
+        or value.startswith("thanks,")
+        or value.startswith("thank you,")
+    )
+
+
+def _latest_resolution_event(events: list[Any]) -> tuple[Mapping[str, Any], int, str]:
+    for index in range(len(events) - 1, -1, -1):
+        event = events[index]
+        if not isinstance(event, Mapping):
+            continue
+        concern = _text(event.get("underlying_concern_resolution") or event.get("resolved_concern_type")).lower()
+        if concern:
+            return event, index, concern
+    return {}, -1, ""
 
 
 def _post_resolution_state(event: Mapping[str, Any]) -> str:
@@ -75,6 +91,10 @@ def build_objection_resolution_intelligence(
     diagnosis_status = _text(diagnosis.get("status")).lower()
     events = lead.get("conversation_events")
     events = events if isinstance(events, list) else []
+    resolution_event, resolution_index, resolved_type = _latest_resolution_event(events)
+    if diagnosis_status != "resolved" and resolved_type:
+        diagnosis_status = "resolved"
+        diagnosis = {**diagnosis, "state_evidence_ref": _ref(resolution_event, resolution_index), "state_event_index": resolution_index, "hypothesis_type": resolved_type}
 
     if _text(progression.get("current_state")).lower() in _TERMINAL or diagnosis_status == "terminal":
         return {
