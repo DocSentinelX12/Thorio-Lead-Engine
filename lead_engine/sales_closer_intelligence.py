@@ -495,12 +495,25 @@ def _conversation_state_transition(lead: Mapping[str, Any], state: str, buying_s
 
 
 
+def _latest_objection_event(lead: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the most recent conversation event that actually records an objection."""
+    events = lead.get("conversation_events")
+    if not isinstance(events, list):
+        return {}
+    for event in reversed(events):
+        if not isinstance(event, Mapping):
+            continue
+        outcome = _text(event.get("outcome")).lower()
+        objection = _text(event.get("objection"))
+        if outcome == "objection" or objection:
+            return event
+    return {}
+
+
 def _underlying_concern_intelligence(lead: Mapping[str, Any], objection_category: str) -> dict[str, Any]:
     """Generate a falsifiable concern hypothesis from observed language, never a buyer fact."""
-    events = lead.get("conversation_events")
-    latest = events[-1] if isinstance(events, list) and events and isinstance(events[-1], Mapping) else {}
-    text = _text(latest.get("text"))
-    lowered = text.lower()
+    latest = _latest_objection_event(lead)
+    text = _text(latest.get("text") or latest.get("objection"))
     hypotheses = {
         "price": ("economic_risk", "The buyer may be concerned that the economics are not justified by the expected value.", "Which outcome or constraint would need to be clear before the economics could be evaluated?"),
         "existing_solution": ("capability_or_displacement_risk", "The buyer may be concerned that changing or adding a provider would create unnecessary disruption because the current solution already works.", "What would need to be different from the current solution for an additional option to be worth evaluating?"),
@@ -643,9 +656,11 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         unknowns.append("Timing and urgency have not been independently established.")
 
     state = _conversation_state(lead)
-    latest_events = lead.get("conversation_events")
-    latest_event = latest_events[-1] if isinstance(latest_events, list) and latest_events and isinstance(latest_events[-1], Mapping) else {}
-    observed_objection = objection or _text(latest_event.get("objection")) or _text(latest_event.get("text")) if state == "objection" else objection
+    objection_event = _latest_objection_event(lead) if state == "objection" else {}
+    if state == "objection":
+        observed_objection = objection or _text(objection_event.get("objection")) or _text(objection_event.get("text"))
+    else:
+        observed_objection = objection
     objection_category = _objection_category(observed_objection) if observed_objection else ""
     conversation_intelligence = _conversation_intelligence(lead, state, objection_category)
     conversation_memory = _conversation_memory(lead)
