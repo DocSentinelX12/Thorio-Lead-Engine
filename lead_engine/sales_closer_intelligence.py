@@ -67,7 +67,7 @@ def _objection_category(text: str) -> str:
         return "decision_process"
     if any(token in value for token in ("how does this work", "how would this work", "process", "what do you do")):
         return "information"
-    if any(token in value for token in ("trust", "proof", "case study", "experience", "references")):
+    if any(token in value for token in ("trust", "proof", "case study", "experience", "references", "deliver reliably", "reliable delivery", "delivery risk", "can you deliver", "delivery capability")):
         return "trust"
     return "unspecified"
 
@@ -761,16 +761,15 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     buying_signal_intelligence = _buying_signal_intelligence(lead, state)
     underlying_concern = _underlying_concern_intelligence(lead, objection_category)
     concern_confirmation = _apply_confirmed_concern_state(lead, underlying_concern)
-    if concern_confirmation["status"] != "unconfirmed":
-        underlying_concern = {
-            **underlying_concern,
-            "status": concern_confirmation["status"],
-            "state_evidence_ref": concern_confirmation["state_evidence_ref"],
-            "state_event_index": concern_confirmation["state_event_index"],
-            "state_transition": concern_confirmation["transition"],
-        }
-        if concern_confirmation["status"] == "confirmed":
-            underlying_concern["confirmation_evidence_ref"] = concern_confirmation["confirmed_by"]
+    underlying_concern = {
+        **underlying_concern,
+        "status": concern_confirmation["status"],
+        "state_evidence_ref": concern_confirmation["state_evidence_ref"],
+        "state_event_index": concern_confirmation["state_event_index"],
+        "state_transition": concern_confirmation["transition"],
+    }
+    if concern_confirmation["status"] == "confirmed":
+        underlying_concern["confirmation_evidence_ref"] = concern_confirmation["confirmed_by"]
     confirmed_concern_action = _confirmed_concern_next_action(underlying_concern)
     if confirmed_concern_action["applied"]:
         conversation_intelligence = {
