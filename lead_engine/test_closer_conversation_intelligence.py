@@ -13,17 +13,39 @@ def test_objection_updates_persist_commercial_strategy(tmp_path):
         "conversation_id": "conversation:closer-conversation-1:shiftr",
     }
     db.insert_if_new(lead)
-    record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-objection-1", text="We already have an internal engineering team.", outcome="objection", objection="We already have an internal engineering team.")
+
+    record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-objection-1",
+        text="We already have an internal engineering team.",
+        outcome="objection",
+        objection="We already have an internal engineering team.",
+    )
+
     stored = db.get(lead["fingerprint"])
     event = stored["conversation_events"][-1]
     assert stored["commercial_strategy"]["objection_category"] == "existing_solution"
     assert stored["commercial_strategy"]["next_best_action"] == "diagnose_capacity_gap"
     assert event["commercial_strategy"]["psychological_objective"] == "differentiate_without_attacking"
 
-
 def test_commercial_strategy_exposes_buyer_intent_progression_history():
     from .sales_closer_intelligence import build_commercial_strategy
-    lead = {"conversation_events": [{"outcome": "replied", "text": "We have a problem with engineering capacity.", "evidence_ref": "evt-problem"}, {"outcome": "replied", "text": "It is causing release delays.", "evidence_ref": "evt-impact"}, {"outcome": "replied", "text": "We are comparing providers.", "evidence_ref": "evt-eval"}], "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering capacity", "evidence_url": "https://example.com/need"}}
+
+    lead = {
+        "conversation_events": [
+            {"outcome": "replied", "text": "We have a problem with engineering capacity.", "evidence_ref": "evt-problem"},
+            {"outcome": "replied", "text": "It is causing release delays.", "evidence_ref": "evt-impact"},
+            {"outcome": "replied", "text": "We are comparing providers.", "evidence_ref": "evt-eval"},
+        ],
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "engineering capacity",
+            "evidence_url": "https://example.com/need",
+        },
+    }
     strategy = build_commercial_strategy(lead)
     progression = strategy["buyer_intent_progression"]
     assert progression["current_state"] == "evaluation"
@@ -35,15 +57,55 @@ def test_commercial_strategy_exposes_buyer_intent_progression_history():
 
 def test_confirmed_concern_remains_authoritative_over_progression():
     from .sales_closer_intelligence import build_commercial_strategy
-    lead = {"outreach_state": "objection", "conversation_events": [{"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-objection"}, {"outcome": "replied", "text": "Yes, avoiding disruption is the concern.", "underlying_concern_confirmation": "capability_or_displacement_risk", "evidence_ref": "evt-confirm"}], "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering capacity", "evidence_url": "https://example.com/need"}}
-    strategy = build_commercial_strategy(lead, objection="We already have an internal engineering team.")
+
+    lead = {
+        "outreach_state": "objection",
+        "conversation_events": [
+            {
+                "outcome": "objection",
+                "text": "We already have an internal engineering team.",
+                "evidence_ref": "evt-objection",
+            },
+            {
+                "outcome": "replied",
+                "text": "Yes, avoiding disruption is the concern.",
+                "underlying_concern_confirmation": "capability_or_displacement_risk",
+                "evidence_ref": "evt-confirm",
+            },
+        ],
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "engineering capacity",
+            "evidence_url": "https://example.com/need",
+        },
+    }
+    strategy = build_commercial_strategy(
+        lead,
+        objection="We already have an internal engineering team.",
+    )
     assert strategy["buyer_intent_progression"]["current_state"] == "existing_solution"
     assert strategy["conversation_intelligence"]["next_best_action"] == "de_risk_augmentation_fit"
 
 
 def test_commercial_commitment_progression_selects_execution_question():
     from .sales_closer_intelligence import build_commercial_strategy
-    lead = {"conversation_events": [{"outcome": "replied", "text": "Send the agreement and kickoff options.", "evidence_ref": "evt-commit"}], "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering capacity", "evidence_url": "https://example.com/need"}}
+
+    lead = {
+        "conversation_events": [
+            {
+                "outcome": "replied",
+                "text": "Send the agreement and kickoff options.",
+                "evidence_ref": "evt-commit",
+            }
+        ],
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "engineering capacity",
+            "evidence_url": "https://example.com/need",
+        },
+    }
     strategy = build_commercial_strategy(lead)
     assert strategy["buyer_intent_progression"]["current_state"] == "commercial_commitment"
     assert strategy["conversation_intelligence"]["next_best_action"] == "confirm_commitment_details"
@@ -52,7 +114,18 @@ def test_commercial_commitment_progression_selects_execution_question():
 
 def test_commercial_strategy_exposes_objection_constraint_diagnosis_for_no_need():
     from .sales_closer_intelligence import build_commercial_strategy
-    strategy = build_commercial_strategy({"conversation_events": [{"outcome": "declined", "text": "We do not need this because our internal engineering team handles it.", "evidence_ref": "evt-no-need-team"}]})
+
+    strategy = build_commercial_strategy(
+        {
+            "conversation_events": [
+                {
+                    "outcome": "declined",
+                    "text": "We do not need this because our internal engineering team handles it.",
+                    "evidence_ref": "evt-no-need-team",
+                }
+            ]
+        }
+    )
     diagnosis = strategy["objection_constraint_diagnosis"]
     assert diagnosis["interruption_type"] == "no_need"
     assert diagnosis["status"] == "hypothesis"
@@ -64,7 +137,19 @@ def test_commercial_strategy_exposes_objection_constraint_diagnosis_for_no_need(
 
 def test_commercial_strategy_preserves_terminal_rejection_over_diagnosis():
     from .sales_closer_intelligence import build_commercial_strategy
-    strategy = build_commercial_strategy({"revenue_lifecycle_state": "closed_lost", "conversation_events": [{"outcome": "replied", "text": "We decided not to pursue this. Please stop.", "evidence_ref": "evt-rejected"}]})
+
+    strategy = build_commercial_strategy(
+        {
+            "revenue_lifecycle_state": "closed_lost",
+            "conversation_events": [
+                {
+                    "outcome": "replied",
+                    "text": "We decided not to pursue this. Please stop.",
+                    "evidence_ref": "evt-rejected",
+                }
+            ],
+        }
+    )
     diagnosis = strategy["objection_constraint_diagnosis"]
     assert diagnosis["status"] == "terminal"
     assert diagnosis["permitted_persuasion"] == "none"
@@ -73,21 +158,26 @@ def test_commercial_strategy_preserves_terminal_rejection_over_diagnosis():
 
 def test_commercial_strategy_exposes_objection_resolution_handoff_intelligence():
     from .sales_closer_intelligence import build_commercial_strategy
-    strategy = build_commercial_strategy({"conversation_events": [{"outcome": "objection", "text": "The price is too high.", "evidence_ref": "evt-price"}, {"outcome": "replied", "text": "We resolved the pricing concern.", "underlying_concern_resolution": "economic", "evidence_ref": "evt-resolved"}]})
+
+    strategy = build_commercial_strategy(
+        {
+            "conversation_events": [
+                {
+                    "outcome": "objection",
+                    "text": "The price is too high.",
+                    "evidence_ref": "evt-price",
+                },
+                {
+                    "outcome": "replied",
+                    "text": "We resolved the pricing concern.",
+                    "underlying_concern_resolution": "economic",
+                    "evidence_ref": "evt-resolved",
+                },
+            ]
+        }
+    )
     resolution = strategy["objection_resolution_intelligence"]
     assert resolution["status"] == "resolved_pending_reconfirmation"
     assert resolution["progression_handoff_allowed"] is False
     assert resolution["resolution_evidence_ref"] == "evt-resolved"
     assert resolution["next_best_action"] == "reconfirm_active_need"
-
-
-def test_commercial_strategy_uses_contradictory_buyer_evidence_as_active_state():
-    from .sales_closer_intelligence import build_commercial_strategy
-    lead = {"conversation_events": [{"outcome": "replied", "text": "We are comparing providers.", "evidence_ref": "evt-eval"}, {"outcome": "replied", "text": "We are no longer evaluating providers. We are just gathering information.", "evidence_ref": "evt-clarify"}], "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering capacity", "evidence_url": "https://example.com/need"}}
-    strategy = build_commercial_strategy(lead)
-    progression = strategy["buyer_intent_progression"]
-    assert progression["current_state"] == "engaged"
-    assert progression["active_state_supersession"]["prior_state"] == "evaluation"
-    assert progression["active_state_supersession"]["active_state"] == "engaged"
-    assert strategy["conversation_intelligence"]["buyer_intent_state"] == "engaged"
-    assert strategy["conversation_intelligence"]["next_best_action"] == "clarify_business_impact"

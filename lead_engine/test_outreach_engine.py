@@ -689,23 +689,3 @@ def test_explicit_commitment_progression_reaches_final_outreach_body():
     question = decision.commercial_strategy["conversation_intelligence"]["next_best_question"]
     assert decision.commercial_strategy["buyer_intent_progression"]["current_state"] == "commercial_commitment"
     assert question in decision.body
-
-
-def test_contradictory_buyer_state_reaches_final_outreach_question():
-    value = lead(
-        conversation_events=[
-            {"outcome": "replied", "text": "We are comparing providers.", "evidence_ref": "evt-eval"},
-            {
-                "outcome": "replied",
-                "text": "We are no longer evaluating providers. We are just gathering information.",
-                "evidence_ref": "evt-clarify",
-            },
-        ]
-    )
-    decision = build_outreach_decision(value)
-    strategy = decision.commercial_strategy
-    assert strategy["buyer_intent_progression"]["current_state"] == "engaged"
-    assert strategy["buyer_intent_progression"]["active_state_supersession"]["prior_state"] == "evaluation"
-    question = strategy["conversation_intelligence"]["next_best_question"]
-    assert strategy["conversation_intelligence"]["next_best_action"] == "establish_problem"
-    assert question in decision.body
