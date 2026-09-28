@@ -905,41 +905,24 @@ def build_objection_response(objection: str, route: str, *, lead: Mapping[str, A
 
     strategy = build_commercial_strategy(lead or {}, objection=text)
     category = strategy["objection_category"]
+    conversation_intelligence = strategy.get("conversation_intelligence")
+    next_question = _text(conversation_intelligence.get("next_best_question")) if isinstance(conversation_intelligence, Mapping) else ""
+    next_action = _text(conversation_intelligence.get("next_best_action")) if isinstance(conversation_intelligence, Mapping) else ""
+    action_phrase = next_action.replace("_", " ") if next_action else ""
 
-    if category == "price":
-        return (
-            f"I understand the concern. I do not want to make assumptions or defend a price before establishing whether "
-            f"{route} is actually a fit. If useful, I can first clarify the outcome you need and then "
-            "we can determine whether the economics make sense."
-        )
-    if category == "existing_solution":
-        return (
-            "That makes sense. I would not suggest replacing something that is already working. "
-            "The useful question is whether there is a capacity, specialization, speed, or delivery gap "
-            "your current team is not trying to cover. Is there a gap like that today?"
-        )
-    if category == "timing":
-        return (
-            "Understood. I do not want to manufacture urgency. What would need to change for this to "
-            "become a priority, and is there a real date or event driving that decision?"
-        )
-    if category == "decision_process":
-        return (
-            "Absolutely. Rather than push for a decision prematurely, what does the evaluation process "
-            "normally look like on your side, and who else needs to be involved?"
-        )
-    if category == "trust":
-        return (
-            "Fair question. I would rather use specific, verifiable evidence than make a broad claim. "
-            "What would you need to verify before deciding whether a conversation is worthwhile?"
-        )
-    if category == "information":
-        return (
-            f"Happy to explain. The goal is to determine whether {route} addresses the need you described. "
-            "If I answer that directly, would the next useful step be deciding whether a deeper conversation makes sense?"
-        )
-
-    return (
-        "Thanks for the context. I do not want to assume the reason behind your concern. "
-        "What is the main issue you would need resolved before considering a next step?"
+    acknowledgments = {
+        "price": "I understand the concern. I do not want to defend a price before establishing whether the fit and expected value are clear.",
+        "existing_solution": "That makes sense. I would not suggest changing something that is already working without understanding the actual gap.",
+        "timing": "Understood. I do not want to manufacture urgency or assume the timing is right.",
+        "decision_process": "Absolutely. I do not want to push a decision before understanding how the decision is actually made on your side.",
+        "trust": "Fair question. I would rather use specific, verifiable evidence than make a broad delivery claim.",
+        "information": f"Happy to clarify. The goal is to determine whether {route} addresses the need you described.",
+    }
+    acknowledgment = acknowledgments.get(
+        category,
+        "Thanks for the context. I do not want to assume the reason behind the concern.",
     )
+    if next_question:
+        return f"{acknowledgment} The next useful step is to {action_phrase}. {next_question}" if action_phrase else f"{acknowledgment} {next_question}"
+    return acknowledgment
+
