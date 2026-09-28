@@ -6,6 +6,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from .agent_queue import enqueue
 from .outreach_engine import STOP_STATES, objection_response
+from .sales_closer_intelligence import build_commercial_strategy
 
 STATE_KEY = "revenue_conversations"
 
@@ -161,10 +162,12 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
             _save(db, state)
         return dict(conversation)
     if objection: event["objection"] = str(objection)
+    commercial_strategy = build_commercial_strategy(lead, objection=str(objection or text if classified == "objection" else ""))
+    event["commercial_strategy"] = dict(commercial_strategy)
     conversation["events"].append(event); conversation["processed_event_ids"].append(event_id); conversation["last_inbound_at"] = event["at"]; conversation["response_count"] = int(conversation.get("response_count", 0) or 0) + 1
     switched_route, switch_evidence, switch_evidence_text = _route_switch(lead, suggested_route, text)
     existing_route_history = list(lead.get("route_switch_history") or []) if isinstance(lead.get("route_switch_history"), list) else []
-    updated = dict(lead); updated.update({"conversation_id": conversation_id, "conversation_events": list(conversation["events"]), "response_count": conversation["response_count"], "last_response_at": event["at"], "last_response_outcome": classified, "outreach_state": classified, "revenue_lifecycle_state": "conversation_active", "route_switch_history": existing_route_history})
+    updated = dict(lead); updated.update({"conversation_id": conversation_id, "conversation_events": list(conversation["events"]), "response_count": conversation["response_count"], "last_response_at": event["at"], "last_response_outcome": classified, "outreach_state": classified, "revenue_lifecycle_state": "conversation_active", "route_switch_history": existing_route_history, "commercial_strategy": dict(commercial_strategy)})
     if switched_route:
         history = list(updated.get("route_switch_history") or []) if isinstance(updated.get("route_switch_history"), list) else []
         history.append({"at": event["at"], "from": updated.get("outreach_route"), "to": switched_route, "evidence": switch_evidence, "evidence_text": switch_evidence_text}); updated["route_switch_history"] = history; updated["outreach_route"] = switched_route; updated["active_route"] = switched_route
