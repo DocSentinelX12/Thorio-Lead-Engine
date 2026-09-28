@@ -156,6 +156,22 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
     if _explicit(
         text,
         (
+            "we have a problem",
+            "this is a problem",
+            "we're struggling",
+            "we are struggling",
+            "we need help",
+            "we need this",
+            "we need to solve",
+            "we need to address",
+            "this is causing a problem",
+            "the issue is",
+        ),
+    ):
+        return {"state": "problem_acknowledged", "reason": "buyer explicitly acknowledged a problem", "ref": ref}
+    if _explicit(
+        text,
+        (
             "it is costing",
             "it's costing",
             "costs us",
