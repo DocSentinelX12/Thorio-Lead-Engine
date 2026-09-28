@@ -251,3 +251,86 @@ def test_package_projection_rejects_tampered_identity_version():
 
     with pytest.raises(ValueError, match="Unsupported canonical opportunity identity version"):
         package_projection(lead)
+
+
+def test_persisted_handoff_rejects_stale_local_digest(tmp_path):
+    from .sales_handoff import verify_persisted_airtable_handoff
+    db = LeadDB(data_dir=tmp_path)
+    lead = _ready_lead()
+    assert db.insert_if_new(lead)
+    db.record_airtable_handoff(
+        lead["fingerprint"],
+        "stale-digest",
+        "recLead",
+        "recResearch",
+        ["recCompany"],
+        "2026-09-28T00:00:00+00:00",
+    )
+    confirmed, reason = verify_persisted_airtable_handoff(db, lead)
+    assert confirmed is False
+    assert reason == "handoff_digest_mismatch"
+
+
+def test_persisted_handoff_rejects_remote_research_mutation(tmp_path, monkeypatch):
+    from .sales_handoff import verify_persisted_airtable_handoff
+    import json
+    db = LeadDB(data_dir=tmp_path)
+    lead = _ready_lead()
+    assert db.insert_if_new(lead)
+    digest = package_digest(lead)
+    db.record_airtable_handoff(
+        lead["fingerprint"],
+        digest,
+        "recLead",
+        "recResearch",
+        ["recCompany"],
+        "2026-09-28T00:00:00+00:00",
+    )
+    lead_record, research_record, _ = _records(lead)
+    research_record["fields"]["Package Digest"] = "tampered"
+    def fake_read(table_key, record_id):
+        return lead_record if table_key == "lead_radar" else research_record
+    monkeypatch.setattr("lead_engine.sales_handoff._read_airtable_record", fake_read)
+    confirmed, reason = verify_persisted_airtable_handoff(db, lead)
+    assert confirmed is False
+    assert reason == "research_record_package_mismatch"
+
+
+def test_persisted_handoff_requires_each_destination_opportunity(tmp_path, monkeypatch):
+    from .sales_handoff import verify_persisted_airtable_handoff
+    db = LeadDB(data_dir=tmp_path)
+    lead = _ready_lead()
+    lead["potential_routes"] = ["Paxus"]
+    lead["eligible_routes"] = ["Paxus"]
+    lead["preserved_routes"] = ["Paxus"]
+    lead["routing_result"] = {"destinations": ["Paxus"], "review_required": False}
+    from .lead_identity import canonical_opportunity_identity
+    lead.update(canonical_opportunity_identity(lead))
+    lead["research_intelligence"] = build_research_intelligence(lead)
+    assert db.insert_if_new(lead)
+    digest = package_digest(lead)
+    db.record_airtable_handoff(
+        lead["fingerprint"],
+        digest,
+        "recLead",
+        "recResearch",
+        ["recCompany"],
+        "2026-09-28T00:00:00+00:00",
+    )
+    lead_record, research_record, _ = _records(lead)
+    def fake_read(table_key, record_id):
+        if table_key == "lead_radar":
+            return lead_record
+        return research_record
+    monkeypatch.setattr("lead_engine.sales_handoff._read_airtable_record", fake_read)
+    monkeypatch.setattr(
+        "lead_engine.airtable_sync.find_master_records",
+        lambda table_key, lookup_field, lookup_value: (
+            [{"id": "recCompany", "fields": {"Company": lead["company"]}}]
+            if table_key == "companies"
+            else []
+        ),
+    )
+    confirmed, reason = verify_persisted_airtable_handoff(db, lead)
+    assert confirmed is False
+    assert reason == "opportunity_not_confirmed:Paxus"
