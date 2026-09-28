@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from .agent_registry import agent_registry
 from .lead_identity import validate_opportunity_identity
+from .retry_policy import DEFAULT_MAX_ATTEMPTS, should_retry
 
 
 class LeadDB:
@@ -253,7 +254,7 @@ class LeadDB:
             raise ValueError("Pending limit must be an integer.")
         if limit <= 0:
             raise ValueError("Pending limit must be greater than zero.")
-        return self.conn.execute("SELECT fingerprint, payload, attempts FROM leads WHERE synced = 0 ORDER BY rowid LIMIT ?", (limit,)).fetchall()
+        return self.conn.execute("SELECT fingerprint, payload, attempts FROM leads WHERE synced = 0 AND attempts < ? ORDER BY rowid LIMIT ?", (DEFAULT_MAX_ATTEMPTS, limit)).fetchall()
 
     def pending_research(self, limit=50):
         if not isinstance(limit, int) or isinstance(limit, bool):
@@ -308,8 +309,14 @@ class LeadDB:
         self.conn.commit()
 
     def mark_error(self, fingerprint, error):
-        self.conn.execute("UPDATE leads SET synced = 0, attempts = attempts + 1, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?", (str(error)[:4000], fingerprint))
+        row = self.conn.execute("SELECT attempts FROM leads WHERE fingerprint = ?", (fingerprint,)).fetchone()
+        if row is None:
+            raise ValueError(f"Lead not found: {fingerprint}")
+        next_attempts = int(row[0] or 0) + 1
+        quarantined = not should_retry(next_attempts, DEFAULT_MAX_ATTEMPTS)
+        self.conn.execute("UPDATE leads SET synced = 0, attempts = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?", (next_attempts, str(error)[:4000], fingerprint))
         self.conn.commit()
+        return {"attempts": next_attempts, "max_attempts": DEFAULT_MAX_ATTEMPTS, "retryable": not quarantined, "quarantined": quarantined}
 
     def set_checkpoint(self, collector, checkpoint):
         if not collector:
