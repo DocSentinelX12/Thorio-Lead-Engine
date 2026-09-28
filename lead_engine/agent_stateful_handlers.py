@@ -368,6 +368,8 @@ def verification(_: str, payload: Mapping[str, Any], __: Any) -> Dict[str, Any]:
             errors.append(f"route_not_qualified:{route_name}")
         if route_name == "Paxus" and (not isinstance(route_result, Mapping) or route_result.get("true_referral") is not True):
             errors.append("paxus_true_referral_not_verified")
+        if route_name == "Astrivon Labs" and (not isinstance(route_result, Mapping) or route_result.get("service_fit_verified") is not True):
+            errors.append("astrivon_service_fit_not_verified")
 
     decision_maker_verification = "not_required"
     decision_maker_role_evidence = ""
