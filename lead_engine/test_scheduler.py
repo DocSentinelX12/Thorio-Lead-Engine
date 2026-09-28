@@ -251,8 +251,7 @@ def test_scheduler_records_actual_source_start_time(tmp_path, monkeypatch):
     runner.run_source.return_value = {"processed_count": 1, "failed_count": 0, "total": 1}
     source = StaticLeadSource([])
 
-    wall_times = iter([1000.0])
-    monkeypatch.setattr("lead_engine.scheduler.time.time", lambda: next(wall_times))
+    monkeypatch.setattr("lead_engine.scheduler.time.time", lambda: 1000.0)
     scheduler = LeadScheduler(runner=runner)
     scheduler.run([source])
 
