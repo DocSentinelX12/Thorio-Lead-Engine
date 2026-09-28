@@ -224,6 +224,10 @@ def main(argv=None):
             print(str(exc), flush=True)
             return 1
 
+        if result.get("status") != "completed":
+            print("PRODUCTION EXECUTION GATE FAILURE: bounded scheduler execution did not complete without failures.", flush=True)
+            return 1
+
     print(json.dumps(result, indent=2, ensure_ascii=False, default=str), flush=True)
     return 0
 
