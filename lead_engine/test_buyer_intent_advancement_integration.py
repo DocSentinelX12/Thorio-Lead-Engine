@@ -26,7 +26,7 @@ def test_commercial_strategy_exposes_evidence_grounded_advancement_guard():
             ]
         )
     )
-    advancement = strategy["buyer_intent_advancement"]
+    advancement = strategy["buyer_intent_progression"]["advancement"]
     assert advancement["current_state"] == "problem_acknowledged"
     assert advancement["advance_allowed"] is False
     assert advancement["missing_evidence"] == ["business_impact"]
