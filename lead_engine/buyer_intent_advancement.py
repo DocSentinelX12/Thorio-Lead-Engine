@@ -135,13 +135,16 @@ def build_buyer_intent_advancement(
     missing_value = not _known_value(known, missing_dimension) if missing_dimension else False
 
     if state == "commercial_commitment":
-        commitment = _known_value(known, "commitment_details")
-        advance_allowed = bool(commitment) and not (required and missing_value)
+        commitment = _known_value(known, "commitment_details") or _known_value(known, "active_need")
+        advance_allowed = bool(commitment)
         blocked_reason = (
             ""
             if advance_allowed
             else "An explicit commitment exists, but the concrete execution details are not established."
         )
+        if not _known_value(known, "commitment_details") or (required and missing_value):
+            advance_allowed = False
+            blocked_reason = "An explicit commitment exists, but the concrete execution details are not established."
     elif state == "conversion":
         advance_allowed = False
         blocked_reason = "Conversion is terminal."
