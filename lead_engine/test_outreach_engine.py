@@ -299,3 +299,72 @@ def test_closer_conversation_intelligence_does_not_reask_known_timing_or_priorit
     assert "October launch" in intelligence["known_buyer_context"]
     assert "timing" not in intelligence["next_best_question"].lower()
     assert "priority" not in intelligence["next_best_question"].lower()
+
+def test_closer_conversation_memory_aggregates_prior_events_and_preserves_latest_context():
+    value = lead(
+        outreach_state="replied",
+        conversation_events=[
+            {"outcome": "replied", "priority": "October launch", "evidence_ref": "evt-1"},
+            {"outcome": "replied", "timing": "October launch", "desired_outcome": "restore delivery capacity", "evidence_ref": "evt-2"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    memory = decision.commercial_strategy["conversation_memory"]
+    assert memory["event_count"] == 2
+    assert memory["known_context"]["priority"]["value"] == "October launch"
+    assert memory["known_context"]["desired_outcome"]["value"] == "restore delivery capacity"
+    assert memory["known_context"]["desired_outcome"]["event_index"] == 1
+
+
+def test_closer_buying_signal_distinguishes_evaluation_from_interest():
+    value = lead(
+        outreach_state="interested",
+        conversation_events=[
+            {"outcome": "interested", "text": "Please send the proposal so we can compare options and review procurement."},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    signal = decision.commercial_strategy["buying_signal_intelligence"]
+    assert signal["category"] == "active_evaluation"
+    assert signal["confidence"] == "high"
+    assert signal["do_not_overstate"] is False
+
+
+def test_closer_interest_is_not_promoted_to_purchase_commitment():
+    value = lead(
+        outreach_state="interested",
+        conversation_events=[{"outcome": "interested", "text": "Sounds interesting, tell me more."}],
+    )
+    decision = build_outreach_decision(value)
+    signal = decision.commercial_strategy["buying_signal_intelligence"]
+    transition = decision.commercial_strategy["state_transition"]
+    assert signal["category"] == "interest"
+    assert signal["do_not_overstate"] is True
+    assert transition["candidate_state"] == "interested"
+    assert transition["required_evidence"]
+
+
+def test_closer_research_reentry_marks_missing_evidence_without_replacing_safe_next_action():
+    value = lead(
+        outreach_state="replied",
+        conversation_events=[{"outcome": "replied", "text": "We need this for the October launch.", "priority": "October launch"}],
+    )
+    decision = build_outreach_decision(value)
+    strategy = decision.commercial_strategy
+    assert strategy["research_reentry"]["recommended"] is True
+    assert "verified business impact or buyer-stated consequence" in strategy["research_reentry"]["required_evidence"]
+    assert strategy["next_best_action"] == "clarify_business_impact"
+    assert strategy["persuasion_quality"]["passed"] is True
+
+
+def test_closer_persuasion_quality_fails_when_strategy_tries_to_close_beyond_signal():
+    from .sales_closer_intelligence import _persuasion_quality
+
+    result = _persuasion_quality(
+        {"next_best_action": "force_decision", "psychological_objective": "force_decision"},
+        {"next_best_question": "What matters most?"},
+        {"category": "interest", "do_not_overstate": True},
+        {"recommended": False, "required_evidence": [], "unknowns": []},
+    )
+    assert result["passed"] is False
+    assert "psychological_objective_exceeds_signal" in result["violations"]
