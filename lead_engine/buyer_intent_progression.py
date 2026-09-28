@@ -241,7 +241,7 @@ def _next_requirement(state: str, known: Mapping[str, Any]) -> tuple[str, str, s
         "conversion": ("none", "stop_outreach", ""),
         "objection": ("objection", "diagnose_objection_before_persuading", "What specifically would need to change or be clarified for you to consider moving forward?"),
         "timing_delay": ("timing", "map_timing_constraint", "What event or condition would need to change before this becomes actionable?"),
-        "no_need": ("none", "stop_outreach", ""),
+        "no_need": ("no_need_reason", "diagnose_no_need", "What specifically makes this unnecessary right now, and is there any gap in the current approach worth evaluating?"),
         "existing_solution": ("existing_solution", "diagnose_capacity_gap", "Where, if anywhere, is there still a capacity, specialization, speed, or delivery gap?"),
         "rejected": ("none", "stop_outreach", ""),
         "re_engagement": ("active_need", "reconfirm_active_need", "What has changed, if anything, that makes revisiting this worthwhile now?"),
