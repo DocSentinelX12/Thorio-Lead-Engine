@@ -346,6 +346,15 @@ def _conversation_intelligence(lead: Mapping[str, Any], state: str, objection_ca
             "advance_condition": "A real timing condition is identified without manufacturing urgency.",
         }
 
+    if state == "interested" and not known_context:
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "answer_and_advance",
+            "next_best_question": "What outcome matters most to your team, and how would you measure whether solving this was worthwhile?",
+            "advance_condition": "The buyer's desired outcome and a concrete next step are clear.",
+        }
+
     if state in {"replied", "interested"}:
         if _text(latest.get("desired_outcome")) or _text(latest.get("success_metric")):
             return {
