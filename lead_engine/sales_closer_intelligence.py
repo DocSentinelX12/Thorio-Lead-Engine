@@ -298,6 +298,87 @@ def build_commercial_psychology_profile(lead: Mapping[str, Any]) -> dict[str, An
     }
 
 
+def _conversation_intelligence(lead: Mapping[str, Any], state: str, objection_category: str) -> dict[str, Any]:
+    """Turn observed conversation context into one evidence-safe next move."""
+    events = lead.get("conversation_events")
+    latest = events[-1] if isinstance(events, list) and events and isinstance(events[-1], Mapping) else {}
+    known_context: list[str] = []
+    context_fields = (
+        ("priority", "priority"),
+        ("timing", "timing"),
+        ("decision_process", "decision_process"),
+        ("budget", "budget"),
+        ("authority", "authority"),
+        ("desired_outcome", "desired_outcome"),
+        ("success_metric", "success_metric"),
+    )
+    for field, label in context_fields:
+        value = _text(latest.get(field))
+        if value:
+            known_context.append(value)
+
+    if objection_category == "opt_out" or state in {"converted", "referred", "closed_lost", "disqualified", "stopped"}:
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "stop_outreach",
+            "next_best_question": "",
+            "advance_condition": "The conversation is terminal or the prospect has opted out.",
+        }
+
+    if objection_category == "decision_process" or (
+        state == "interested" and _text(latest.get("decision_process"))
+    ):
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "map_decision_process",
+            "next_best_question": "What part of the decision process is still unresolved, and who else needs to be involved?",
+            "advance_condition": "The evaluation path and required participants are clear enough to define a concrete next step.",
+        }
+
+    if objection_category == "timing":
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "clarify_timing",
+            "next_best_question": "What event or condition determines when this becomes actionable?",
+            "advance_condition": "A real timing condition is identified without manufacturing urgency.",
+        }
+
+    if state in {"replied", "interested"}:
+        if _text(latest.get("desired_outcome")) or _text(latest.get("success_metric")):
+            return {
+                "state": state,
+                "known_buyer_context": known_context,
+                "next_best_action": "clarify_business_impact",
+                "next_best_question": "What business consequence matters most if that outcome is not achieved?",
+                "advance_condition": "The material consequence and its relevance to the buyer are understood.",
+            }
+        if _text(latest.get("priority")) or _text(latest.get("timing")):
+            return {
+                "state": state,
+                "known_buyer_context": known_context,
+                "next_best_action": "clarify_business_impact",
+                "next_best_question": "What outcome would make addressing this priority worthwhile?",
+                "advance_condition": "The desired outcome and material business consequence are clear.",
+            }
+        return {
+            "state": state,
+            "known_buyer_context": known_context,
+            "next_best_action": "clarify_business_impact",
+            "next_best_question": "What outcome would make solving this problem worthwhile?",
+            "advance_condition": "The desired outcome and material business consequence are clear.",
+        }
+
+    return {
+        "state": state,
+        "known_buyer_context": known_context,
+        "next_best_action": "discover_active_need",
+        "next_best_question": "Is this need still active, and what outcome would make solving it worthwhile?",
+        "advance_condition": "The need is confirmed as active and the desired outcome is understood.",
+    }
+
 def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -> dict[str, Any]:
     verified_facts: list[str] = []
     evidence_refs: list[str] = []
@@ -374,6 +455,7 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
 
     state = _conversation_state(lead)
     objection_category = _objection_category(objection) if objection else ""
+    conversation_intelligence = _conversation_intelligence(lead, state, objection_category)
 
     objectives = {
         "new": ("diagnose", "ask_one_high_value_question"),
@@ -420,7 +502,8 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "verified_business_impact": verified_impact,
         "verified_cost_of_inaction": cost_of_inaction,
         "psychological_objective": psychological_objective,
-        "next_best_action": next_best_action,
+        "next_best_action": conversation_intelligence["next_best_action"],
+        "conversation_intelligence": conversation_intelligence,
         "commercial_psychology_profile": commercial_psychology_profile,
         "ethical_constraints": [
             "Never convert inference into fact.",
