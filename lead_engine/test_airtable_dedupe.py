@@ -47,3 +47,42 @@ def test_existing_fingerprint_updates_existing_record_without_duplicate_creation
 
     mock_update.assert_called_once()
     mock_create.assert_not_called()
+
+
+def test_empty_lookup_uses_atomic_upsert_to_prevent_check_then_create_race():
+    lead = {
+        "company": "Concurrent Corp",
+        "source": "company website",
+        "url": "https://example.com/careers",
+        "signal": "Remote software engineer",
+        "evidence": "Remote engineering role found.",
+        "fingerprint": "concurrent-test-001",
+        "potential_routes": ["Thorio"],
+    }
+    raced_record = {
+        "id": "rec_raced_001",
+        "fields": {
+            "Company": "Concurrent Corp",
+            "Duplicate Key": "concurrent-test-001",
+        },
+    }
+
+    with patch(
+        "lead_engine.airtable_sync.find_by_fingerprint",
+        return_value=[],
+    ), patch(
+        "lead_engine.airtable_sync._request",
+        return_value={"records": [raced_record]},
+    ) as mock_request, patch(
+        "lead_engine.airtable_sync.create_master_record"
+    ) as mock_create:
+        result = sync_lead_if_missing(lead)
+
+    assert result["status"] == "created"
+    assert result["record"] == raced_record
+    mock_create.assert_not_called()
+    mock_request.assert_called_once()
+    method, _url, payload = mock_request.call_args.args
+    assert method == "PATCH"
+    assert payload["performUpsert"]["fieldsToMergeOn"] == ["Duplicate Key"]
+    assert payload["records"][0]["fields"]["Duplicate Key"] == lead["fingerprint"]
