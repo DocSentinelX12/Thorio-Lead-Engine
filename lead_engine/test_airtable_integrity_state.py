@@ -20,8 +20,9 @@ def test_airtable_integrity_reads_real_durable_sync_state():
         db.mark_synced("airtable-state")
         synced = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)
         assert synced["sync_status"] == "synced"
-        assert synced["airtable_verified"] is True
+        assert synced["airtable_verified"] is False
         assert synced["sync_error_present"] is False
+        assert synced["verification_error"] == "airtable_handoff_missing"
 
         db.mark_error("airtable-state", "Airtable unavailable")
         failed = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)
