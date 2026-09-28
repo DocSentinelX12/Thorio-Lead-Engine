@@ -234,6 +234,100 @@ def _verify_optional_lifecycle_record(record: Any, lead: Mapping[str, Any], *, k
     return True
 
 
+
+def verify_persisted_airtable_handoff(
+    db: Any,
+    lead: Mapping[str, Any],
+) -> tuple[bool, str]:
+    """Independently reverify the durable Airtable handoff after recovery.
+
+    This is intentionally stronger than LeadDB.synced. A local synced flag only
+    proves that a prior handoff completed. Recovery integrity must re-read the
+    persisted remote records and compare their canonical identity and package
+    digest with the current durable lead state.
+    """
+    if not isinstance(lead, Mapping):
+        return False, "lead_invalid"
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    if not fingerprint:
+        return False, "fingerprint_missing"
+    try:
+        handoff = db.get_airtable_handoff(fingerprint)
+    except Exception as exc:
+        return False, f"handoff_state_read_failed:{exc}"
+    if not isinstance(handoff, Mapping):
+        return False, "handoff_missing"
+    try:
+        digest = package_digest(lead)
+    except (TypeError, ValueError, KeyError):
+        return False, "research_intelligence_not_ready"
+    if str(handoff.get("package_digest") or "").strip() != digest:
+        return False, "handoff_digest_mismatch"
+
+    try:
+        lead_record = _read_airtable_record(
+            "lead_radar",
+            str(handoff.get("lead_radar_record_id") or ""),
+        )
+        research_record = _read_airtable_record(
+            "research",
+            str(handoff.get("research_record_id") or ""),
+        )
+    except (TypeError, ValueError, KeyError, Exception) as exc:
+        return False, f"airtable_readback_failed:{exc}"
+
+    if not verify_lead_radar_record(lead_record, lead):
+        return False, "lead_radar_record_not_confirmed"
+    if not verify_research_record(research_record, lead, digest):
+        return False, "research_record_package_mismatch"
+
+    routing_result = lead.get("routing_result")
+    destinations = (
+        [str(route).strip() for route in routing_result.get("destinations", []) if str(route).strip()]
+        if isinstance(routing_result, Mapping)
+        else []
+    )
+    expected_master_ids = {
+        str(record_id).strip()
+        for record_id in (handoff.get("master_tracker_record_ids") or [])
+        if str(record_id).strip()
+    }
+
+    from .airtable_sync import find_master_records
+
+    company = str(lead.get("company") or "").strip()
+    if company:
+        company_records = find_master_records("companies", "Company", company)
+        if not any(
+            str(record.get("id") or "").strip() in expected_master_ids
+            for record in company_records
+            if isinstance(record, Mapping)
+        ):
+            return False, "company_record_not_confirmed"
+
+    for route in destinations:
+        if route == "Thorio":
+            continue
+        if route not in {"Paxus", "Shiftr", "Astrivon Labs"}:
+            return False, f"unsupported_destination:{route}"
+        opportunity_key = f"{fingerprint}:{route}"
+        opportunity_records = find_master_records(
+            "opportunities",
+            "Opportunity",
+            opportunity_key,
+        )
+        if not any(
+            str(record.get("id") or "").strip() in expected_master_ids
+            and str(_record_fields(record).get("Opportunity") or "").strip() == opportunity_key
+            and str(_record_fields(record).get("Company") or "").strip() == company
+            and str(_record_fields(record).get("Partner") or "").strip() == route
+            for record in opportunity_records
+            if isinstance(record, Mapping)
+        ):
+            return False, f"opportunity_not_confirmed:{route}"
+
+    return True, digest
+
 def verify_airtable_handoff(result: Mapping[str, Any], lead: Mapping[str, Any], expected_digest: str | None = None, *, readback: bool = True) -> tuple[bool, str]:
     if not package_is_ready(lead): return False, "research_intelligence_not_ready"
     try: digest = expected_digest or package_digest(lead)
@@ -253,11 +347,4 @@ def verify_airtable_handoff(result: Mapping[str, Any], lead: Mapping[str, Any], 
         fields = _record_fields(referral)
         if str(fields.get("Company") or "").strip() != str(lead.get("company") or "").strip(): return False, "referral_company_mismatch"
         if str(fields.get("Referral") or "").strip() != str(lead.get("fingerprint") or "").strip(): return False, "referral_fingerprint_mismatch"
-    return True, digest
-    if not package_is_ready(lead): return False, "research_intelligence_not_ready"
-    try: digest = expected_digest or package_digest(lead)
-    except ValueError: return False, "research_intelligence_not_ready"
-    if not verify_lead_radar_record(result.get("airtable_record"), lead): return False, "lead_radar_record_not_confirmed"
-    if not verify_research_record(result.get("research_record"), lead, digest): return False, "research_record_package_mismatch"
-    if not verify_master_tracker(result.get("master_tracker"), lead): return False, "master_tracker_not_confirmed"
     return True, digest
