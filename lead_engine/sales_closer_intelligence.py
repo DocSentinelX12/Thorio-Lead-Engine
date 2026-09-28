@@ -514,6 +514,13 @@ def _underlying_concern_intelligence(lead: Mapping[str, Any], objection_category
     """Generate a falsifiable concern hypothesis from observed language, never a buyer fact."""
     latest = _latest_objection_event(lead)
     text = _text(latest.get("text") or latest.get("objection"))
+    origin_index = None
+    events = lead.get("conversation_events")
+    if isinstance(events, list):
+        for index in range(len(events) - 1, -1, -1):
+            if events[index] is latest:
+                origin_index = index
+                break
     hypotheses = {
         "price": ("economic_risk", "The buyer may be concerned that the economics are not justified by the expected value.", "Which outcome or constraint would need to be clear before the economics could be evaluated?"),
         "existing_solution": ("capability_or_displacement_risk", "The buyer may be concerned that changing or adding a provider would create unnecessary disruption because the current solution already works.", "What would need to be different from the current solution for an additional option to be worth evaluating?"),
@@ -532,25 +539,70 @@ def _underlying_concern_intelligence(lead: Mapping[str, Any], objection_category
         "concern_type": concern_type,
         "evidence_refs": [evidence_ref] if evidence_ref else [],
         "observed_text": text,
+        "origin_event_index": origin_index,
         "validation_question": question,
         "confirmation_criteria": "Confirm only if the buyer explicitly validates the concern; otherwise retain it as unconfirmed and do not use it as a factual claim.",
+        "state_policy": "A later explicit confirmation, rejection, resolution, or replacement can change this state; ordinary replies do not.",
     }
 
 
-def _apply_confirmed_concern_state(lead: Mapping[str, Any], concern: Mapping[str, Any]) -> dict[str, Any]:
-    """Confirm only an explicitly validated underlying concern, never from the objection alone."""
+def _conversation_event_ref(event: Mapping[str, Any], index: int) -> str:
+    return _text(event.get("evidence_ref") or event.get("source_id") or event.get("source_url") or event.get("event_id")) or f"conversation_event:{index}"
+
+
+def _concern_state_evolution(lead: Mapping[str, Any], concern: Mapping[str, Any]) -> dict[str, Any]:
+    """Track explicit concern transitions without inferring resolution from ordinary replies."""
     events = lead.get("conversation_events")
     if not isinstance(events, list):
-        return {"status": "unconfirmed", "confirmed_by": ""}
+        return {"status": "unconfirmed", "evidence_ref": "", "event_index": None, "transition": "none"}
+
     concern_type = _text(concern.get("concern_type"))
+    origin_index = concern.get("origin_event_index")
+    if not isinstance(origin_index, int):
+        origin_index = -1
+
+    state = "unconfirmed"
+    evidence_ref = ""
+    event_index = None
+    transition = "none"
+
     for index, event in enumerate(events):
-        if not isinstance(event, Mapping):
+        if not isinstance(event, Mapping) or index <= origin_index:
             continue
-        explicit = _text(event.get("underlying_concern_confirmation") or event.get("confirmed_concern_type"))
-        if explicit and (explicit == concern_type or explicit.lower() == "confirmed"):
-            ref = _text(event.get("evidence_ref") or event.get("source_id") or event.get("source_url") or event.get("event_id"))
-            return {"status": "confirmed", "confirmed_by": ref or f"conversation_event:{index}"}
-    return {"status": "unconfirmed", "confirmed_by": ""}
+        ref = _conversation_event_ref(event, index)
+
+        confirmation = _text(event.get("underlying_concern_confirmation") or event.get("confirmed_concern_type"))
+        rejection = _text(event.get("underlying_concern_rejection") or event.get("rejected_concern_type"))
+        resolution = _text(event.get("underlying_concern_resolution") or event.get("resolved_concern_type"))
+        replacement = _text(event.get("underlying_concern_replacement") or event.get("replaced_concern_type"))
+        new_objection = _text(event.get("new_objection"))
+
+        if confirmation and (confirmation == concern_type or confirmation.lower() == "confirmed"):
+            state, evidence_ref, event_index, transition = "confirmed", ref, index, "confirmed"
+        if rejection and (rejection == concern_type or rejection.lower() == "rejected"):
+            state, evidence_ref, event_index, transition = "rejected", ref, index, "rejected"
+        if resolution and (resolution == concern_type or resolution.lower() == "resolved"):
+            state, evidence_ref, event_index, transition = "resolved", ref, index, "resolved"
+        if replacement and (replacement == concern_type or replacement.lower() == "superseded"):
+            state, evidence_ref, event_index, transition = "superseded", ref, index, "superseded"
+        if new_objection:
+            state, evidence_ref, event_index, transition = "superseded", ref, index, "superseded"
+        if _text(event.get("outcome")).lower() == "objection":
+            state, evidence_ref, event_index, transition = "superseded", ref, index, "superseded"
+
+    return {"status": state, "evidence_ref": evidence_ref, "event_index": event_index, "transition": transition}
+
+
+def _apply_confirmed_concern_state(lead: Mapping[str, Any], concern: Mapping[str, Any]) -> dict[str, Any]:
+    """Preserve confirmation while allowing later explicit state transitions to override it."""
+    evolution = _concern_state_evolution(lead, concern)
+    return {
+        "status": evolution["status"],
+        "confirmed_by": evolution["evidence_ref"] if evolution["status"] == "confirmed" else "",
+        "state_evidence_ref": evolution["evidence_ref"],
+        "state_event_index": evolution["event_index"],
+        "transition": evolution["transition"],
+    }
 
 def _confirmed_concern_next_action(concern: Mapping[str, Any]) -> dict[str, Any]:
     """Translate only a buyer-confirmed concern into a targeted, evidence-safe next move."""
@@ -709,8 +761,16 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     buying_signal_intelligence = _buying_signal_intelligence(lead, state)
     underlying_concern = _underlying_concern_intelligence(lead, objection_category)
     concern_confirmation = _apply_confirmed_concern_state(lead, underlying_concern)
-    if concern_confirmation["status"] == "confirmed":
-        underlying_concern = {**underlying_concern, "status": "confirmed", "confirmation_evidence_ref": concern_confirmation["confirmed_by"]}
+    if concern_confirmation["status"] != "unconfirmed":
+        underlying_concern = {
+            **underlying_concern,
+            "status": concern_confirmation["status"],
+            "state_evidence_ref": concern_confirmation["state_evidence_ref"],
+            "state_event_index": concern_confirmation["state_event_index"],
+            "state_transition": concern_confirmation["transition"],
+        }
+        if concern_confirmation["status"] == "confirmed":
+            underlying_concern["confirmation_evidence_ref"] = concern_confirmation["confirmed_by"]
     confirmed_concern_action = _confirmed_concern_next_action(underlying_concern)
     if confirmed_concern_action["applied"]:
         conversation_intelligence = {
@@ -721,7 +781,10 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
             "action_basis": "buyer_confirmed_underlying_concern",
         }
     else:
-        conversation_intelligence = {**conversation_intelligence, "action_basis": "observed_conversation_context"}
+        action_basis = "observed_conversation_context"
+        if _text(underlying_concern.get("status")).lower() in {"rejected", "resolved", "superseded"}:
+            action_basis = "concern_state_evolution"
+        conversation_intelligence = {**conversation_intelligence, "action_basis": action_basis}
     state_transition = _conversation_state_transition(lead, state, buying_signal_intelligence, conversation_memory)
 
     objectives = {
@@ -793,6 +856,8 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
             "Use questions to discover unknown buyer conditions.",
             "Use only verified evidence for factual claims.",
             "Stop immediately on opt-out or terminal commercial states.",
+            "Do not treat ordinary buyer replies as proof that a concern was resolved or rejected.",
+            "When a concern is explicitly resolved, rejected, or superseded, remove its stale action from the active strategy.",
         ],
     }
 
