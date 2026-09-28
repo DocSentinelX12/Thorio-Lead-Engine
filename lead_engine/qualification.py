@@ -131,20 +131,81 @@ def _route_research(lead: Dict[str, Any], route: str) -> Dict[str, Any]:
     return {"verified": True, "evidence": evidence, "reason": "Route research section verified."} if str(section.get("route") or "").strip() == route and _section_verified(section) and evidence else {"verified": False, "evidence": "", "reason": f"{route} route research is not explicitly verified."}
 
 
+def _verified_recent_inquiry(lead: Dict[str, Any]) -> Dict[str, Any]:
+    """Require a distinct, recent, verified inquiry signal for Paxus referrals."""
+    candidates: list[tuple[str, Any, Any, Any]] = []
+
+    explicit = lead.get("recent_inquiry_research")
+    if isinstance(explicit, dict) and _section_verified(explicit):
+        value = explicit.get("recent_inquiry") or explicit.get("evidence")
+        observed_at = explicit.get("observed_at") or explicit.get("inquiry_at") or explicit.get("last_inquiry_at")
+        candidates.append(("recent_inquiry_research", value, observed_at, explicit))
+
+    current_intent = lead.get("current_intent_research")
+    if isinstance(current_intent, dict) and _section_verified(current_intent):
+        value = current_intent.get("recent_inquiry")
+        observed_at = current_intent.get("recent_inquiry_at") or current_intent.get("inquiry_at") or current_intent.get("last_inquiry_at")
+        if value and observed_at:
+            candidates.append(("current_intent_research", value, observed_at, current_intent))
+
+    specialist = lead.get("specialist_findings")
+    if isinstance(specialist, dict):
+        for agent in ("recent_inquiry_discovery", "social_inquiry_research"):
+            result = specialist.get(agent)
+            if not isinstance(result, dict):
+                continue
+            parent_status = str(result.get("verification_status") or result.get("status") or "").strip().lower()
+            parent_verified = result.get("verified") is True or parent_status in {"verified", "research_verified", "complete"}
+            items = result.get("findings") or result.get("evidence")
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_status = str(item.get("verification_status") or item.get("status") or "").strip().lower()
+                verified = item.get("verified") is True or item_status in {"verified", "research_verified", "complete"} or parent_verified
+                value = str(item.get("evidence") or item.get("signal") or "").strip()
+                observed_at = item.get("observed_at") or item.get("inquiry_at") or item.get("last_inquiry_at")
+                if verified and value and observed_at:
+                    candidates.append((agent, value, observed_at, item))
+
+    for source, value, observed_at, source_record in candidates:
+        timestamp = _recent_timestamp(observed_at, RECENT_INQUIRY_DAYS)
+        text = str(value or "").strip()
+        if timestamp and text and INQUIRY_CONTEXT.search(text):
+            return {
+                "qualified": True,
+                "observed_at": timestamp,
+                "evidence": text,
+                "source_section": source,
+                "reason": "A recent inquiry is explicitly researched and verified.",
+            }
+
+    return {
+        "qualified": False,
+        "observed_at": None,
+        "evidence": "",
+        "source_section": None,
+        "reason": "No recent inquiry is explicitly researched and verified.",
+    }
+
+
 def _paxus_referral_checks(lead: Dict[str, Any], paxus_qualified: bool) -> Dict[str, Any]:
     research = lead.get("company_research") if isinstance(lead.get("company_research"), dict) else {}
     dm_verified = str(research.get("decision_maker_verification_status") or "").strip().lower() == "verified"
     company_verified = research.get("company_verified") is True
     named_contact = str(research.get("decision_maker") or "").strip()
+    recent_inquiry = _verified_recent_inquiry(lead)
     checks = {
         "paxus_base_qualification": {"passed": paxus_qualified, "reason": "Paxus base qualification passed." if paxus_qualified else "Paxus base qualification did not pass."},
+        "recent_inquiry": {"passed": recent_inquiry["qualified"], "reason": recent_inquiry["reason"]},
         "company_verified": {"passed": company_verified, "reason": "Company research is explicitly verified." if company_verified else "Company research still requires verification."},
         "named_hiring_contact": {"passed": bool(named_contact and dm_verified), "reason": "Decision maker is explicitly verified." if named_contact and dm_verified else "Decision maker still requires research and verification."},
         "contact_communication": {"passed": lead.get("contact_communicated") is True, "reason": "Contact communication is recorded." if lead.get("contact_communicated") is True else "Contact communication has not been verified."},
         "contact_consent": {"passed": lead.get("contact_consent") is True, "reason": "Contact consent is recorded." if lead.get("contact_consent") is True else "Contact consent has not been verified."},
     }
     failures = [name for name, result in checks.items() if not result["passed"]]
-    research_items = [name for name in ("company_verified", "named_hiring_contact") if not checks[name]["passed"]]
+    research_items = [name for name in ("recent_inquiry", "company_verified", "named_hiring_contact") if not checks[name]["passed"]]
     verification_items = [name for name in ("contact_communication", "contact_consent") if not checks[name]["passed"]]
     return {"checks": checks, "passed": paxus_qualified and not failures, "failures": failures, "research_required": research_items, "verification_required": verification_items, "reason": "All Paxus referral gates passed." if paxus_qualified and not failures else "Paxus is not yet a true referral; missing or failed checks remain."}
 
