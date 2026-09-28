@@ -56,7 +56,9 @@ def classify_buyer_signal(lead: Mapping[str, Any]) -> dict[str, Any]:
     evaluation_phrases = (
         "send a proposal", "send the proposal", "send a quote", "send pricing", "review the proposal",
         "compare options", "compare providers", "comparing options", "comparing providers", "evaluate this", "evaluate the fit",
+        "compare options", "compare providers", "evaluate this", "evaluate the fit",
         "legal review", "security review", "reviewing proposals", "reviewing the proposal", "who needs to approve", "approval process",
+        "legal review", "security review", "who needs to approve", "approval process",
     )
     interest_phrases = (
         "interested", "tell me more", "let's talk", "lets talk", "happy to talk",
