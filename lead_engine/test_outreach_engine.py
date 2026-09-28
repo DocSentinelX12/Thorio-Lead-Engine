@@ -328,7 +328,7 @@ def test_closer_buying_signal_distinguishes_evaluation_from_interest():
     signal = decision.commercial_strategy["buying_signal_intelligence"]
     assert signal["category"] == "active_evaluation"
     assert signal["confidence"] == "high"
-    assert signal["do_not_overstate"] is False
+    assert signal["do_not_overstate"] is True
 
 
 def test_closer_interest_is_not_promoted_to_purchase_commitment():
