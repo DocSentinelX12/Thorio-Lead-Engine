@@ -73,7 +73,24 @@ def test_paxus_qualified_but_true_referral_waits_for_research_and_verification()
 
 
 def test_true_paxus_referral_requires_all_existing_gates():
-    result = evaluate_company_qualification(_lead("technology recruitment support", "The company is seeking technology recruitment support.", contact_name="Jane Doe", contact_communicated=True, contact_consent=True))
+    lead = _lead(
+        "technology recruitment support",
+        "The company is seeking technology recruitment support.",
+        contact_name="Jane Doe",
+        contact_communicated=True,
+        contact_consent=True,
+    )
+    lead["specialist_findings"] = {
+        "recent_inquiry_discovery": {
+            "findings": [{
+                "url": "https://example.com/inquiry",
+                "evidence": "The company requested information about technology recruitment support.",
+                "observed_at": NOW,
+                "verification_status": "verified",
+            }]
+        }
+    }
+    result = evaluate_company_qualification(lead)
     paxus = result["companies"]["Paxus"]
     assert paxus["qualified"] is True
     assert paxus["true_referral"] is True
