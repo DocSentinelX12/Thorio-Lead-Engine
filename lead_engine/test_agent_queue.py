@@ -119,3 +119,21 @@ def test_unknown_agent_is_rejected(tmp_path):
         assert "Unknown agent role" in str(exc)
     else:
         raise AssertionError("unknown agent role was accepted")
+
+
+def test_single_task_claim_reclaims_expired_sqlite_lease(tmp_path, monkeypatch):
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"fingerprint": "expired-lease"})
+    first = claim(db, "paxus_research", worker_id="worker-old", limit=1, lease_seconds=1)[0]
+
+    expired = "2000-01-01T00:00:00+00:00"
+    db.queue_update(first["task_id"], lease_until=expired, updated_at=expired)
+
+    from . import agent_queue
+    monkeypatch.setattr(agent_queue, "_now", lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc))
+    reclaimed = agent_queue.claim_task(db, task["task_id"], worker_id="worker-new", lease_seconds=300)
+
+    assert reclaimed["task_id"] == task["task_id"]
+    assert reclaimed["status"] == RUNNING
+    assert reclaimed["worker_id"] == "worker-new"
+    assert reclaimed["attempts"] == 2
