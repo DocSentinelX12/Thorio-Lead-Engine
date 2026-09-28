@@ -174,7 +174,7 @@ def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], 
         body = f"Hi {contact_name},\\n\\nThanks for the context. {response}\\n\\nThe researched need remains {signal.rstrip('.!?')}. If it is still active, would it be useful to take a short look at fit and the decision process?\\n\\nBest,\\nThorio"
         subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
     else:
-        cadence_preview = build_outreach_decision({**lead, "outreach_state": "ready", "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0)})
+        cadence_preview = build_outreach_decision({**lead, "outreach_state": "awaiting_response", "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0)})
         strategy = dict(cadence_preview.commercial_strategy)
         body = cadence_preview.body
         subject = str(lead.get("outreach_draft_subject") or cadence_preview.subject)
@@ -193,7 +193,7 @@ def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], 
     history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "kind": "follow_up", "provider_result": dict(action.provider_result or {})})
     next_follow_up = cadence.next_follow_up_at
     stored = _persist_lead(ctx.db, {**lead, "conversation_id": conversation_id, "revenue_lifecycle_state": "conversation_active", "outreach_state": "awaiting_response", "outreach_attempt": attempt, "follow_up_due": bool(next_follow_up), "outreach_draft_subject": subject, "outreach_draft_body": body, "commercial_strategy": strategy, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {}), "next_follow_up_at": next_follow_up})
-    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_follow_up", "route": route, "next_follow_up_at": next_follow_up, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None, "commercial_strategy": strategy}
+    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_follow_up", "route": route, "contact": {"name": contact_name, "email": contact_email}, "subject": subject, "body": body, "next_state": "awaiting_response", "next_follow_up_at": next_follow_up, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None, "commercial_strategy": strategy}
 
 def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload); fingerprint = str(lead.get("fingerprint") or "").strip()
