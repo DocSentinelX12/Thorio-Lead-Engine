@@ -94,7 +94,7 @@ def test_sync_opportunities_creates_one_opportunity_per_non_thorio_route(monkeyp
     def fake_create(table_key, fields):
         created.append({"table_key": table_key, "fields": fields})
         return {"records": [{"id": f"rec{len(created)}", "fields": fields}]}
-    monkeypatch.setattr("lead_engine.master_tracker_sync.create_master_record", fake_create)
+    monkeypatch.setattr("lead_engine.master_tracker_sync.atomic_upsert_master_record", lambda table_key, lookup_field, fields: fake_create(table_key, fields))
     lead = {"qualified": True, "fingerprint": "fingerprint", "company": "Example Company", "signal": "software engineering hiring", "signal_type": "hiring", "potential_routes": ["Paxus", "Shiftr", "Thorio"], **_verified_need()}
     from lead_engine.master_tracker_sync import sync_opportunities
     results = sync_opportunities(lead)
@@ -141,7 +141,7 @@ def test_sync_outreach_uses_actual_airtable_schema(monkeypatch):
         captured.update(table_key=table_key, fields=fields)
         return {"records": [{"id": "rec_outreach_001", "fields": fields}]}
     monkeypatch.setattr("lead_engine.airtable_sync.find_master_records", fake_find)
-    monkeypatch.setattr("lead_engine.airtable_sync.create_master_record", fake_create)
+    monkeypatch.setattr("lead_engine.airtable_sync.atomic_upsert_master_record", lambda table_key, lookup_field, fields: fake_create(table_key, fields))
     from lead_engine.airtable_sync import sync_outreach
     result = sync_outreach({"fingerprint": "fingerprint-001", "company": "Example Corp", "route": "Paxus", "platform": "Himalayas", "follow_up_number": 0, "response": "", "next_action_date": "2026-09-10"})
     assert result["status"] == "created"
@@ -167,7 +167,7 @@ def test_sync_followup_uses_actual_airtable_schema(monkeypatch):
         captured.update(table_key=table_key, fields=fields)
         return {"records": [{"id": "rec_followup_001", "fields": fields}]}
     monkeypatch.setattr("lead_engine.airtable_sync.find_master_records", fake_find)
-    monkeypatch.setattr("lead_engine.airtable_sync.create_master_record", fake_create)
+    monkeypatch.setattr("lead_engine.airtable_sync.atomic_upsert_master_record", lambda table_key, lookup_field, fields: fake_create(table_key, fields))
     from lead_engine.airtable_sync import sync_followup
     result = sync_followup({"fingerprint": "fingerprint-002", "company": "Example Corp", "route": "Shiftr", "due_date": "2026-09-12", "status": "pending", "follow_up_number": 1, "notes": "Verify project budget."})
     assert result["status"] == "created"
