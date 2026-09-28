@@ -59,7 +59,8 @@ def _failed_sync_details(
             SELECT
                 COUNT(*) AS failed_leads,
                 COALESCE(SUM(attempts), 0) AS failed_attempts,
-                MAX(updated_at) AS last_failure_at
+                MAX(updated_at) AS last_failure_at,
+                COALESCE(SUM(CASE WHEN attempts >= 5 THEN 1 ELSE 0 END), 0) AS quarantined_leads
             FROM leads
             WHERE synced = 0
               AND attempts > 0
@@ -74,6 +75,7 @@ def _failed_sync_details(
         "failed_sync_leads": int(row[0] or 0),
         "failed_sync_attempts": int(row[1] or 0),
         "last_sync_failure": row[2],
+        "quarantined_sync_leads": int(row[3] or 0),
     }
 
 
@@ -246,6 +248,9 @@ def get_engine_status(
         "failed_sync_attempts": failed_details[
             "failed_sync_attempts"
         ],
+        "quarantined_sync_leads": failed_details[
+            "quarantined_sync_leads"
+        ],
         "last_sync_failure": (
             sync_details["last_sync_failure"]
             or failed_details["last_sync_failure"]
@@ -277,6 +282,9 @@ def get_sync_status(
         ],
         "failed_attempts": failed_details[
             "failed_sync_attempts"
+        ],
+        "quarantined_leads": failed_details[
+            "quarantined_sync_leads"
         ],
         "oldest_pending_created_at": (
             pending_details[
