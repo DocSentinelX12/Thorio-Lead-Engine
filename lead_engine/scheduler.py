@@ -392,9 +392,22 @@ class LeadScheduler:
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be greater than or equal to 1.")
         cycles = 0
+        failed = False
+        last_result: Dict[str, Any] = {}
         while max_cycles is None or cycles < max_cycles:
-            self.run(source_list, agent_max_rounds=agent_max_rounds)
+            last_result = self.run(source_list, agent_max_rounds=agent_max_rounds)
             cycles += 1
+            if last_result.get("failed_count") or last_result.get("processing_failed_count"):
+                failed = True
+            sync = last_result.get("sync")
+            if isinstance(sync, dict) and int(sync.get("failed_count", 0) or 0):
+                failed = True
+            agents = last_result.get("agents")
+            if isinstance(agents, dict) and int(agents.get("failed_count", 0) or 0):
+                failed = True
+            post_sync_agents = last_result.get("post_sync_agents")
+            if isinstance(post_sync_agents, dict) and int(post_sync_agents.get("failed_count", 0) or 0):
+                failed = True
             if max_cycles is None or cycles < max_cycles:
                 time.sleep(interval_seconds)
-        return {"status": "completed", "cycles": cycles}
+        return {"status": "failed" if failed else "completed", "cycles": cycles}
