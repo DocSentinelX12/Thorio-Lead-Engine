@@ -241,3 +241,22 @@ def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future
     assert result["discovered_count"] == 1
     assert runner.run_source.call_count == 1
     db.close()
+
+
+def test_scheduler_records_actual_source_start_time(tmp_path, monkeypatch):
+    runner = MagicMock()
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db)
+    runner.pipeline = pipeline
+    runner.run_source.return_value = {"processed_count": 1, "failed_count": 0, "total": 1}
+    source = StaticLeadSource([])
+
+    wall_times = iter([1000.0])
+    monkeypatch.setattr("lead_engine.scheduler.time.time", lambda: next(wall_times))
+    scheduler = LeadScheduler(runner=runner)
+    scheduler.run([source])
+
+    state = db.get_state("source_observability")
+    assert state["last_source_started_at"] == "1970-01-01T00:16:40+00:00"
+    assert state["last_source_completed_at"] != state["last_source_started_at"]
+    db.close()
