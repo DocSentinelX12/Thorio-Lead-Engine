@@ -472,6 +472,31 @@ def update_master_record(
     }
 
 
+def atomic_upsert_master_record(
+    table_key: str,
+    lookup_field: str,
+    fields: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Atomically create or update one master record by its stable identity field."""
+    if table_key not in MASTER_TRACKER_TABLE_KEYS:
+        raise AirtableSyncError(f"Unknown Airtable table key: {table_key}")
+    lookup_field = _text(lookup_field)
+    if not lookup_field:
+        raise ValueError("Airtable upsert requires a merge field.")
+    if not isinstance(fields, dict):
+        raise ValueError("Airtable record fields must be a dictionary.")
+    if not _text(fields.get(lookup_field)):
+        raise ValueError(f"Airtable upsert requires a value for {lookup_field}.")
+    return _request(
+        "PATCH",
+        _master_table_url(table_key),
+        {
+            "performUpsert": {"fieldsToMergeOn": [lookup_field]},
+            "records": [{"fields": fields}],
+        },
+    )
+
+
 def sync_paxus_referral(
     referral: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -646,8 +671,9 @@ def sync_paxus_referral(
             ][0],
         }
 
-    result = create_master_record(
+    result = atomic_upsert_master_record(
         "referrals",
+        "Referral",
         {
             key: value
             for key, value in fields.items()
@@ -861,8 +887,9 @@ def sync_outreach(
             "record": record,
         }
 
-    result = create_master_record(
+    result = atomic_upsert_master_record(
         "outreach",
+        "Outreach",
         clean_fields,
     )
 
@@ -1046,8 +1073,9 @@ def sync_followup(
             "record": record,
         }
 
-    result = create_master_record(
+    result = atomic_upsert_master_record(
         "followups",
+        "Follow-up",
         clean_fields,
     )
 
