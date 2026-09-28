@@ -368,3 +368,45 @@ def test_closer_persuasion_quality_fails_when_strategy_tries_to_close_beyond_sig
     )
     assert result["passed"] is False
     assert "psychological_objective_exceeds_signal" in result["violations"]
+
+def test_closer_underlying_concern_is_hypothesis_not_fact():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-objection"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    concern = decision.commercial_strategy["underlying_concern"]
+    assert concern["status"] == "hypothesis"
+    assert concern["concern_type"] == "capability_or_displacement_risk"
+    assert concern["evidence_refs"] == ["evt-objection"]
+    assert "may be concerned" in concern["hypothesis"]
+    assert "validation_question" in concern
+    assert "confirmed" not in concern["status"]
+
+
+def test_closer_underlying_concern_requires_explicit_confirmation():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {"outcome": "replied", "text": "Yes, avoiding disruption is the concern.", "underlying_concern_confirmation": "capability_or_displacement_risk", "evidence_ref": "evt-2"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    concern = decision.commercial_strategy["underlying_concern"]
+    assert concern["status"] == "confirmed"
+    assert concern["confirmation_evidence_ref"] == "evt-2"
+
+
+def test_closer_underlying_concern_does_not_leak_inference_into_message_as_fact():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-objection"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    assert "disruption" not in decision.body.lower()
+    assert decision.commercial_strategy["underlying_concern"]["status"] == "hypothesis"
