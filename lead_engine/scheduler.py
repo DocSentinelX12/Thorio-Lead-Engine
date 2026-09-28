@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
@@ -253,6 +254,55 @@ class LeadScheduler:
         accepted_total = sum(int(item["result"].get("accepted_count", 0) or 0) for item in results)
         duplicate_total = sum(int(item["result"].get("duplicate_count", 0) or 0) for item in results)
         processing_failed_total = sum(int(item["result"].get("failed_count", 0) or 0) for item in results)
+
+        # Persist operational telemetry only after the bounded cycle has
+        # produced its authoritative aggregate result.
+        db = self.runner.pipeline.db
+        checked_at = datetime.now(timezone.utc).isoformat()
+
+        source_state = db.get_state("source_observability") if hasattr(db, "get_state") else {}
+        source_state = dict(source_state) if isinstance(source_state, dict) else {}
+        db.set_state(
+            "source_observability",
+            {
+                **source_state,
+                "sources_started": int(source_state.get("sources_started", 0) or 0) + len(due_sources),
+                "sources_completed": int(source_state.get("sources_completed", 0) or 0) + len(results),
+                "sources_failed": int(source_state.get("sources_failed", 0) or 0) + len(failed),
+                "last_source": results[-1]["source"] if results else None,
+                "last_source_started_at": checked_at if due_sources else source_state.get("last_source_started_at"),
+                "last_source_completed_at": checked_at if results else source_state.get("last_source_completed_at"),
+                "last_source_failure_at": checked_at if failed else source_state.get("last_source_failure_at"),
+                "last_source_error": (failed[-1].get("error") if failed else None),
+                "last_source_record_count": int(results[-1]["result"].get("discovered_count", results[-1]["result"].get("total", 0)) or 0) if results else 0,
+            },
+        )
+
+        sync_state = db.get_state("sync_observability") if hasattr(db, "get_state") else {}
+        sync_state = dict(sync_state) if isinstance(sync_state, dict) else {}
+        sync_failed = int(sync_result.get("failed_count", 0) or 0)
+        sync_successes = int(sync_result.get("synced_count", 0) or 0) + int(sync_result.get("already_exists_count", 0) or 0)
+        failed_items = sync_result.get("failed")
+        failed_items = failed_items if isinstance(failed_items, list) else []
+        first_sync_error = failed_items[0].get("error") if failed_items and isinstance(failed_items[0], dict) else None
+        db.set_state(
+            "sync_observability",
+            {
+                **sync_state,
+                "sync_runs": int(sync_state.get("sync_runs", 0) or 0) + 1,
+                "successful_sync_runs": int(sync_state.get("successful_sync_runs", 0) or 0) + (1 if sync_failed == 0 else 0),
+                "failed_sync_runs": int(sync_state.get("failed_sync_runs", 0) or 0) + (1 if sync_failed > 0 else 0),
+                "last_sync_started_at": checked_at,
+                "last_sync_completed_at": checked_at,
+                "last_successful_sync": checked_at if sync_failed == 0 else sync_state.get("last_successful_sync"),
+                "last_sync_failure": checked_at if sync_failed > 0 else sync_state.get("last_sync_failure"),
+                "last_sync_error": first_sync_error if sync_failed > 0 else None,
+                "last_sync_processed_count": int(sync_result.get("synced_count", 0) or 0) + int(sync_result.get("already_exists_count", 0) or 0) + int(sync_result.get("failed_count", 0) or 0) + int(sync_result.get("deferred_research_count", 0) or 0),
+                "last_sync_success_count": sync_successes,
+                "last_sync_failure_count": sync_failed,
+            },
+        )
+
         return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "post_sync_agents": post_sync_agents, "due_followups_enqueued": due_followups, "revenue_inbound_health": revenue_inbound_health, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 1) -> Dict[str, Any]:
