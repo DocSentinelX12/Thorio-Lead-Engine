@@ -1,6 +1,7 @@
 from typing import Any, Dict, Iterable
 
 from .database import LeadDB
+from .status import get_engine_status
 
 
 def check_database(db: LeadDB) -> Dict[str, Any]:
@@ -281,6 +282,36 @@ def check_sources(
         "sources": results,
     }
 
+ 
+def check_operational_status(db: LeadDB) -> Dict[str, Any]:
+    """Verify current durable delivery state, not only configuration."""
+
+    try:
+        status = get_engine_status(db)
+    except Exception as exc:
+        return {
+            "name": "operational_status",
+            "status": "unhealthy",
+            "ok": False,
+            "error": str(exc),
+        }
+
+    if status.get("healthy") is not True:
+        return {
+            "name": "operational_status",
+            "status": "unhealthy",
+            "ok": False,
+            "error": "durable lead delivery is not healthy",
+            "engine_status": status,
+        }
+
+    return {
+        "name": "operational_status",
+        "status": "healthy",
+        "ok": True,
+        "engine_status": status,
+    }
+
 
 def health_report(
     db: LeadDB,
@@ -293,6 +324,7 @@ def health_report(
         check_database(db),
         check_configuration(config),
         check_airtable_configuration(config),
+        check_operational_status(db),
     ]
 
     if sources is not None:
