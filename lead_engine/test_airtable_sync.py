@@ -190,3 +190,18 @@ def test_normalize_routes_and_partner_projection_support_astrivon():
     assert fields["Applicable Routes"] == ["Astrivon Labs"]
     assert fields["Recommended Partner"] == "Astrivon Labs"
     assert fields["Work Queue"] == "🟩 Astrivon Referral"
+
+
+def test_atomic_master_upsert_uses_duplicate_key_field(monkeypatch):
+    captured = {}
+    response = {"records": [{"id": "rec_atomic", "fields": {"Opportunity": "opp-atomic"}}]}
+    def fake_request(method, url, payload):
+        captured.update(method=method, url=url, payload=payload)
+        return response
+    monkeypatch.setattr("lead_engine.airtable_sync._request", fake_request)
+    from lead_engine.airtable_sync import atomic_upsert_master_record
+    result = atomic_upsert_master_record("opportunities", "Opportunity", {"Opportunity": "opp-atomic", "Company": "Atomic Corp"})
+    assert result == response
+    assert captured["method"] == "PATCH"
+    assert captured["payload"]["performUpsert"] == {"fieldsToMergeOn": ["Opportunity"]}
+    assert captured["payload"]["records"][0]["fields"]["Opportunity"] == "opp-atomic"
