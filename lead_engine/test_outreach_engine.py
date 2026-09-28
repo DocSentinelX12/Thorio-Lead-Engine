@@ -144,7 +144,7 @@ def test_build_outreach_decision_enforces_message_quality_gate(monkeypatch):
         outreach_engine,
         "_sales_body",
         lambda route, contact_name, company, signal, strategy: (
-            f"Hi {contact_name},\\n\\nThis is urgent. Act now before the deadline."
+            f"Hi {contact_name},\n\nThis is urgent. Act now before the deadline."
         ),
     )
     with pytest.raises(OutreachContractError, match="commercial truthfulness gate"):
@@ -158,7 +158,7 @@ def test_build_outreach_decision_rejects_unsupported_outcome_claim(monkeypatch):
         outreach_engine,
         "_sales_body",
         lambda route, contact_name, company, signal, strategy: (
-            f"Hi {contact_name},\\n\\nWe will increase revenue and guarantee the result.\\n\\nWould you be open to a brief conversation?"
+            f"Hi {contact_name},\n\nWe will increase revenue and guarantee the result.\n\nWould you be open to a brief conversation?"
         ),
     )
     with pytest.raises(OutreachContractError, match="commercial truthfulness gate"):
@@ -227,3 +227,36 @@ def test_closer_message_uses_discovery_unknown_instead_of_fabricating_business_i
     assert "The business impact of the verified need is not yet established." in decision.commercial_strategy["unknowns"]
     assert "What is the main outcome you would want to improve?" not in decision.body
     assert "business consequence" in decision.body.lower()
+
+
+def test_commercial_psychology_profile_separates_fact_inference_and_unknown_with_evidence():
+    decision = build_outreach_decision(
+        lead(
+            business_need_research={
+                "verified": True,
+                "verification_status": "verified",
+                "business_need": "Expand engineering capacity",
+                "evidence_url": "https://example.com/business-need",
+            },
+            business_impact_research={
+                "verified": True,
+                "verification_status": "verified",
+                "business_impact": "delivery capacity is constrained during the current hiring cycle",
+                "cost_of_inaction": "the current release schedule remains constrained",
+                "evidence_url": "https://example.com/business-impact",
+            },
+            current_need_at="2026-09-20T12:00:00+00:00",
+            research_verified_fields=["current_intent_research", "business_need_research"],
+        )
+    )
+    profile = decision.commercial_strategy["commercial_psychology_profile"]
+    assert profile["observed_fact"]
+    assert profile["observed_fact"]["evidence_refs"]
+    assert "Expand engineering capacity" in profile["observed_fact"]["statement"]
+    assert profile["sales_inference"]
+    assert profile["sales_inference"]["evidence_refs"]
+    assert "capacity" in profile["sales_inference"]["statement"].lower()
+    assert profile["unknowns"]
+    assert any("decision-maker" in item.lower() or "buyer" in item.lower() for item in profile["unknowns"])
+    assert profile["why_now"]["evidence_refs"]
+    assert profile["why_now"]["statement"] == "A verified timing signal exists; the commercial reason for urgency remains to be discovered."
