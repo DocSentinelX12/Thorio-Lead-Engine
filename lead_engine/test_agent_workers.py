@@ -102,6 +102,132 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     finally: register_revenue_transport(None)
     output = closer["results"][0]; stored = db.get(lead["fingerprint"]); assert closer["completed_count"] == 1 and closer["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_follow_up"; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["outreach_attempt"] == 2 and stored["next_follow_up_at"] is not None and stored["follow_up_due"] is True and len(stored["outreach_history"]) == 3 and stored["outreach_history"][-2]["outcome"] == "no_response" and stored["outreach_history"][-1]["kind"] == "follow_up" and stored["outreach_history"][-1]["status"] == "sent"
 
+def test_follow_up_closer_persists_message_quality_strategy(tmp_path):
+    db = _db(tmp_path); now = _recent()
+    lead = {
+        "fingerprint": "follow-up-quality-test",
+        "company": "Acme",
+        "qualified": True,
+        "sales_eligibility": "eligible",
+        "signal": "Acme is hiring a remote software engineer",
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_email": "taylor@example.com",
+            "decision_maker_verification_status": "verified",
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "remote software engineer hiring",
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current hiring need."}},
+        },
+        "qualification_results": {"Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Current hiring need."}}},
+        "outreach_route": "Thorio",
+        "outreach_state": "awaiting_response",
+        "outreach_history": [{"at": now, "outcome": "sent"}],
+        "outreach_attempt": 1,
+        "conversation_id": "conversation:follow-up-quality-test:thorio",
+        "contact_email": "taylor@example.com",
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True, "authorized": True, "authorized_by_role": "high_ticket_sales_closer"})
+    transport = _FakeTransport(); register_revenue_transport(transport)
+    try:
+        follow = run_worker_once(db, "follow_up", worker_id="follow-up-quality-worker")
+        closer = run_worker_once(db, "outreach_closer", worker_id="follow-up-quality-closer")
+    finally:
+        register_revenue_transport(None)
+    assert follow["completed_count"] == 1 and closer["completed_count"] == 1
+    output = closer["results"][0]
+    assert output["commercial_strategy"]["message_quality"]["passed"] is True
+    assert output["commercial_strategy"]["message_quality"]["truthfulness"] is True
+    assert output["commercial_strategy"]["message_quality"]["clear_next_step"] is True
+    assert "remote software engineer hiring" in output["body"]
+
+
+def test_follow_up_closer_fails_closed_on_manufactured_urgency(tmp_path, monkeypatch):
+    from . import agent_workers
+    from .outreach_engine import OutreachDecision
+
+    db = _db(tmp_path); now = _recent()
+    lead = {
+        "fingerprint": "follow-up-urgency-test",
+        "company": "Acme",
+        "qualified": True,
+        "sales_eligibility": "eligible",
+        "signal": "Acme is hiring a remote software engineer",
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_email": "taylor@example.com",
+            "decision_maker_verification_status": "verified",
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "remote software engineer hiring",
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current hiring need."}},
+        },
+        "qualification_results": {"Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Current hiring need."}}},
+        "outreach_route": "Thorio",
+        "outreach_state": "awaiting_response",
+        "outreach_history": [{"at": now, "outcome": "sent"}],
+        "outreach_attempt": 1,
+        "conversation_id": "conversation:follow-up-urgency-test:thorio",
+        "contact_email": "taylor@example.com",
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True, "authorized": True, "authorized_by_role": "high_ticket_sales_closer"})
+    original = agent_workers.build_outreach_decision
+    monkeypatch.setattr(
+        agent_workers,
+        "build_outreach_decision",
+        lambda value: OutreachDecision(
+            route="Thorio",
+            contact_name="Taylor",
+            contact_email="taylor@example.com",
+            subject="Re: verified need",
+            body="Hi Taylor,\\n\\nThis is urgent. Act now before the deadline.\\n\\nWould you be open to a brief conversation?\\n\\nBest,\\nThorio",
+            evidence_refs=("https://example.com/need",),
+            buying_signal="remote software engineer hiring",
+            next_state="drafted",
+            next_follow_up_at=None,
+            stop_reason=None,
+            commercial_strategy={"urgency_basis": "none_verified"},
+        ),
+    )
+    transport = _FakeTransport(); register_revenue_transport(transport)
+    try:
+        result = run_worker_once(db, "follow_up", worker_id="follow-up-urgency-worker")
+        assert result["completed_count"] == 1
+        closer = run_worker_once(db, "outreach_closer", worker_id="follow-up-urgency-closer")
+    finally:
+        register_revenue_transport(None)
+    assert closer["completed_count"] == 0
+    assert closer["failed_count"] == 1
+    assert not transport.calls
+    _ = original
+
+
 def test_company_research_persists_research_intelligence_handoff(tmp_path):
     db = _db(tmp_path)
     lead = {"fingerprint": "research-intelligence-worker", "company": "Acme", "signal": "Acme is hiring a backend engineer"}
