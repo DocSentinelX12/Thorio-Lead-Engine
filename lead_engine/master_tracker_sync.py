@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
-from .airtable_sync import AirtableSyncError, create_master_record, find_master_records, update_master_record
+from .airtable_sync import AirtableSyncError, atomic_upsert_master_record, create_master_record, find_master_records, update_master_record
 from .paxus_referral_adapter import lead_to_paxus_referral, paxus_commission_tracking_enabled
 MASTER_TRACKER_TABLE_KEYS = ("lead_radar", "companies", "opportunities", "outreach", "referrals", "followups", "commissions", "lead_sources")
 def _text(value: Any) -> str: return "" if value is None else str(value).strip()
@@ -16,8 +16,8 @@ def _upsert(table_key: str, lookup_field: str, lookup_value: Any, fields: Dict[s
         result = update_master_record(table_key, record_id, clean_fields); record = _first_record(result.get("records", []))
         if record is None: raise AirtableSyncError(f"Airtable returned no updated record for {table_key}.")
         return {"status": "updated", "record": record}
-    result = create_master_record(table_key, clean_fields); record = _first_record(result.get("records", []))
-    if record is None: raise AirtableSyncError(f"Airtable returned no created record for {table_key}.")
+    result = atomic_upsert_master_record(table_key, lookup_field, clean_fields); record = _first_record(result.get("records", []))
+    if record is None: raise AirtableSyncError(f"Airtable returned no upserted record for {table_key}.")
     return {"status": "created", "record": record}
 def _routes(lead: Dict[str, Any]) -> List[str]:
     value = lead.get("potential_routes", [])
