@@ -235,6 +235,178 @@ def _verify_optional_lifecycle_record(record: Any, lead: Mapping[str, Any], *, k
 
 
 
+def _find_exact_master_record(
+    table_key: str,
+    lookup_field: str,
+    lookup_value: str,
+    lead: Mapping[str, Any],
+    *,
+    expected_company: str,
+    expected_partner: str | None = None,
+    expected_opportunity: str | None = None,
+) -> bool:
+    from .airtable_sync import find_master_records
+
+    records = find_master_records(table_key, lookup_field, lookup_value)
+    for record in records:
+        if not isinstance(record, Mapping) or not _record_id(record):
+            continue
+        fields = _record_fields(record)
+        if str(fields.get("Company") or "").strip() != expected_company:
+            continue
+        if expected_partner is not None and str(fields.get("Partner") or "").strip() != expected_partner:
+            continue
+        if expected_opportunity is not None and str(fields.get("Opportunity") or "").strip() != expected_opportunity:
+            continue
+        return True
+    return False
+
+
+def _verify_downstream_lifecycle_records(lead: Mapping[str, Any]) -> tuple[bool, str]:
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    company = str(lead.get("company") or "").strip()
+    if not fingerprint or not company:
+        return False, "downstream_identity_missing"
+
+    route = str(
+        lead.get("outreach_route")
+        or lead.get("active_route")
+        or lead.get("route")
+        or ""
+    ).strip()
+    sales_eligible = str(lead.get("sales_eligibility") or "").strip().lower() == "eligible"
+    delivery_approved = str(lead.get("delivery_status") or "").strip().lower() == "approved"
+    outreach_expected = bool(
+        route
+        and str(lead.get("contact_email") or "").strip()
+        and (sales_eligible or delivery_approved)
+    )
+
+    if outreach_expected:
+        outreach_key = f"{fingerprint}:{route}"
+        if not _find_exact_master_record(
+            "outreach",
+            "Outreach",
+            outreach_key,
+            lead,
+            expected_company=company,
+            expected_opportunity=outreach_key,
+        ):
+            return False, f"outreach_not_confirmed:{route}"
+
+        next_action_date = str(lead.get("next_action_date") or "").strip()
+        followup_status = str(lead.get("follow_up_status") or "").strip().lower()
+        followup_notes = str(lead.get("follow_up_notes") or "").strip()
+        followup_number = lead.get("follow_up_number")
+        followup_expected = bool(
+            next_action_date
+            or followup_notes
+            or followup_status not in {"", "pending"}
+            or followup_number not in {None, "", 0, "0"}
+        )
+        if followup_expected:
+            try:
+                followup_number_int = int(followup_number or 0)
+            except (TypeError, ValueError):
+                followup_number_int = 0
+            followup_key = f"{fingerprint}:{route}:{max(0, followup_number_int)}"
+            if not _find_exact_master_record(
+                "followups",
+                "Follow-up",
+                followup_key,
+                lead,
+                expected_company=company,
+                expected_opportunity=f"{fingerprint}:{route}",
+            ):
+                return False, f"followup_not_confirmed:{route}:{max(0, followup_number_int)}"
+
+    referral_state_expected = any(
+        bool(lead.get(field))
+        for field in (
+            "referral_submitted",
+            "contact_consent",
+            "warm_referral_ready",
+            "paxus_accepted",
+            "introduction_made",
+            "client_payment_received",
+            "commission_due",
+        )
+    )
+    try:
+        referral_state_expected = referral_state_expected or int(lead.get("placement_count") or 0) > 0
+    except (TypeError, ValueError):
+        return False, "invalid_placement_count"
+
+    if referral_state_expected:
+        if not _find_exact_master_record(
+            "referrals",
+            "Referral",
+            fingerprint,
+            lead,
+            expected_company=company,
+            expected_partner="Paxus",
+        ):
+            return False, "paxus_referral_not_confirmed"
+
+    routes = {
+        str(route_name).strip()
+        for route_name in (lead.get("routing_result", {}).get("destinations", []) if isinstance(lead.get("routing_result"), Mapping) else [])
+        if str(route_name).strip()
+    }
+    if "Astrivon Labs" in routes or "Astrivon Labs" in {
+        str(route_name).strip() for route_name in (lead.get("potential_routes") or []) if str(route_name).strip()
+    }:
+        astrivon_key = f"{fingerprint}:Astrivon Labs"
+        if not _find_exact_master_record(
+            "referrals",
+            "Referral",
+            astrivon_key,
+            lead,
+            expected_company=company,
+            expected_partner="Astrivon Labs",
+            expected_opportunity=astrivon_key,
+        ):
+            return False, "astrivon_referral_not_confirmed"
+
+        astrivon_status = str(lead.get("astrivon_status") or "qualified").strip().lower()
+        if astrivon_status == "active" and lead.get("astrivon_partner_confirmed") is True:
+            events = lead.get("astrivon_payment_events") or []
+            if not isinstance(events, (list, tuple)):
+                return False, "astrivon_payment_events_invalid"
+            for event in events:
+                if not isinstance(event, Mapping):
+                    continue
+                event_id = str(event.get("event_id") or "").strip()
+                if not event_id:
+                    return False, "astrivon_payment_event_id_missing"
+                commission_key = f"{fingerprint}:Astrivon Labs:{event_id}"
+                if not _find_exact_master_record(
+                    "commissions",
+                    "Referral",
+                    commission_key,
+                    lead,
+                    expected_company=company,
+                    expected_partner="Astrivon Labs",
+                ):
+                    return False, f"astrivon_commission_not_confirmed:{event_id}"
+
+    try:
+        placement_count = int(lead.get("placement_count") or 0)
+    except (TypeError, ValueError):
+        return False, "invalid_placement_count"
+    if placement_count > 0 and lead.get("client_payment_received") is True:
+        if not _find_exact_master_record(
+            "commissions",
+            "Referral",
+            fingerprint,
+            lead,
+            expected_company=company,
+            expected_partner="Paxus",
+        ):
+            return False, "paxus_commission_not_confirmed"
+
+    return True, ""
+
 def verify_persisted_airtable_handoff(
     db: Any,
     lead: Mapping[str, Any],
