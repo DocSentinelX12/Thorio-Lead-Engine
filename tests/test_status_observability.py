@@ -1,5 +1,6 @@
 import pytest
 
+from lead_engine.database import LeadDB
 from lead_engine.status import (
     _failed_sync_details,
     _pending_details,
