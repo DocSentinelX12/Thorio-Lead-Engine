@@ -187,6 +187,8 @@ def _state_evolution(
             state_evidence_ref = ref
             state_event_index = index
             transition = "superseded"
+            if replacement and replacement != hypothesis_type:
+                active_type = replacement
         if resolution and resolution == hypothesis_type:
             status = "resolved"
             state_evidence_ref = ref
