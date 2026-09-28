@@ -98,7 +98,7 @@ def test_research_record_verification_rejects_mutated_explicit_digest():
 def test_research_record_verification_rejects_mutated_research_intelligence_field():
     lead = _ready_lead()
     lead_record, research_record, master_tracker = _records(lead)
-    research_record["fields"]["Research Intelligence"] = "{\\"tampered\\":true}"
+    research_record["fields"]["Research Intelligence"] = '{"tampered":true}'
     confirmed, reason = verify_airtable_handoff({"airtable_record": lead_record, "research_record": research_record, "master_tracker": master_tracker}, lead, readback=False)
     assert confirmed is False
     assert reason == "research_record_package_mismatch"
