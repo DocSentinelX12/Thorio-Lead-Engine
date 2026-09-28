@@ -437,7 +437,7 @@ def airtable_integrity(_: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str
                     airtable_verified = True
                 else:
                     verification_error = reason
-            except (TypeError, ValueError, KeyError) as exc:
+            except Exception as exc:
                 verification_error = f"airtable_handoff_verification_failed:{exc}"
     return {
         "role": "airtable_integrity",
