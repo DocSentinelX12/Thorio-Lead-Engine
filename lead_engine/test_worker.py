@@ -463,7 +463,7 @@ def test_sync_one_records_exact_handoff_for_sales_ready_package(tmp_path, monkey
     raw["__thorio_package_digest"] = digest
 
     monkeypatch.setattr("lead_engine.sync_worker.sync_lead_if_missing", lambda payload: {"status": "created", "record": {"id": "recLead", "fields": {"Duplicate Key": payload["fingerprint"], "Company": payload["company"]}}})
-    monkeypatch.setattr("lead_engine.sync_worker.sync_research", lambda payload: {"status": "created", "record": {"id": "recResearch", "fields": {"Research Key": payload["fingerprint"], "Lead Fingerprint": payload["fingerprint"], "Raw Research Package": json.dumps(raw, sort_keys=True)}}})
+    monkeypatch.setattr("lead_engine.sync_worker.sync_research", lambda payload: {"status": "created", "record": {"id": "recResearch", "fields": {"Research Key": payload["fingerprint"], "Lead Fingerprint": payload["fingerprint"], "Research Intelligence": json.dumps(payload["research_intelligence"], sort_keys=True), "Package Digest": digest, "Raw Research Package": json.dumps(raw, sort_keys=True)}}})
     monkeypatch.setattr("lead_engine.sync_worker.sync_master_tracker", lambda payload: {"status": "synced", "company": {"status": "created", "record": {"id": "recCompany", "fields": {"Company": payload["company"]}}}, "opportunities": []})
 
     result = sync_one(lead, db=db)
