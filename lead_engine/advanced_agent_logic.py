@@ -265,7 +265,7 @@ def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, A
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
     decision = build_outreach_decision(lead)
     updated = dict(lead)
-    updated.update({"outreach_route": decision.route, "outreach_state": decision.next_state, "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0), "next_follow_up_at": decision.next_follow_up_at, "outreach_draft_subject": decision.subject, "outreach_draft_body": decision.body})
+    updated.update({"outreach_route": decision.route, "outreach_state": decision.next_state, "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0), "next_follow_up_at": decision.next_follow_up_at, "outreach_draft_subject": decision.subject, "outreach_draft_body": decision.body, "commercial_strategy": dict(decision.commercial_strategy)})
     if ctx is not None:
         fingerprint = str(updated.get("fingerprint") or "").strip()
         if fingerprint:
@@ -273,7 +273,7 @@ def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, A
             if stored is None:
                 raise OutreachContractError(f"Lead not found for autonomous outreach preparation: {fingerprint}")
             updated = stored
-    return {"role": "outreach_closer", "lead": dict(updated), "action": "prepare_outreach", "autonomous": True, "human_approval_required": False, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "verified_research_only"}
+    return {"role": "outreach_closer", "lead": dict(updated), "action": "prepare_outreach", "autonomous": True, "human_approval_required": False, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "verified_research_only", "commercial_strategy": dict(decision.commercial_strategy)}
 
 
 def follow_up_action(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
@@ -293,7 +293,7 @@ def follow_up_action(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, A
     result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "human_approval_required": False, "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_follow_up", "outcome_recorded": True}
     objection = payload.get("objection")
     if objection:
-        result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"))
+        result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"), lead=updated)
     return result
 
 
