@@ -355,6 +355,7 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
     history: list[dict[str, Any]] = []
     known: dict[str, dict[str, Any]] = {}
     supersession: dict[str, Any] | None = None
+    last_supersession: dict[str, Any] | None = None
     active_terminal = False
     last_ref = ""
     last_index: int | None = None
@@ -413,6 +414,7 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
                     "evidence_text": _text(event.get("text")),
                     "reason": contradiction["reason"],
                 }
+                last_supersession = supersession
             else:
                 supersession = None
                 if current in NON_LINEAR_STATES and candidate == "engaged":
@@ -476,7 +478,7 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
         },
         "next_best_action": next_action,
         "next_best_question": next_question,
-        "active_state_supersession": supersession or {
+        "active_state_supersession": last_supersession or {
             "status": "none",
             "prior_state": "",
             "active_state": current,
