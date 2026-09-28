@@ -911,8 +911,8 @@ def build_objection_response(objection: str, route: str, *, lead: Mapping[str, A
     action_phrase = next_action.replace("_", " ") if next_action else ""
 
     acknowledgments = {
-        "price": "I understand the concern. I do not want to defend a price before establishing whether the fit and expected value are clear.",
-        "existing_solution": "That makes sense. I would not suggest changing something that is already working without understanding the actual gap.",
+        "price": "I understand the concern. I do not want to defend a price or rely on assumptions before establishing whether the fit and expected value are clear.",
+        "existing_solution": "That makes sense. I would not suggest changing something that is already working without understanding the actual gap. The next useful question is where the current capacity, specialization, speed, or delivery gap actually exists.",
         "timing": "Understood. I do not want to manufacture urgency or assume the timing is right.",
         "decision_process": "Absolutely. I do not want to push a decision before understanding how the decision is actually made on your side.",
         "trust": "Fair question. I would rather use specific, verifiable evidence than make a broad delivery claim.",
