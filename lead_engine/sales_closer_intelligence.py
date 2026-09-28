@@ -205,7 +205,8 @@ def _conversation_memory(lead: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(events, list):
         events = []
     fields = ("priority", "timeline", "budget", "decision_process", "current_provider", "authority", "stated_objection", "commitment", "next_step")
-    memory: dict[str, Any] = {field: {"value": "", "event_index": None, "evidence_ref": ""} for field in fields}
+    fields = tuple(dict.fromkeys((*fields, "priority", "timing", "decision_process", "budget", "authority", "desired_outcome", "success_metric")))
+    memory: dict[str, Any> = {field: {"value": "", "event_index": None, "evidence_ref": ""} for field in fields}
     observed_events = []
     for index, event in enumerate(events):
         if not isinstance(event, Mapping):
