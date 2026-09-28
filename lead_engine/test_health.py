@@ -76,7 +76,8 @@ def test_health_report_is_healthy(tmp_path):
     )
 
     config = LeadEngineConfig(
-        database_dir=str(tmp_path)
+        database_dir=str(tmp_path),
+        airtable_base_id="appTestHealthFixture",
     )
 
     result = health_report(
