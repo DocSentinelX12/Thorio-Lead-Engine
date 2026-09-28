@@ -166,7 +166,7 @@ def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], 
     route = str(lead.get("outreach_route") or "").strip()
     if not route: raise AgentContractError("outreach_closer follow-up requires an active revenue route")
     objection = str(payload.get("objection") or "").strip(); signal = str(lead.get("current_need") or lead.get("business_need") or lead.get("signal") or lead.get("evidence") or "the need you described").strip()
-    if objection: body = objection_response(objection, route); subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
+    if objection: body = objection_response(objection, route, lead=lead); subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
     else: body = f"Hi {contact_name},\n\nJust following up on my earlier note about {signal.rstrip('.!?')}. If this is still a priority, I can send the most relevant {route} option.\n\nBest,\nThorio"; subject = str(lead.get("outreach_draft_subject") or f"Re: {signal[:72]}")
     conversation_id = str(lead.get("conversation_id") or f"conversation:{lead['fingerprint']}:{route}")
     # apply_outcome() has already advanced the durable outreach attempt for the observed outcome. The closer must execute that exact scheduled attempt, not increment the cadence a second time.
@@ -228,7 +228,7 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         stored = _persist_lead(ctx.db, updated); return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": True}
     if not bool(payload.get("execute")):
         result = {"role": "follow_up", "lead": dict(lead), "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
-        if objection: result["objection_response"] = objection_response(objection, str(lead.get("outreach_route") or "the selected service"))
+        if objection: result["objection_response"] = objection_response(objection, str(lead.get("outreach_route") or "the selected service"), lead=lead)
         return result
     stored = _persist_lead(ctx.db, updated)
     event_id = str(payload.get("inbound_event_id") or f"followup:{fingerprint}:{int(lead.get('outreach_attempt', 0) or 0) + 1}")
