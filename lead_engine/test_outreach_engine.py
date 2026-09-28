@@ -433,6 +433,90 @@ def test_closer_unconfirmed_concern_cannot_override_objection_action():
     assert strategy["conversation_intelligence"]["action_basis"] == "observed_conversation_context"
 
 
+
+
+def test_closer_confirmed_concern_stays_active_without_contrary_evidence():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {"outcome": "replied", "text": "Yes, avoiding disruption is the concern.", "underlying_concern_confirmation": "capability_or_displacement_risk", "evidence_ref": "evt-2"},
+            {"outcome": "replied", "text": "That is still the issue.", "evidence_ref": "evt-3"},
+        ],
+    )
+    strategy = build_outreach_decision(value).commercial_strategy
+    concern = strategy["underlying_concern"]
+    assert concern["status"] == "confirmed"
+    assert concern["state_transition"] == "confirmed"
+    assert concern["state_evidence_ref"] == "evt-2"
+    assert strategy["confirmed_concern_action"]["applied"] is True
+
+
+def test_closer_explicit_concern_rejection_removes_stale_confirmed_action():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {"outcome": "replied", "text": "Yes, avoiding disruption is the concern.", "underlying_concern_confirmation": "capability_or_displacement_risk", "evidence_ref": "evt-2"},
+            {"outcome": "replied", "text": "Actually, disruption is not the concern.", "underlying_concern_rejection": "capability_or_displacement_risk", "evidence_ref": "evt-3"},
+        ],
+    )
+    strategy = build_outreach_decision(value).commercial_strategy
+    concern = strategy["underlying_concern"]
+    assert concern["status"] == "rejected"
+    assert concern["state_transition"] == "rejected"
+    assert concern["state_evidence_ref"] == "evt-3"
+    assert strategy["confirmed_concern_action"]["applied"] is False
+    assert strategy["conversation_intelligence"]["action_basis"] == "concern_state_evolution"
+
+
+def test_closer_explicit_concern_resolution_removes_stale_confirmed_action():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {"outcome": "replied", "text": "Yes, avoiding disruption is the concern.", "underlying_concern_confirmation": "capability_or_displacement_risk", "evidence_ref": "evt-2"},
+            {"outcome": "replied", "text": "We have resolved that concern.", "underlying_concern_resolution": "capability_or_displacement_risk", "evidence_ref": "evt-3"},
+        ],
+    )
+    strategy = build_outreach_decision(value).commercial_strategy
+    concern = strategy["underlying_concern"]
+    assert concern["status"] == "resolved"
+    assert concern["state_transition"] == "resolved"
+    assert concern["state_evidence_ref"] == "evt-3"
+    assert strategy["confirmed_concern_action"]["applied"] is False
+
+
+def test_closer_ordinary_reply_cannot_resolve_or_reject_a_concern():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {"outcome": "replied", "text": "Thanks, I understand.", "evidence_ref": "evt-2"},
+        ],
+    )
+    strategy = build_outreach_decision(value).commercial_strategy
+    concern = strategy["underlying_concern"]
+    assert concern["status"] == "hypothesis"
+    assert concern["state_transition"] == "none"
+    assert strategy["confirmed_concern_action"]["applied"] is False
+
+
+def test_closer_new_objection_replaces_prior_objection_action_without_rewriting_history():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "The price is too high for our budget.", "evidence_ref": "evt-1"},
+            {"outcome": "objection", "text": "Our bigger concern is whether your team can deliver reliably.", "evidence_ref": "evt-2"},
+        ],
+    )
+    strategy = build_outreach_decision(value).commercial_strategy
+    assert strategy["objection_category"] == "trust"
+    assert strategy["conversation_intelligence"]["next_best_action"] == "provide_verified_proof_or_offer_discovery"
+    assert strategy["underlying_concern"]["concern_type"] == "proof_or_delivery_risk"
+    assert strategy["underlying_concern"]["origin_event_index"] == 1
+    assert "The price is too high" not in strategy["underlying_concern"]["observed_text"]
+
 def test_closer_underlying_concern_does_not_leak_inference_into_message_as_fact():
     value = lead(
         outreach_state="objection",
