@@ -52,3 +52,23 @@ def test_engine_status_surfaces_database_read_failure():
         match="Unable to read pending lead details from the database",
     ):
         get_engine_status(BrokenStateDB())
+
+    
+def test_engine_status_does_not_remain_unhealthy_after_historical_sync_failure(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    db.set_state(
+        "sync_observability",
+        {
+            "sync_runs": 3,
+            "successful_sync_runs": 2,
+            "failed_sync_runs": 1,
+            "last_sync_failure": "2026-09-27T00:00:00+00:00",
+            "last_successful_sync": "2026-09-27T00:05:00+00:00",
+        },
+    )
+
+    status = get_engine_status(db)
+
+    assert status["healthy"] is True
+    assert status["failed_sync_runs"] == 1
+    assert status["successful_sync_runs"] == 2
