@@ -318,6 +318,31 @@ class LeadDB:
         self.conn.commit()
         return {"attempts": next_attempts, "max_attempts": DEFAULT_MAX_ATTEMPTS, "retryable": not quarantined, "quarantined": quarantined}
 
+    def requeue_quarantined(self, fingerprint: str, reason: str) -> Dict[str, Any]:
+        """Deliberately requeue an exhausted lead for one fresh bounded retry cycle."""
+        fingerprint = str(fingerprint or "").strip()
+        reason = str(reason or "").strip()
+        if not fingerprint:
+            raise ValueError("Quarantined lead fingerprint is required.")
+        if not reason:
+            raise ValueError("Quarantine requeue reason is required.")
+        row = self.conn.execute(
+            "SELECT synced, attempts FROM leads WHERE fingerprint = ?",
+            (fingerprint,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Lead not found: {fingerprint}")
+        if bool(row[0]):
+            raise ValueError("Only unsynced quarantined leads can be requeued.")
+        if int(row[1] or 0) < DEFAULT_MAX_ATTEMPTS:
+            raise ValueError("Lead is not quarantined and cannot be requeued through the quarantine recovery path.")
+        self.conn.execute(
+            "UPDATE leads SET attempts = 0, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
+            (f"Quarantine requeued: {reason}"[:4000], fingerprint),
+        )
+        self.conn.commit()
+        return self.get_sync_state(fingerprint)
+
     def set_checkpoint(self, collector, checkpoint):
         if not collector:
             raise ValueError("Checkpoint collector is required.")
