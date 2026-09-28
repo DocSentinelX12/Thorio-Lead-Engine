@@ -114,3 +114,20 @@ def test_research_payload_rejects_mismatched_research_intelligence():
     lead["research_intelligence"]["opportunity_id"] = "opp-2"
     with pytest.raises(ValueError, match="opportunity"):
         _research_payload(lead)
+
+
+def test_sync_research_uses_atomic_upsert_when_lookup_is_empty(monkeypatch):
+    lead = _complete_lead("research-race")
+    captured = {}
+    raced = {"id": "recResearchRace", "fields": {"Research Key": "research-race"}}
+    monkeypatch.setattr("lead_engine.research_sync.find_master_records", lambda *args: [])
+    def fake_request(method, url, payload):
+        captured.update(method=method, url=url, payload=payload)
+        return {"records": [raced]}
+    monkeypatch.setattr("lead_engine.research_sync._request", fake_request)
+    result = sync_research(lead)
+    assert result["status"] == "created"
+    assert result["record"] == raced
+    assert captured["method"] == "PATCH"
+    assert captured["payload"]["performUpsert"]["fieldsToMergeOn"] == ["Research Key"]
+    assert captured["payload"]["records"][0]["fields"]["Research Key"] == "research-race"
