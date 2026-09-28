@@ -105,11 +105,11 @@ def build_commercial_psychology_profile(lead: Mapping[str, Any]) -> dict[str, An
     impact, impact_refs = _verified_field(impact_section, "business_impact")
     cost_of_inaction, cost_refs = _verified_field(impact_section, "cost_of_inaction")
 
-    objective_value = current_need or business_need
-    objective_refs = current_refs or business_refs
-    if objective_value:
+    objective_values = list(dict.fromkeys(value for value in (business_need, current_need) if value))
+    objective_refs = list(dict.fromkeys(business_refs + current_refs))
+    if objective_values:
         observed_fact = _profile_entry(
-            f"The researched commercial objective is {objective_value}.",
+            "The researched commercial objective includes " + " and ".join(objective_values) + ".",
             objective_refs,
         )
     else:
