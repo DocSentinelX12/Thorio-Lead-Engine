@@ -525,26 +525,18 @@ def _underlying_concern_intelligence(lead: Mapping[str, Any], objection_category
 
 
 def _apply_confirmed_concern_state(lead: Mapping[str, Any], concern: Mapping[str, Any]) -> dict[str, Any]:
-    """Determine whether prior conversation evidence explicitly confirms a concern hypothesis."""
+    """Confirm only an explicitly validated underlying concern, never from the objection alone."""
     events = lead.get("conversation_events")
     if not isinstance(events, list):
         return {"status": "unconfirmed", "confirmed_by": ""}
     concern_type = _text(concern.get("concern_type"))
-    confirmation_terms = {
-        "economic_risk": ("budget", "too expensive", "cost is", "price is the issue"),
-        "capability_or_displacement_risk": ("already have", "current team handles", "don't want to replace", "do not want to replace"),
-        "timing_or_resource_constraint": ("not now", "no bandwidth", "next quarter", "not a priority"),
-        "internal_decision_risk": ("need approval", "procurement", "need my", "discuss internally"),
-        "proof_or_delivery_risk": ("need proof", "need references", "need a case study", "need to see it work"),
-        "fit_or_understanding_risk": ("don't understand", "do not understand", "how does this fit", "need more information"),
-    }
-    terms = confirmation_terms.get(concern_type, ())
     for index, event in enumerate(events):
         if not isinstance(event, Mapping):
             continue
-        event_text = _text(event.get("text")).lower()
-        if event_text and any(term in event_text for term in terms):
-            return {"status": "confirmed", "confirmed_by": _text(event.get("evidence_ref") or event.get("source_id") or event.get("source_url") or event.get("event_id")) or f"conversation_event:{index}"}
+        explicit = _text(event.get("underlying_concern_confirmation") or event.get("confirmed_concern_type"))
+        if explicit and (explicit == concern_type or explicit.lower() == "confirmed"):
+            ref = _text(event.get("evidence_ref") or event.get("source_id") or event.get("source_url") or event.get("event_id"))
+            return {"status": "confirmed", "confirmed_by": ref or f"conversation_event:{index}"}
     return {"status": "unconfirmed", "confirmed_by": ""}
 
 def _research_reentry_intelligence(strategy_inputs: Mapping[str, Any], state: str, next_best_action: str) -> dict[str, Any]:
