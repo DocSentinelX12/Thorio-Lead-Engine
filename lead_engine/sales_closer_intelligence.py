@@ -188,7 +188,9 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "value_hypotheses": list(dict.fromkeys(value_hypotheses)),
         "unknowns": list(dict.fromkeys(unknowns)),
         "evidence_refs": list(dict.fromkeys(evidence_refs)),
-        "urgency_basis": urgency_basis,\n        "verified_business_impact": verified_impact,\n        "verified_cost_of_inaction": cost_of_inaction,
+        "urgency_basis": urgency_basis,
+        "verified_business_impact": verified_impact,
+        "verified_cost_of_inaction": cost_of_inaction,
         "psychological_objective": psychological_objective,
         "next_best_action": next_best_action,
         "ethical_constraints": [
