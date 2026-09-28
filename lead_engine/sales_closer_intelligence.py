@@ -494,6 +494,59 @@ def _conversation_state_transition(lead: Mapping[str, Any], state: str, buying_s
     return {"from_state": state, "candidate_state": "discovery", "transition": "hold_and_discover", "required_evidence": ["active need", "desired outcome"], "reason": "The conversation needs evidence before a stronger state can be justified."}
 
 
+
+def _underlying_concern_intelligence(lead: Mapping[str, Any], objection_category: str) -> dict[str, Any]:
+    """Generate a falsifiable concern hypothesis from observed language, never a buyer fact."""
+    events = lead.get("conversation_events")
+    latest = events[-1] if isinstance(events, list) and events and isinstance(events[-1], Mapping) else {}
+    text = _text(latest.get("text"))
+    lowered = text.lower()
+    hypotheses = {
+        "price": ("economic_risk", "The buyer may be concerned that the economics are not justified by the expected value.", "Which outcome or constraint would need to be clear before the economics could be evaluated?"),
+        "existing_solution": ("capability_or_displacement_risk", "The buyer may be concerned that changing or adding a provider would create unnecessary disruption because the current solution already works.", "What would need to be different from the current solution for an additional option to be worth evaluating?"),
+        "timing": ("timing_or_resource_constraint", "The buyer may be constrained by timing, competing priorities, or available resources.", "What condition would make this worth revisiting, and what constraint is preventing action today?"),
+        "decision_process": ("internal_decision_risk", "The buyer may need internal alignment, approval, or confidence about how a decision will be evaluated.", "What part of the internal decision process is still uncertain?"),
+        "trust": ("proof_or_delivery_risk", "The buyer may need evidence that the proposed capability can be delivered reliably in their context.", "What specific evidence would reduce the uncertainty you have?"),
+        "information": ("fit_or_understanding_risk", "The buyer may not yet have enough information to determine whether the offering fits the need.", "What specific part of the approach would you need to understand to evaluate fit?"),
+    }
+    if objection_category not in hypotheses:
+        return {"status": "unconfirmed", "hypothesis": "", "concern_type": "", "evidence_refs": [], "validation_question": "", "confirmation_criteria": "No underlying concern is established from the available conversation evidence."}
+    concern_type, hypothesis, question = hypotheses[objection_category]
+    evidence_ref = _text(latest.get("evidence_ref") or latest.get("source_id") or latest.get("source_url") or latest.get("event_id"))
+    return {
+        "status": "hypothesis",
+        "hypothesis": hypothesis,
+        "concern_type": concern_type,
+        "evidence_refs": [evidence_ref] if evidence_ref else [],
+        "observed_text": text,
+        "validation_question": question,
+        "confirmation_criteria": "Confirm only if the buyer explicitly validates the concern; otherwise retain it as unconfirmed and do not use it as a factual claim.",
+    }
+
+
+def _apply_confirmed_concern_state(lead: Mapping[str, Any], concern: Mapping[str, Any]) -> dict[str, Any]:
+    """Determine whether prior conversation evidence explicitly confirms a concern hypothesis."""
+    events = lead.get("conversation_events")
+    if not isinstance(events, list):
+        return {"status": "unconfirmed", "confirmed_by": ""}
+    concern_type = _text(concern.get("concern_type"))
+    confirmation_terms = {
+        "economic_risk": ("budget", "too expensive", "cost is", "price is the issue"),
+        "capability_or_displacement_risk": ("already have", "current team handles", "don't want to replace", "do not want to replace"),
+        "timing_or_resource_constraint": ("not now", "no bandwidth", "next quarter", "not a priority"),
+        "internal_decision_risk": ("need approval", "procurement", "need my", "discuss internally"),
+        "proof_or_delivery_risk": ("need proof", "need references", "need a case study", "need to see it work"),
+        "fit_or_understanding_risk": ("don't understand", "do not understand", "how does this fit", "need more information"),
+    }
+    terms = confirmation_terms.get(concern_type, ())
+    for index, event in enumerate(events):
+        if not isinstance(event, Mapping):
+            continue
+        event_text = _text(event.get("text")).lower()
+        if event_text and any(term in event_text for term in terms):
+            return {"status": "confirmed", "confirmed_by": _text(event.get("evidence_ref") or event.get("source_id") or event.get("source_url") or event.get("event_id")) or f"conversation_event:{index}"}
+    return {"status": "unconfirmed", "confirmed_by": ""}
+
 def _research_reentry_intelligence(strategy_inputs: Mapping[str, Any], state: str, next_best_action: str) -> dict[str, Any]:
     """Identify when research should be revisited instead of filling evidence gaps with persuasion."""
     unknowns = [str(item).strip() for item in strategy_inputs.get("unknowns", []) if str(item).strip()] if isinstance(strategy_inputs.get("unknowns"), (list, tuple)) else []
@@ -602,6 +655,10 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     conversation_intelligence = _conversation_intelligence(lead, state, objection_category)
     conversation_memory = _conversation_memory(lead)
     buying_signal_intelligence = _buying_signal_intelligence(lead, state)
+    underlying_concern = _underlying_concern_intelligence(lead, objection_category)
+    concern_confirmation = _apply_confirmed_concern_state(lead, underlying_concern)
+    if concern_confirmation["status"] == "confirmed":
+        underlying_concern = {**underlying_concern, "status": "confirmed", "confirmation_evidence_ref": concern_confirmation["confirmed_by"]}
     state_transition = _conversation_state_transition(lead, state, buying_signal_intelligence, conversation_memory)
 
     objectives = {
@@ -661,6 +718,7 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "conversation_intelligence": conversation_intelligence,
         "conversation_memory": conversation_memory,
         "buying_signal_intelligence": buying_signal_intelligence,
+        "underlying_concern": underlying_concern,
         "state_transition": state_transition,
         "research_reentry": research_reentry,
         "persuasion_quality": persuasion_quality,
