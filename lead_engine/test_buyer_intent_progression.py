@@ -121,3 +121,48 @@ def test_opt_out_is_terminal():
     assert result["current_state"] == "rejected"
     assert result["transition"]["reason"] == "explicit opt-out"
     assert result["next_best_action"] == "stop_outreach"
+
+
+def test_explicit_contradiction_supersedes_stale_evaluation_without_erasing_history():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event("We are comparing providers and reviewing proposals.", evidence_ref="evt-eval"),
+            event("We are no longer evaluating providers. We are just gathering information.", evidence_ref="evt-clarify"),
+        ]}
+    )
+    assert result["current_state"] == "engaged"
+    assert result["history"][0]["current_state"] == "evaluation"
+    assert result["history"][1]["prior_state"] == "evaluation"
+    assert result["history"][1]["current_state"] == "engaged"
+    assert result["history"][1]["transition_type"] == "contradicted"
+    assert result["active_state_supersession"]["status"] == "superseded"
+    assert result["active_state_supersession"]["prior_state"] == "evaluation"
+    assert result["active_state_supersession"]["active_state"] == "engaged"
+    assert result["active_state_supersession"]["evidence_ref"] == "evt-clarify"
+    assert result["active_state_supersession"]["event_index"] == 1
+
+
+def test_explicit_contradiction_can_supersede_problem_when_buyer_resolves_it():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event("We have an engineering capacity problem.", evidence_ref="evt-problem"),
+            event("The problem is resolved now.", evidence_ref="evt-resolved"),
+        ]}
+    )
+    assert result["current_state"] == "no_need"
+    assert result["history"][0]["current_state"] == "problem_acknowledged"
+    assert result["history"][1]["transition_type"] == "contradicted"
+    assert result["active_state_supersession"]["prior_state"] == "problem_acknowledged"
+    assert result["active_state_supersession"]["active_state"] == "no_need"
+
+
+def test_non_contradictory_lower_ranked_event_does_not_replace_active_state():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event("We are comparing providers.", evidence_ref="evt-eval"),
+            event("We have a problem with engineering capacity.", evidence_ref="evt-problem"),
+        ]}
+    )
+    assert result["current_state"] == "evaluation"
+    assert result["history"][-1]["current_state"] == "evaluation"
+    assert result["active_state_supersession"]["status"] == "none"
