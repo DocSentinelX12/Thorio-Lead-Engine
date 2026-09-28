@@ -9,7 +9,7 @@ def _lead(events):
             "verified": True,
             "verification_status": "verified",
             "current_need": "engineering capacity",
-            "evidence_url": "https://example.com/need",
+            "evidence_ref": "research-current-need",
         },
     }
 
@@ -46,7 +46,7 @@ def test_commercial_strategy_keeps_evaluation_distinct_from_commitment():
             ]
         )
     )
-    advancement = strategy["buyer_intent_advancement"]
+    advancement = strategy["buyer_intent_progression"]["advancement"]
     assert advancement["current_state"] == "evaluation"
     assert advancement["buyer_signal_category"] == "active_evaluation"
     assert advancement["commitment_claim_allowed"] is False
