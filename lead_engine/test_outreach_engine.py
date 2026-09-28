@@ -400,6 +400,39 @@ def test_closer_underlying_concern_requires_explicit_confirmation():
     assert concern["confirmation_evidence_ref"] == "evt-2"
 
 
+def test_closer_confirmed_concern_drives_targeted_next_best_action():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+            {"outcome": "replied", "text": "Yes, avoiding disruption is the concern.", "underlying_concern_confirmation": "capability_or_displacement_risk", "evidence_ref": "evt-2"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    strategy = decision.commercial_strategy
+    assert strategy["underlying_concern"]["status"] == "confirmed"
+    assert strategy["confirmed_concern_action"]["applied"] is True
+    assert strategy["confirmed_concern_action"]["next_best_action"] == "de_risk_augmentation_fit"
+    assert strategy["conversation_intelligence"]["next_best_action"] == "de_risk_augmentation_fit"
+    assert strategy["conversation_intelligence"]["action_basis"] == "buyer_confirmed_underlying_concern"
+    assert "disruption" in strategy["conversation_intelligence"]["next_best_question"].lower()
+
+
+def test_closer_unconfirmed_concern_cannot_override_objection_action():
+    value = lead(
+        outreach_state="objection",
+        conversation_events=[
+            {"outcome": "objection", "text": "We already have an internal engineering team.", "evidence_ref": "evt-1"},
+        ],
+    )
+    decision = build_outreach_decision(value)
+    strategy = decision.commercial_strategy
+    assert strategy["underlying_concern"]["status"] == "hypothesis"
+    assert strategy["confirmed_concern_action"]["applied"] is False
+    assert strategy["conversation_intelligence"]["next_best_action"] == "diagnose_capacity_gap"
+    assert strategy["conversation_intelligence"]["action_basis"] == "observed_conversation_context"
+
+
 def test_closer_underlying_concern_does_not_leak_inference_into_message_as_fact():
     value = lead(
         outreach_state="objection",
