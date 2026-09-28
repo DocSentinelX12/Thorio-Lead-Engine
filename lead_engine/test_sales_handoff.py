@@ -296,6 +296,138 @@ def test_persisted_handoff_rejects_remote_research_mutation(tmp_path, monkeypatc
     assert reason == "research_record_package_mismatch"
 
 
+
+def test_persisted_handoff_rejects_missing_downstream_outreach(tmp_path, monkeypatch):
+    from .sales_handoff import verify_persisted_airtable_handoff
+    db = LeadDB(data_dir=tmp_path)
+    lead = _ready_lead()
+    lead.update({
+        "sales_eligibility": "eligible",
+        "outreach_route": "Thorio",
+    })
+    assert db.insert_if_new(lead)
+    digest = package_digest(lead)
+    db.record_airtable_handoff(
+        lead["fingerprint"], digest, "recLead", "recResearch", ["recCompany"],
+        "2026-09-28T00:00:00+00:00",
+    )
+    lead_record, research_record, _ = _records(lead)
+
+    def fake_read(table_key, record_id):
+        return lead_record if table_key == "lead_radar" else research_record
+
+    monkeypatch.setattr("lead_engine.sales_handoff._read_airtable_record", fake_read)
+    monkeypatch.setattr(
+        "lead_engine.airtable_sync.find_master_records",
+        lambda table_key, lookup_field, lookup_value: (
+            [{"id": "recCompany", "fields": {"Company": lead["company"]}}]
+            if table_key == "companies"
+            else []
+        ),
+    )
+    confirmed, reason = verify_persisted_airtable_handoff(db, lead)
+    assert confirmed is False
+    assert reason == "outreach_not_confirmed:Thorio"
+
+
+def test_persisted_handoff_rejects_missing_downstream_followup(tmp_path, monkeypatch):
+    from .sales_handoff import verify_persisted_airtable_handoff
+    db = LeadDB(data_dir=tmp_path)
+    lead = _ready_lead()
+    lead.update({
+        "sales_eligibility": "eligible",
+        "outreach_route": "Thorio",
+        "next_action_date": "2026-10-01",
+    })
+    assert db.insert_if_new(lead)
+    digest = package_digest(lead)
+    db.record_airtable_handoff(
+        lead["fingerprint"], digest, "recLead", "recResearch", ["recCompany"],
+        "2026-09-28T00:00:00+00:00",
+    )
+    lead_record, research_record, _ = _records(lead)
+
+    def fake_read(table_key, record_id):
+        return lead_record if table_key == "lead_radar" else research_record
+
+    monkeypatch.setattr("lead_engine.sales_handoff._read_airtable_record", fake_read)
+
+    def find_records(table_key, lookup_field, lookup_value):
+        if table_key == "companies":
+            return [{"id": "recCompany", "fields": {"Company": lead["company"]}}]
+        if table_key == "outreach":
+            return [{
+                "id": "recOutreach",
+                "fields": {
+                    "Outreach": f"{lead['fingerprint']}:Thorio",
+                    "Company": lead["company"],
+                    "Opportunity": f"{lead['fingerprint']}:Thorio",
+                },
+            }]
+        return []
+
+    monkeypatch.setattr("lead_engine.airtable_sync.find_master_records", find_records)
+    confirmed, reason = verify_persisted_airtable_handoff(db, lead)
+    assert confirmed is False
+    assert reason == "followup_not_confirmed:Thorio:0"
+
+
+def test_persisted_handoff_rejects_missing_paxus_commission(tmp_path, monkeypatch):
+    from .sales_handoff import verify_persisted_airtable_handoff
+    db = LeadDB(data_dir=tmp_path)
+    lead = _ready_lead()
+    lead.update({
+        "potential_routes": ["Paxus"],
+        "eligible_routes": ["Paxus"],
+        "preserved_routes": ["Paxus"],
+        "routing_result": {"destinations": ["Paxus"], "review_required": False},
+        "placement_count": 1,
+        "client_payment_received": True,
+    })
+    from .lead_identity import canonical_opportunity_identity
+    lead.update(canonical_opportunity_identity(lead))
+    lead["research_intelligence"] = build_research_intelligence(lead)
+    assert db.insert_if_new(lead)
+    digest = package_digest(lead)
+    db.record_airtable_handoff(
+        lead["fingerprint"], digest, "recLead", "recResearch", ["recCompany", "recPaxus"],
+        "2026-09-28T00:00:00+00:00",
+    )
+    lead_record, research_record, _ = _records(lead)
+
+    def fake_read(table_key, record_id):
+        return lead_record if table_key == "lead_radar" else research_record
+
+    monkeypatch.setattr("lead_engine.sales_handoff._read_airtable_record", fake_read)
+
+    def find_records(table_key, lookup_field, lookup_value):
+        if table_key == "companies":
+            return [{"id": "recCompany", "fields": {"Company": lead["company"]}}]
+        if table_key == "opportunities":
+            return [{
+                "id": "recPaxus",
+                "fields": {
+                    "Opportunity": f"{lead['fingerprint']}:Paxus",
+                    "Company": lead["company"],
+                    "Partner": "Paxus",
+                },
+            }]
+        if table_key == "referrals":
+            return [{
+                "id": "recReferral",
+                "fields": {
+                    "Referral": lead["fingerprint"],
+                    "Company": lead["company"],
+                    "Partner": "Paxus",
+                },
+            }]
+        return []
+
+    monkeypatch.setattr("lead_engine.airtable_sync.find_master_records", find_records)
+    confirmed, reason = verify_persisted_airtable_handoff(db, lead)
+    assert confirmed is False
+    assert reason == "paxus_commission_not_confirmed"
+
 def test_persisted_handoff_requires_each_destination_opportunity(tmp_path, monkeypatch):
     from .sales_handoff import verify_persisted_airtable_handoff
     db = LeadDB(data_dir=tmp_path)
