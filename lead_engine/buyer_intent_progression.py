@@ -198,6 +198,95 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
     return {"state": "unknown", "reason": "no explicit buyer evidence", "ref": ref}
 
 
+def _explicit_contradiction(event: Mapping[str, Any], current_state: str) -> dict[str, str] | None:
+    """Return an explicit, evidence-bounded replacement for a stale active state.
+
+    A contradiction may change the active state only when the buyer explicitly
+    negates the prior condition or explicitly names the replacement condition.
+    Historical progression is never deleted.
+    """
+    text = _text(event.get("text")).lower()
+    if not text or current_state in {"unknown", "engaged"}:
+        return None
+
+    replacements: dict[str, tuple[str, tuple[str, ...]]] = {
+        "problem_acknowledged": (
+            "no_need",
+            (
+                "we no longer have a problem",
+                "we don't have a problem anymore",
+                "we do not have a problem anymore",
+                "the problem is resolved",
+                "we solved the problem",
+                "we fixed the problem",
+            ),
+        ),
+        "impact_acknowledged": (
+            "problem_acknowledged",
+            (
+                "the impact isn't material",
+                "the impact is not material",
+                "the impact is no longer material",
+                "it's not materially impacting us",
+                "it is not materially impacting us",
+                "the impact is not significant",
+            ),
+        ),
+        "evaluation": (
+            "engaged",
+            (
+                "we are not evaluating",
+                "we're not evaluating",
+                "we are no longer evaluating",
+                "we're no longer evaluating",
+                "we stopped evaluating",
+                "we are not comparing providers",
+                "we're not comparing providers",
+                "we are no longer comparing providers",
+                "we're no longer comparing providers",
+                "we are not reviewing proposals",
+                "we're not reviewing proposals",
+                "we are just gathering information",
+                "we're just gathering information",
+                "we are only gathering information",
+                "we're only gathering information",
+            ),
+        ),
+        "decision_process": (
+            "evaluation",
+            (
+                "we are not at the approval stage",
+                "we're not at the approval stage",
+                "we are not discussing approval yet",
+                "we're not discussing approval yet",
+                "approval is not part of this yet",
+            ),
+        ),
+        "commercial_commitment": (
+            "rejected",
+            (
+                "we are not moving forward",
+                "we're not moving forward",
+                "we will not move forward",
+                "we won't move forward",
+                "we decided not to proceed",
+                "we have decided not to proceed",
+            ),
+        ),
+    }
+
+    replacement = replacements.get(current_state)
+    if not replacement:
+        return None
+    state, phrases = replacement
+    if not _explicit(text, phrases):
+        return None
+    return {
+        "state": state,
+        "reason": f"explicit buyer contradiction superseded active {current_state} state",
+    }
+
+
 def _qualification_from_event(event: Mapping[str, Any], state: str) -> dict[str, str]:
     text = _text(event.get("text")).lower()
     values = {
@@ -265,6 +354,7 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
     current = "unknown"
     history: list[dict[str, Any]] = []
     known: dict[str, dict[str, Any]] = {}
+    supersession: dict[str, Any] | None = None
     active_terminal = False
     last_ref = ""
     last_index: int | None = None
@@ -304,15 +394,36 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
         else:
             if active_terminal:
                 continue
-            if current in NON_LINEAR_STATES and candidate == "engaged":
-                continue
-            rank = {state: index for index, state in enumerate(PROGRESSION_STATES)}
-            if rank[candidate] >= rank.get(current, 0):
-                transition_type = "advanced" if candidate != current else "confirmed"
-                current = candidate
+            contradiction = _explicit_contradiction(event, current)
+            if contradiction:
+                prior_state = current
+                current = contradiction["state"]
+                transition_type = "contradicted"
+                evidence = {
+                    **evidence,
+                    "state": current,
+                    "reason": contradiction["reason"],
+                }
+                supersession = {
+                    "status": "superseded",
+                    "prior_state": prior_state,
+                    "active_state": current,
+                    "evidence_ref": evidence["ref"],
+                    "event_index": index,
+                    "evidence_text": _text(event.get("text")),
+                    "reason": contradiction["reason"],
+                }
             else:
-                transition_type = "superseded"
-                continue
+                supersession = None
+                if current in NON_LINEAR_STATES and candidate == "engaged":
+                    continue
+                rank = {state: index for index, state in enumerate(PROGRESSION_STATES)}
+                if rank[candidate] >= rank.get(current, 0):
+                    transition_type = "advanced" if candidate != current else "confirmed"
+                    current = candidate
+                else:
+                    transition_type = "superseded"
+                    continue
 
         last_ref = evidence["ref"]
         last_index = index
@@ -325,8 +436,10 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
                 "evidence_text": _text(event.get("text")),
                 "event_index": index,
                 "reason": evidence["reason"],
+                **({"supersession": supersession} if supersession else {}),
             }
         )
+        supersession = None
 
     # Explicit conversion/rejection stored on the lead is respected only as
     # an already-established lifecycle state, not as inferred buyer intent.
@@ -363,5 +476,14 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
         },
         "next_best_action": next_action,
         "next_best_question": next_question,
-        "evidence_policy": "Progression requires explicit buyer evidence. Historical states remain auditable when a later non-linear state interrupts the active progression.",
+        "active_state_supersession": supersession or {
+            "status": "none",
+            "prior_state": "",
+            "active_state": current,
+            "evidence_ref": "",
+            "event_index": None,
+            "evidence_text": "",
+            "reason": "No explicit contradiction has superseded the active progression state.",
+        },
+        "evidence_policy": "Progression requires explicit buyer evidence. Explicit contradictory buyer evidence may supersede the stale active state while every historical state remains auditable.",
     }
