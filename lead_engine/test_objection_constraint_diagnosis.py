@@ -122,3 +122,58 @@ def test_terminal_rejection_disables_diagnosis_persuasion():
     assert result["permitted_persuasion"] == "none"
     assert result["next_best_action"] == "stop_outreach"
     assert result["next_best_question"] == ""
+
+
+def test_resolved_concern_requires_explicit_resolution_and_stays_nonterminal():
+    events = [
+        {"outcome": "objection", "text": "The price is too high.", "evidence_ref": "evt-price"},
+        {"outcome": "replied", "text": "That makes sense, thanks for explaining.", "evidence_ref": "evt-polite"},
+        {"outcome": "replied", "text": "We have resolved the economic concern.", "underlying_concern_resolution": "economic", "evidence_ref": "evt-resolved"},
+    ]
+    result = build_objection_constraint_diagnosis({"conversation_events": events}, _progression(events))
+    assert result["status"] == "resolved"
+    assert result["state_transition"] == "resolved"
+    assert result["state_evidence_ref"] == "evt-resolved"
+    assert result["permitted_persuasion"] == "evidence_bounded_discovery"
+    assert result["next_best_action"] == "reconfirm_active_need"
+    assert "evt-polite" not in result["evidence_refs"]
+
+
+def test_concern_replacement_activates_the_replacement_type():
+    events = [
+        {"outcome": "objection", "text": "The price is too high.", "evidence_ref": "evt-price"},
+        {
+            "outcome": "replied",
+            "text": "Actually price is not the issue. Timing is the issue.",
+            "underlying_concern_rejection": "economic",
+            "underlying_concern_replacement": "timing",
+            "evidence_ref": "evt-timing",
+        },
+    ]
+    result = build_objection_constraint_diagnosis({"conversation_events": events}, _progression(events))
+    assert result["status"] == "superseded"
+    assert result["active_hypothesis_type"] == "timing"
+    assert result["next_best_action"] == "map_timing_constraint"
+    assert result["next_best_question"] == "What event or condition would need to change before this becomes actionable?"
+
+
+def test_polite_agreement_cannot_resolve_a_confirmed_concern():
+    events = [
+        {"outcome": "objection", "text": "We need proof of reliable delivery.", "evidence_ref": "evt-trust"},
+        {"outcome": "replied", "text": "Yes, delivery reliability is the concern.", "underlying_concern_confirmation": "trust", "evidence_ref": "evt-confirm"},
+        {"outcome": "replied", "text": "Thanks, that is helpful.", "evidence_ref": "evt-polite"},
+    ]
+    result = build_objection_constraint_diagnosis({"conversation_events": events}, _progression(events))
+    assert result["status"] == "confirmed"
+    assert result["state_evidence_ref"] == "evt-confirm"
+    assert result["next_best_action"] == "provide_verified_proof_or_offer_discovery"
+
+
+def test_verified_research_is_not_exposed_without_verification():
+    events = [{"outcome": "objection", "text": "We need proof of reliable delivery.", "evidence_ref": "evt-trust"}]
+    lead = {
+        "conversation_events": events,
+        "company_research": {"status": "draft", "source_url": "unverified-source"},
+    }
+    result = build_objection_constraint_diagnosis(lead, _progression(events))
+    assert result["relevant_verified_evidence"] == []
