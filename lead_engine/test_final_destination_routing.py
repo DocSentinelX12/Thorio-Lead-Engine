@@ -46,7 +46,7 @@ def test_astrivon_route_requires_verified_service_fit():
     routed = route_leads([lead])
     assert routed["Astrivon Labs"] == []
     assert routed["Review"] == [lead]
-    assert route_state(lead)["destinations"]["Astrivon Labs"]["state"] == "route_research_required"
+    assert route_state(lead)["destinations"]["Astrivon Labs"]["state"] == "astrivon_service_fit_required"
 
 
 def test_verified_qualified_route_reaches_handoff_without_raw_route_hint():
