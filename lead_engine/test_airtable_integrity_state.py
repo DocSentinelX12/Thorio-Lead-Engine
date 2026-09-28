@@ -4,12 +4,15 @@ from types import SimpleNamespace
 
 from .agent_stateful_handlers import airtable_integrity
 from .database import LeadDB
+from .sales_handoff import package_digest
+from .test_sales_handoff import _ready_lead
 
 
 def test_airtable_integrity_reads_real_durable_sync_state():
     with tempfile.TemporaryDirectory() as directory:
         db = LeadDB(data_dir=Path(directory))
-        lead = {"fingerprint": "airtable-state", "company": "Example"}
+        lead = _ready_lead()
+        lead["fingerprint"] = "airtable-state"
         assert db.insert_if_new(lead)
         ctx = SimpleNamespace(db=db)
 
@@ -18,11 +21,19 @@ def test_airtable_integrity_reads_real_durable_sync_state():
         assert pending["airtable_verified"] is False
 
         db.mark_synced("airtable-state")
+        db.record_airtable_handoff(
+            "airtable-state",
+            package_digest(lead),
+            "recLead",
+            "recResearch",
+            ["recCompany"],
+            "2026-09-28T00:00:00+00:00",
+        )
         synced = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)
         assert synced["sync_status"] == "synced"
-        assert synced["airtable_verified"] is False
+        assert synced["airtable_verified"] is True
         assert synced["sync_error_present"] is False
-        assert synced["verification_error"] == "airtable_handoff_missing"
+        assert synced["verification_error"] == ""
 
         db.mark_error("airtable-state", "Airtable unavailable")
         failed = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)
