@@ -143,7 +143,7 @@ def classify_buyer_signal(lead: Mapping[str, Any]) -> dict[str, Any]:
         next_question = "What specifically would need to change or be clarified for you to consider moving forward?"
         evidence_basis = "explicit concern or objection"
     elif any(phrase in text for phrase in interest_phrases):
-        category = "qualified_interest"
+        category = "interest"
         confidence = "medium"
         next_action = "clarify_business_outcome"
         next_question = "What outcome would make a next conversation worthwhile for you?"
@@ -171,7 +171,7 @@ def classify_buyer_signal(lead: Mapping[str, Any]) -> dict[str, Any]:
         commitment_level = "explicit"
     elif category == "active_evaluation":
         commitment_level = "evaluation"
-    elif category == "qualified_interest":
+    elif category == "interest":
         commitment_level = "interest"
     else:
         commitment_level = "none_or_unestablished"
@@ -209,7 +209,7 @@ def enrich_commercial_strategy(strategy: Mapping[str, Any], lead: Mapping[str, A
     existing_ci = dict(existing) if isinstance(existing, Mapping) else {}
     category = signal["category"]
 
-    if category in {"explicit_commitment", "active_evaluation", "qualified_interest", "commercial_engagement", "general_engagement", "no_signal"}:
+    if category in {"explicit_commitment", "active_evaluation", "interest", "commercial_engagement", "general_engagement", "no_signal"}:
         existing_ci.update(
             {
                 "next_best_action": signal["next_best_action"],
