@@ -108,8 +108,8 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
     if current in STOP_STATES: return OutreachDecision(route, contact_name, contact_email, "", "", _evidence_refs(lead), signal, current, None, current, strategy)
     now = now or datetime.now(timezone.utc); attempt = int(lead.get("outreach_attempt", 0) or 0); next_at = None if attempt >= len(CADENCE_DAYS) - 1 else (now + timedelta(days=CADENCE_DAYS[attempt + 1])).isoformat()
     return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None, strategy)
-def objection_response(objection: str, route: str) -> str:
-    return build_objection_response(objection, route)
+def objection_response(objection: str, route: str, *, lead: Mapping[str, Any] | None = None) -> str:
+    return build_objection_response(objection, route, lead=lead)
 def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     outcome = _text(outcome).lower(); allowed = STOP_STATES | ACTIVE_STATES | {"no_response"}
     if outcome not in allowed: raise OutreachContractError(f"Unsupported outreach outcome: {outcome}")
