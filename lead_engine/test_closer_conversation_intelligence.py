@@ -154,3 +154,30 @@ def test_commercial_strategy_preserves_terminal_rejection_over_diagnosis():
     assert diagnosis["status"] == "terminal"
     assert diagnosis["permitted_persuasion"] == "none"
     assert diagnosis["next_best_action"] == "stop_outreach"
+
+
+def test_commercial_strategy_exposes_objection_resolution_handoff_intelligence():
+    from .sales_closer_intelligence import build_commercial_strategy
+
+    strategy = build_commercial_strategy(
+        {
+            "conversation_events": [
+                {
+                    "outcome": "objection",
+                    "text": "The price is too high.",
+                    "evidence_ref": "evt-price",
+                },
+                {
+                    "outcome": "replied",
+                    "text": "We resolved the pricing concern.",
+                    "underlying_concern_resolution": "economic",
+                    "evidence_ref": "evt-resolved",
+                },
+            ]
+        }
+    )
+    resolution = strategy["objection_resolution_intelligence"]
+    assert resolution["status"] == "resolved_pending_reconfirmation"
+    assert resolution["progression_handoff_allowed"] is False
+    assert resolution["resolution_evidence_ref"] == "evt-resolved"
+    assert resolution["next_best_action"] == "reconfirm_active_need"
