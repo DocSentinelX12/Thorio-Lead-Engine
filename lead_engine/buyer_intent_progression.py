@@ -415,6 +415,7 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
                     "reason": contradiction["reason"],
                 }
                 last_supersession = supersession
+                active_terminal = current in {"rejected", "no_need"}
             else:
                 supersession = None
                 if current in NON_LINEAR_STATES and candidate == "engaged":
