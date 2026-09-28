@@ -117,9 +117,12 @@ def test_research_payload_rejects_mismatched_research_intelligence():
 
 
 def test_sync_research_uses_atomic_upsert_when_lookup_is_empty(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+    monkeypatch.setenv("AIRTABLE_RESEARCH_TABLE", "Research")
+    monkeypatch.setenv("AIRTABLE_API_KEY", "pat_test_fixture")
     lead = _complete_lead("research-race")
     captured = {}
-    raced = {"id": "recResearchRace", "fields": {"Research Key": "research-race"}}
+    raced = {"id": "recResearchRace", "fields": {"Research Key": lead["fingerprint"]}}
     monkeypatch.setattr("lead_engine.research_sync.find_master_records", lambda *args: [])
     def fake_request(method, url, payload):
         captured.update(method=method, url=url, payload=payload)
