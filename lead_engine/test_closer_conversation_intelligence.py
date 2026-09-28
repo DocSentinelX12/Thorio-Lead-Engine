@@ -181,3 +181,31 @@ def test_commercial_strategy_exposes_objection_resolution_handoff_intelligence()
     assert resolution["progression_handoff_allowed"] is False
     assert resolution["resolution_evidence_ref"] == "evt-resolved"
     assert resolution["next_best_action"] == "reconfirm_active_need"
+
+
+def test_commercial_strategy_uses_contradictory_buyer_evidence_as_active_state():
+    from .sales_closer_intelligence import build_commercial_strategy
+
+    lead = {
+        "conversation_events": [
+            {"outcome": "replied", "text": "We are comparing providers.", "evidence_ref": "evt-eval"},
+            {
+                "outcome": "replied",
+                "text": "We are no longer evaluating providers. We are just gathering information.",
+                "evidence_ref": "evt-clarify",
+            },
+        ],
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "engineering capacity",
+            "evidence_url": "https://example.com/need",
+        },
+    }
+    strategy = build_commercial_strategy(lead)
+    progression = strategy["buyer_intent_progression"]
+    assert progression["current_state"] == "engaged"
+    assert progression["active_state_supersession"]["prior_state"] == "evaluation"
+    assert progression["active_state_supersession"]["active_state"] == "engaged"
+    assert strategy["conversation_intelligence"]["buyer_intent_state"] == "engaged"
+    assert strategy["conversation_intelligence"]["next_best_action"] == "establish_problem"
