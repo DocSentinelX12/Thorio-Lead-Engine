@@ -202,6 +202,9 @@ def _conversation_memory(lead: Mapping[str, Any]) -> dict[str, Any]:
     events = lead.get("conversation_events")
     events = events if isinstance(events, list) else []
     fields = ("priority", "timing", "decision_process", "budget", "authority", "desired_outcome", "success_metric")
+    if not isinstance(events, list):
+        events = []
+    fields = ("priority", "timeline", "budget", "decision_process", "current_provider", "authority", "stated_objection", "commitment", "next_step")
     memory: dict[str, Any] = {field: {"value": "", "event_index": None, "evidence_ref": ""} for field in fields}
     observed_events = []
     for index, event in enumerate(events):
@@ -217,6 +220,26 @@ def _conversation_memory(lead: Mapping[str, Any]) -> dict[str, Any]:
         if observed or _text(event.get("text")):
             observed_events.append({"event_index": index, "outcome": _text(event.get("outcome")), "text": _text(event.get("text")), "evidence_ref": event_ref})
     return {"event_count": len(events), "known_context": memory, "observed_events": observed_events}
+
+
+def _buying_signal_intelligence(lead: Mapping[str, Any], state: str) -> dict[str, Any]:
+    signal = classify_buyer_signal(lead)
+    return {"category": _text(signal.get("category")), "confidence": _text(signal.get("confidence")), "evidence_text": _text(signal.get("evidence_text")), "evidence_ref": _text(signal.get("evidence_ref")), "do_not_overstate": bool(signal.get("do_not_overstate", True))}
+
+
+def _conversation_state_transition(lead: Mapping[str, Any], state: str, buying_signal: Mapping[str, Any], memory: Mapping[str, Any]) -> dict[str, Any]:
+    category = _text(buying_signal.get("category"))
+    if state in {"converted", "referred", "closed_lost", "disqualified", "stopped"}:
+        return {"from_state": state, "candidate_state": state, "transition": "terminal", "required_evidence": [], "reason": "Terminal state requires no further persuasion."}
+    if category == "explicit_commitment":
+        return {"from_state": state, "candidate_state": "decision", "transition": "advance", "required_evidence": ["explicit commitment or concrete commercial action"], "reason": "The buyer has expressed a concrete commitment signal."}
+    if category == "active_evaluation":
+        return {"from_state": state, "candidate_state": "evaluation", "transition": "advance", "required_evidence": ["documented evaluation activity"], "reason": "The buyer is actively evaluating fit, economics, process, or approval."}
+    if category == "interest":
+        return {"from_state": state, "candidate_state": "interested", "transition": "advance", "required_evidence": ["explicit interest or request for a next conversation"], "reason": "Interest is present but does not establish purchase intent."}
+    if state in {"replied", "interested"} and memory.get("known_context"):
+        return {"from_state": state, "candidate_state": "discovery", "transition": "hold_and_discover", "required_evidence": ["desired outcome", "material business consequence"], "reason": "Conversation context exists, but the evidence required for a stronger commercial state is incomplete."}
+    return {"from_state": state, "candidate_state": "discovery", "transition": "hold_and_discover", "required_evidence": ["active need", "desired outcome"], "reason": "The conversation needs evidence before a stronger state can be justified."}
 
 
 def _latest_objection_event(lead: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -277,6 +300,10 @@ def _concern_state_evolution(lead: Mapping[str, Any], concern: Mapping[str, Any]
             state, evidence_ref, event_index, transition = "superseded", ref, index, "superseded"
         if new_objection or _text(event.get("outcome")).lower() == "objection":
             state, evidence_ref, event_index, transition = "superseded", ref, index, "superseded"
+        if replacement and (replacement == concern_type or replacement.lower() == "replaced"):
+            state, evidence_ref, event_index, transition = "replaced", ref, index, "replaced"
+        if new_objection and new_objection.lower() != concern_type.lower():
+            state, evidence_ref, event_index, transition = "replaced", ref, index, "replaced"
     return {"status": state, "evidence_ref": evidence_ref, "event_index": event_index, "transition": transition}
 
 
