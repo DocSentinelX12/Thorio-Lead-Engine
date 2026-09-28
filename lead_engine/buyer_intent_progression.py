@@ -44,6 +44,50 @@ def _explicit(text: str, phrases: tuple[str, ...]) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
+def _problem_acknowledged(text: str) -> bool:
+    if _explicit(
+        text,
+        (
+            "we have a problem",
+            "this is a problem",
+            "we're struggling",
+            "we are struggling",
+            "we need help",
+            "we need this",
+            "we need to solve",
+            "we need to address",
+            "this is causing a problem",
+            "the issue is",
+        ),
+    ):
+        return True
+    if "problem" not in text:
+        return False
+    if _explicit(
+        text,
+        (
+            "we have no problem",
+            "we don't have a problem",
+            "we do not have a problem",
+            "we solved the problem",
+            "we fixed the problem",
+            "the problem is resolved",
+        ),
+    ):
+        return False
+    active_subjects = (
+        "we have ",
+        "we're facing ",
+        "we are facing ",
+        "we're experiencing ",
+        "we are experiencing ",
+        "we're dealing with ",
+        "we are dealing with ",
+    )
+    problem_index = text.find("problem")
+    return any(prefix in text[:problem_index] for prefix in active_subjects)
+
+
 def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
     text = _text(event.get("text")).lower()
     outcome = _text(event.get("outcome")).lower()
@@ -107,21 +151,7 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
         ),
     ):
         return {"state": "evaluation", "reason": "explicit evaluation activity", "ref": ref}
-    if _explicit(
-        text,
-        (
-            "we have a problem",
-            "this is a problem",
-            "we're struggling",
-            "we are struggling",
-            "we need help",
-            "we need this",
-            "we need to solve",
-            "we need to address",
-            "this is causing a problem",
-            "the issue is",
-        ),
-    ):
+    if _problem_acknowledged(text):
         return {"state": "problem_acknowledged", "reason": "buyer explicitly acknowledged a problem", "ref": ref}
     if _explicit(
         text,
