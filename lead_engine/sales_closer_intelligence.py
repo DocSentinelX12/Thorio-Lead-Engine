@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from .buyer_intent_progression import build_buyer_intent_progression
 from .buyer_signal_intelligence import classify_buyer_signal
 from .buyer_intent_advancement import build_buyer_intent_advancement
+from .objection_constraint_diagnosis import build_objection_constraint_diagnosis
 
 
 def _text(value: Any) -> str:
@@ -447,10 +448,23 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     if concern_confirmation["status"] == "confirmed":
         underlying_concern["confirmation_evidence_ref"] = concern_confirmation["confirmed_by"]
     confirmed_concern_action = _confirmed_concern_next_action(underlying_concern)
+    objection_constraint_diagnosis = build_objection_constraint_diagnosis(lead, buyer_intent_progression)
     if confirmed_concern_action["applied"]:
         conversation_intelligence = {**conversation_intelligence, "next_best_action": confirmed_concern_action["next_best_action"], "next_best_question": confirmed_concern_action["next_best_question"], "advance_condition": confirmed_concern_action["reason"], "action_basis": "buyer_confirmed_underlying_concern"}
     elif _text(underlying_concern.get("status")).lower() in {"rejected", "resolved", "superseded"}:
         conversation_intelligence = {**conversation_intelligence, "action_basis": "concern_state_evolution"}
+    if (
+        objection_constraint_diagnosis.get("status") not in {"not_applicable", ""}
+        and not confirmed_concern_action["applied"]
+    ):
+        conversation_intelligence = {
+            **conversation_intelligence,
+            "next_best_action": objection_constraint_diagnosis["next_best_action"],
+            "next_best_question": objection_constraint_diagnosis["next_best_question"],
+            "advance_condition": objection_constraint_diagnosis["evidence_policy"],
+            "action_basis": "objection_constraint_diagnosis",
+            "buyer_intent_state": buyer_intent_progression["current_state"],
+        }
     state_transition = _conversation_state_transition(lead, state, buying_signal_intelligence, conversation_memory)
     objectives = {"new": ("diagnose", "ask_one_high_value_question"), "replied": ("diagnose", "clarify_problem_and_impact"), "interested": ("clarify_value", "answer_and_advance"), "objection": ("resolve_objection", "resolve_then_advance"), "awaiting_response": ("advance", "make_next_step_easy"), "timing": ("clarify_timing", "establish_real_timeline"), "converted": ("protect_conversion", "stop_outreach"), "referred": ("protect_referral", "stop_outreach"), "closed_lost": ("respect_decision", "stop_outreach"), "disqualified": ("protect_integrity", "stop_outreach"), "stopped": ("respect_stop", "stop_outreach")}
     psychological_objective, next_best_action = objectives.get(state, objectives["new"])
@@ -473,7 +487,7 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
             psychological_objective = "clarify_value"
     research_reentry = _research_reentry_intelligence({"unknowns": unknowns}, state, conversation_intelligence["next_best_action"])
     persuasion_quality = _persuasion_quality({"next_best_action": conversation_intelligence["next_best_action"], "psychological_objective": psychological_objective}, conversation_intelligence, buying_signal_intelligence, research_reentry)
-    return {"conversation_state": state, "objection_category": objection_category, "verified_facts": list(dict.fromkeys(verified_facts)), "value_hypotheses": list(dict.fromkeys(value_hypotheses)), "unknowns": list(dict.fromkeys(unknowns)), "evidence_refs": list(dict.fromkeys(evidence_refs)), "urgency_basis": urgency_basis, "verified_business_impact": verified_impact, "verified_cost_of_inaction": cost_of_inaction, "psychological_objective": psychological_objective, "next_best_action": conversation_intelligence["next_best_action"], "conversation_intelligence": conversation_intelligence, "conversation_memory": conversation_memory, "buying_signal_intelligence": buying_signal_intelligence, "buyer_intent_progression": buyer_intent_progression, "underlying_concern": underlying_concern, "confirmed_concern_action": confirmed_concern_action, "state_transition": state_transition, "research_reentry": research_reentry, "persuasion_quality": persuasion_quality, "commercial_psychology_profile": commercial_psychology_profile, "ethical_constraints": ["Never convert inference into fact.", "Never manufacture urgency, scarcity, social proof, pain, pricing, or outcomes.", "Use questions to discover unknown buyer conditions.", "Use only verified evidence for factual claims.", "Stop immediately on opt-out or terminal commercial states.", "Do not treat ordinary buyer replies as proof that a concern was resolved or rejected.", "When a concern is explicitly resolved, rejected, or superseded, remove its stale action from the active strategy."]}
+    return {"conversation_state": state, "objection_category": objection_category, "verified_facts": list(dict.fromkeys(verified_facts)), "objection_constraint_diagnosis": objection_constraint_diagnosis, "value_hypotheses": list(dict.fromkeys(value_hypotheses)), "unknowns": list(dict.fromkeys(unknowns)), "evidence_refs": list(dict.fromkeys(evidence_refs)), "urgency_basis": urgency_basis, "verified_business_impact": verified_impact, "verified_cost_of_inaction": cost_of_inaction, "psychological_objective": psychological_objective, "next_best_action": conversation_intelligence["next_best_action"], "conversation_intelligence": conversation_intelligence, "conversation_memory": conversation_memory, "buying_signal_intelligence": buying_signal_intelligence, "buyer_intent_progression": buyer_intent_progression, "underlying_concern": underlying_concern, "confirmed_concern_action": confirmed_concern_action, "state_transition": state_transition, "research_reentry": research_reentry, "persuasion_quality": persuasion_quality, "commercial_psychology_profile": commercial_psychology_profile, "ethical_constraints": ["Never convert inference into fact.", "Never manufacture urgency, scarcity, social proof, pain, pricing, or outcomes.", "Use questions to discover unknown buyer conditions.", "Use only verified evidence for factual claims.", "Stop immediately on opt-out or terminal commercial states.", "Do not treat ordinary buyer replies as proof that a concern was resolved or rejected.", "When a concern is explicitly resolved, rejected, or superseded, remove its stale action from the active strategy."]}
 
 
 def evaluate_closer_message(body: str, strategy: Mapping[str, Any], buying_signal: str) -> dict[str, Any]:
