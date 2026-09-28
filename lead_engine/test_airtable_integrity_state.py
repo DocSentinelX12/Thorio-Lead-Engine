@@ -12,7 +12,6 @@ def test_airtable_integrity_reads_real_durable_sync_state():
     with tempfile.TemporaryDirectory() as directory:
         db = LeadDB(data_dir=Path(directory))
         lead = _ready_lead()
-        lead["fingerprint"] = "airtable-state"
         assert db.insert_if_new(lead)
         ctx = SimpleNamespace(db=db)
 
@@ -20,9 +19,9 @@ def test_airtable_integrity_reads_real_durable_sync_state():
         assert pending["sync_status"] == "pending"
         assert pending["airtable_verified"] is False
 
-        db.mark_synced("airtable-state")
+        db.mark_synced(lead["fingerprint"])
         db.record_airtable_handoff(
-            "airtable-state",
+            lead["fingerprint"],
             package_digest(lead),
             "recLead",
             "recResearch",
@@ -35,7 +34,7 @@ def test_airtable_integrity_reads_real_durable_sync_state():
         assert synced["sync_error_present"] is False
         assert synced["verification_error"] == ""
 
-        db.mark_error("airtable-state", "Airtable unavailable")
+        db.mark_error(lead["fingerprint"], "Airtable unavailable")
         failed = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)
         assert failed["sync_status"] == "pending"
         assert failed["sync_error_present"] is True
