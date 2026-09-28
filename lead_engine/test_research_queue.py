@@ -25,6 +25,16 @@ def _lead(fingerprint="paxus-1", verified_dm=False, **extra):
             "current_need": "The company is seeking technology recruitment support.",
             "observed_at": NOW,
         },
+        "specialist_findings": {
+            "recent_inquiry_discovery": {
+                "findings": [{
+                    "url": "https://example.com/inquiry",
+                    "evidence": "The company requested information about technology recruitment support.",
+                    "observed_at": NOW,
+                    "verification_status": "verified",
+                }]
+            }
+        },
         "route_research": {
             "verified": True,
             "verification_status": "verified",
