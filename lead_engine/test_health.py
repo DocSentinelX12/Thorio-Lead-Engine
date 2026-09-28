@@ -86,7 +86,9 @@ def test_health_report_is_healthy(tmp_path):
 
     assert result["ok"] is True
     assert result["status"] == "healthy"
-    assert len(result["checks"]) == 2
+    assert len(result["checks"]) == 3
+    assert result["checks"][2]["name"] == "airtable_configuration"
+    assert result["checks"][2]["ok"] is True
 
 
 def test_configuration_health_rejects_invalid_batch_size(
