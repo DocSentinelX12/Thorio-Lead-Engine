@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping, Optional
 from .sales_closer_intelligence import build_commercial_strategy, build_objection_response, evaluate_closer_message
+from .buyer_signal_intelligence import enrich_commercial_strategy
 STOP_STATES = frozenset({"declined", "opted_out", "irrelevant", "exhausted", "converted"})
 ACTIVE_STATES = frozenset({"ready", "drafted", "sent", "replied", "interested", "objection"})
 CADENCE_DAYS = (0, 3, 7, 14)
@@ -123,6 +124,7 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
     signal = _verified_buying_signal(lead); route = choose_route(lead); company = _text(lead.get("company"))
     if not company: raise OutreachContractError("Verified company identity is required")
     strategy = build_commercial_strategy(lead)
+    strategy = enrich_commercial_strategy(strategy, lead)
     body = _sales_body(route, contact_name, company, signal, strategy)
     message_quality = evaluate_closer_message(body, strategy, signal)
     strategy = {**strategy, "message_quality": message_quality}
@@ -131,7 +133,7 @@ def build_outreach_decision(lead: Mapping[str, Any], *, now: Optional[datetime] 
     current = _text(lead.get("outreach_state") or "ready").lower()
     if current in STOP_STATES: return OutreachDecision(route, contact_name, contact_email, "", "", _evidence_refs(lead), signal, current, None, current, strategy)
     now = now or datetime.now(timezone.utc); attempt = int(lead.get("outreach_attempt", 0) or 0); next_at = None if attempt >= len(CADENCE_DAYS) - 1 else (now + timedelta(days=CADENCE_DAYS[attempt + 1])).isoformat()
-    return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None, strategy)
+    return OutreachDecision(route, contact_name, contact_email, _subject(route, signal), body, _evidence_refs(lead), signal, "drafted", next_at, None, strategy
 def objection_response(objection: str, route: str, *, lead: Mapping[str, Any] | None = None) -> str:
     return build_objection_response(objection, route, lead=lead)
 def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
