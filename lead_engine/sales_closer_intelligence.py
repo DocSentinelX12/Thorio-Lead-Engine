@@ -594,11 +594,14 @@ def _concern_state_evolution(lead: Mapping[str, Any], concern: Mapping[str, Any]
 
 
 def _apply_confirmed_concern_state(lead: Mapping[str, Any], concern: Mapping[str, Any]) -> dict[str, Any]:
-    """Preserve confirmation while allowing later explicit state transitions to override it."""
+    """Preserve a hypothesis until explicit evidence changes its state."""
     evolution = _concern_state_evolution(lead, concern)
+    status = evolution["status"]
+    if status == "unconfirmed" and _text(concern.get("status")).lower() == "hypothesis" and evolution["transition"] == "none":
+        status = "hypothesis"
     return {
-        "status": evolution["status"],
-        "confirmed_by": evolution["evidence_ref"] if evolution["status"] == "confirmed" else "",
+        "status": status,
+        "confirmed_by": evolution["evidence_ref"] if status == "confirmed" else "",
         "state_evidence_ref": evolution["evidence_ref"],
         "state_event_index": evolution["event_index"],
         "transition": evolution["transition"],
