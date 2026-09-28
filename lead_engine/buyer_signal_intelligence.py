@@ -81,7 +81,6 @@ def classify_buyer_signal(lead: Mapping[str, Any]) -> dict[str, Any]:
     interest_phrases = (
         "interested",
         "tell me more",
-        "sounds good",
         "let's talk",
         "lets talk",
         "happy to talk",
@@ -192,7 +191,7 @@ def classify_buyer_signal(lead: Mapping[str, Any]) -> dict[str, Any]:
         "evidence_basis": evidence_basis,
         "next_best_action": next_action,
         "next_best_question": next_question,
-        "do_not_overstate": category not in {"explicit_commitment", "active_evaluation"},
+        "do_not_overstate": category != "explicit_commitment",
         "unsupported_inferences_blocked": [
             "budget existence or amount unless buyer explicitly supplied it",
             "decision authority unless buyer explicitly supplied it",
