@@ -79,9 +79,33 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
 
     if _explicit(text, ("who needs to approve", "approval process", "legal review", "security review", "needs to approve", "need to approve")):
         return {"state": "decision_process", "reason": "explicit decision-process language", "ref": ref}
+    if _explicit(
+        text,
+        (
+            "who needs to approve",
+            "approval process",
+            "legal review",
+            "security review",
+            "needs to approve",
+            "need to approve",
+        ),
+    ):
+        return {"state": "decision_process", "reason": "explicit decision-process language", "ref": ref}
     if signal["category"] == "explicit_commitment":
         return {"state": "commercial_commitment", "reason": "explicit commercial commitment language", "ref": ref}
-    if signal["category"] == "active_evaluation":
+    if signal["category"] == "active_evaluation" or _explicit(
+        text,
+        (
+            "comparing providers",
+            "comparing options",
+            "reviewing proposals",
+            "reviewing the proposal",
+            "evaluating providers",
+            "evaluating options",
+            "evaluating this",
+            "reviewing options",
+        ),
+    ):
         return {"state": "evaluation", "reason": "explicit evaluation activity", "ref": ref}
     if _explicit(
         text,
