@@ -423,6 +423,23 @@ def airtable_integrity(_: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str
     if stored is None:
         raise StatefulAgentError("lead is not present in LeadDB")
     sync_state = ctx.db.get_sync_state(lead["fingerprint"])
+    handoff = ctx.db.get_airtable_handoff(lead["fingerprint"])
+    airtable_verified = False
+    verification_error = ""
+    if sync_state["synced"] and not sync_state["last_error"]:
+        if not isinstance(handoff, Mapping):
+            verification_error = "airtable_handoff_missing"
+        else:
+            try:
+                from .sales_handoff import package_digest
+                expected_digest = package_digest(stored)
+                stored_digest = str(handoff.get("package_digest") or "").strip()
+                if stored_digest != expected_digest:
+                    verification_error = "airtable_handoff_digest_mismatch"
+                else:
+                    airtable_verified = True
+            except (TypeError, ValueError, KeyError) as exc:
+                verification_error = f"airtable_handoff_verification_failed:{exc}"
     return {
         "role": "airtable_integrity",
         "fingerprint": lead["fingerprint"],
@@ -431,6 +448,7 @@ def airtable_integrity(_: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str
         "sync_attempts": sync_state["attempts"],
         "sync_error_present": bool(sync_state["last_error"]),
         "sync_error": sync_state["last_error"],
-        "airtable_verified": bool(sync_state["synced"] and not sync_state["last_error"]),
-        "verification_basis": "LeadDB durable synchronization state",
+        "airtable_verified": airtable_verified,
+        "verification_basis": "durable Airtable handoff record and canonical package digest",
+        "verification_error": verification_error,
     }
