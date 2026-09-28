@@ -65,7 +65,7 @@ def test_commercial_strategy_requires_execution_details_after_commitment():
             ]
         )
     )
-    advancement = strategy["buyer_intent_advancement"]
+    advancement = strategy["buyer_intent_progression"]["advancement"]
     assert advancement["current_state"] == "commercial_commitment"
     assert advancement["advance_allowed"] is False
     assert "execution details" in advancement["blocked_reason"]
