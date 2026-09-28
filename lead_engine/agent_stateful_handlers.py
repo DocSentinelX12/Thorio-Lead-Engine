@@ -431,13 +431,12 @@ def airtable_integrity(_: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str
             verification_error = "airtable_handoff_missing"
         else:
             try:
-                from .sales_handoff import package_digest
-                expected_digest = package_digest(stored)
-                stored_digest = str(handoff.get("package_digest") or "").strip()
-                if stored_digest != expected_digest:
-                    verification_error = "airtable_handoff_digest_mismatch"
-                else:
+                from .sales_handoff import verify_persisted_airtable_handoff
+                confirmed, reason = verify_persisted_airtable_handoff(ctx.db, stored)
+                if confirmed:
                     airtable_verified = True
+                else:
+                    verification_error = reason
             except (TypeError, ValueError, KeyError) as exc:
                 verification_error = f"airtable_handoff_verification_failed:{exc}"
     return {
