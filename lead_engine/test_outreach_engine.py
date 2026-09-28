@@ -137,6 +137,34 @@ def test_closer_message_quality_gate_records_truthfulness_and_conversion_checks(
     assert quality["unsupported_urgency"] is False
 
 
+def test_build_outreach_decision_enforces_message_quality_gate(monkeypatch):
+    from . import outreach_engine
+
+    monkeypatch.setattr(
+        outreach_engine,
+        "_sales_body",
+        lambda route, contact_name, company, signal, strategy: (
+            f"Hi {contact_name},\\n\\nThis is urgent. Act now before the deadline."
+        ),
+    )
+    with pytest.raises(OutreachContractError, match="commercial truthfulness gate"):
+        build_outreach_decision(lead())
+
+
+def test_build_outreach_decision_rejects_unsupported_outcome_claim(monkeypatch):
+    from . import outreach_engine
+
+    monkeypatch.setattr(
+        outreach_engine,
+        "_sales_body",
+        lambda route, contact_name, company, signal, strategy: (
+            f"Hi {contact_name},\\n\\nWe will increase revenue and guarantee the result.\\n\\nWould you be open to a brief conversation?"
+        ),
+    )
+    with pytest.raises(OutreachContractError, match="commercial truthfulness gate"):
+        build_outreach_decision(lead())
+
+
 def test_closer_message_quality_gate_rejects_manufactured_urgency():
     from .sales_closer_intelligence import evaluate_closer_message
 
