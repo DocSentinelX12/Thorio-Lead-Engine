@@ -259,3 +259,52 @@ def test_scheduler_records_actual_source_start_time(tmp_path, monkeypatch):
     assert state["last_source_started_at"] == "1970-01-01T00:16:40+00:00"
     assert state["last_source_completed_at"] != state["last_source_started_at"]
     db.close()
+
+
+def test_scheduler_bounded_run_is_failed_when_any_cycle_has_execution_failure():
+    scheduler = LeadScheduler.__new__(LeadScheduler)
+    scheduler._next_run_at = {}
+    scheduler._source_key = lambda source: source.name
+    scheduler.run = lambda sources, agent_max_rounds=None: {
+        "results": [],
+        "failed": [{"source": "broken", "error": "source unavailable"}],
+        "skipped": [],
+        "source_count": 1,
+        "successful_source_count": 0,
+        "failed_count": 1,
+        "skipped_count": 0,
+        "discovered_count": 0,
+        "accepted_count": 0,
+        "duplicate_count": 0,
+        "processing_failed_count": 0,
+        "sync": {"failed_count": 0},
+        "agents": {"failed_count": 0},
+        "post_sync_agents": None,
+    }
+    source = StaticLeadSource([])
+
+    result = scheduler.run_bounded([source], interval_seconds=0, max_cycles=1)
+
+    assert result["status"] == "failed"
+    assert result["failed_count"] == 1
+
+
+def test_scheduler_records_sync_start_before_sync_completion(tmp_path, monkeypatch):
+    runner = MagicMock()
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db)
+    runner.pipeline = pipeline
+    runner.run_source.return_value = {"processed_count": 1, "failed_count": 0, "total": 1}
+    source = StaticLeadSource([])
+
+    scheduler = LeadScheduler(runner=runner)
+    timestamps = iter(["2026-09-27T00:00:00+00:00", "2026-09-27T00:00:05+00:00"])
+    monkeypatch.setattr("lead_engine.scheduler.datetime", MagicMock())
+    scheduler_datetime = __import__("lead_engine.scheduler", fromlist=["datetime"]).datetime
+    scheduler_datetime.now.side_effect = lambda tz=None: __import__("datetime").datetime.fromisoformat(next(timestamps))
+    scheduler_datetime.fromtimestamp.side_effect = lambda value, tz=None: __import__("datetime").datetime.fromtimestamp(value, tz)
+    scheduler.run([source])
+    state = db.get_state("sync_observability")
+    assert state["last_sync_started_at"] == "2026-09-27T00:00:00+00:00"
+    assert state["last_sync_completed_at"] == "2026-09-27T00:00:05+00:00"
+    db.close()
