@@ -186,6 +186,39 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     }
 
 
+def evaluate_closer_message(body: str, strategy: Mapping[str, Any], buying_signal: str) -> dict[str, Any]:
+    """Fail closed on unsupported pressure while checking for a concrete next step."""
+    text = _text(body)
+    lowered = text.lower()
+    violations: list[str] = []
+    if _text(strategy.get("urgency_basis")) == "none_verified" and any(
+        phrase in lowered for phrase in ("urgent", "act now", "last chance", "limited time", "deadline", "expires")
+    ):
+        violations.append("unsupported_urgency")
+    if any(
+        phrase in lowered
+        for phrase in ("guaranteed", "guarantee", "best in the market", "everyone is using", "no risk", "will save you", "will increase revenue")
+    ):
+        violations.append("unsupported_outcome_claim")
+    if not text:
+        violations.append("empty_message")
+    if buying_signal and buying_signal.lower() not in lowered:
+        violations.append("verified_need_not_reflected")
+    clear_next_step = any(
+        marker in lowered
+        for marker in ("would you", "could we", "are you open", "would it be useful", "what is the main", "what would need")
+    )
+    if not clear_next_step:
+        violations.append("missing_next_step")
+    return {
+        "passed": not violations,
+        "truthfulness": not any(item in violations for item in ("unsupported_urgency", "unsupported_outcome_claim", "verified_need_not_reflected")),
+        "clear_next_step": clear_next_step,
+        "unsupported_urgency": "unsupported_urgency" in violations,
+        "violations": violations,
+    }
+
+
 def build_objection_response(objection: str, route: str, *, lead: Mapping[str, Any] | None = None) -> str:
     text = _text(objection)
     lowered = text.lower()
