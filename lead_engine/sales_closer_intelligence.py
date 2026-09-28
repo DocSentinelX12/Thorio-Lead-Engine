@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from .buyer_intent_progression import build_buyer_intent_progression
+
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
@@ -762,6 +764,16 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
     conversation_intelligence = _conversation_intelligence(lead, state, objection_category)
     conversation_memory = _conversation_memory(lead)
     buying_signal_intelligence = _buying_signal_intelligence(lead, state)
+    buyer_intent_progression = build_buyer_intent_progression(lead)
+    if not objection_category:
+        conversation_intelligence = {
+            **conversation_intelligence,
+            "next_best_action": buyer_intent_progression["next_best_action"],
+            "next_best_question": buyer_intent_progression["next_best_question"],
+            "advance_condition": buyer_intent_progression["missing_qualification"]["reason"],
+            "action_basis": "buyer_intent_progression",
+            "buyer_intent_state": buyer_intent_progression["current_state"],
+        }
     underlying_concern = _underlying_concern_intelligence(lead, objection_category)
     concern_confirmation = _apply_confirmed_concern_state(lead, underlying_concern)
     underlying_concern = {
@@ -823,6 +835,23 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         next_best_action = "answer_and_advance"
         psychological_objective = "increase_clarity"
 
+    if not objection_category and not confirmed_concern_action["applied"]:
+        progression_objectives = {
+            "unknown": "diagnose",
+            "engaged": "diagnose",
+            "problem_acknowledged": "diagnose",
+            "impact_acknowledged": "clarify_value",
+            "evaluation": "clarify_value",
+            "decision_process": "reduce_decision_friction",
+            "commercial_commitment": "protect_conversion",
+            "conversion": "protect_conversion",
+            "re_engagement": "diagnose",
+        }
+        psychological_objective = progression_objectives.get(
+            _text(buyer_intent_progression.get("current_state")).lower(),
+            psychological_objective,
+        )
+
     research_reentry = _research_reentry_intelligence({"unknowns": unknowns}, state, conversation_intelligence["next_best_action"])
     persuasion_quality = _persuasion_quality(
         {"next_best_action": conversation_intelligence["next_best_action"], "psychological_objective": psychological_objective},
@@ -846,6 +875,7 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
         "conversation_intelligence": conversation_intelligence,
         "conversation_memory": conversation_memory,
         "buying_signal_intelligence": buying_signal_intelligence,
+        "buyer_intent_progression": buyer_intent_progression,
         "underlying_concern": underlying_concern,
         "confirmed_concern_action": confirmed_concern_action,
         "state_transition": state_transition,
