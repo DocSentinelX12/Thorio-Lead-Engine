@@ -135,3 +135,49 @@ def _concern_state_evolution(lead: Mapping[str, Any], concern: Mapping[str, Any]
             state, evidence_ref, event_index, transition = "replaced", ref, index, "replaced"
     return {"status": state, "evidence_ref": evidence_ref, "event_index": event_index, "transition": transition}
 
+
+def _apply_confirmed_concern_state(lead: Mapping[str, Any], concern: Mapping[str, Any]) -> dict[str, Any]:
+    evolution = _concern_state_evolution(lead, concern)
+    status = evolution["status"]
+    if status == "unconfirmed" and _text(concern.get("status")).lower() == "hypothesis" and evolution["transition"] == "none":
+        status = "hypothesis"
+    return {"status": status, "confirmed_by": evolution["evidence_ref"] if status == "confirmed" else "", "state_evidence_ref": evolution["evidence_ref"], "state_event_index": evolution["event_index"], "transition": evolution["transition"]}
+
+
+def _confirmed_concern_next_action(concern: Mapping[str, Any]) -> dict[str, Any]:
+    if _text(concern.get("status")).lower() != "confirmed":
+        return {"applied": False, "next_best_action": "", "next_best_question": "", "reason": "The concern is not buyer-confirmed, so it remains a validation hypothesis."}
+    actions = {"economic_risk": ("clarify_economic_criteria", "Which economic outcome or constraint should we evaluate first so we can determine whether the investment makes sense?", "The buyer-confirmed economic concern is addressed through explicit evaluation criteria, without assuming ROI or affordability."), "capability_or_displacement_risk": ("de_risk_augmentation_fit", "What would need to be true for an additional capability to fit alongside the current team without creating the disruption you want to avoid?", "The buyer-confirmed displacement or disruption concern is addressed by defining a non-disruptive fit condition."), "timing_or_resource_constraint": ("map_timing_constraint", "Which timing or resource constraint would need to change before this could become actionable?", "The buyer-confirmed constraint is mapped without manufacturing urgency."), "internal_decision_risk": ("map_internal_decision_risk", "What internal approval or alignment point is creating the remaining decision risk?", "The buyer-confirmed internal decision concern is mapped to its actual approval or alignment requirement."), "proof_or_delivery_risk": ("provide_verified_proof_or_offer_discovery", "What specific evidence about delivery would you need to verify before evaluating the fit?", "The buyer-confirmed proof concern is handled with verified evidence rather than unsupported reassurance."), "fit_or_understanding_risk": ("clarify_fit_requirements", "What specific requirement would you need clarified to determine whether the approach fits?", "The buyer-confirmed fit concern is handled by identifying the concrete evaluation requirement.")}
+    action = actions.get(_text(concern.get("concern_type")))
+    if not action:
+        return {"applied": False, "next_best_action": "", "next_best_question": "", "reason": "The confirmed concern type has no defined safe action."}
+    return {"applied": True, "next_best_action": action[0], "next_best_question": action[1], "reason": action[2]}
+
+
+def _research_reentry_intelligence(strategy_inputs: Mapping[str, Any], state: str, next_best_action: str) -> dict[str, Any]:
+    unknowns = [str(item).strip() for item in strategy_inputs.get("unknowns", []) if str(item).strip()] if isinstance(strategy_inputs.get("unknowns"), (list, tuple)) else []
+    required = []
+    if next_best_action in {"clarify_business_impact", "establish_value_and_fit_before_price", "diagnose_capacity_gap"}:
+        required.append("verified business impact or buyer-stated consequence")
+    if next_best_action == "map_decision_process":
+        required.append("verified decision participants or buyer-stated process")
+    if next_best_action == "provide_verified_proof_or_offer_discovery":
+        required.append("verified evidence matching the buyer's proof requirement")
+    reentry = bool(required and unknowns)
+    return {"recommended": reentry, "required_evidence": required, "reason": "Re-enter research before making a factual claim if the required evidence cannot be obtained from the conversation." if reentry else "Current evidence is sufficient for the defined next discovery action.", "unknowns": unknowns}
+
+
+def _persuasion_quality(strategy: Mapping[str, Any], conversation_intelligence: Mapping[str, Any], buying_signal: Mapping[str, Any], research_reentry: Mapping[str, Any]) -> dict[str, Any]:
+    violations: list[str] = []
+    action = _text(strategy.get("next_best_action"))
+    question = _text(conversation_intelligence.get("next_best_question"))
+    if not action:
+        violations.append("missing_next_best_action")
+    if action != "stop_outreach" and not question:
+        violations.append("missing_discovery_question")
+    if research_reentry.get("recommended") and action in {"claim_value", "claim_urgency", "claim_outcome"}:
+        violations.append("evidence_insufficient_for_persuasion_claim")
+    if buying_signal.get("do_not_overstate") and _text(strategy.get("psychological_objective")) in {"close", "force_decision"}:
+        violations.append("psychological_objective_exceeds_signal")
+    return {"passed": not violations, "violations": violations, "next_best_action_supported": bool(action), "question_supported": bool(question) or action == "stop_outreach", "pressure_free": not any(item in violations for item in ("psychological_objective_exceeds_signal",))}
+
