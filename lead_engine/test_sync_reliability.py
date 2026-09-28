@@ -212,3 +212,27 @@ def test_autonomous_revenue_eligibility_syncs_outreach_without_human_delivery_ap
     assert outreach_payload["next_action_date"] == "2026-09-22T12:00:00+00:00"
     assert outreach_payload["date_sent"] == "2026-09-19T00:00:00+00:00"
     mock_master.assert_called_once()
+
+
+def test_remote_success_before_local_commit_recovers_on_restart(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {"fingerprint": "remote-before-local-001", "company": "Crash Boundary Corp"}
+    assert db.insert_if_new(lead)
+    calls = []
+    with patch("lead_engine.sync_worker.sync_one", side_effect=lambda payload, db: calls.append(payload) or {"status": "synced", "lead": payload}):
+        original_mark_synced = db.mark_synced
+        state = {"crashed": False}
+        def crash_once(fingerprint):
+            if not state["crashed"]:
+                state["crashed"] = True
+                raise RuntimeError("simulated process crash after remote delivery")
+            return original_mark_synced(fingerprint)
+        with patch.object(db, "mark_synced", side_effect=crash_once):
+            import pytest
+            with pytest.raises(RuntimeError, match="simulated process crash"):
+                sync_pending(db)
+    assert db.get_sync_state(lead["fingerprint"])["synced"] is False
+    with patch("lead_engine.sync_worker.sync_one", return_value={"status": "already_exists", "lead": lead}):
+        recovered = sync_pending(db)
+    assert recovered["already_exists_count"] == 1
+    assert db.get_sync_state(lead["fingerprint"])["synced"] is True
