@@ -117,3 +117,28 @@ def test_signal_evidence_never_comes_from_untrusted_lead_signal():
     assert signal["category"] == "no_signal"
     assert signal["evidence_text"] == ""
     assert signal["evidence_ref"] == ""
+
+
+def test_polite_sounds_good_reply_remains_general_engagement():
+    value = lead(
+        outreach_state="replied",
+        conversation_events=[
+            {"outcome": "replied", "text": "Sounds good, thanks for reaching out.", "evidence_ref": "evt-polite"},
+        ],
+    )
+    signal = classify_buyer_signal(value)
+    assert signal["category"] == "general_engagement"
+    assert signal["do_not_overstate"] is True
+
+
+def test_active_evaluation_is_not_a_purchase_commitment_and_allows_overstatement_guard():
+    value = lead(
+        outreach_state="replied",
+        conversation_events=[
+            {"outcome": "replied", "text": "Send the proposal and we will review it with procurement.", "evidence_ref": "evt-eval-guard"},
+        ],
+    )
+    signal = classify_buyer_signal(value)
+    assert signal["category"] == "active_evaluation"
+    assert signal["commitment_level"] == "evaluation"
+    assert signal["do_not_overstate"] is True
