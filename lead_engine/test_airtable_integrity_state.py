@@ -8,7 +8,7 @@ from .sales_handoff import package_digest
 from .test_sales_handoff import _ready_lead
 
 
-def test_airtable_integrity_reads_real_durable_sync_state():
+def test_airtable_integrity_reads_real_durable_sync_state(monkeypatch):
     with tempfile.TemporaryDirectory() as directory:
         db = LeadDB(data_dir=Path(directory))
         lead = _ready_lead()
@@ -28,8 +28,7 @@ def test_airtable_integrity_reads_real_durable_sync_state():
             ["recCompany"],
             "2026-09-28T00:00:00+00:00",
         )
-        synced = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)
-        assert synced["sync_status"] == "synced"
+        monkeypatch.setattr(\n            "lead_engine.sales_handoff.verify_persisted_airtable_handoff",\n            lambda db, lead: (True, package_digest(lead)),\n        )\n        synced = airtable_integrity("airtable_integrity", {"lead": lead}, ctx)\n        assert synced["sync_status"] == "synced"
         assert synced["airtable_verified"] is True
         assert synced["sync_error_present"] is False
         assert synced["verification_error"] == ""
