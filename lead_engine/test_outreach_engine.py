@@ -148,3 +148,54 @@ def test_closer_message_quality_gate_rejects_manufactured_urgency():
     )
     assert quality["passed"] is False
     assert "unsupported_urgency" in quality["violations"]
+
+
+def test_closer_message_uses_verified_business_impact_without_inventing_roi():
+    decision = build_outreach_decision(
+        lead(
+            business_need_research={
+                "verified": True,
+                "verification_status": "verified",
+                "business_need": "Expand engineering capacity",
+                "evidence_url": "https://example.com/business-need",
+            },
+            business_impact_research={
+                "verified": True,
+                "verification_status": "verified",
+                "business_impact": "delivery capacity is constrained during the current hiring cycle",
+                "cost_of_inaction": "the current release schedule remains constrained",
+                "evidence_url": "https://example.com/business-impact",
+            },
+            research_verified_fields=["current_intent_research", "business_need_research"],
+        )
+    )
+    assert "delivery capacity is constrained during the current hiring cycle" in decision.body
+    assert "the current release schedule remains constrained" in decision.body
+    assert "guaranteed" not in decision.body.lower()
+    assert "increase revenue" not in decision.body.lower()
+    assert decision.commercial_strategy["verified_business_impact"]
+    assert decision.commercial_strategy["verified_cost_of_inaction"]
+
+
+def test_closer_message_never_uses_unverified_business_impact_as_fact():
+    decision = build_outreach_decision(
+        lead(
+            business_impact_research={
+                "verified": False,
+                "verification_status": "needs_verification",
+                "business_impact": "revenue will increase by 30 percent",
+                "cost_of_inaction": "the company will lose customers",
+                "evidence_url": "https://example.com/unverified-impact",
+            }
+        )
+    )
+    assert "revenue will increase by 30 percent" not in decision.body
+    assert "the company will lose customers" not in decision.body
+    assert "Business impact research exists but is not verified" in decision.commercial_strategy["unknowns"]
+
+
+def test_closer_message_uses_discovery_unknown_instead_of_fabricating_business_impact():
+    decision = build_outreach_decision(lead())
+    assert "The business impact of the verified need is not yet established." in decision.commercial_strategy["unknowns"]
+    assert "What is the main outcome you would want to improve?" not in decision.body
+    assert "business consequence" in decision.body.lower()
