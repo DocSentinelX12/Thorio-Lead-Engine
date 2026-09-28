@@ -259,6 +259,12 @@ class LeadScheduler:
         # produced its authoritative aggregate result.
         db = self.runner.pipeline.db
         checked_at = datetime.now(timezone.utc).isoformat()
+        source_started_wall_times = [item[3] for item in due_sources]
+        latest_source_started_at = (
+            datetime.fromtimestamp(max(source_started_wall_times), timezone.utc).isoformat()
+            if source_started_wall_times
+            else None
+        )
 
         source_state = db.get_state("source_observability") if hasattr(db, "get_state") else {}
         source_state = dict(source_state) if isinstance(source_state, dict) else {}
@@ -270,7 +276,7 @@ class LeadScheduler:
                 "sources_completed": int(source_state.get("sources_completed", 0) or 0) + len(results),
                 "sources_failed": int(source_state.get("sources_failed", 0) or 0) + len(failed),
                 "last_source": results[-1]["source"] if results else None,
-                "last_source_started_at": checked_at if due_sources else source_state.get("last_source_started_at"),
+                "last_source_started_at": latest_source_started_at if due_sources else source_state.get("last_source_started_at"),
                 "last_source_completed_at": checked_at if results else source_state.get("last_source_completed_at"),
                 "last_source_failure_at": checked_at if failed else source_state.get("last_source_failure_at"),
                 "last_source_error": (failed[-1].get("error") if failed else None),
