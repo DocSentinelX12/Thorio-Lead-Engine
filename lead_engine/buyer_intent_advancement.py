@@ -164,7 +164,7 @@ def build_buyer_intent_advancement(
 
     signal_category = _text(signal.get("category"))
     overstatement_guard = bool(signal.get("do_not_overstate", True))
-    if overstatement_guard and state not in _TERMINAL_STATES:
+    if overstatement_guard and state not in _TERMINAL_STATES and state not in {"no_need"}:
         allowed_persuasion = "evidence_bounded_discovery"
     else:
         allowed_persuasion = "execution_confirmation" if state == "commercial_commitment" else "none"
