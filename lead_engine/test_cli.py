@@ -254,3 +254,34 @@ def test_cli_export_json(
 
     assert output["count"] == 2
     assert output["path"] == str(destination)
+
+
+def test_cli_bounded_scheduler_failure_returns_nonzero(monkeypatch, capsys):
+    class FakeApplication:
+        def __init__(self):
+            self.db = object()
+            self.config = type("Config", (), {"database_dir": "/tmp/thorio-test"})()
+
+    monkeypatch.setattr("lead_engine.cli.create_application", lambda: FakeApplication())
+    monkeypatch.setattr("lead_engine.cli._configured_runtime_sources", lambda: [])
+    monkeypatch.setattr("lead_engine.cli._install_production_diagnostics", lambda: None)
+    monkeypatch.setattr("lead_engine.cli._run_scheduled_with_lock", lambda *args, **kwargs: {
+        "status": "failed",
+        "cycles": 1,
+        "failed_count": 1,
+        "processing_failed_count": 0,
+        "sync_failed_count": 0,
+        "agent_failed_count": 0,
+        "post_sync_agent_failed_count": 0,
+    })
+    monkeypatch.setattr("lead_engine.cli.validate_production_research_gate", lambda db: {
+        "status": "verified",
+        "research_complete_checked": 0,
+        "sales_eligible_checked": 0,
+        "closer_tasks_pending": 0,
+    })
+
+    result = main(["run-scheduled", "--cycles", "1"])
+
+    assert result == 1
+    assert "PRODUCTION EXECUTION GATE FAILURE" in capsys.readouterr().out
