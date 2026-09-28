@@ -851,6 +851,8 @@ def build_commercial_strategy(lead: Mapping[str, Any], *, objection: str = "") -
             _text(buyer_intent_progression.get("current_state")).lower(),
             psychological_objective,
         )
+        if state == "interested" and _text(buyer_intent_progression.get("current_state")).lower() == "engaged":
+            psychological_objective = "clarify_value"
 
     research_reentry = _research_reentry_intelligence({"unknowns": unknowns}, state, conversation_intelligence["next_best_action"])
     persuasion_quality = _persuasion_quality(
