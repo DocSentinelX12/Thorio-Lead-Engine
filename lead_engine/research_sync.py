@@ -182,8 +182,15 @@ def sync_research(lead: Dict[str, Any]) -> Dict[str, Any]:
         if not records or not isinstance(records[0], dict):
             raise AirtableSyncError("Airtable returned no updated Research record.")
         return {"status": "updated", "record": records[0]}
-    result = create_master_record("research", fields)
+    result = _request(
+        "PATCH",
+        _research_table_url(),
+        {
+            "performUpsert": {"fieldsToMergeOn": ["Research Key"]},
+            "records": [{"fields": fields}],
+        },
+    )
     records = result.get("records", [])
     if not records or not isinstance(records[0], dict):
-        raise AirtableSyncError("Airtable returned no created Research record.")
+        raise AirtableSyncError("Airtable returned no upserted Research record.")
     return {"status": "created", "record": records[0]}
