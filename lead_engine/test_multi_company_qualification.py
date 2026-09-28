@@ -81,6 +81,30 @@ def test_true_paxus_referral_requires_all_existing_gates():
     assert paxus["referral_checklist"]["failures"] == []
 
 
+def test_paxus_true_referral_requires_recent_inquiry_in_addition_to_current_need():
+    lead = _lead(
+        "technology recruitment support",
+        "The company is seeking technology recruitment support.",
+        contact_name="Jane Doe",
+        contact_communicated=True,
+        contact_consent=True,
+    )
+    lead["current_intent_research"] = {
+        "verified": True,
+        "verification_status": "verified",
+        "current_need": "The company currently needs technology recruitment support.",
+        "observed_at": NOW,
+    }
+    lead.pop("inquiry_at", None)
+    lead.pop("last_inquiry_at", None)
+    lead.pop("inquired_at", None)
+    result = evaluate_company_qualification(lead)
+    paxus = result["companies"]["Paxus"]
+    assert paxus["qualified"] is True
+    assert paxus["true_referral"] is False
+    assert paxus["referral_status"] == "research_required"
+
+
 def test_shiftr_and_thorio_both_remain_qualified():
     result = evaluate_company_qualification(_lead("remote software engineer", "We are hiring a remote software engineer and need a development team."))
     assert "Shiftr" in result["qualified_companies"]
