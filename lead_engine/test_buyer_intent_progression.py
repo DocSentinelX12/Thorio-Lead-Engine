@@ -13,6 +13,12 @@ def test_generic_engagement_does_not_advance_to_evaluation():
     assert result["history"][-1]["evidence_ref"] == "evt"
 
 
+def test_problem_acknowledgment_accepts_specific_problem_phrase_without_inference():
+    result = build_buyer_intent_progression({"conversation_events": [event("We have an engineering capacity problem.")]})
+    assert result["current_state"] == "problem_acknowledged"
+    assert result["missing_qualification"]["dimension"] == "business_impact"
+
+
 def test_problem_acknowledgment_requires_explicit_problem_evidence():
     result = build_buyer_intent_progression({"conversation_events": [event("We have a problem with engineering capacity.")]})
     assert result["current_state"] == "problem_acknowledged"
