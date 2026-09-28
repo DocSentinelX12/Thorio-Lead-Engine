@@ -1,6 +1,7 @@
 from typing import Any, Dict
 
 from .database import LeadDB
+from .retry_policy import DEFAULT_MAX_ATTEMPTS
 
 
 def _safe_state(
@@ -60,11 +61,12 @@ def _failed_sync_details(
                 COUNT(*) AS failed_leads,
                 COALESCE(SUM(attempts), 0) AS failed_attempts,
                 MAX(updated_at) AS last_failure_at,
-                COALESCE(SUM(CASE WHEN attempts >= 5 THEN 1 ELSE 0 END), 0) AS quarantined_leads
+                COALESCE(SUM(CASE WHEN attempts >= ? THEN 1 ELSE 0 END), 0) AS quarantined_leads
             FROM leads
             WHERE synced = 0
               AND attempts > 0
-            """
+            """,
+            (DEFAULT_MAX_ATTEMPTS,),
         ).fetchone()
     except Exception as exc:
         raise RuntimeError(
