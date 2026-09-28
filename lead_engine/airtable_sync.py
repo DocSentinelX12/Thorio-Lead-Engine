@@ -1811,10 +1811,33 @@ def sync_lead_if_missing(
         lead
     )
 
-    result = create_master_record(
-        "lead_radar",
-        fields,
-    )
+    # The initial lookup above is useful for preserving the existing
+    # machine-only update path. When it found nothing, the final write
+    # must still be atomic with respect to another worker that may have
+    # created the same fingerprint after the lookup. Airtable's
+    # performUpsert merge key closes that check-then-create race without
+    # touching omitted human-controlled fields.
+    if fingerprint:
+        result = _request(
+            "PATCH",
+            _master_table_url("lead_radar"),
+            {
+                "performUpsert": {
+                    "fieldsToMergeOn": ["Duplicate Key"],
+                },
+                "records": [
+                    {
+                        "fields": fields,
+                    }
+                ],
+                "typecast": True,
+            },
+        )
+    else:
+        result = create_master_record(
+            "lead_radar",
+            fields,
+        )
 
     records = result.get(
         "records",
