@@ -174,6 +174,7 @@ def claim_task(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) ->
     if not worker_id: raise ValueError("worker_id is required")
     if lease_seconds <= 0: raise ValueError("lease_seconds must be positive")
     if _queue_db(db):
+        db.queue_recover_stale(_iso(_now()))
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
         if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
