@@ -126,3 +126,25 @@ def test_closer_never_invents_urgency_when_research_has_no_timing_evidence():
     assert decision.commercial_strategy["urgency_basis"] == "none_verified"
     assert "urgent" not in decision.body.lower()
     assert "deadline" not in decision.body.lower()
+
+
+def test_closer_message_quality_gate_records_truthfulness_and_conversion_checks():
+    decision = build_outreach_decision(lead())
+    quality = decision.commercial_strategy["message_quality"]
+    assert quality["passed"] is True
+    assert quality["truthfulness"] is True
+    assert quality["clear_next_step"] is True
+    assert quality["unsupported_urgency"] is False
+
+
+def test_closer_message_quality_gate_rejects_manufactured_urgency():
+    from .sales_closer_intelligence import evaluate_closer_message
+
+    strategy = {"urgency_basis": "none_verified"}
+    quality = evaluate_closer_message(
+        "This is urgent and you need to act now before the deadline.",
+        strategy,
+        "verified need",
+    )
+    assert quality["passed"] is False
+    assert "unsupported_urgency" in quality["violations"]
