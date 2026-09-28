@@ -13,6 +13,7 @@ from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, b
 from .research_intelligence import build_research_intelligence
 from .opportunity_provenance import normalize_evidence_event, validate_provenance_collection
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
+from .sales_closer_intelligence import build_commercial_strategy, evaluate_closer_message
 from .revenue_conversation import objection_reply
 from .revenue_execution import RevenueTransportUnavailable, _issue_closer_capability, configured_revenue_transport, execute_outbound
 from .sales_handoff import package_digest, package_is_ready
@@ -165,9 +166,22 @@ def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], 
     if not contact_name or not contact_email: raise AgentContractError("outreach_closer follow-up requires verified contact details")
     route = str(lead.get("outreach_route") or "").strip()
     if not route: raise AgentContractError("outreach_closer follow-up requires an active revenue route")
-    objection = str(payload.get("objection") or "").strip(); signal = str(lead.get("current_need") or lead.get("business_need") or lead.get("signal") or lead.get("evidence") or "the need you described").strip()
-    if objection: body = objection_response(objection, route, lead=lead); subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
-    else: body = f"Hi {contact_name},\n\nJust following up on my earlier note about {signal.rstrip('.!?')}. If this is still a priority, I can send the most relevant {route} option.\n\nBest,\nThorio"; subject = str(lead.get("outreach_draft_subject") or f"Re: {signal[:72]}")
+    objection = str(payload.get("objection") or "").strip()
+    signal = str(lead.get("current_need") or lead.get("business_need") or lead.get("signal") or lead.get("evidence") or "the need you described").strip()
+    strategy = build_commercial_strategy(lead, objection=objection)
+    if objection:
+        response = objection_response(objection, route, lead=lead)
+        body = f"Hi {contact_name},\\n\\nThanks for the context. {response}\\n\\nThe researched need remains {signal.rstrip('.!?')}. If it is still active, would it be useful to take a short look at fit and the decision process?\\n\\nBest,\\nThorio"
+        subject = f"Re: {signal[:72]}" if signal else f"Re: {route}"
+    else:
+        cadence_preview = build_outreach_decision({**lead, "outreach_state": "ready", "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0)})
+        strategy = dict(cadence_preview.commercial_strategy)
+        body = cadence_preview.body
+        subject = str(lead.get("outreach_draft_subject") or cadence_preview.subject)
+    message_quality = evaluate_closer_message(body, strategy, signal)
+    if not message_quality["passed"]:
+        raise AgentContractError("Follow-up message failed commercial truthfulness gate: " + ",".join(message_quality["violations"]))
+    strategy = {**strategy, "message_quality": message_quality}
     conversation_id = str(lead.get("conversation_id") or f"conversation:{lead['fingerprint']}:{route}")
     # apply_outcome() has already advanced the durable outreach attempt for the observed outcome. The closer must execute that exact scheduled attempt, not increment the cadence a second time.
     attempt = int(lead.get("outreach_attempt", 0) or 0)
@@ -178,8 +192,8 @@ def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], 
     history = list(lead.get("outreach_history") or []) if isinstance(lead.get("outreach_history") or [], list) else []
     history.append({"action_id": action.action_id, "conversation_id": conversation_id, "route": route, "channel": action.channel, "status": action.status, "kind": "follow_up", "provider_result": dict(action.provider_result or {})})
     next_follow_up = cadence.next_follow_up_at
-    stored = _persist_lead(ctx.db, {**lead, "conversation_id": conversation_id, "revenue_lifecycle_state": "conversation_active", "outreach_state": "awaiting_response", "outreach_attempt": attempt, "follow_up_due": bool(next_follow_up), "outreach_draft_subject": subject, "outreach_draft_body": body, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {}), "next_follow_up_at": next_follow_up})
-    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_follow_up", "route": route, "next_follow_up_at": next_follow_up, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None}
+    stored = _persist_lead(ctx.db, {**lead, "conversation_id": conversation_id, "revenue_lifecycle_state": "conversation_active", "outreach_state": "awaiting_response", "outreach_attempt": attempt, "follow_up_due": bool(next_follow_up), "outreach_draft_subject": subject, "outreach_draft_body": body, "commercial_strategy": strategy, "outreach_history": history, "last_outreach_action_id": action.action_id, "last_outreach_delivery": dict(action.provider_result or {}), "next_follow_up_at": next_follow_up})
+    return {"role": "outreach_closer", "lead": stored, "autonomous": True, "approval_required": False, "action": "send_follow_up", "route": route, "next_follow_up_at": next_follow_up, "delivery": dict(action.provider_result or {}), "action_id": action.action_id, "conversation_id": conversation_id, "objection_response": objection_reply(objection, route) if objection else None, "commercial_strategy": strategy}
 
 def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
     lead = _lead_payload(payload); fingerprint = str(lead.get("fingerprint") or "").strip()
