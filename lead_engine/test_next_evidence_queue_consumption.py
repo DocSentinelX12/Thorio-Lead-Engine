@@ -72,7 +72,6 @@ def test_company_research_refreshes_targets_from_authoritative_persisted_lead(tm
 
     assert result["completed_count"] == 1
     assert stored["company_research"]["research_focus"]["missing_sections"] == ["technical_product_hiring_research"]
-    assert stored["research_focus"]["missing_sections"] == ["technical_product_hiring_research"]
     assert stored["research_status"] == "research_required"
     db.close()
 
