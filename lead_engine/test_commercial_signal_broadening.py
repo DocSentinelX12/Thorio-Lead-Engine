@@ -177,7 +177,7 @@ def test_negation_after_signal_blocks_promotion():
 
 def test_safety_marker_in_prior_sentence_does_not_contaminate_signal():
     result = extract_broadened_signals(
-        "We could evaluate vendors someday. We are evaluating vendors for our AI platform.",
+        "We might be evaluating vendors someday. We are evaluating vendors for our AI platform.",
         company="We",
     )
 
