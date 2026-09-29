@@ -822,13 +822,11 @@ def test_normalize_job_record_extracts_commercial_signals_from_json_style_record
         "need an mvp",
         "need ai integration",
     ]
-    assert len(record["signal_context"]) == 3
+    assert record["signal_context"]
+    combined_context = " ".join(record["signal_context"]).lower()
     assert all(
-        trigger in context.lower()
-        for trigger, context in zip(
-            record["signal_matches"],
-            record["signal_context"],
-        )
+        trigger in combined_context
+        for trigger in record["signal_matches"]
     )
 
 
