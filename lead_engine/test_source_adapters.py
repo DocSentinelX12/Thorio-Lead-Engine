@@ -794,3 +794,61 @@ def test_json_adapter_uses_default_company_metadata():
         record["source_id"]
         == "stripe-123"
     )
+
+
+def test_normalize_job_record_extracts_commercial_signals_from_json_style_records():
+    from .source_adapters import normalize_job_record
+
+    record = normalize_job_record(
+        {
+            "id": "commercial-1",
+            "title": "AI Engineering Lead",
+            "company": "Acme",
+            "url": "https://example.com/jobs/commercial-1",
+            "description": (
+                "Acme is looking for a development partner for an MVP. "
+                "The team also needs AI integration."
+            ),
+        },
+        source="Example JSON",
+        source_url="https://example.com/api",
+    )
+
+    assert record is not None
+    assert record["signal_type"] == "commercial_intent"
+    assert record["signal_strength"] == "compound"
+    assert record["signal_matches"] == [
+        "looking for a development partner",
+        "need an mvp",
+        "need ai integration",
+    ]
+    assert len(record["signal_context"]) == 3
+    assert all(
+        trigger in context.lower()
+        for trigger, context in zip(
+            record["signal_matches"],
+            record["signal_context"],
+        )
+    )
+
+
+def test_normalize_job_record_preserves_hiring_signal_without_false_commercial_match():
+    from .source_adapters import normalize_job_record
+
+    record = normalize_job_record(
+        {
+            "id": "hiring-1",
+            "title": "Senior Software Engineer",
+            "company": "Acme",
+            "url": "https://example.com/jobs/hiring-1",
+            "description": "Join our engineering team and build distributed systems.",
+        },
+        source="Example JSON",
+        source_url="https://example.com/api",
+    )
+
+    assert record is not None
+    assert record["signal_type"] == "hiring"
+    assert "signal_matches" not in record
+    assert "signal_strength" not in record
+    assert "signal_context" not in record
