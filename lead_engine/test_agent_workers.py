@@ -286,3 +286,52 @@ def test_company_research_preserves_verified_upgrade_for_existing_evidence(tmp_p
     assert len(stored["evidence_events"]) == 1
     assert stored["evidence_events"][0]["verification_status"] == "verified"
     assert stored["evidence_events"][0]["verified"] is True
+
+def test_web_job_discovery_accepts_generic_web_source_when_observed_signal_identifies_hiring():
+    from .agent_workers import _discovery_handler_for, AgentExecutionContext
+
+    class DB:
+        def get(self, _fingerprint):
+            return None
+
+    result = _discovery_handler_for(
+        "web_job_signal",
+        {
+            "record": {
+                "source": "integration",
+                "url": "https://example.com/integration-001",
+                "signal": "remote software engineer",
+                "evidence": "Company is hiring a remote software engineer.",
+            }
+        },
+        AgentExecutionContext(db=DB(), worker_id="test-worker"),
+    )
+
+    assert result["source_lane"] == "web_job_signal"
+    assert result["observed"] is True
+
+
+def test_web_job_discovery_rejects_generic_web_source_without_hiring_evidence():
+    from .agent_workers import _discovery_handler_for, AgentExecutionContext, AgentContractError
+
+    class DB:
+        def get(self, _fingerprint):
+            return None
+
+    try:
+        _discovery_handler_for(
+            "web_job_signal",
+            {
+                "record": {
+                    "source": "integration",
+                    "url": "https://example.com/integration-002",
+                    "signal": "general company update",
+                    "evidence": "Company published a general company update.",
+                }
+            },
+            AgentExecutionContext(db=DB(), worker_id="test-worker"),
+        )
+    except AgentContractError as exc:
+        assert "not identifiable as a job source" in str(exc)
+    else:
+        raise AssertionError("generic non-hiring web evidence must remain rejected")
