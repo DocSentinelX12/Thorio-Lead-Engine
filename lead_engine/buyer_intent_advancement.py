@@ -117,7 +117,12 @@ def build_buyer_intent_advancement(
     signal = buying_signal if isinstance(buying_signal, Mapping) else {}
 
     state = _text(progression.get("current_state")).lower() or "unknown"
-    known = progression.get("known_qualification")
+    # After explicit re-engagement, historical qualification is retained in
+    # known_qualification for auditability, but only the post-reengagement
+    # active qualification may satisfy current advancement requirements.
+    active_known = progression.get("active_qualification")
+    active_known = active_known if isinstance(active_known, Mapping) else None
+    known = active_known if active_known is not None else progression.get("known_qualification")
     known = known if isinstance(known, Mapping) else {}
     missing = progression.get("missing_qualification")
     missing = missing if isinstance(missing, Mapping) else {}
