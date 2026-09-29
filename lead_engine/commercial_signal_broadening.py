@@ -9,6 +9,11 @@ INDIRECT_SIGNAL_PATTERNS = (
     ("vendor_evaluation", "exploring vendors"),
     ("vendor_evaluation", "exploring providers"),
     ("vendor_evaluation", "exploring solutions"),
+    ("vendor_evaluation", "exploring options"),
+    ("vendor_evaluation", "evaluating options"),
+    ("vendor_evaluation", "reviewing vendors"),
+    ("vendor_evaluation", "reviewing providers"),
+    ("vendor_evaluation", "reviewing solutions"),
     ("partner_evaluation", "looking for a partner"),
     ("partner_evaluation", "looking for partners"),
     ("partner_evaluation", "evaluating partners"),
@@ -95,13 +100,26 @@ def _context(text, start, end, radius=220):
     return " ".join(text[max(0, start-radius):min(len(text), end+radius)].split())
 
 
+def _sentence_bounds(text, start, end):
+    left = max(text.rfind(".", 0, start), text.rfind("!", 0, start), text.rfind("?", 0, start), text.rfind("\\n", 0, start)) + 1
+    right_candidates = [value for value in (text.find(".", end), text.find("!", end), text.find("?", end), text.find("\\n", end)) if value >= 0]
+    right = min(right_candidates) if right_candidates else len(text)
+    return left, right
+
+
+def _sentence(text, start, end):
+    left, right = _sentence_bounds(text, start, end)
+    return text[left:right], left, right
+
+
 def _near(text, start, markers, radius):
     window = _normalize(text[max(0, start-radius):start])
     return next((marker for marker in markers if marker in window), "")
 
 
 def _attribution(text, company, start, end):
-    window = _normalize(text[max(0, start-260):min(len(text), end+260)])
+    sentence, _, _ = _sentence(text, start, end)
+    window = _normalize(sentence)
     company_name = _normalize(company)
     if company_name and company_name in window:
         return "company_named", True
@@ -109,77 +127,3 @@ def _attribution(text, company, start, end):
         return "first_person", True
     return "unattributed", False
 
-
-def extract_broadened_signals(text, *, company=""):
-    """Extract indirect and structural signals with fail-closed safety metadata."""
-    import re
-
-    raw = _text(text)
-    matches = []
-    if not raw:
-        return {"contract_version": BROADENING_CONTRACT_VERSION, "matches": [], "promotion_eligible": False}
-
-    def add(category, phrase, indirect):
-        for found in re.finditer(re.escape(phrase), raw, flags=re.IGNORECASE):
-            attribution, attributed = _attribution(raw, company, found.start(), found.end())
-            speculative = bool(_near(raw, found.start(), SPECULATIVE_MARKERS, 100))
-            historical = bool(_near(raw, found.start(), HISTORICAL_MARKERS, 150))
-            negated = bool(_near(raw, found.start(), NEGATION_MARKERS, 45))
-            technical = any(term in _normalize(raw[max(0, found.start()-220):min(len(raw), found.end()+220)]) for term in TECHNICAL_CONTEXT_TERMS)
-            certainty = "speculative" if speculative else ("exploratory" if indirect else "observed")
-            temporal = "historical" if historical else "current_or_unspecified"
-            promotion = indirect and attributed and not speculative and not historical and not negated and technical
-            matches.append({
-                "signal_id": category,
-                "category": category,
-                "phrase": found.group(0),
-                "evidence_context": _context(raw, found.start(), found.end()),
-                "attribution": attribution,
-                "temporal_status": temporal,
-                "certainty": certainty,
-                "negated": negated,
-                "technical_context": technical,
-                "promotion_eligible": promotion,
-            })
-
-    for category, phrase in INDIRECT_SIGNAL_PATTERNS:
-        add(category, phrase, True)
-    for category, phrase in STRUCTURAL_SIGNAL_PATTERNS:
-        add(category, phrase, False)
-
-    deduped = []
-    seen = set()
-    for item in matches:
-        key = (item["signal_id"], _normalize(item["phrase"]), item["evidence_context"])
-        if key not in seen:
-            seen.add(key)
-            deduped.append(item)
-
-    eligible = [item for item in deduped if item["promotion_eligible"]]
-    reasons = []
-    if any(item["attribution"] == "unattributed" for item in deduped):
-        reasons.append("unattributed_signal_preserved_not_promoted")
-    if any(item["temporal_status"] == "historical" for item in deduped):
-        reasons.append("historical_signal_preserved_not_promoted")
-    if any(item["certainty"] == "speculative" for item in deduped):
-        reasons.append("speculative_signal_preserved_not_promoted")
-    if any(item["negated"] for item in deduped):
-        reasons.append("negated_signal_preserved_not_promoted")
-    if any(item["category"] in {"funding_execution", "product_event", "enterprise_event", "market_expansion", "corporate_event"} for item in deduped):
-        reasons.append("structural_event_requires_current_need_or_corroboration")
-
-    return {
-        "contract_version": BROADENING_CONTRACT_VERSION,
-        "matches": deduped,
-        "promotion_eligible": bool(eligible),
-        "promotion_count": len(eligible),
-        "promotion_reason": "verified_attributed_current_or_unspecified_signal" if eligible else "no_single_observation_safe_for_commercial_intent_promotion",
-        "safety_reasons": _dedupe(reasons),
-    }
-
-
-def extract_broadened_signals_from_record(record):
-    if not hasattr(record, "get"):
-        raise ValueError("record must be a mapping.")
-    observed = " ".join(_text(record.get(field)) for field in ("signal", "evidence", "job_title") if _text(record.get(field)))
-    return extract_broadened_signals(observed, company=_text(record.get("company")))
