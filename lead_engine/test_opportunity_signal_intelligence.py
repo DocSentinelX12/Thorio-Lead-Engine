@@ -175,3 +175,136 @@ def test_compound_detection_ignores_unsafe_broadened_signals():
     result = detect_compound_opportunities([first, second])
 
     assert result["cluster_count"] == 0
+
+
+def test_funding_followed_by_execution_is_preserved_as_ordered_cross_source_relationship():
+    funding = _lead(
+        "funding",
+        source="Company News",
+        when="2026-09-01T00:00:00+00:00",
+        matches=[],
+    )
+    funding["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "category": "funding_execution",
+                "phrase": "raised Series A",
+                "attribution": "company_named",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+    execution = _lead(
+        "execution",
+        source="Product Hunt",
+        when="2026-09-15T00:00:00+00:00",
+        matches=["Need AI integration"],
+    )
+    execution["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "category": "product_event",
+                "phrase": "new product launch",
+                "attribution": "company_named",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+
+    result = detect_compound_opportunities([funding, execution])
+
+    assert result["cluster_count"] == 1
+    cluster = result["clusters"][0]
+    assert "funding_followed_by_execution" in cluster["commercial_triggers"]
+    relationship = cluster["structural_relationships"][0]
+    assert relationship["relationship"] == "funding_followed_by_execution"
+    assert relationship["funding"]["opportunity_id"] == "funding"
+    assert relationship["execution"]["opportunity_id"] == "execution"
+
+
+def test_funding_after_execution_does_not_count_as_funding_followed_by_execution():
+    funding = _lead(
+        "funding",
+        source="Company News",
+        when="2026-09-15T00:00:00+00:00",
+        matches=[],
+    )
+    funding["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "category": "funding_execution",
+                "phrase": "new funding",
+                "attribution": "company_named",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+    execution = _lead(
+        "execution",
+        source="Product Hunt",
+        when="2026-09-01T00:00:00+00:00",
+        matches=[],
+    )
+    execution["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "category": "product_event",
+                "phrase": "product launch",
+                "attribution": "company_named",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+
+    result = detect_compound_opportunities([funding, execution])
+
+    assert result["cluster_count"] == 0
+
+
+def test_historical_funding_cannot_establish_funding_followed_by_execution():
+    funding = _lead(
+        "funding",
+        source="Company News",
+        when="2026-09-01T00:00:00+00:00",
+        matches=[],
+    )
+    funding["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "category": "funding_execution",
+                "phrase": "new funding",
+                "attribution": "company_named",
+                "temporal_status": "historical",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+    execution = _lead(
+        "execution",
+        source="Product Hunt",
+        when="2026-09-15T00:00:00+00:00",
+        matches=[],
+    )
+    execution["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "category": "product_event",
+                "phrase": "new product launch",
+                "attribution": "company_named",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+
+    assert detect_compound_opportunities([funding, execution])["cluster_count"] == 0
