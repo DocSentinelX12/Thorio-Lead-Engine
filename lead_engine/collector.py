@@ -145,6 +145,43 @@ def _apply_universal_commercial_signals(normalized: Dict[str, Any]) -> None:
     normalized["signal_context"] = _commercial_signal_context(observed, matches)
 
 
+def apply_commercial_signal_intelligence(normalized: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply explicit and broadened commercial extraction to a validated canonical record."""
+    _apply_universal_commercial_signals(normalized)
+    broadened = extract_broadened_signals_from_record(normalized)
+    if broadened.get("matches"):
+        normalized["commercial_signal_broadening"] = broadened
+        eligible = [
+            item for item in broadened["matches"]
+            if item.get("promotion_eligible") is True
+        ]
+        if eligible:
+            existing_type = str(normalized.get("signal_type") or "").strip().lower()
+            if existing_type in {"", "business_intent", "hiring", "discovery"}:
+                normalized["signal_type"] = "commercial_intent"
+            existing_matches = normalized.get("signal_matches")
+            if not isinstance(existing_matches, list):
+                existing_matches = []
+            broadened_matches = [
+                str(item.get("phrase") or "").strip()
+                for item in eligible
+                if str(item.get("phrase") or "").strip()
+            ]
+            normalized["signal_matches"] = list(dict.fromkeys(existing_matches + broadened_matches))
+            normalized["signal_strength"] = "compound" if len(normalized["signal_matches"]) >= 2 else "explicit"
+            existing_context = normalized.get("signal_context")
+            if not isinstance(existing_context, list):
+                existing_context = []
+            normalized["signal_context"] = list(dict.fromkeys(
+                existing_context + [
+                    str(item.get("evidence_context") or "").strip()
+                    for item in eligible
+                    if str(item.get("evidence_context") or "").strip()
+                ]
+            ))
+    return normalized
+
+
 def normalize_lead_input(lead: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize incoming discovery data and apply the universal commercial
@@ -165,68 +202,8 @@ def normalize_lead_input(lead: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(value, str):
             normalized[field] = _sanitize_text(value).strip()
     validate_lead_input(normalized)
-    _apply_universal_commercial_signals(normalized)
-    broadened = extract_broadened_signals_from_record(normalized)
-    if broadened.get("matches"):
-        normalized["commercial_signal_broadening"] = broadened
-        eligible = [
-            item
-            for item in broadened["matches"]
-            if item.get("promotion_eligible") is True
-        ]
-        if eligible:
-            existing_type = str(normalized.get("signal_type") or "").strip().lower()
-            if existing_type in {"", "business_intent", "hiring", "discovery"}:
-                normalized["signal_type"] = "commercial_intent"
-            existing_matches = normalized.get("signal_matches")
-            if not isinstance(existing_matches, list):
-                existing_matches = []
-            broadened_matches = [
-                str(item.get("phrase") or "").strip()
-                for item in eligible
-                if str(item.get("phrase") or "").strip()
-            ]
-            normalized["signal_matches"] = list(
-                dict.fromkeys(existing_matches + broadened_matches)
-            )
-            normalized["signal_strength"] = (
-                "compound"
-                if len(normalized["signal_matches"]) >= 2
-                else "explicit"
-            )
-            existing_context = normalized.get("signal_context")
-            if not isinstance(existing_context, list):
-                existing_context = []
-            normalized["signal_context"] = list(
-                dict.fromkeys(
-                    existing_context
-                    + [
-                        str(item.get("evidence_context") or "").strip()
-                        for item in eligible
-                        if str(item.get("evidence_context") or "").strip()
-                    ]
-                )
-            )
-    # The collector's canonical field is company_website. Preserve that
-    # exact observed URL under the website alias consumed by public research.
+    apply_commercial_signal_intelligence(normalized)
     if normalized.get("company_website") and not normalized.get("website"):
         normalized["website"] = normalized["company_website"]
     return normalized
 
-
-def collect(leads: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Normalize a batch of discovered leads.
-
-    Invalid leads are rejected instead of silently entering
-    the processing system. SourceRunner is responsible for
-    isolating rejected records from the remaining source data.
-    """
-    collected = []
-    for lead in leads:
-        collected.append(normalize_lead_input(lead))
-    return collected
-
-
-if __name__ == "__main__":
-    print("Lead collector loaded. Use collect() to normalize leads.")
