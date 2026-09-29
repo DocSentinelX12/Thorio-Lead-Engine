@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
+from urllib.parse import urlparse
 
 
 TEMPORAL_INTELLIGENCE_VERSION = "1"
@@ -41,9 +42,15 @@ def _timestamp(lead: Mapping[str, Any]) -> datetime | None:
 
 
 def _company_key(lead: Mapping[str, Any]) -> str:
-    domain = _normalize(lead.get("company_website") or lead.get("domain"))
-    if domain:
-        return f"domain:{domain.removeprefix('https://').removeprefix('http://').rstrip('/')}"
+    raw_domain = _text(lead.get("company_website") or lead.get("domain"))
+    if raw_domain:
+        candidate = raw_domain if "://" in raw_domain else f"https://{raw_domain}"
+        parsed = urlparse(candidate)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+        if hostname:
+            return f"domain:{hostname}"
     company = _normalize(lead.get("company"))
     return f"company:{company}" if company else ""
 
@@ -72,7 +79,12 @@ def analyze_temporal_signals(
             continue
         timestamp = _timestamp(lead)
         key = _company_key(lead)
-        if timestamp is not None and key and (reference - timestamp).total_seconds() <= window_seconds:
+        if (
+            timestamp is not None
+            and key
+            and timestamp <= reference
+            and (reference - timestamp).total_seconds() <= window_seconds
+        ):
             grouped[key].append((timestamp, lead))
 
     profiles: list[Dict[str, Any]] = []
