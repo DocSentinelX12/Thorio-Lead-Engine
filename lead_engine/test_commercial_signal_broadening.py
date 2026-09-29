@@ -88,6 +88,23 @@ def test_no_longer_indirect_signal_is_preserved_but_not_promoted():
     assert result["matches"][0]["promotion_eligible"] is False
 
 
+def test_company_name_requires_word_boundaries():
+    result = extract_broadened_signals("The team is evaluating vendors for its AI platform.", company="AI")
+    assert result["matches"][0]["attribution"] == "unattributed"
+    assert result["matches"][0]["promotion_eligible"] is False
+
+
+def test_record_extraction_preserves_two_distinct_occurrences_in_one_field():
+    from .commercial_signal_broadening import extract_broadened_signals_from_record
+    result = extract_broadened_signals_from_record({
+        "company": "Acme",
+        "signal": "We are evaluating vendors for our AI platform. Later, we are evaluating vendors for our data platform.",
+        "evidence": "Founder update.",
+    })
+    assert len(result["matches"]) == 2
+    assert len({match["observation_key"] for match in result["matches"]}) == 2
+
+
 def test_negated_indirect_signal_is_preserved_but_not_promoted():
     result = extract_broadened_signals("We are not looking for a partner for our software platform.", company="Acme")
     assert len(result["matches"]) == 1
