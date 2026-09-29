@@ -4,6 +4,7 @@ import logging
 from .pipeline import LeadPipeline
 from .collector import normalize_lead_input
 from .agent_queue import enqueue_many
+from .advanced_agent_logic import DISCOVERY_TARGETS, _matches
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,22 @@ def _queue_priority(value: Any) -> int:
     except (TypeError, ValueError):
         logger.warning("Unknown lead priority %r; defaulting to queue priority 0", value)
         return 0
+
+
+def _discovery_intelligence_agents(record: Dict[str, Any]) -> list[str]:
+    """Fan out accepted evidence to every matching discovery-intelligence lane."""
+    text = " ".join(
+        str(record.get(key) or "").strip()
+        for key in ("signal", "evidence", "job_title", "company")
+        if str(record.get(key) or "").strip()
+    )
+    if not text:
+        return []
+    return [
+        agent
+        for agent, terms in DISCOVERY_TARGETS.items()
+        if _matches(text, terms)
+    ]
 
 
 def _discovery_agent(record: Dict[str, Any]) -> str:
@@ -126,6 +143,18 @@ class SourceRunner:
                             "priority": _queue_priority(result.get("priority")),
                             "dedupe_key": f"discovery:{agent}:{fingerprint}",
                         })
+                        for intelligence_agent in _discovery_intelligence_agents(normalized_record):
+                            queue_tasks.append({
+                                "agent": intelligence_agent,
+                                "payload": {
+                                    "record": dict(normalized_record),
+                                    "lead": dict(lead),
+                                    "fingerprint": fingerprint,
+                                    "discovery_source_agent": agent,
+                                },
+                                "priority": max(1, _queue_priority(result.get("priority"))),
+                                "dedupe_key": f"discovery_intelligence:{intelligence_agent}:{fingerprint}",
+                            })
 
                 if result.get("qualification_status") == "qualified":
                     qualified += 1
