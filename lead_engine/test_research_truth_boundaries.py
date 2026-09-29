@@ -29,6 +29,9 @@ def test_company_research_does_not_promote_signal_to_research(monkeypatch):
     )
 
     class DB:
+        def get(self, fingerprint):
+            return dict(lead) if fingerprint == lead["fingerprint"] else None
+
         def update_payload(self, fingerprint, updates):
             captured["updates"] = updates
             return {**lead, **updates}
