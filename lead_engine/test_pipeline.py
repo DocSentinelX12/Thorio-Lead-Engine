@@ -130,3 +130,23 @@ def test_paxus_submission_marks_revenue_opportunity_referred(tmp_path):
     assert stored["follow_up_due"] is False
     assert stored["commercial_outcome"]["type"] == "referred"
     assert stored["referral_submitted"] is True
+
+
+def test_pipeline_direct_boundary_applies_broadened_commercial_intelligence(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db, sync_enabled=False)
+
+    result = pipeline.process(
+        source="linkedin",
+        source_id="direct-broadening-001",
+        url="https://example.com/posts/direct-broadening-001",
+        company="Acme",
+        signal="Founder update",
+        evidence="We are evaluating vendors for our AI platform.",
+    )
+
+    lead = result["lead"]
+    assert lead["signal_type"] == "commercial_intent"
+    assert lead["signal_matches"] == ["evaluating vendors"]
+    assert lead["commercial_signal_broadening"]["promotion_eligible"] is True
+
