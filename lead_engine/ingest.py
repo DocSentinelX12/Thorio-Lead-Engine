@@ -22,14 +22,9 @@ class LeadIngestor:
     ) -> Dict[str, Any]:
         normalized = collect([lead])[0]
 
-        return self.pipeline.process(
-            source=normalized["source"],
-            source_id=normalized["source_id"],
-            url=normalized["url"],
-            company=normalized["company"],
-            signal=normalized["signal"],
-            evidence=normalized["evidence"],
-        )
+        pipeline_fields = dict(normalized)
+        pipeline_fields.pop("website", None)
+        return self.pipeline.process(**pipeline_fields)
 
     def ingest_many(
         self,
@@ -40,16 +35,9 @@ class LeadIngestor:
         results = []
 
         for lead in normalized_leads:
-            results.append(
-                self.pipeline.process(
-                    source=lead["source"],
-                    source_id=lead["source_id"],
-                    url=lead["url"],
-                    company=lead["company"],
-                    signal=lead["signal"],
-                    evidence=lead["evidence"],
-                )
-            )
+            pipeline_fields = dict(lead)
+            pipeline_fields.pop("website", None)
+            results.append(self.pipeline.process(**pipeline_fields))
 
         return results
 
