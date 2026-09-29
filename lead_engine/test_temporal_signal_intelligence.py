@@ -37,6 +37,14 @@ def test_temporal_intelligence_does_not_treat_old_observations_as_current():
     assert result["profiles"][0]["observation_count"] == 1
 
 
+def test_temporal_intelligence_ignores_future_observations():
+    result = analyze_temporal_signals([
+        _lead("future", "2026-10-01T00:00:00+00:00"),
+        _lead("recent", "2026-09-27T00:00:00+00:00"),
+    ], now=datetime(2026, 9, 28, tzinfo=timezone.utc))
+    assert result["profiles"][0]["observation_count"] == 1
+
+
 def test_temporal_intelligence_preserves_distinct_opportunities():
     result = analyze_temporal_signals([
         _lead("a", "2026-09-25T00:00:00+00:00", source="A"),
@@ -47,7 +55,7 @@ def test_temporal_intelligence_preserves_distinct_opportunities():
 
 def test_temporal_intelligence_can_use_company_domain():
     first = _lead("a", "2026-09-25T00:00:00+00:00", company="Different Display")
-    first["company_website"] = "https://acme.example"
+    first["company_website"] = "https://www.acme.example/products"
     second = _lead("b", "2026-09-26T00:00:00+00:00", company="Acme")
     second["company_website"] = "acme.example"
     result = analyze_temporal_signals([first, second], now=datetime(2026, 9, 28, tzinfo=timezone.utc))
