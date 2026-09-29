@@ -180,6 +180,15 @@ def _company_identity_verified(company: str, public_research: Mapping[str, Any])
 def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     """Acquire real public evidence, preserve observed evidence separately, and persist explicit verification state."""
     lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    if not fingerprint:
+        raise ValueError("company_research requires lead fingerprint")
+    current = ctx.db.get(fingerprint)
+    if not isinstance(current, Mapping):
+        raise ValueError(f"Lead not found for company research: {fingerprint}")
+    # The durable database is authoritative. Queue payloads may contain an older
+    # snapshot because research targets can change while a task is waiting.
+    lead = dict(current)
     events = _events(payload)
     social_findings = payload.get("social_findings", [])
     if not isinstance(social_findings, list):
