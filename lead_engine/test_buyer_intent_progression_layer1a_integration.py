@@ -5,6 +5,35 @@ def _event(text, ref):
     return {"outcome": "replied", "text": text, "evidence_ref": ref}
 
 
+def _completed_outreach_lead():
+    return {
+        "research_status": "complete",
+        "company": "Example Company",
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Alex Morgan",
+            "decision_maker_email": "alex@example.com",
+            "decision_maker_evidence": "https://example.com/decision-maker",
+            "decision_maker_verification_status": "verified",
+            "company_verification_evidence": "https://example.com/company",
+        },
+        "research_verified_fields": ["current_intent_research"],
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "engineering capacity",
+            "evidence_url": "https://example.com/need",
+        },
+        "potential_routes": ["Thorio"],
+        "qualification_results": {
+            "Thorio": {
+                "qualified": True,
+                "route_research": {"verified": True},
+            }
+        },
+    }
+
+
 def test_layer1a_contradiction_replaces_stale_evaluation_and_preserves_history():
     result = build_buyer_intent_progression({"conversation_events": [_event("We are comparing providers.", "evt-eval"), _event("We are no longer evaluating providers. We are just gathering information.", "evt-clarify")]})
     assert result["current_state"] == "engaged"
@@ -45,7 +74,8 @@ def test_layer1a_closer_integration_uses_active_state_without_inventing_progress
 
 def test_layer1a_outreach_uses_current_engaged_strategy_after_contradiction():
     from .outreach_engine import build_outreach_decision
-    lead = {"conversation_events": [_event("We are comparing providers.", "evt-eval"), _event("We are no longer evaluating providers. We are just gathering information.", "evt-clarify")], "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "engineering capacity", "evidence_url": "https://example.com/need"}}
+    lead = _completed_outreach_lead()
+    lead["conversation_events"] = [_event("We are comparing providers.", "evt-eval"), _event("We are no longer evaluating providers. We are just gathering information.", "evt-clarify")]
     decision = build_outreach_decision(lead)
     strategy = decision.commercial_strategy
     assert strategy["buyer_intent_progression"]["current_state"] == "engaged"
