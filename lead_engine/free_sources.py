@@ -208,6 +208,22 @@ B2B_SIGNAL_TERMS = (
     "acquired",
 )
 
+HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS = (
+    "looking for a development partner", "seeking a development partner", "need a development partner",
+    "looking for a technology partner", "seeking a technology partner", "need a technology partner",
+    "need an mvp", "need a minimum viable product", "looking to build an mvp", "looking to build a mobile app",
+    "looking to build a saas", "need ai integration", "need an ai integration", "looking for ai integration",
+    "llm integration", "implement llm", "implement an llm", "ai agent development", "ai agents development",
+    "build ai agents", "staff augmentation", "engineering staff augmentation", "outsource development",
+    "outsourcing development", "outsource software development", "development outsourcing",
+    "software development outsourcing", "cloud migration", "migration project", "migrate to the cloud",
+    "legacy modernization", "modernize our", "system modernization", "application modernization",
+    "raised seed round", "raised seed funding", "raised series a", "raised series b", "new funding",
+    "recent funding", "recently funded", "new enterprise customer", "new enterprise contract",
+    "enterprise contract", "major customer", "product launch", "new product launch",
+    "launching a new product", "acquisition", "acquired",
+)
+
 MAX_RECORDS_PER_PAGE = 500
 MAX_TEXT_LENGTH = 5000
 MAX_TITLE_LENGTH = 300
@@ -696,6 +712,11 @@ class FreeJobSource:
 
         return False
 
+    @classmethod
+    def _commercial_signal_matches(cls, text: str) -> List[str]:
+        normalized = cls._clean_text(text).lower()
+        return [term for term in HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS if term in normalized]
+
     @staticmethod
     def _record_key(
         record: Dict[str, Any],
@@ -1145,10 +1166,19 @@ class FreeJobSource:
                 surrounding,
             )
 
+            commercial_matches = self._commercial_signal_matches(combined)
             if self._looks_like_job_url(url):
                 evidence = (
                     "Job listing link discovered from "
                     f"{source_name}."
+                )
+            elif commercial_matches:
+                evidence = (
+                    "Commercial technology signal discovered from "
+                    f"{source_name}. Exact trigger(s): "
+                    + "; ".join(commercial_matches)
+                    + ". Observed context: "
+                    + self._truncate(context, MAX_TEXT_LENGTH)
                 )
             else:
                 evidence = (
@@ -1162,6 +1192,10 @@ class FreeJobSource:
                 company=company,
                 evidence=evidence,
             )
+            if record and commercial_matches:
+                record["signal_type"] = "commercial_intent"
+                record["signal_strength"] = "compound" if len(commercial_matches) >= 2 else "explicit"
+                record["signal_matches"] = commercial_matches
 
             if record:
                 records.append(record)
