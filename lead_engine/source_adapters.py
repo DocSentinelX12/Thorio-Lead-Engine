@@ -18,6 +18,7 @@ from xml.etree import ElementTree
 
 from .http_retry import HTTPRetryError, fetch_url
 from .free_sources import HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS
+from .collector import apply_commercial_signal_intelligence
 from .source_definition import SourceDefinition
 
 
@@ -671,7 +672,7 @@ def normalize_job_record(
             commercial_matches,
         )
 
-    return record
+    return apply_commercial_signal_intelligence(record)
 
 
 class JsonSourceAdapter:
