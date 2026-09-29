@@ -1128,7 +1128,7 @@ class FreeJobSource:
                 surrounding
             )
 
-            if not self._candidate_is_useful(
+            if not cls._candidate_is_useful(
                 anchor_text,
                 context,
                 url,
