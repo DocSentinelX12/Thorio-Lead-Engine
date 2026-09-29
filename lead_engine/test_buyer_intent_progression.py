@@ -179,3 +179,80 @@ def test_contradiction_to_terminal_no_need_stays_terminal_until_reengagement():
     assert result["current_state"] == "no_need"
     assert result["history"][1]["transition_type"] == "contradicted"
     assert len(result["history"]) == 2
+
+
+def test_layer1b_reengagement_requires_fresh_current_evidence_after_prior_evaluation():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event(
+                "We were evaluating providers.",
+                evidence_ref="evt-old-eval",
+                timing="next quarter",
+                decision_process="CTO approval",
+            ),
+            event(
+                "Our situation changed and we are looking again.",
+                outcome="re_engagement",
+                evidence_ref="evt-reengage",
+            ),
+            event(
+                "We are comparing providers again.",
+                evidence_ref="evt-new-eval",
+            ),
+        ]}
+    )
+    assert result["current_state"] == "evaluation"
+    assert result["reengagement_reconciliation"]["status"] == "reopened"
+    assert result["reengagement_reconciliation"]["prior_state"] == "evaluation"
+    assert result["reengagement_reconciliation"]["evidence_ref"] == "evt-reengage"
+    assert set(result["reengagement_reconciliation"]["stale_dimensions"]) == {"decision_process", "timing"}
+    assert result["reengagement_reconciliation"]["reconfirmed_dimensions"] == []
+    assert result["reengagement_reconciliation"]["reconfirmation_required"] == ["decision_process", "timing"]
+    assert result["missing_qualification"]["dimension"] == "decision_process"
+    assert result["active_qualification"] == {}
+    assert result["known_qualification"]["decision_process"]["evidence_ref"] == "evt-old-eval"
+
+
+def test_layer1b_reengagement_event_itself_can_establish_only_explicit_current_qualification():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event("We have an engineering capacity problem.", evidence_ref="evt-old-problem", active_need="engineering capacity"),
+            event(
+                "Our situation changed and we are interested again.",
+                outcome="re_engagement",
+                evidence_ref="evt-reengage",
+                active_need="new engineering expansion",
+            ),
+        ]}
+    )
+    assert result["current_state"] == "re_engagement"
+    assert result["reengagement_reconciliation"]["stale_dimensions"] == ["active_need"]
+    assert result["reengagement_reconciliation"]["reconfirmed_dimensions"] == ["active_need"]
+    assert result["active_qualification"]["active_need"]["evidence_ref"] == "evt-reengage"
+    assert result["known_qualification"]["active_need"]["evidence_ref"] == "evt-reengage"
+
+
+def test_layer1b_polite_reply_does_not_reopen_terminal_no_need_state():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event("We do not need this.", outcome="declined", evidence_ref="evt-reject"),
+            event("Thanks, appreciate the information.", evidence_ref="evt-polite"),
+        ]}
+    )
+    assert result["current_state"] == "no_need"
+    assert result["reengagement_reconciliation"]["status"] == "none"
+    assert result["reengagement_reconciliation"]["reconfirmation_required"] == []
+
+
+def test_layer1b_explicit_renewed_evaluation_is_reengagement_not_inferred_progression():
+    result = build_buyer_intent_progression(
+        {"conversation_events": [
+            event("We are not evaluating providers right now.", evidence_ref="evt-old"),
+            event("We are evaluating providers again because our situation changed.", evidence_ref="evt-reopen"),
+        ]}
+    )
+    assert result["current_state"] == "re_engagement"
+    assert result["transition"]["evidence_ref"] == "evt-reopen"
+    assert result["transition"]["transition_type"] == "reengaged"
+    assert result["next_best_action"] == "reconfirm_active_need"
+    assert result["next_best_question"] == "What has changed, if anything, that makes revisiting this worthwhile now?"
