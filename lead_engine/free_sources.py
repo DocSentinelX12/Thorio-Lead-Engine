@@ -1048,9 +1048,8 @@ class FreeJobSource:
 
         return records
 
-    @classmethod
     def _extract_links(
-        cls,
+        self,
         html: str,
         base_url: str,
         source_name: str,
@@ -1071,17 +1070,17 @@ class FreeJobSource:
             after,
             anchor,
         ) in pattern.findall(html):
-            url = cls._normalize_url(
+            url = self._normalize_url(
                 href,
                 base_url,
             )
 
-            if not cls._url_is_http(url):
+            if not self._url_is_http(url):
                 continue
 
             attrs = f"{before} {after}"
 
-            anchor_text = cls._clean_text(
+            anchor_text = self._clean_text(
                 anchor
             )
 
@@ -1124,29 +1123,29 @@ class FreeJobSource:
 
             surrounding = html[start:end]
 
-            context = cls._clean_text(
+            context = self._clean_text(
                 surrounding
             )
 
-            if not cls._candidate_is_useful(
+            if not self._candidate_is_useful(
                 anchor_text,
                 context,
                 url,
             ):
                 continue
 
-            title = cls._extract_title_from_context(
+            title = self._extract_title_from_context(
                 anchor_text,
                 surrounding,
                 url,
             )
 
-            company = cls._extract_company(
+            company = self._extract_company(
                 attrs,
                 surrounding,
             )
 
-            if cls._looks_like_job_url(url):
+            if self._looks_like_job_url(url):
                 evidence = (
                     "Job listing link discovered from "
                     f"{source_name}."
@@ -1157,7 +1156,7 @@ class FreeJobSource:
                     f"{source_name}."
                 )
 
-            record = cls._make_record(
+            record = self._make_record(
                 url=url,
                 title=title,
                 company=company,
