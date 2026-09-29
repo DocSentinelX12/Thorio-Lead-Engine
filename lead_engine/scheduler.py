@@ -16,6 +16,7 @@ from .revenue_conversation import enqueue_due_followups
 from .research_queue import process_paxus_research_queue
 from .runner import LeadEngineRunner
 from .sources import LeadSource
+from .source_collection_metrics import record_source_collection_metrics
 
 sync_pending = sync_pending_batched
 
@@ -173,6 +174,8 @@ class LeadScheduler:
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count != 0:
                     result["checkpoint"] = previous_checkpoint
+                source_metrics = record_source_collection_metrics(self.runner.pipeline.db, source.name, result)
+                result["source_collection_metrics"] = source_metrics
                 results.append({"source": source.name, "result": result})
                 self._schedule_next_run(source, started_at, started_wall)
             except Exception as exc:
