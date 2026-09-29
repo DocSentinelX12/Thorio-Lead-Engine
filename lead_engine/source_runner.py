@@ -1,5 +1,6 @@
 from typing import Any, Dict, Iterable, Optional
 import logging
+import re
 
 from .pipeline import LeadPipeline
 from .collector import normalize_lead_input
@@ -79,8 +80,17 @@ def _discovery_agent(record: Dict[str, Any]) -> str:
     )
 
     for agent, aliases in _DISCOVERY_SOURCE_ALIASES.items():
-        if any(alias in source_text for alias in aliases):
-            return agent
+        for alias in aliases:
+            if re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", source_text):
+                return agent
+
+    source_identity = str(record.get("source") or record.get("provider") or "").strip().lower()
+    if source_identity in {"x", "twitter"}:
+        return "x_signal"
+
+    source_url = str(record.get("source_url") or record.get("url") or "").strip().lower()
+    if "x.com/" in source_url or "twitter.com/" in source_url:
+        return "x_signal"
 
     return "web_job_signal"
 
