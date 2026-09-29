@@ -52,6 +52,38 @@ def test_compound_detection_respects_time_window():
     assert result["cluster_count"] == 0
 
 
+def test_compound_detection_preserves_repeated_hiring_as_structural_evidence():
+    first = _lead("a", source="LinkedIn", matches=[])
+    first.update({
+        "signal_type": "hiring",
+        "job_title": "Senior Software Engineer",
+        "evidence": "Acme is hiring a Senior Software Engineer.",
+    })
+    second = _lead("b", source="Company Careers", when="2026-09-29T00:00:00+00:00", matches=["Need AI integration"])
+    second.update({
+        "signal_type": "hiring",
+        "job_title": "AI Engineer",
+        "evidence": "Acme is hiring an AI Engineer.",
+    })
+
+    result = detect_compound_opportunities([first, second])
+
+    assert result["cluster_count"] == 1
+    assert "repeated_hiring_activity" in result["clusters"][0]["commercial_triggers"]
+    assert "need ai integration" in result["clusters"][0]["commercial_triggers"]
+
+
+def test_repeated_hiring_alone_does_not_create_commercial_cluster():
+    first = _lead("a", source="LinkedIn", matches=[])
+    first.update({"signal_type": "hiring", "job_title": "Software Engineer"})
+    second = _lead("b", source="Company Careers", when="2026-09-29T00:00:00+00:00", matches=[])
+    second.update({"signal_type": "hiring", "job_title": "AI Engineer"})
+
+    result = detect_compound_opportunities([first, second])
+
+    assert result["cluster_count"] == 0
+
+
 def test_compound_detection_uses_company_domain_when_available():
     first = _lead("a", source="Source A", company="Acme One", matches=["Need AI integration"])
     first["company_website"] = "https://acme.example"
