@@ -128,7 +128,7 @@ def extract_broadened_signals(text, *, company=""):
             technical = any(term in _normalize(raw[max(0, found.start()-220):min(len(raw), found.end()+220)]) for term in TECHNICAL_CONTEXT_TERMS)
             certainty = "speculative" if speculative else ("exploratory" if indirect else "observed")
             temporal = "historical" if historical else "current_or_unspecified"
-            promotion = attributed and not speculative and not historical and not negated and technical
+            promotion = indirect and attributed and not speculative and not historical and not negated and technical
             matches.append({
                 "signal_id": category,
                 "category": category,
