@@ -66,3 +66,80 @@ def test_compound_detection_db_reader_is_durable(tmp_path):
     db.insert_if_new(_lead("a", source="Source A", matches=["Need AI integration"]))
     db.insert_if_new(_lead("b", source="Source B", when="2026-09-29T00:00:00+00:00", matches=["Need MVP"]))
     assert detect_compound_opportunities_from_db(db)["cluster_count"] == 1
+
+
+def test_compound_detection_uses_safe_broadened_structural_and_indirect_signals():
+    first = _lead(
+        "a",
+        source="Product Hunt",
+        matches=[],
+    )
+    first["company"] = "Acme"
+    first["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "phrase": "new product launch",
+                "attribution": "company_named",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+    second = _lead(
+        "b",
+        source="LinkedIn",
+        when="2026-09-29T00:00:00+00:00",
+        matches=[],
+    )
+    second["company"] = "Acme"
+    second["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "phrase": "evaluating vendors",
+                "attribution": "first_person",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "exploratory",
+                "negated": False,
+            }
+        ]
+    }
+
+    result = detect_compound_opportunities([first, second])
+
+    assert result["cluster_count"] == 1
+    assert result["clusters"][0]["commercial_triggers"] == [
+        "evaluating vendors",
+        "new product launch",
+    ]
+
+
+def test_compound_detection_ignores_unsafe_broadened_signals():
+    first = _lead("a", source="Source A")
+    first["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "phrase": "evaluating vendors",
+                "attribution": "unattributed",
+                "temporal_status": "current_or_unspecified",
+                "certainty": "exploratory",
+                "negated": False,
+            }
+        ]
+    }
+    second = _lead("b", source="Source B", when="2026-09-29T00:00:00+00:00")
+    second["commercial_signal_broadening"] = {
+        "matches": [
+            {
+                "phrase": "new product launch",
+                "attribution": "company_named",
+                "temporal_status": "historical",
+                "certainty": "observed",
+                "negated": False,
+            }
+        ]
+    }
+
+    result = detect_compound_opportunities([first, second])
+
+    assert result["cluster_count"] == 0

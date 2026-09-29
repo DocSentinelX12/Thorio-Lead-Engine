@@ -42,9 +42,30 @@ def _entity_key(lead: Mapping[str, Any]) -> str:
 
 def _triggers(lead: Mapping[str, Any]) -> list[str]:
     values = lead.get("signal_matches")
-    if not isinstance(values, list):
-        return []
-    return sorted({_normalize(value) for value in values if _normalize(value)})
+    triggers = {
+        _normalize(value)
+        for value in values
+        if isinstance(values, list) and _normalize(value)
+    }
+    broadening = lead.get("commercial_signal_broadening")
+    matches = broadening.get("matches") if isinstance(broadening, Mapping) else []
+    if isinstance(matches, list):
+        for item in matches:
+            if not isinstance(item, Mapping):
+                continue
+            attribution = _normalize(item.get("attribution"))
+            temporal = _normalize(item.get("temporal_status"))
+            certainty = _normalize(item.get("certainty"))
+            if attribution not in {"company_named", "first_person"}:
+                continue
+            if temporal != "current_or_unspecified":
+                continue
+            if certainty == "speculative" or item.get("negated") is True:
+                continue
+            phrase = _normalize(item.get("phrase"))
+            if phrase:
+                triggers.add(phrase)
+    return sorted(triggers)
 
 
 def detect_compound_opportunities(
