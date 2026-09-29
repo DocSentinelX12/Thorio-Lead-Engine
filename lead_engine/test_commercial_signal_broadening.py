@@ -21,6 +21,43 @@ def test_indirect_signal_is_promoted_only_when_attributed_current_and_technical(
     assert "evaluating vendors" in match["evidence_context"].lower()
 
 
+def test_exploring_options_is_promoted_when_company_owns_a_technical_evaluation():
+    result = extract_broadened_signals(
+        "We are exploring options for our AI platform.",
+        company="Acme",
+    )
+
+    assert result["promotion_eligible"] is True
+    assert result["promotion_count"] == 1
+    match = result["matches"][0]
+    assert match["category"] == "vendor_evaluation"
+    assert match["phrase"].lower() == "exploring options"
+    assert match["attribution"] == "first_person"
+    assert match["technical_context"] is True
+
+
+def test_generic_exploring_options_is_preserved_but_not_promoted():
+    result = extract_broadened_signals(
+        "We are exploring options.",
+        company="Acme",
+    )
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["phrase"].lower() == "exploring options"
+    assert result["matches"][0]["promotion_eligible"] is False
+
+
+def test_unattributed_exploring_options_is_preserved_but_not_promoted():
+    result = extract_broadened_signals(
+        "Industry teams are exploring options for AI platforms.",
+        company="Acme",
+    )
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["attribution"] == "unattributed"
+    assert result["matches"][0]["promotion_eligible"] is False
+
+
 def test_unattributed_indirect_signal_is_preserved_but_not_promoted():
     result = extract_broadened_signals(
         "Industry teams are evaluating vendors for AI platforms.",
