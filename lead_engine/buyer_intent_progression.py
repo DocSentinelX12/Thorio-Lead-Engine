@@ -88,6 +88,42 @@ def _problem_acknowledged(text: str) -> bool:
     return any(prefix in text[:problem_index] for prefix in active_subjects)
 
 
+
+
+def _explicit_reengagement(text: str) -> bool:
+    """Recognize explicit renewed interest without treating politeness as re-entry."""
+    return _explicit(
+        text,
+        (
+            "let's revisit",
+            "lets revisit",
+            "want to revisit",
+            "revisit this",
+            "revisit the",
+            "circle back",
+            "re-engage",
+            "reengage",
+            "reconsidering",
+            "considering this again",
+            "evaluating again",
+            "reviewing again",
+            "comparing providers again",
+            "comparing options again",
+            "looking again",
+            "back to evaluating",
+            "back to reviewing",
+            "our situation changed",
+            "our needs changed",
+            "things have changed",
+            "the situation changed",
+            "the need is active again",
+            "this is active again",
+            "we are interested again",
+            "we're interested again",
+        ),
+    )
+
+
 def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
     text = _text(event.get("text")).lower()
     outcome = _text(event.get("outcome")).lower()
@@ -116,10 +152,8 @@ def _event_signal(event: Mapping[str, Any], index: int = 0) -> dict[str, Any]:
         text, ("not now", "later", "next quarter", "next month", "revisit in", "circle back in")
     ):
         return {"state": "timing_delay", "reason": "explicit timing constraint", "ref": ref}
-    if outcome in {"re_engagement", "reengaged"} or _explicit(
-        text, ("let's revisit", "lets revisit", "circle back", "re-engage", "reengage")
-    ):
-        return {"state": "re_engagement", "reason": "explicit re-engagement evidence", "ref": ref}
+    if outcome in {"re_engagement", "reengaged"} or _explicit_reengagement(text):
+        return {"state": "re_engagement", "reason": "explicit renewed buyer interest or changed circumstances", "ref": ref}
 
     if _explicit(text, ("who needs to approve", "approval process", "legal review", "security review", "needs to approve", "need to approve")):
         return {"state": "decision_process", "reason": "explicit decision-process language", "ref": ref}
@@ -354,6 +388,10 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
     current = "unknown"
     history: list[dict[str, Any]] = []
     known: dict[str, dict[str, Any]] = {}
+    active_known: dict[str, dict[str, Any]] = {}
+    stale_qualification: dict[str, dict[str, Any]] = {}
+    reengagement_epoch: int | None = None
+    reengagement_record: dict[str, Any] | None = None
     supersession: dict[str, Any] | None = None
     last_supersession: dict[str, Any] | None = None
     active_terminal = False
@@ -368,13 +406,28 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
         if candidate == "unknown":
             continue
         qualification = _qualification_from_event(event, candidate)
+        if candidate == "re_engagement":
+            reengagement_epoch = index
+            stale_qualification = dict(known)
+            active_known = {}
+            reengagement_record = {
+                "status": "reopened",
+                "prior_state": current,
+                "reengagement_state": "re_engagement",
+                "evidence_ref": _event_ref(event, index),
+                "event_index": index,
+                "evidence_text": _text(event.get("text")),
+                "reason": "Explicit renewed interest or changed circumstances reopened the conversation; pre-reengagement qualification is historical until explicitly reconfirmed.",
+            }
         for dimension, value in qualification.items():
             if value:
-                known[dimension] = {
+                record = {
                     "value": value,
                     "event_index": index,
                     "evidence_ref": _event_ref(event, index),
                 }
+                known[dimension] = record
+                active_known[dimension] = record
 
         if candidate == "conversion":
             transition_type = "advanced" if current != candidate else "confirmed"
@@ -453,8 +506,34 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
         current = "rejected"
         active_terminal = True
 
-    known_values = {key: item["value"] for key, item in known.items()}
+    known_values = {key: item["value"] for key, item in active_known.items()}
     missing_dimension, next_action, next_question = _next_requirement(current, known_values)
+    stale_dimensions = sorted(
+        dimension for dimension, record in stale_qualification.items()
+        if not reengagement_record or record.get("event_index", -1) < reengagement_record.get("event_index", -1)
+    )
+    reconfirmed_dimensions = sorted(
+        dimension for dimension, record in active_known.items()
+        if reengagement_record and record.get("event_index", -1) >= reengagement_record.get("event_index", -1)
+    )
+    reengagement_reconciliation = reengagement_record or {
+        "status": "none",
+        "prior_state": "",
+        "reengagement_state": "",
+        "evidence_ref": "",
+        "event_index": None,
+        "evidence_text": "",
+        "reason": "No explicit re-engagement event has reopened the conversation.",
+    }
+    reengagement_reconciliation = {
+        **reengagement_reconciliation,
+        "current_state": current,
+        "stale_dimensions": stale_dimensions,
+        "reconfirmed_dimensions": reconfirmed_dimensions,
+        "reconfirmation_required": stale_dimensions,
+        "historical_qualification_preserved": bool(stale_dimensions),
+        "active_qualification_source": "post_reengagement_evidence" if reengagement_record else "conversation_history",
+    }
     transition = history[-1] if history else {
         "prior_state": "unknown",
         "current_state": current,
@@ -472,6 +551,9 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
         "evidence_ref": last_ref,
         "event_index": last_index,
         "known_qualification": known,
+        "active_qualification": active_known,
+        "stale_qualification": stale_qualification,
+        "reengagement_reconciliation": reengagement_reconciliation,
         "missing_qualification": {
             "dimension": missing_dimension,
             "required": missing_dimension != "none",
@@ -488,5 +570,5 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
             "evidence_text": "",
             "reason": "No explicit contradiction has superseded the active progression state.",
         },
-        "evidence_policy": "Progression requires explicit buyer evidence. Explicit contradictory buyer evidence may supersede the stale active state while every historical state remains auditable.",
+        "evidence_policy": "Progression requires explicit buyer evidence. Explicit contradictory buyer evidence may supersede the stale active state while every historical state remains auditable. After explicit re-engagement, pre-reengagement qualification remains historical and cannot satisfy current-state requirements until explicitly reconfirmed.",
     }
