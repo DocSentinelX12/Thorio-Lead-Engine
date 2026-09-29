@@ -94,6 +94,12 @@ def test_company_name_requires_word_boundaries():
     assert result["matches"][0]["promotion_eligible"] is False
 
 
+def test_technical_context_requires_word_boundaries():
+    result = extract_broadened_signals("We are evaluating vendors for our maintainable platform.", company="Acme")
+    assert result["matches"][0]["technical_context"] is False
+    assert result["matches"][0]["promotion_eligible"] is False
+
+
 def test_record_extraction_preserves_two_distinct_occurrences_in_one_field():
     from .commercial_signal_broadening import extract_broadened_signals_from_record
     result = extract_broadened_signals_from_record({
