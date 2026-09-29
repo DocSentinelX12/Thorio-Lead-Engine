@@ -190,7 +190,13 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         raise ValueError("company_research requires lead fingerprint")
     existing = lead.get("company_research")
     prior = dict(existing) if isinstance(existing, Mapping) else {}
-    public_research = research_public_web(lead)
+    next_evidence = payload.get("next_evidence_to_find")
+    if not isinstance(next_evidence, Mapping):
+        next_evidence = {}
+    research_focus = dict(next_evidence)
+    research_input = dict(lead)
+    research_input["research_focus"] = research_focus
+    public_research = research_public_web(research_input)
     public_facts = public_research.get("facts", {}) if isinstance(public_research, Mapping) else {}
     observed_input = {"company": company, "source_url": source_url, "signal": str(lead.get("signal") or "").strip(), "evidence": str(lead.get("evidence") or "").strip(), "evidence_event_count": len(events), "provenance": [dict(event.get("provenance") or {}) for event in events if isinstance(event.get("provenance"), Mapping)]}
     company_verified, company_verification_evidence = _company_identity_verified(company, public_research)
@@ -199,6 +205,7 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         "social_findings": social_findings,
         "researched_at": datetime.now(timezone.utc).isoformat(),
         "public_web_research": public_research,
+        "research_focus": research_focus,
         "public_web_sources": public_research.get("sources", []) if isinstance(public_research, Mapping) else [],
         "public_company_facts": public_facts.get("company", []) if isinstance(public_facts, Mapping) else [],
         "public_product_facts": public_facts.get("product", []) if isinstance(public_facts, Mapping) else [],
@@ -257,7 +264,7 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
     if status == "research_complete":
         enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": events, "research_result": {"status": status, "verified_fields": verified_fields}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
-    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": decision_maker_verified, "verified_fields": verified_fields, "fabricated_fields": [], "public_research_status": public_research.get("status"), "handoff": "verification" if status == "research_complete" else "research_required"}
+    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": decision_maker_verified, "verified_fields": verified_fields, "fabricated_fields": [], "public_research_status": public_research.get("status"), "next_evidence_to_find": research_focus, "handoff": "verification" if status == "research_complete" else "research_required"}
 
 
 def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
