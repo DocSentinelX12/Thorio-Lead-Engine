@@ -62,6 +62,14 @@ def _sentence_has_marker(text, start, end, markers):
     return next((marker for marker in markers if marker in sentence), "")
 
 
+def _has_technical_context(sentence):
+    normalized = _normalize(sentence)
+    return any(
+        re.search(r"(?<!\\w)" + re.escape(term) + r"(?!\\w)", normalized)
+        for term in TECHNICAL_CONTEXT_TERMS
+    )
+
+
 def _temporal_status(sentence, *, historical_markers):
     normalized = _normalize(sentence)
     current_year = datetime.now(timezone.utc).year
@@ -99,7 +107,7 @@ def extract_broadened_signals(text, *, company=""):
             speculative = bool(_sentence_has_marker(raw, found.start(), found.end(), SPECULATIVE_MARKERS))
             temporal = _temporal_status(sentence, historical_markers=HISTORICAL_MARKERS)
             negated = bool(_sentence_has_marker(raw, found.start(), found.end(), NEGATION_MARKERS))
-            technical = any(term in _normalize(sentence) for term in TECHNICAL_CONTEXT_TERMS)
+            technical = _has_technical_context(sentence)
             certainty = "speculative" if speculative else ("exploratory" if indirect else "observed")
             promotion = indirect and attributed and not speculative and temporal == "current_or_unspecified" and not negated and technical
             matches.append({
