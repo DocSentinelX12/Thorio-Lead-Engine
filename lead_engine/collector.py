@@ -3,6 +3,7 @@ import re
 from urllib.parse import urlparse
 
 from .free_sources import HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS
+from .commercial_signal_broadening import extract_broadened_signals_from_record
 
 
 REQUIRED_FIELDS = {
@@ -165,6 +166,9 @@ def normalize_lead_input(lead: Dict[str, Any]) -> Dict[str, Any]:
             normalized[field] = _sanitize_text(value).strip()
     validate_lead_input(normalized)
     _apply_universal_commercial_signals(normalized)
+    broadened = extract_broadened_signals_from_record(normalized)
+    if broadened.get("matches"):
+        normalized["commercial_signal_broadening"] = broadened
     # The collector's canonical field is company_website. Preserve that
     # exact observed URL under the website alias consumed by public research.
     if normalized.get("company_website") and not normalized.get("website"):
