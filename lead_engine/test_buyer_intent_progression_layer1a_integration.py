@@ -82,3 +82,28 @@ def test_layer1a_outreach_uses_current_engaged_strategy_after_contradiction():
     assert strategy["buyer_intent_progression"]["active_state_supersession"]["prior_state"] == "evaluation"
     assert strategy["conversation_intelligence"]["next_best_action"] == "discover_business_outcome"
     assert strategy["conversation_intelligence"]["next_best_question"] in decision.body
+
+
+def test_layer1b_closer_reenters_discovery_after_explicit_buyer_reengagement():
+    from .sales_closer_intelligence import build_commercial_strategy
+
+    strategy = build_commercial_strategy(
+        {
+            "conversation_events": [
+                _event("We were evaluating providers.", "evt-old-eval"),
+                _event("Our situation changed and we are evaluating providers again.", "evt-reengage"),
+            ],
+            "current_intent_research": {
+                "verified": True,
+                "verification_status": "verified",
+                "current_need": "engineering capacity",
+                "evidence_url": "https://example.com/need",
+            },
+        }
+    )
+    progression = strategy["buyer_intent_progression"]
+    assert progression["current_state"] == "re_engagement"
+    assert progression["reengagement_reconciliation"]["status"] == "reopened"
+    assert strategy["conversation_intelligence"]["buyer_intent_state"] == "re_engagement"
+    assert strategy["conversation_intelligence"]["next_best_action"] == "reconfirm_active_need"
+    assert strategy["psychological_objective"] == "diagnose"
