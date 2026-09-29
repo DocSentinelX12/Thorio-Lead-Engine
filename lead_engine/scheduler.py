@@ -148,6 +148,19 @@ class LeadScheduler:
             self._persisted_next_run_at[key] = started_wall + interval
         self._save_polling_state()
 
+    @staticmethod
+    def _source_collection_metrics_input(result: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize legacy scheduler summaries to collection telemetry counts."""
+        processed = int(result.get("processed_count", 0) or 0)
+        discovered = int(result.get("discovered_count", result.get("total", processed)) or 0)
+        accepted = int(result.get("accepted_count", processed) or 0)
+        return {
+            "discovered_count": discovered,
+            "accepted_count": accepted,
+            "duplicate_count": int(result.get("duplicate_count", 0) or 0),
+            "failed_count": int(result.get("failed_count", 0) or 0),
+        }
+
     def _agent_batch_limit(self) -> int:
         return max(role.max_concurrency for role in ALL_AGENT_ROLES)
 
@@ -174,7 +187,7 @@ class LeadScheduler:
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count != 0:
                     result["checkpoint"] = previous_checkpoint
-                source_metrics = record_source_collection_metrics(self.runner.pipeline.db, source.name, result)
+                source_metrics = record_source_collection_metrics(self.runner.pipeline.db, source.name, self._source_collection_metrics_input(result))
                 result["source_collection_metrics"] = source_metrics
                 results.append({"source": source.name, "result": result})
                 self._schedule_next_run(source, started_at, started_wall)
