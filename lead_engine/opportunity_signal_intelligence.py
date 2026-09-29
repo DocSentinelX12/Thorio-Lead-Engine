@@ -68,6 +68,14 @@ def _triggers(lead: Mapping[str, Any]) -> list[str]:
     return sorted(triggers)
 
 
+def _is_hiring_observation(lead: Mapping[str, Any]) -> bool:
+    """Recognize an existing hiring observation without turning hiring into intent."""
+    signal_type = _normalize(lead.get("signal_type"))
+    if signal_type == "hiring":
+        return bool(_normalize(lead.get("job_title") or lead.get("signal") or lead.get("evidence")))
+    return False
+
+
 def detect_compound_opportunities(
     leads: Iterable[Mapping[str, Any]],
     *,
@@ -105,6 +113,14 @@ def detect_compound_opportunities(
             opportunity_ids = sorted({_text(item.get("opportunity_id") or item.get("fingerprint")) for item in members if _text(item.get("opportunity_id") or item.get("fingerprint"))})
             sources = sorted({_text(item.get("source")) for item in members if _text(item.get("source"))})
             triggers = sorted({trigger for item in members for trigger in _triggers(item)})
+            hiring_sources = {
+                _text(item.get("source"))
+                for item in members
+                if _is_hiring_observation(item) and _text(item.get("source"))
+            }
+            if len(hiring_sources) >= 2:
+                triggers.append("repeated_hiring_activity")
+                triggers = sorted(set(triggers))
             if len(opportunity_ids) < 2 or len(sources) < 2 or len(triggers) < 2:
                 continue
 
