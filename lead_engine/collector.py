@@ -1,5 +1,8 @@
 from typing import Any, Dict, Iterable, List
+import re
 from urllib.parse import urlparse
+
+from .free_sources import HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS
 
 
 REQUIRED_FIELDS = {
@@ -97,10 +100,55 @@ def _sanitize_text(value: str) -> str:
     return "".join(character for character in value if ord(character) >= 32 or character in ("\t", "\n", "\r"))
 
 
+def _commercial_signal_matches(text: str) -> List[str]:
+    """Extract only exact configured commercial triggers from observed source text."""
+    normalized = " ".join(text.lower().split())
+    return [term for term in HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS if term in normalized]
+
+
+def _commercial_signal_context(text: str, matches: List[str]) -> List[str]:
+    """Preserve bounded observed context around each exact commercial trigger."""
+    contexts: List[str] = []
+    for term in matches:
+        match = re.search(re.escape(term), text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        start = max(0, match.start() - 180)
+        end = min(len(text), match.end() + 180)
+        context = " ".join(text[start:end].split())
+        if context and context not in contexts:
+            contexts.append(context)
+    return contexts
+
+
+def _apply_universal_commercial_signals(normalized: Dict[str, Any]) -> None:
+    """Apply the canonical commercial extraction contract to every ingestion lane."""
+    observed = " ".join(
+        str(normalized.get(field) or "").strip()
+        for field in ("signal", "evidence", "job_title", "company")
+        if str(normalized.get(field) or "").strip()
+    )
+    matches = _commercial_signal_matches(observed)
+    if not matches:
+        return
+
+    existing_type = str(normalized.get("signal_type") or "").strip().lower()
+    if existing_type in {"", "business_intent", "hiring", "discovery"}:
+        normalized["signal_type"] = "commercial_intent"
+
+    existing_strength = str(normalized.get("signal_strength") or "").strip().lower()
+    if existing_strength not in {"compound", "explicit"}:
+        normalized["signal_strength"] = "compound" if len(matches) >= 2 else "explicit"
+
+    normalized["signal_matches"] = list(dict.fromkeys(matches))
+    normalized["signal_context"] = _commercial_signal_context(observed, matches)
+
+
 def normalize_lead_input(lead: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Normalize incoming discovery data without making
-    qualification, routing, or deduplication decisions.
+    Normalize incoming discovery data and apply the universal commercial
+    signal extraction contract without making qualification, routing,
+    or deduplication decisions.
 
     External sources can contain embedded ASCII control characters,
     especially copied HTML/text evidence. Clean those characters at
@@ -116,6 +164,7 @@ def normalize_lead_input(lead: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(value, str):
             normalized[field] = _sanitize_text(value).strip()
     validate_lead_input(normalized)
+    _apply_universal_commercial_signals(normalized)
     # The collector's canonical field is company_website. Preserve that
     # exact observed URL under the website alias consumed by public research.
     if normalized.get("company_website") and not normalized.get("website"):
@@ -138,4 +187,4 @@ def collect(leads: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 if __name__ == "__main__":
-    print("Lead collector loaded. Use collect() to normalize discovered leads.")
+    print("Lead collector loaded. Use collect() to normalize leads.")
