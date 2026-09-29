@@ -185,3 +185,41 @@ This design does not replace the existing sales closer, research system, Airtabl
 ## Success criteria
 
 The implementation is complete only when the progression engine is used by production strategy generation, its evidence lineage is preserved, its next-best action reaches actual outreach, and the full relevant test suite passes without weakening existing gates or replacing verified evidence with inference.
+
+
+## Layer 1B: Buyer State Reconciliation and Re-Engagement Intelligence
+
+Layer 1B extends the Layer 1A contradiction model without deleting historical buyer evidence.
+
+### Re-entry rules
+
+1. Re-engagement requires explicit renewed buyer interest, an explicit changed circumstance, or an explicit request to revisit.
+2. Polite replies, generic engagement, and information gathering do not reopen a terminal state.
+3. A re-engagement event creates a new active qualification epoch.
+4. Qualification observed before that epoch remains preserved as historical evidence but is stale for current-state requirements.
+5. Qualification observed after re-engagement can satisfy current-state requirements only when it is explicit.
+6. The re-engagement event itself may establish current qualification when the event explicitly supplies that qualification.
+7. Historical qualification is never deleted or silently rewritten.
+8. The closer must use the reconciled active evidence rather than falling back to stale historical qualification.
+9. Re-engagement enters discovery psychology first. It does not imply evaluation, commitment, urgency, authority, budget, or readiness to close.
+10. Re-engagement preserves all existing truthfulness, opt-out, terminal-state, research, and objection safeguards.
+
+### Reconciliation contract
+
+`reengagement_reconciliation` records:
+
+- the prior active state
+- the explicit re-engagement evidence
+- the re-engagement event index and evidence text
+- the current state after subsequent evidence
+- stale qualification dimensions
+- explicitly reconfirmed qualification dimensions
+- dimensions that still require reconfirmation
+- whether historical qualification was preserved
+- the source epoch for active qualification
+
+The resulting state model is:
+
+`historical evidence -> explicit interruption or contradiction -> explicit re-engagement -> new active qualification epoch -> reconfirmed current state`
+
+This prevents old timing, decision-process, need, economic, or other qualification evidence from silently becoming current after a buyer changes circumstances.
