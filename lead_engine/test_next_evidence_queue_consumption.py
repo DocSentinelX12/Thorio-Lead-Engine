@@ -56,6 +56,7 @@ def test_company_research_refreshes_targets_from_authoritative_persisted_lead(tm
         status_code = 200
         encoding = "utf-8"
         headers = {"content-type": "text/html"}
+        text = ""
         is_redirect = False
         is_permanent_redirect = False
 
