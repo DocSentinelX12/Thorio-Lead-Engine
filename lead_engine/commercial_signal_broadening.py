@@ -96,13 +96,31 @@ def _context(text, start, end, radius=220):
     return " ".join(text[max(0, start-radius):min(len(text), end+radius)].split())
 
 
+def _sentence_context(text, start, end):
+    left = max(
+        text.rfind(".", 0, start),
+        text.rfind("!", 0, start),
+        text.rfind("?", 0, start),
+    )
+    right_candidates = [
+        position for position in (
+            text.find(".", end),
+            text.find("!", end),
+            text.find("?", end),
+        )
+        if position >= 0
+    ]
+    right = min(right_candidates) if right_candidates else len(text)
+    return " ".join(text[left + 1:right + 1].split())
+
+
 def _near(text, start, markers, radius):
     window = _normalize(text[max(0, start-radius):start])
     return next((marker for marker in markers if marker in window), "")
 
 
 def _attribution(text, company, start, end):
-    window = _normalize(text[max(0, start-260):min(len(text), end+260)])
+    window = _normalize(_sentence_context(text, start, end))
     company_name = _normalize(company)
     if company_name and company_name in window:
         return "company_named", True
@@ -126,7 +144,8 @@ def extract_broadened_signals(text, *, company=""):
             speculative = bool(_near(raw, found.start(), SPECULATIVE_MARKERS, 100))
             historical = bool(_near(raw, found.start(), HISTORICAL_MARKERS, 150))
             negated = bool(_near(raw, found.start(), NEGATION_MARKERS, 45))
-            technical = any(term in _normalize(raw[max(0, found.start()-220):min(len(raw), found.end()+220)]) for term in TECHNICAL_CONTEXT_TERMS)
+            technical_context = _normalize(_sentence_context(raw, found.start(), found.end()))
+            technical = any(term in technical_context for term in TECHNICAL_CONTEXT_TERMS)
             certainty = "speculative" if speculative else ("exploratory" if indirect else "observed")
             temporal = "historical" if historical else "current_or_unspecified"
             promotion = indirect and attributed and not speculative and not historical and not negated and technical
