@@ -102,6 +102,18 @@ def test_source_runner_does_not_hide_internal_type_error():
         raise AssertionError("Internal TypeError was incorrectly swallowed.")
     assert source.collect.call_count == 1
 
+def test_discovery_agent_does_not_misclassify_example_domain_as_x():
+    from .source_runner import _discovery_agent
+
+    record = {
+        "source": "integration",
+        "url": "https://example.com/integration-001",
+        "signal": "remote software engineer",
+    }
+
+    assert _discovery_agent(record) == "web_job_signal"
+
+
 def test_source_runner_fans_out_matching_signal_to_discovery_intelligence(tmp_path):
     from .database import LeadDB
     from .agent_queue import pending
@@ -117,7 +129,7 @@ def test_source_runner_fans_out_matching_signal_to_discovery_intelligence(tmp_pa
 
     record = {
         **_record("linkedin", "fanout-001"),
-        "signal": "We are looking for an AI engineering partner and need an MVP.",
+        "signal": "We are looking for an AI engineering partner and need an MVP. Need an MVP.",
         "evidence": "The founder is seeking an AI development partner for a new MVP.",
     }
     result = SourceRunner(Pipeline()).process([record])
