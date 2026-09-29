@@ -175,6 +175,18 @@ def detect_compound_opportunities(
                 for item in members
                 for event in _structural_events(item)
             ]
+            qualifying_non_structural_triggers = {
+                trigger
+                for trigger in triggers
+                if trigger != "repeated_hiring_activity"
+            }
+            if qualifying_non_structural_triggers:
+                triggers.extend(
+                    event["phrase"]
+                    for event in structural_events
+                    if event["phrase"]
+                )
+                triggers = sorted(set(triggers))
             funding_events = [
                 event for event in structural_events
                 if event["category"] == "funding_execution"
