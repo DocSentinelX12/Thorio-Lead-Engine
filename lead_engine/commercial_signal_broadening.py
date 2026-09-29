@@ -201,5 +201,63 @@ def extract_broadened_signals(text, *, company=""):
 def extract_broadened_signals_from_record(record):
     if not hasattr(record, "get"):
         raise ValueError("record must be a mapping.")
-    observed = " ".join(_text(record.get(field)) for field in ("signal", "evidence", "job_title") if _text(record.get(field)))
-    return extract_broadened_signals(observed, company=_text(record.get("company")))
+
+    company = _text(record.get("company"))
+    matches = []
+    for field in ("signal", "evidence", "job_title"):
+        observed = _text(record.get(field))
+        if not observed:
+            continue
+        extracted = extract_broadened_signals(observed, company=company)
+        for item in extracted.get("matches", []):
+            enriched = dict(item)
+            enriched["source_field"] = field
+            matches.append(enriched)
+
+    deduped = []
+    seen = set()
+    for item in matches:
+        key = (
+            item.get("signal_id"),
+            _normalize(item.get("phrase")),
+            item.get("source_field"),
+            item.get("evidence_context"),
+        )
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+
+    eligible = [item for item in deduped if item.get("promotion_eligible") is True]
+    reasons = []
+    if any(item.get("attribution") == "unattributed" for item in deduped):
+        reasons.append("unattributed_signal_preserved_not_promoted")
+    if any(item.get("temporal_status") == "historical" for item in deduped):
+        reasons.append("historical_signal_preserved_not_promoted")
+    if any(item.get("certainty") == "speculative" for item in deduped):
+        reasons.append("speculative_signal_preserved_not_promoted")
+    if any(item.get("negated") is True for item in deduped):
+        reasons.append("negated_signal_preserved_not_promoted")
+    if any(
+        item.get("category") in {
+            "funding_execution",
+            "product_event",
+            "enterprise_event",
+            "market_expansion",
+            "corporate_event",
+        }
+        for item in deduped
+    ):
+        reasons.append("structural_event_requires_current_need_or_corroboration")
+
+    return {
+        "contract_version": BROADENING_CONTRACT_VERSION,
+        "matches": deduped,
+        "promotion_eligible": bool(eligible),
+        "promotion_count": len(eligible),
+        "promotion_reason": (
+            "verified_attributed_current_or_unspecified_signal"
+            if eligible
+            else "no_single_observation_safe_for_commercial_intent_promotion"
+        ),
+        "safety_reasons": _dedupe(reasons),
+    }
