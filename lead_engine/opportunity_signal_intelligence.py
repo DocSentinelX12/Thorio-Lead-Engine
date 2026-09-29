@@ -76,6 +76,44 @@ def _is_hiring_observation(lead: Mapping[str, Any]) -> bool:
     return False
 
 
+def _structural_events(lead: Mapping[str, Any]) -> list[Dict[str, Any]]:
+    """Return safe structural events with their category and observation time."""
+    broadening = lead.get("commercial_signal_broadening")
+    matches = broadening.get("matches") if isinstance(broadening, Mapping) else []
+    if not isinstance(matches, list):
+        return []
+
+    observed_at = _text(lead.get("discovered_at") or lead.get("observed_at"))
+    events: list[Dict[str, Any]] = []
+    for item in matches:
+        if not isinstance(item, Mapping):
+            continue
+        category = _normalize(item.get("category") or item.get("signal_id"))
+        if category not in {
+            "funding_execution",
+            "product_event",
+            "enterprise_event",
+            "market_expansion",
+            "corporate_event",
+        }:
+            continue
+        if _normalize(item.get("temporal_status")) != "current_or_unspecified":
+            continue
+        if _normalize(item.get("certainty")) == "speculative" or item.get("negated") is True:
+            continue
+        phrase = _normalize(item.get("phrase"))
+        if not phrase:
+            continue
+        events.append({
+            "category": category,
+            "phrase": phrase,
+            "observed_at": observed_at,
+            "opportunity_id": _text(lead.get("opportunity_id") or lead.get("fingerprint")),
+            "source": _text(lead.get("source")),
+        })
+    return events
+
+
 def detect_compound_opportunities(
     leads: Iterable[Mapping[str, Any]],
     *,
@@ -121,6 +159,38 @@ def detect_compound_opportunities(
             if len(hiring_sources) >= 2:
                 triggers.append("repeated_hiring_activity")
                 triggers = sorted(set(triggers))
+
+            structural_events = [
+                event
+                for item in members
+                for event in _structural_events(item)
+            ]
+            funding_events = [
+                event for event in structural_events
+                if event["category"] == "funding_execution"
+            ]
+            execution_events = [
+                event for event in structural_events
+                if event["category"] != "funding_execution"
+            ]
+            funding_followed_by_execution = []
+            for funding in funding_events:
+                for execution in execution_events:
+                    funding_time = _timestamp({"discovered_at": funding["observed_at"]})
+                    execution_time = _timestamp({"discovered_at": execution["observed_at"]})
+                    if funding_time is None or execution_time is None:
+                        continue
+                    if 0 <= execution_time - funding_time <= window_seconds:
+                        if funding["source"] and execution["source"] and funding["source"] != execution["source"]:
+                            funding_followed_by_execution.append({
+                                "relationship": "funding_followed_by_execution",
+                                "funding": funding,
+                                "execution": execution,
+                            })
+            if funding_followed_by_execution:
+                triggers.append("funding_followed_by_execution")
+                triggers = sorted(set(triggers))
+
             if len(opportunity_ids) < 2 or len(sources) < 2 or len(triggers) < 2:
                 continue
 
@@ -132,6 +202,7 @@ def detect_compound_opportunities(
                 "opportunity_count": len(opportunity_ids),
                 "source_count": len(sources),
                 "trigger_count": len(triggers),
+                "structural_relationships": funding_followed_by_execution,
                 "first_observed_at": _text(min(
                     (item.get("discovered_at") or item.get("observed_at") for item in members),
                     key=lambda value: _timestamp({"discovered_at": value}) or float("inf"),
