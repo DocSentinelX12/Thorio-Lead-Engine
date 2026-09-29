@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterable, Mapping
 from .router import ROUTES, score_routes
 from .opportunity_provenance import normalize_evidence_event, validate_provenance_collection
 from .lead_identity import canonical_opportunity_identity
+from .next_evidence_intelligence import build_next_evidence_plan
 
 VERIFIABLE_RESEARCH_SECTIONS = (
     "business_need_research",
@@ -251,6 +252,7 @@ def finalize_research_readiness(lead: Mapping[str, Any]) -> tuple[Dict[str, Any]
     has_any_evidence = any(isinstance(updated.get(section), Mapping) and bool(updated.get(section, {}).get("evidence")) for section in VERIFIABLE_RESEARCH_SECTIONS)
     gaps["missing_sections"] = [section for section in VERIFIABLE_RESEARCH_SECTIONS if not _section_has_evidence(updated.get(section))]
     gaps["unknowns"] = list(readiness["blockers"])
+    gaps["next_evidence_to_find"] = build_next_evidence_plan({**updated, "research_gaps": gaps})
     updated["research_gaps"] = gaps
     updated["research_status"] = "complete" if readiness["ready"] else "research_required"
     updated["research_verified_fields"] = [section for section in VERIFIABLE_RESEARCH_SECTIONS if _explicitly_verified(updated.get(section))]
@@ -286,6 +288,7 @@ def build_canonical_research_package(lead: Mapping[str, Any], company_research: 
     missing_sections = list(missing_evidence)
     has_any_evidence = any(bool(package[name].get("evidence")) for name in VERIFIABLE_RESEARCH_SECTIONS)
     package["research_gaps"] = {"verified": False, "verification_status": "observed_evidence" if has_any_evidence else "research_required", "researched_at": _now(), "missing_sections": missing_sections, "unknowns": ["company_verification", "decision_maker_verification", "current_need_verification", "route_verification"] + missing_evidence, "provenance": {"source": "canonical_research_sections", "checked_sections": list(VERIFIABLE_RESEARCH_SECTIONS), "missing_count": len(missing_evidence)}}
+    package["research_gaps"]["next_evidence_to_find"] = build_next_evidence_plan({**lead, **package, "research_gaps": package["research_gaps"]})
     all_refs = _refs(business + intent + technical + commercial + _items(company_research.get("public_company_facts")) + _items(company_research.get("public_decision_maker_facts")), opportunity_id=opportunity_id, research_section="closer_package")
     package["closer_package"] = {"ready": False, "verification_status": "research_required", "researched_at": _now(), "company": str(lead.get("company") or "").strip(), "contact": str(lead.get("contact_name") or lead.get("person") or "").strip(), "evidence": all_refs, "required_verification": list(VERIFIABLE_RESEARCH_SECTIONS), "provenance": {"source": "canonical_research_sections", "evidence_count": len(all_refs)}, "unknowns": list(package["research_gaps"]["unknowns"])}
     return package
