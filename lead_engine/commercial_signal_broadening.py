@@ -1,5 +1,7 @@
 """Evidence-grounded Phase 2 commercial signal broadening."""
 
+from datetime import datetime, timezone
+
 BROADENING_CONTRACT_VERSION = "1"
 
 INDIRECT_SIGNAL_PATTERNS = (
@@ -68,7 +70,9 @@ SPECULATIVE_MARKERS = (
 
 NEGATION_MARKERS = (
     "not", "no", "never", "don't", "do not", "doesn't", "does not",
-    "isn't", "is not", "wasn't", "was not", "without",
+    "isn't", "is not", "wasn't", "was not", "without", "no longer",
+    "stopped", "ended", "cancelled", "canceled", "decided against",
+    "decided not to",
 )
 
 HISTORICAL_MARKERS = (
@@ -124,6 +128,19 @@ def _sentence_has_marker(text, start, end, markers):
     return next((marker for marker in markers if marker in sentence), "")
 
 
+def _temporal_status(sentence, *, historical_markers):
+    normalized = _normalize(sentence)
+    current_year = datetime.now(timezone.utc).year
+    years = [int(value) for value in __import__("re").findall(r"\b(?:19|20|21)\d{2}\b", normalized)]
+    historical = any(marker in normalized for marker in historical_markers) or any(year < current_year for year in years)
+    future = any(year > current_year for year in years)
+    if historical:
+        return "historical"
+    if future:
+        return "future"
+    return "current_or_unspecified"
+
+
 def _attribution(text, company, start, end):
     window = _normalize(_sentence_context(text, start, end))
     company_name = _normalize(company)
@@ -145,21 +162,21 @@ def extract_broadened_signals(text, *, company=""):
 
     def add(category, phrase, indirect):
         for found in re.finditer(re.escape(phrase), raw, flags=re.IGNORECASE):
+            sentence = _sentence_context(raw, found.start(), found.end())
             attribution, attributed = _attribution(raw, company, found.start(), found.end())
             speculative = bool(_sentence_has_marker(raw, found.start(), found.end(), SPECULATIVE_MARKERS))
-            historical = bool(_sentence_has_marker(raw, found.start(), found.end(), HISTORICAL_MARKERS))
+            temporal = _temporal_status(sentence, historical_markers=HISTORICAL_MARKERS)
             negated = bool(_sentence_has_marker(raw, found.start(), found.end(), NEGATION_MARKERS))
-            technical_context = _normalize(_sentence_context(raw, found.start(), found.end()))
+            technical_context = _normalize(sentence)
             technical = any(term in technical_context for term in TECHNICAL_CONTEXT_TERMS)
             certainty = "speculative" if speculative else ("exploratory" if indirect else "observed")
-            temporal = "historical" if historical else "current_or_unspecified"
-            promotion = indirect and attributed and not speculative and not historical and not negated and technical
+            promotion = indirect and attributed and not speculative and temporal == "current_or_unspecified" and not negated and technical
             matches.append({
                 "signal_id": category,
                 "category": category,
                 "phrase": found.group(0),
                 "evidence_context": _context(raw, found.start(), found.end()),
-                "__dedupe_context": _sentence_context(raw, found.start(), found.end()),
+                "__dedupe_context": sentence,
                 "attribution": attribution,
                 "temporal_status": temporal,
                 "certainty": certainty,
@@ -192,6 +209,8 @@ def extract_broadened_signals(text, *, company=""):
         reasons.append("unattributed_signal_preserved_not_promoted")
     if any(item["temporal_status"] == "historical" for item in deduped):
         reasons.append("historical_signal_preserved_not_promoted")
+    if any(item["temporal_status"] == "future" for item in deduped):
+        reasons.append("future_signal_preserved_not_promoted")
     if any(item["certainty"] == "speculative" for item in deduped):
         reasons.append("speculative_signal_preserved_not_promoted")
     if any(item["negated"] for item in deduped):
@@ -244,20 +263,13 @@ def extract_broadened_signals_from_record(record):
         reasons.append("unattributed_signal_preserved_not_promoted")
     if any(item.get("temporal_status") == "historical" for item in deduped):
         reasons.append("historical_signal_preserved_not_promoted")
+    if any(item.get("temporal_status") == "future" for item in deduped):
+        reasons.append("future_signal_preserved_not_promoted")
     if any(item.get("certainty") == "speculative" for item in deduped):
         reasons.append("speculative_signal_preserved_not_promoted")
     if any(item.get("negated") is True for item in deduped):
         reasons.append("negated_signal_preserved_not_promoted")
-    if any(
-        item.get("category") in {
-            "funding_execution",
-            "product_event",
-            "enterprise_event",
-            "market_expansion",
-            "corporate_event",
-        }
-        for item in deduped
-    ):
+    if any(item.get("category") in {"funding_execution", "product_event", "enterprise_event", "market_expansion", "corporate_event"} for item in deduped):
         reasons.append("structural_event_requires_current_need_or_corroboration")
 
     return {
@@ -265,10 +277,6 @@ def extract_broadened_signals_from_record(record):
         "matches": deduped,
         "promotion_eligible": bool(eligible),
         "promotion_count": len(eligible),
-        "promotion_reason": (
-            "verified_attributed_current_or_unspecified_signal"
-            if eligible
-            else "no_single_observation_safe_for_commercial_intent_promotion"
-        ),
+        "promotion_reason": "verified_attributed_current_or_unspecified_signal" if eligible else "no_single_observation_safe_for_commercial_intent_promotion",
         "safety_reasons": _dedupe(reasons),
     }
