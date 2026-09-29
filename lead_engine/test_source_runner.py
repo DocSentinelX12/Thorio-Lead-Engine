@@ -101,3 +101,59 @@ def test_source_runner_does_not_hide_internal_type_error():
     else:
         raise AssertionError("Internal TypeError was incorrectly swallowed.")
     assert source.collect.call_count == 1
+
+def test_source_runner_fans_out_matching_signal_to_discovery_intelligence(tmp_path):
+    from .database import LeadDB
+    from .agent_queue import pending
+
+    db = LeadDB(data_dir=tmp_path)
+    lead = {"fingerprint": "fanout-001", "opportunity_id": "fanout-001", "company": "Example Company"}
+
+    class Pipeline:
+        def __init__(self):
+            self.db = db
+        def process(self, **_kwargs):
+            return {"accepted": True, "status": "accepted", "fingerprint": lead["fingerprint"], "lead": dict(lead), "priority": 2}
+
+    record = {
+        **_record("linkedin", "fanout-001"),
+        "signal": "We are looking for an AI engineering partner and need an MVP.",
+        "evidence": "The founder is seeking an AI development partner for a new MVP.",
+    }
+    result = SourceRunner(Pipeline()).process([record])
+    agents = {task["agent"] for task in pending(db)}
+
+    assert result["accepted_count"] == 1
+    assert "linkedin_signal" in agents
+    assert "engineering_demand_discovery" in agents
+    assert "ai_demand_discovery" in agents
+    assert "recent_inquiry_discovery" in agents
+    assert "astrivon_demand_discovery" in agents
+    db.close()
+
+
+def test_source_runner_does_not_fan_out_unmatched_generic_signal(tmp_path):
+    from .database import LeadDB
+    from .agent_queue import pending
+
+    db = LeadDB(data_dir=tmp_path)
+    lead = {"fingerprint": "fanout-002", "opportunity_id": "fanout-002", "company": "Example Company"}
+
+    class Pipeline:
+        def __init__(self):
+            self.db = db
+        def process(self, **_kwargs):
+            return {"accepted": True, "status": "accepted", "fingerprint": lead["fingerprint"], "lead": dict(lead)}
+
+    record = {
+        **_record("linkedin", "fanout-002"),
+        "signal": "The company published a general company update.",
+        "evidence": "Observed a general company update with no demand language.",
+    }
+    SourceRunner(Pipeline()).process([record])
+    intelligence_agents = {
+        task["agent"] for task in pending(db)
+        if task["agent"].endswith("_demand_discovery") or task["agent"] == "recent_inquiry_discovery"
+    }
+    assert intelligence_agents == set()
+    db.close()
