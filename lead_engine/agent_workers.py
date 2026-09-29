@@ -51,8 +51,16 @@ def _discovery_handler_for(agent: str, payload: Mapping[str, Any], ctx: AgentExe
     if not signal: raise AgentContractError(f"{agent} requires observed signal/evidence")
     if agent in _DISCOVERY_SOURCE_ALIASES and not any(alias in source for alias in _DISCOVERY_SOURCE_ALIASES[agent]): raise AgentContractError(f"{agent} received evidence outside its permanent source lane: {record.get('source')!r}")
     if agent == "web_job_signal":
-        markers = ("job", "jobs", "career", "careers", "hiring", "greenhouse", "lever", "workable", "ashby", "remote", "jobicy", "himalayas", "remote ok", "remotejobs", "arbeitnow", "muse")
-        if not any(marker in source for marker in markers) and not any(key in record for key in ("job_title", "application_url", "apply_url")): raise AgentContractError(f"web_job_signal received evidence that is not identifiable as a job source: {record.get('source')!r}")
+        job_text = " ".join(
+            value for value in (
+                source,
+                str(record.get("signal") or "").strip().lower(),
+                str(record.get("evidence") or "").strip().lower(),
+            )
+            if value
+        )
+        markers = ("job", "jobs", "career", "careers", "hiring", "greenhouse", "lever", "workable", "ashby", "remote", "jobicy", "himalayas", "remote ok", "remotejobs", "arbeitnow", "muse", "software engineer", "software engineering", "developer", "engineering role")
+        if not any(marker in job_text for marker in markers) and not any(key in record for key in ("job_title", "application_url", "apply_url")): raise AgentContractError(f"web_job_signal received evidence that is not identifiable as a job source: {record.get('source')!r}")
     fingerprint = str(record.get("fingerprint") or payload.get("fingerprint") or "").strip(); lead = ctx.db.get(fingerprint) if fingerprint else None; provenance = dict(record.get("provenance") or {}) if isinstance(record.get("provenance"), Mapping) else {}; provenance.update({"collector_agent": agent, "source_lane": agent, "collected_at": datetime.now(timezone.utc).isoformat()}); normalized = dict(record); normalized.update({"source_lane": agent, "observed": True, "qualification_performed": False, "provenance": provenance})
     if fingerprint:
         normalized = normalize_evidence_event(normalized, opportunity_id=fingerprint, research_section="evidence_events", collector=agent)
