@@ -119,3 +119,45 @@ def test_collector_keeps_structural_signal_as_context_only():
     assert result["signal_type"] == "discovery"
     assert result["commercial_signal_broadening"]["promotion_eligible"] is False
     assert result["commercial_signal_broadening"]["matches"][0]["category"] == "product_event"
+
+
+def test_attribution_does_not_cross_unrelated_sentences():
+    result = extract_broadened_signals(
+        "Acme announced its roadmap. Industry teams are evaluating vendors for AI platforms.",
+        company="Acme",
+    )
+
+    assert result["matches"][0]["attribution"] == "unattributed"
+    assert result["matches"][0]["promotion_eligible"] is False
+
+
+def test_exploring_options_requires_a_technology_or_vendor_context():
+    result = extract_broadened_signals(
+        "We are exploring options for our AI platform.",
+        company="Acme",
+    )
+
+    assert result["promotion_eligible"] is True
+    assert result["matches"][0]["category"] == "vendor_evaluation"
+
+
+def test_broadened_record_preserves_source_provenance():
+    from .commercial_signal_broadening import extract_broadened_signals_from_record
+
+    result = extract_broadened_signals_from_record(
+        {
+            "source": "LinkedIn",
+            "source_id": "post-42",
+            "url": "https://example.com/post-42",
+            "company": "Acme",
+            "signal": "Founder update",
+            "evidence": "We are evaluating vendors for our AI platform.",
+            "observed_at": "2026-09-29T12:00:00+00:00",
+        }
+    )
+
+    assert result["provenance"]["source"] == "LinkedIn"
+    assert result["provenance"]["source_id"] == "post-42"
+    assert result["provenance"]["source_url"] == "https://example.com/post-42"
+    assert result["provenance"]["observed_at"] == "2026-09-29T12:00:00+00:00"
+
