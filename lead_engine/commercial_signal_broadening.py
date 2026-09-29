@@ -59,7 +59,10 @@ def _near(text, start, markers, radius):
 
 def _sentence_has_marker(text, start, end, markers):
     sentence = _normalize(_sentence_context(text, start, end))
-    return next((marker for marker in markers if marker in sentence), "")
+    return next(
+        (marker for marker in markers if re.search(r"(?<!\\w)" + re.escape(marker) + r"(?!\\w)", sentence)),
+        "",
+    )
 
 
 def _has_technical_context(sentence):
