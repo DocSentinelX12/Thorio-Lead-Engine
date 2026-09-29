@@ -23,6 +23,10 @@ class Lead:
     person: str = ""
     signal: str = ""
     signal_type: str = ""
+    signal_strength: str = ""
+    signal_matches: List[str] = None
+    signal_context: List[str] = None
+    commercial_signal_broadening: Dict[str, Any] = None
     business_need: str = ""
     source_url: str = ""
     job_title: str = ""
@@ -97,6 +101,12 @@ class Lead:
     def __post_init__(self):
         if self.potential_routes is None:
             self.potential_routes = []
+        if self.signal_matches is None:
+            self.signal_matches = []
+        if self.signal_context is None:
+            self.signal_context = []
+        if self.commercial_signal_broadening is None:
+            self.commercial_signal_broadening = {}
         if self.qualification_results is None:
             self.qualification_results = {}
         if self.evidence_events is None:
