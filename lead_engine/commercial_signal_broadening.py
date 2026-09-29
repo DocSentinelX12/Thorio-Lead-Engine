@@ -65,7 +65,7 @@ def _sentence_has_marker(text, start, end, markers):
 def _has_technical_context(sentence):
     normalized = _normalize(sentence)
     return any(
-        re.search(r"(?<!\\w)" + re.escape(term) + r"(?!\\w)", normalized)
+        re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", normalized)
         for term in TECHNICAL_CONTEXT_TERMS
     )
 
