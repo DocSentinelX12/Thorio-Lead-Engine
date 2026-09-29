@@ -9,6 +9,7 @@ INDIRECT_SIGNAL_PATTERNS = (
     ("vendor_evaluation", "exploring vendors"),
     ("vendor_evaluation", "exploring providers"),
     ("vendor_evaluation", "exploring solutions"),
+    ("vendor_evaluation", "exploring options"),
     ("partner_evaluation", "looking for a partner"),
     ("partner_evaluation", "looking for partners"),
     ("partner_evaluation", "evaluating partners"),
