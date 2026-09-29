@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, Mapping
 from .opportunity_signal_intelligence import detect_compound_opportunities
 
 ATTRIBUTION_VERSION = "2"
+SIGNAL_OUTCOME_LEARNING_VERSION = "1"
 
 _COUNTERS = (
     "opportunities",
@@ -101,6 +102,49 @@ def _trigger_groups(leads: Iterable[Mapping[str, Any]]) -> Dict[str, Dict[str, A
             metrics = groups.setdefault(trigger, _new_metrics())
             _accumulate(metrics, lead)
     return {key: _finalize(metrics) for key, metrics in sorted(groups.items())}
+
+
+def learn_signal_outcomes(db: Any) -> Dict[str, Any]:
+    """Describe observed lifecycle associations for exact persisted signals.
+
+    This function is descriptive only. It does not infer causation, rank signals,
+    change qualification, change routing, or mutate lead state. Signal membership
+    comes only from persisted exact ``signal_matches`` values.
+    """
+    leads = [lead for lead in db.all_leads() if isinstance(lead, Mapping)]
+    overall = _finalize(_accumulate_metrics(leads))
+    overall_conversion_rate = overall["conversion_rate"]
+    by_signal: Dict[str, Dict[str, Any]] = {}
+    for signal, metrics in _trigger_groups(leads).items():
+        metrics = dict(metrics)
+        metrics.update({
+            "observations": metrics["opportunities"],
+            "overall_conversion_rate": overall_conversion_rate,
+            "conversion_rate_delta_vs_overall": metrics["conversion_rate"] - overall_conversion_rate,
+            "association_only": True,
+            "interpretation_note": (
+                "Observed association only. The signal is not established as a "
+                "cause of any lifecycle outcome."
+            ),
+        })
+        by_signal[signal] = metrics
+    return {
+        "learning_version": SIGNAL_OUTCOME_LEARNING_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "association_note": (
+            "Historical lifecycle outcomes are descriptive associations with "
+            "persisted exact signals. They do not establish causation."
+        ),
+        "overall": overall,
+        "by_signal": by_signal,
+    }
+
+
+def _accumulate_metrics(leads: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    metrics = _new_metrics()
+    for lead in leads:
+        _accumulate(metrics, lead)
+    return metrics
 
 
 def revenue_attribution(db: Any) -> Dict[str, Any]:
