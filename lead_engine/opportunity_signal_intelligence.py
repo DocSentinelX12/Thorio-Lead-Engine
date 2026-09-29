@@ -50,8 +50,18 @@ def _triggers(lead: Mapping[str, Any]) -> list[str]:
     broadening = lead.get("commercial_signal_broadening")
     matches = broadening.get("matches") if isinstance(broadening, Mapping) else []
     if isinstance(matches, list):
+        structural_categories = {
+            "funding_execution",
+            "product_event",
+            "enterprise_event",
+            "market_expansion",
+            "corporate_event",
+        }
         for item in matches:
             if not isinstance(item, Mapping):
+                continue
+            category = _normalize(item.get("category") or item.get("signal_id"))
+            if category in structural_categories:
                 continue
             attribution = _normalize(item.get("attribution"))
             temporal = _normalize(item.get("temporal_status"))
