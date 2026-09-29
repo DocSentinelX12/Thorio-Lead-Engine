@@ -26,7 +26,7 @@ TECHNICAL_CONTEXT_TERMS = ("software", "engineering", "developer", "developers",
 SPECULATIVE_MARKERS = ("might", "may", "could", "possibly", "potentially", "perhaps", "thinking about", "considering")
 NEGATION_MARKERS = ("not", "no", "never", "don't", "do not", "doesn't", "does not", "isn't", "is not", "wasn't", "was not", "without", "no longer", "stopped", "ended", "cancelled", "canceled", "decided against", "decided not to")
 HISTORICAL_MARKERS = ("last year", "previously", "historically", "years ago", "had announced", "was acquired", "were acquired", "previous announcement", "in 2020", "in 2021", "in 2022", "in 2023", "in 2024", "in 2025")
-FIRST_PERSON_MARKERS = ("we ", "we're", "we are", "our ", "us ", "i'm", "i am", "my ")
+FIRST_PERSON_MARKER_PATTERNS = (r"\bwe\b", r"\bwe're\b", r"\bwe are\b", r"\bour\b", r"\bus\b", r"\bi'm\b", r"\bi am\b", r"\bmy\b")
 
 
 def _text(value):
@@ -88,7 +88,7 @@ def _attribution(text, company, start, end):
     company_name = _normalize(company)
     if company_name and re.search(rf"(?<!\w){re.escape(company_name)}(?!\w)", window):
         return "company_named", True
-    if any(marker in window for marker in FIRST_PERSON_MARKERS):
+    if any(re.search(pattern, window) for pattern in FIRST_PERSON_MARKER_PATTERNS):
         return "first_person", True
     return "unattributed", False
 
