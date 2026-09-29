@@ -113,14 +113,27 @@ def learn_signal_outcomes(db: Any) -> Dict[str, Any]:
     """
     leads = [lead for lead in db.all_leads() if isinstance(lead, Mapping)]
     overall = _finalize(_accumulate_metrics(leads))
-    overall_conversion_rate = overall["conversion_rate"]
+    overall_opportunities = int(overall["opportunities"])
+    overall_converted = int(overall["converted"])
+    overall_conversion_rate = overall_converted / overall_opportunities if overall_opportunities else 0.0
     by_signal: Dict[str, Dict[str, Any]] = {}
     for signal, metrics in _trigger_groups(leads).items():
         metrics = dict(metrics)
+        signal_opportunities = int(metrics["opportunities"])
+        signal_converted = int(metrics["converted"])
+        # Compute the rate delta from the persisted integer counts directly.
+        # This avoids subtracting two independently rounded binary floats while
+        # preserving the exact mathematical ratio represented by the test data.
+        delta = (
+            (signal_converted * overall_opportunities - overall_converted * signal_opportunities)
+            / (signal_opportunities * overall_opportunities)
+            if signal_opportunities and overall_opportunities
+            else 0.0
+        )
         metrics.update({
-            "observations": metrics["opportunities"],
+            "observations": signal_opportunities,
             "overall_conversion_rate": overall_conversion_rate,
-            "conversion_rate_delta_vs_overall": metrics["conversion_rate"] - overall_conversion_rate,
+            "conversion_rate_delta_vs_overall": delta,
             "association_only": True,
             "interpretation_note": (
                 "Observed association only. The signal is not established as a "
