@@ -136,3 +136,48 @@ def test_advancement_stops_on_terminal_rejection():
     assert result["advance_allowed"] is False
     assert result["mode"] == "stop"
     assert result["allowed_persuasion"] == "none"
+
+
+def test_reengagement_advancement_ignores_stale_historical_qualification():
+    from .buyer_intent_advancement import build_buyer_intent_advancement
+
+    progression = {
+        "current_state": "evaluation",
+        "known_qualification": {
+            "decision_process": {
+                "value": "CTO approval",
+                "evidence_ref": "evt-old",
+                "event_index": 0,
+            },
+            "timing": {
+                "value": "next quarter",
+                "evidence_ref": "evt-old",
+                "event_index": 0,
+            },
+        },
+        "active_qualification": {},
+        "missing_qualification": {
+            "dimension": "decision_process",
+            "required": True,
+        },
+        "next_best_action": "map_evaluation_process",
+        "next_best_question": "What criteria, people, and approval steps will determine whether you move forward?",
+        "history": [
+            {
+                "current_state": "evaluation",
+                "evidence_ref": "evt-new-eval",
+                "evidence_text": "We are comparing providers again.",
+                "event_index": 2,
+            }
+        ],
+        "reengagement_reconciliation": {
+            "status": "reopened",
+            "prior_state": "evaluation",
+            "evidence_ref": "evt-reengage",
+        },
+    }
+
+    result = build_buyer_intent_advancement(progression)
+    assert result["advance_allowed"] is False
+    assert result["missing_evidence"] == ["decision_process"]
+    assert result["known_qualification"] == {}
