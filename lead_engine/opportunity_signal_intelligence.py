@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
+from urllib.parse import urlparse
 
 
 WINDOW_SECONDS = 30 * 24 * 60 * 60
@@ -33,9 +34,15 @@ def _timestamp(lead: Mapping[str, Any]) -> float | None:
 
 
 def _entity_key(lead: Mapping[str, Any]) -> str:
-    domain = _normalize(lead.get("company_website") or lead.get("domain") or "")
-    if domain:
-        return f"domain:{domain.removeprefix('https://').removeprefix('http://').rstrip('/')}"
+    raw_domain = _text(lead.get("company_website") or lead.get("domain"))
+    if raw_domain:
+        candidate = raw_domain if "://" in raw_domain else f"https://{raw_domain}"
+        parsed = urlparse(candidate)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+        if hostname:
+            return f"domain:{hostname}"
     company = _normalize(lead.get("company"))
     return f"company:{company}" if company else ""
 
@@ -139,12 +146,13 @@ def detect_compound_opportunities(
         raise ValueError("window_seconds must be a non-negative integer.")
 
     grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    now = datetime.now(timezone.utc).timestamp()
     for lead in leads:
         if not isinstance(lead, Mapping):
             continue
         key = _entity_key(lead)
         timestamp = _timestamp(lead)
-        if key and timestamp is not None:
+        if key and timestamp is not None and timestamp <= now:
             grouped[key].append(lead)
 
     clusters: list[Dict[str, Any]] = []
@@ -259,7 +267,6 @@ def detect_compound_opportunities(
                 ],
             })
 
-    # Keep the strongest corroboration for a given opportunity/source/trigger set.
     unique: dict[tuple, Dict[str, Any]] = {}
     for cluster in clusters:
         key = (
