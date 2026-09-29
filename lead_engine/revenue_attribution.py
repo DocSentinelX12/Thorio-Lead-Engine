@@ -1,16 +1,12 @@
-"""Evidence-grounded revenue attribution by discovery source and collected signal.
-
-This module derives attribution from durable Lead records. It does not create a
-second identity system, infer causality, or promote unverified text into a
-commercial trigger. Commercial trigger attribution uses only the exact
-signal_matches captured by the collection layer.
-"""
+"""Evidence-grounded revenue attribution by discovery source and collected signal."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
-ATTRIBUTION_VERSION = "1"
+from .opportunity_signal_intelligence import detect_compound_opportunities
+
+ATTRIBUTION_VERSION = "2"
 
 _COUNTERS = (
     "opportunities",
@@ -81,10 +77,7 @@ def _accumulate(metrics: Dict[str, Any], lead: Mapping[str, Any]) -> None:
             metrics[key] += 1
 
 
-def _group_by(
-    leads: Iterable[Mapping[str, Any]],
-    value_getter,
-) -> Dict[str, Dict[str, Any]]:
+def _group_by(leads: Iterable[Mapping[str, Any]], value_getter) -> Dict[str, Dict[str, Any]]:
     groups: Dict[str, Dict[str, Any]] = {}
     for lead in leads:
         key = _bucket(value_getter(lead))
@@ -111,8 +104,9 @@ def _trigger_groups(leads: Iterable[Mapping[str, Any]]) -> Dict[str, Dict[str, A
 
 
 def revenue_attribution(db: Any) -> Dict[str, Any]:
-    """Return durable source and signal attribution without causal inference."""
+    """Return observed revenue attribution and analytical compound clusters."""
     leads = [lead for lead in db.all_leads() if isinstance(lead, Mapping)]
+    compound = detect_compound_opportunities(leads)
     return {
         "attribution_version": ATTRIBUTION_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -124,8 +118,13 @@ def revenue_attribution(db: Any) -> Dict[str, Any]:
             "Commercial trigger groups are multi-attributed. One opportunity "
             "with multiple exact signal_matches contributes to each matching trigger."
         ),
+        "compound_opportunity_note": (
+            "Compound clusters are analytical corroboration only. They do not "
+            "merge opportunities or establish that one signal caused another."
+        ),
         "total_opportunities": len(leads),
         "by_source": _group_by(leads, lambda lead: lead.get("source")),
         "by_signal_type": _group_by(leads, lambda lead: lead.get("signal_type")),
         "by_commercial_trigger": _trigger_groups(leads),
+        "compound_opportunities": compound,
     }
