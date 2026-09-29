@@ -119,6 +119,11 @@ def _near(text, start, markers, radius):
     return next((marker for marker in markers if marker in window), "")
 
 
+def _sentence_has_marker(text, start, end, markers):
+    sentence = _normalize(_sentence_context(text, start, end))
+    return next((marker for marker in markers if marker in sentence), "")
+
+
 def _attribution(text, company, start, end):
     window = _normalize(_sentence_context(text, start, end))
     company_name = _normalize(company)
@@ -141,9 +146,9 @@ def extract_broadened_signals(text, *, company=""):
     def add(category, phrase, indirect):
         for found in re.finditer(re.escape(phrase), raw, flags=re.IGNORECASE):
             attribution, attributed = _attribution(raw, company, found.start(), found.end())
-            speculative = bool(_near(raw, found.start(), SPECULATIVE_MARKERS, 100))
-            historical = bool(_near(raw, found.start(), HISTORICAL_MARKERS, 150))
-            negated = bool(_near(raw, found.start(), NEGATION_MARKERS, 45))
+            speculative = bool(_sentence_has_marker(raw, found.start(), found.end(), SPECULATIVE_MARKERS))
+            historical = bool(_sentence_has_marker(raw, found.start(), found.end(), HISTORICAL_MARKERS))
+            negated = bool(_sentence_has_marker(raw, found.start(), found.end(), NEGATION_MARKERS))
             technical_context = _normalize(_sentence_context(raw, found.start(), found.end()))
             technical = any(term in technical_context for term in TECHNICAL_CONTEXT_TERMS)
             certainty = "speculative" if speculative else ("exploratory" if indirect else "observed")
