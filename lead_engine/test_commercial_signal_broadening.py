@@ -50,6 +50,17 @@ def test_unattributed_indirect_signal_is_preserved_but_not_promoted():
     assert "unattributed_signal_preserved_not_promoted" in result["safety_reasons"]
 
 
+def test_safety_markers_require_word_boundaries():
+    negation = extract_broadened_signals("We are evaluating vendors for our known software platform.", company="Acme")
+    assert negation["matches"][0]["negated"] is False
+    assert negation["matches"][0]["promotion_eligible"] is True
+
+    month = extract_broadened_signals("In May 2026, we are evaluating vendors for our software platform.", company="Acme")
+    assert month["matches"][0]["certainty"] == "exploratory"
+    assert month["matches"][0]["temporal_status"] == "current_or_unspecified"
+    assert month["matches"][0]["promotion_eligible"] is True
+
+
 def test_speculative_indirect_signal_is_preserved_but_not_promoted():
     result = extract_broadened_signals("We might be evaluating vendors for our AI platform.", company="Acme")
     assert len(result["matches"]) == 1
