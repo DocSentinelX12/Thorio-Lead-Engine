@@ -159,6 +159,7 @@ def extract_broadened_signals(text, *, company=""):
                 "category": category,
                 "phrase": found.group(0),
                 "evidence_context": _context(raw, found.start(), found.end()),
+                "__dedupe_context": _sentence_context(raw, found.start(), found.end()),
                 "attribution": attribution,
                 "temporal_status": temporal,
                 "certainty": certainty,
@@ -175,9 +176,14 @@ def extract_broadened_signals(text, *, company=""):
     deduped = []
     seen = set()
     for item in matches:
-        key = (item["signal_id"], _normalize(item["phrase"]), item["evidence_context"])
+        key = (
+            item["signal_id"],
+            _normalize(item["phrase"]),
+            _normalize(item["__dedupe_context"]),
+        )
         if key not in seen:
             seen.add(key)
+            item.pop("__dedupe_context", None)
             deduped.append(item)
 
     eligible = [item for item in deduped if item["promotion_eligible"]]
