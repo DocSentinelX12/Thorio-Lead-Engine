@@ -153,6 +153,40 @@ def test_structural_event_is_extracted_without_becoming_direct_intent():
     assert "structural_event_requires_current_need_or_corroboration" in result["safety_reasons"]
 
 
+def test_record_extraction_does_not_borrow_technical_context_from_job_title():
+    from .commercial_signal_broadening import extract_broadened_signals_from_record
+
+    result = extract_broadened_signals_from_record({
+        "company": "Acme",
+        "signal": "Company update",
+        "evidence": "We are exploring options.",
+        "job_title": "Senior Software Engineer",
+    })
+
+    assert len(result["matches"]) == 1
+    match = result["matches"][0]
+    assert match["source_field"] == "evidence"
+    assert match["technical_context"] is False
+    assert match["promotion_eligible"] is False
+
+
+def test_record_extraction_preserves_field_provenance_for_technical_signal():
+    from .commercial_signal_broadening import extract_broadened_signals_from_record
+
+    result = extract_broadened_signals_from_record({
+        "company": "Acme",
+        "signal": "We are evaluating vendors for our software platform.",
+        "evidence": "Founder update.",
+        "job_title": "Senior Software Engineer",
+    })
+
+    assert len(result["matches"]) == 1
+    match = result["matches"][0]
+    assert match["source_field"] == "signal"
+    assert match["technical_context"] is True
+    assert match["promotion_eligible"] is True
+
+
 def test_collector_carries_broadened_signal_contract_without_replacing_existing_signal_type():
     lead = {
         "source": "linkedin_signal",
