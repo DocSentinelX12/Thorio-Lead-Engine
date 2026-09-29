@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-from .collector import validate_lead_input
+from .collector import apply_commercial_signal_intelligence, validate_lead_input
 from .database import LeadDB
 from .dedupe import Dedupe
 from .enrichment import enrich_lead
@@ -180,6 +180,26 @@ class LeadPipeline:
             }
         )
 
+        commercial_record = dict(extra_fields)
+        commercial_record.update({
+            "source": source,
+            "source_id": source_id,
+            "url": url,
+            "company": company,
+            "signal": signal,
+            "evidence": evidence,
+        })
+        apply_commercial_signal_intelligence(commercial_record)
+        for field in (
+            "signal_type",
+            "signal_strength",
+            "signal_matches",
+            "signal_context",
+            "commercial_signal_broadening",
+        ):
+            if field in commercial_record:
+                extra_fields[field] = commercial_record[field]
+
         recommended_route = route(
             company=company,
             signal=signal,
@@ -212,6 +232,10 @@ class LeadPipeline:
         )
 
         lead.ensure_timestamp()
+        if isinstance(lead.commercial_signal_broadening, dict):
+            provenance = lead.commercial_signal_broadening.get("provenance")
+            if isinstance(provenance, dict) and not str(provenance.get("observed_at") or "").strip():
+                provenance["observed_at"] = lead.discovered_at
 
         payload = lead.to_dict()
 
