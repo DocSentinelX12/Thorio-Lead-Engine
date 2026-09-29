@@ -22,6 +22,14 @@ MAX_TEXT = 12_000
 MIN_DOMAIN_DELAY = 1.0
 MAX_PAGES = 6
 
+_RESEARCH_FOCUS_PATHS = {
+    "business_need_research": ("about", "company", "product"),
+    "current_intent_research": ("careers", "jobs", "product"),
+    "technical_product_hiring_research": ("product", "careers", "jobs"),
+    "commercial_research": ("pricing", "enterprise", "contact", "about"),
+    "route_research": ("services", "solutions", "product", "contact", "careers", "jobs"),
+}
+
 _LOCK = threading.Lock()
 _LAST_REQUEST: dict[str, float] = defaultdict(float)
 _ROBOTS_CACHE: dict[str, tuple[float, RobotFileParser | None, str]] = {}
@@ -171,6 +179,25 @@ def _fetch(url: str) -> Dict[str, Any]:
         return base
 
 
+def _research_focus_sections(lead: Mapping[str, Any]) -> list[str]:
+    raw = lead.get("research_focus") or lead.get("next_evidence_to_find")
+    if isinstance(raw, Mapping):
+        targets = raw.get("targets", [])
+        if isinstance(targets, list):
+            return list(dict.fromkeys(
+                str(item.get("research_section") or "").strip()
+                for item in targets
+                if isinstance(item, Mapping) and str(item.get("research_section") or "").strip()
+            ))
+    if isinstance(raw, list):
+        return list(dict.fromkeys(
+            str(item.get("research_section") or "").strip()
+            for item in raw
+            if isinstance(item, Mapping) and str(item.get("research_section") or "").strip()
+        ))
+    return []
+
+
 def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
     verified_company_urls = [lead.get("website"), lead.get("company_url")]
     company_domains: set[str] = set()
@@ -210,7 +237,16 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
                 return ordered
             continue
         base = root.rstrip("/") + "/"
-        paths = ["", "about", "company", "team", "product", "careers", "jobs"] if root.endswith("/") else [""]
+        if root.endswith("/"):
+            default_paths = ["", "about", "company", "team", "product", "careers", "jobs"]
+            focus_paths = []
+            for section in _research_focus_sections(lead):
+                for path in _RESEARCH_FOCUS_PATHS.get(section, ()):
+                    if path not in focus_paths:
+                        focus_paths.append(path)
+            paths = [""] + focus_paths + [path for path in default_paths if path not in focus_paths]
+        else:
+            paths = [""]
         for path in paths:
             candidate = urljoin(base, path)
             if candidate not in seen:
