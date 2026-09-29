@@ -1166,7 +1166,7 @@ class FreeJobSource:
                 surrounding,
             )
 
-            commercial_matches = self._commercial_signal_matches(combined)
+            commercial_matches = self._commercial_signal_matches(context)
             if self._looks_like_job_url(url):
                 evidence = (
                     "Job listing link discovered from "
