@@ -89,7 +89,7 @@ def test_no_longer_indirect_signal_is_preserved_but_not_promoted():
 
 
 def test_company_name_requires_word_boundaries():
-    result = extract_broadened_signals("The team is evaluating vendors for its AI platform.", company="AI")
+    result = extract_broadened_signals("The team is evaluating vendors for its maintainable platform.", company="AI")
     assert result["matches"][0]["attribution"] == "unattributed"
     assert result["matches"][0]["promotion_eligible"] is False
 
