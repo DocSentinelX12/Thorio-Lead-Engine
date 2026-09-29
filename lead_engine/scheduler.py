@@ -161,6 +161,16 @@ class LeadScheduler:
             "failed_count": int(result.get("failed_count", 0) or 0),
         }
 
+    def _record_source_metrics(self, source: LeadSource, result: Dict[str, Any]) -> Dict[str, Any] | None:
+        db = getattr(getattr(self.runner, "pipeline", None), "db", None)
+        if not isinstance(db, LeadDB):
+            return None
+        return record_source_collection_metrics(
+            db,
+            source.name,
+            self._source_collection_metrics_input(result),
+        )
+
     def _agent_batch_limit(self) -> int:
         return max(role.max_concurrency for role in ALL_AGENT_ROLES)
 
@@ -187,7 +197,7 @@ class LeadScheduler:
                 failed_count = int(result.get("failed_count", 0) or 0)
                 if failed_count != 0:
                     result["checkpoint"] = previous_checkpoint
-                source_metrics = record_source_collection_metrics(self.runner.pipeline.db, source.name, self._source_collection_metrics_input(result))
+                source_metrics = self._record_source_metrics(source, result)
                 result["source_collection_metrics"] = source_metrics
                 results.append({"source": source.name, "result": result})
                 self._schedule_next_run(source, started_at, started_wall)
