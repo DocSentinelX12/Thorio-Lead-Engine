@@ -106,6 +106,39 @@ def test_negated_indirect_signal_is_preserved_but_not_promoted():
     assert "negated_signal_preserved_not_promoted" in result["safety_reasons"]
 
 
+def test_unrelated_technical_sentence_does_not_supply_context_for_indirect_signal():
+    result = extract_broadened_signals(
+        "We are evaluating vendors. Our company builds software.",
+        company="Acme",
+    )
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["technical_context"] is False
+    assert result["promotion_eligible"] is False
+
+
+def test_technical_context_in_same_sentence_remains_eligible():
+    result = extract_broadened_signals(
+        "We are evaluating vendors for our software platform. Our hiring plan is unchanged.",
+        company="Acme",
+    )
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["technical_context"] is True
+    assert result["promotion_eligible"] is True
+
+
+def test_attribution_does_not_cross_unrelated_sentences():
+    result = extract_broadened_signals(
+        "Acme builds software. Industry teams are evaluating vendors.",
+        company="Acme",
+    )
+
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["attribution"] == "unattributed"
+    assert result["matches"][0]["promotion_eligible"] is False
+
+
 def test_structural_event_is_extracted_without_becoming_direct_intent():
     result = extract_broadened_signals(
         "Acme raised Series A and launched a new product for its software platform.",
