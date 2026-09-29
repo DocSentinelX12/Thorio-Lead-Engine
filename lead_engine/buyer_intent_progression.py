@@ -427,13 +427,11 @@ def build_buyer_intent_progression(lead: Mapping[str, Any]) -> dict[str, Any]:
             current = candidate
             active_terminal = True
         elif candidate == "re_engagement":
-            if active_terminal:
-                transition_type = "reengaged"
-                current = "re_engagement"
-                active_terminal = False
-            else:
-                transition_type = "observed"
-                current = "re_engagement"
+            # Explicit renewed interest is a re-entry event whenever a prior
+            # buyer state exists, not only when reopening a terminal state.
+            transition_type = "reengaged" if reengagement_record and current != "unknown" else "observed"
+            current = "re_engagement"
+            active_terminal = False
         elif candidate in NON_LINEAR_STATES:
             transition_type = "interrupted" if current != candidate else "confirmed"
             current = candidate
