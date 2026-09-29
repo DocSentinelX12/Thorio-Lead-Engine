@@ -120,6 +120,11 @@ def _structural_events(lead: Mapping[str, Any]) -> list[Dict[str, Any]]:
             "observed_at": observed_at,
             "opportunity_id": _text(lead.get("opportunity_id") or lead.get("fingerprint")),
             "source": _text(lead.get("source")),
+            "evidence_context": _text(item.get("evidence_context")),
+            "attribution": _text(item.get("attribution")),
+            "temporal_status": _text(item.get("temporal_status")),
+            "certainty": _text(item.get("certainty")),
+            "negated": item.get("negated") is True,
         })
     return events
 
@@ -237,7 +242,17 @@ def detect_compound_opportunities(
                     {
                         "opportunity_id": _text(item.get("opportunity_id") or item.get("fingerprint")),
                         "source": _text(item.get("source")),
+                        "url": _text(item.get("url")),
                         "signal_matches": _triggers(item),
+                        "commercial_signal_broadening_matches": [
+                            dict(match)
+                            for match in (
+                                item.get("commercial_signal_broadening", {}).get("matches", [])
+                                if isinstance(item.get("commercial_signal_broadening"), Mapping)
+                                else []
+                            )
+                            if isinstance(match, Mapping)
+                        ],
                         "discovered_at": _text(item.get("discovered_at") or item.get("observed_at")),
                     }
                     for item in members
