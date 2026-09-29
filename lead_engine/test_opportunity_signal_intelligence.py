@@ -18,7 +18,6 @@ def test_compound_detection_requires_distinct_sources_and_exact_triggers():
         _lead("a", source="Source A", matches=["Need AI integration"]),
         _lead("b", source="Source B", when="2026-09-29T00:00:00+00:00", matches=["Looking for a development partner"]),
     ])
-
     assert result["cluster_count"] == 1
     cluster = result["clusters"][0]
     assert cluster["opportunity_ids"] == ["a", "b"]
@@ -44,6 +43,14 @@ def test_compound_detection_rejects_single_source_or_single_trigger():
     assert result["cluster_count"] == 0
 
 
+def test_compound_detection_ignores_future_observations():
+    result = detect_compound_opportunities([
+        _lead("a", source="Source A", matches=["Need AI integration"]),
+        _lead("future", source="Source B", when="2099-01-01T00:00:00+00:00", matches=["Need MVP"]),
+    ])
+    assert result["cluster_count"] == 0
+
+
 def test_compound_detection_respects_time_window():
     result = detect_compound_opportunities([
         _lead("a", source="Source A", when="2026-01-01T00:00:00+00:00", matches=["Need AI integration"]),
@@ -54,20 +61,10 @@ def test_compound_detection_respects_time_window():
 
 def test_compound_detection_preserves_repeated_hiring_as_structural_evidence():
     first = _lead("a", source="LinkedIn", matches=[])
-    first.update({
-        "signal_type": "hiring",
-        "job_title": "Senior Software Engineer",
-        "evidence": "Acme is hiring a Senior Software Engineer.",
-    })
+    first.update({"signal_type": "hiring", "job_title": "Senior Software Engineer", "evidence": "Acme is hiring a Senior Software Engineer."})
     second = _lead("b", source="Company Careers", when="2026-09-29T00:00:00+00:00", matches=["Need AI integration"])
-    second.update({
-        "signal_type": "hiring",
-        "job_title": "AI Engineer",
-        "evidence": "Acme is hiring an AI Engineer.",
-    })
-
+    second.update({"signal_type": "hiring", "job_title": "AI Engineer", "evidence": "Acme is hiring an AI Engineer."})
     result = detect_compound_opportunities([first, second])
-
     assert result["cluster_count"] == 1
     assert "repeated_hiring_activity" in result["clusters"][0]["commercial_triggers"]
     assert "need ai integration" in result["clusters"][0]["commercial_triggers"]
@@ -78,15 +75,13 @@ def test_repeated_hiring_alone_does_not_create_commercial_cluster():
     first.update({"signal_type": "hiring", "job_title": "Software Engineer"})
     second = _lead("b", source="Company Careers", when="2026-09-29T00:00:00+00:00", matches=[])
     second.update({"signal_type": "hiring", "job_title": "AI Engineer"})
-
     result = detect_compound_opportunities([first, second])
-
     assert result["cluster_count"] == 0
 
 
 def test_compound_detection_uses_company_domain_when_available():
     first = _lead("a", source="Source A", company="Acme One", matches=["Need AI integration"])
-    first["company_website"] = "https://acme.example"
+    first["company_website"] = "https://www.acme.example/products"
     second = _lead("b", source="Source B", company="Different Display Name", when="2026-09-29T00:00:00+00:00", matches=["Need MVP"])
     second["company_website"] = "acme.example"
     result = detect_compound_opportunities([first, second])
@@ -122,20 +117,10 @@ def test_compound_detection_ignores_unsafe_broadened_signals():
 def test_compound_cluster_preserves_exact_broadened_evidence_and_provenance():
     first = _lead("a", source="Source A", matches=["Need AI integration"])
     first["url"] = "https://example.com/a"
-    first["commercial_signal_broadening"] = {
-        "matches": [{
-            "phrase": "evaluating vendors",
-            "evidence_context": "Founder post: We are evaluating vendors for our AI platform.",
-            "attribution": "first_person",
-            "temporal_status": "current_or_unspecified",
-            "certainty": "exploratory",
-            "negated": False,
-        }]
-    }
+    first["commercial_signal_broadening"] = {"matches": [{"phrase": "evaluating vendors", "evidence_context": "Founder post: We are evaluating vendors for our AI platform.", "attribution": "first_person", "temporal_status": "current_or_unspecified", "certainty": "exploratory", "negated": False}]}
     second = _lead("b", source="Source B", when="2026-09-29T00:00:00+00:00", matches=["Need MVP"])
     second["url"] = "https://example.com/b"
     second["commercial_signal_broadening"] = {"matches": [{"phrase": "planning a rebuild", "evidence_context": "Engineering update: We are planning a rebuild of the platform.", "attribution": "company_named", "temporal_status": "current_or_unspecified", "certainty": "exploratory", "negated": False}]}
-
     cluster = detect_compound_opportunities([first, second])["clusters"][0]
     evidence = {item["opportunity_id"]: item for item in cluster["evidence"]}
     assert evidence["a"]["url"] == "https://example.com/a"
