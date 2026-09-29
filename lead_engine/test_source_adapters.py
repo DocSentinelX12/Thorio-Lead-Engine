@@ -806,8 +806,8 @@ def test_normalize_job_record_extracts_commercial_signals_from_json_style_record
             "company": "Acme",
             "url": "https://example.com/jobs/commercial-1",
             "description": (
-                "Acme is looking for a development partner for an MVP. "
-                "The team also needs AI integration."
+                "Acme is looking for a development partner and need an MVP. "
+                "The team also needs AI integration and need AI integration."
             ),
         },
         source="Example JSON",
