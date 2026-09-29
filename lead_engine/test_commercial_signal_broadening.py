@@ -153,6 +153,40 @@ def test_structural_event_is_extracted_without_becoming_direct_intent():
     assert "structural_event_requires_current_need_or_corroboration" in result["safety_reasons"]
 
 
+def test_speculation_after_signal_blocks_promotion():
+    result = extract_broadened_signals(
+        "We are evaluating vendors, but we could decide to build it ourselves.",
+        company="We",
+    )
+
+    match = result["matches"][0]
+    assert match["certainty"] == "speculative"
+    assert match["promotion_eligible"] is False
+
+
+def test_negation_after_signal_blocks_promotion():
+    result = extract_broadened_signals(
+        "We are evaluating vendors, but this is not something we need.",
+        company="We",
+    )
+
+    match = result["matches"][0]
+    assert match["negated"] is True
+    assert match["promotion_eligible"] is False
+
+
+def test_safety_marker_in_prior_sentence_does_not_contaminate_signal():
+    result = extract_broadened_signals(
+        "We could evaluate vendors someday. We are evaluating vendors for our AI platform.",
+        company="We",
+    )
+
+    match = result["matches"][1]
+    assert match["certainty"] == "exploratory"
+    assert match["negated"] is False
+    assert match["promotion_eligible"] is True
+
+
 def test_record_extraction_does_not_borrow_technical_context_from_job_title():
     from .commercial_signal_broadening import extract_broadened_signals_from_record
 
