@@ -105,7 +105,6 @@ def _explicit_reengagement(text: str) -> bool:
             "reengage",
             "reconsidering",
             "considering this again",
-            "reconsidering",
             "our situation changed",
             "our needs changed",
             "things have changed",
