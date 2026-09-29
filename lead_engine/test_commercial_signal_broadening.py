@@ -96,7 +96,9 @@ def test_collector_carries_broadened_signal_contract_without_replacing_existing_
 
     result = normalize_lead_input(lead)
 
-    assert result["signal_type"] == "business_intent"
+    assert result["signal_type"] == "commercial_intent"
+    assert result["signal_strength"] == "explicit"
+    assert result["signal_matches"] == ["evaluating vendors"]
     assert result["commercial_signal_broadening"]["promotion_eligible"] is True
     assert result["commercial_signal_broadening"]["matches"][0]["phrase"].lower() == "evaluating vendors"
 
