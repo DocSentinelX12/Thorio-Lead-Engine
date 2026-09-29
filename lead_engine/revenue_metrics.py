@@ -4,9 +4,10 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from .agent_queue import pending
+from .revenue_attribution import revenue_attribution
 
 
-def collect_revenue_metrics(db: Any) -> Dict[str, int]:
+def collect_revenue_metrics(db: Any) -> Dict[str, Any]:
     leads = db.all_leads()
     queue = pending(db)
     revenue_state = db.get_state("revenue_execution") or {}
@@ -51,4 +52,5 @@ def collect_revenue_metrics(db: Any) -> Dict[str, int]:
         "closed_lost": sum(1 for lead in leads if str(lead.get("revenue_lifecycle_state") or "").lower() == "closed_lost"),
         "disqualified": sum(1 for lead in leads if str(lead.get("revenue_lifecycle_state") or "").lower() == "disqualified"),
         "orphaned_qualified": orphaned,
+        "attribution": revenue_attribution(db),
     }
