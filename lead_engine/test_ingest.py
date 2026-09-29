@@ -92,3 +92,26 @@ def test_ingestor_handles_multiple_leads(tmp_path):
     assert all(result["accepted"] is True for result in results)
     assert db.stats()[0] == 2
     assert mock_sync.call_count == 2
+
+
+def test_ingestor_preserves_canonical_commercial_signal_fields(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db, sync_enabled=False)
+    ingestor = LeadIngestor(pipeline)
+
+    result = ingestor.ingest_one(
+        {
+            "source": "linkedin",
+            "source_id": "ingest-broadening-001",
+            "url": "https://example.com/posts/ingest-broadening-001",
+            "company": "Acme",
+            "signal": "Founder update",
+            "evidence": "We are evaluating vendors for our AI platform.",
+        }
+    )
+
+    lead = result["lead"]
+    assert lead["signal_type"] == "commercial_intent"
+    assert lead["signal_matches"] == ["evaluating vendors"]
+    assert lead["commercial_signal_broadening"]["promotion_eligible"] is True
+
