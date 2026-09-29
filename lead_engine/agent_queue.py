@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping
 from uuid import uuid4
 
 from .agent_registry import agent_registry
+from .next_evidence_intelligence import build_next_evidence_plan
 
 STATE_KEY = "agent_work_queue"
 QUEUED = "queued"
@@ -54,6 +55,23 @@ def _validate_task_authorization(agent: str, payload: Mapping[str, Any]) -> None
     return None
 
 
+def _research_target_payload(db, agent: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Attach the current evidence-search plan to durable company-research tasks."""
+    if agent != "company_research":
+        return dict(payload)
+    updated = dict(payload)
+    lead = updated.get("lead", updated)
+    if not isinstance(lead, Mapping):
+        return updated
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    authoritative = db.get(fingerprint) if fingerprint and hasattr(db, "get") else None
+    source = authoritative if isinstance(authoritative, Mapping) else lead
+    supplied = updated.get("next_evidence_to_find")
+    plan = dict(supplied) if isinstance(supplied, Mapping) else build_next_evidence_plan(source)
+    updated["next_evidence_to_find"] = plan
+    return updated
+
+
 def _verification_stage(payload: Mapping[str, Any]) -> str:
     """Return the qualification state that a verification task is evaluating.
 
@@ -96,7 +114,7 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
             rows = []
             for specification in tasks:
                 agent = specification.get("agent")
-                payload = specification.get("payload")
+                payload = _research_target_payload(db, str(agent), specification.get("payload"))
                 priority = specification.get("priority", 0)
                 dedupe_key = specification.get("dedupe_key")
                 duplicate_row = db.queue_find_duplicate(agent, dedupe_key) if dedupe_key else None
@@ -141,7 +159,7 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
 
     state = _load(db); existing_items = state["items"]; now = _iso(_now()); created = []
     for specification in tasks:
-        agent = specification.get("agent"); payload = specification.get("payload"); priority = specification.get("priority", 0); dedupe_key = specification.get("dedupe_key")
+        agent = specification.get("agent"); payload = _research_target_payload(db, str(agent), specification.get("payload")); priority = specification.get("priority", 0); dedupe_key = specification.get("dedupe_key")
         if dedupe_key:
             duplicate = next((existing for existing in existing_items.values() if existing.get("agent") == agent and existing.get("dedupe_key") == dedupe_key and existing.get("status") in {QUEUED, RUNNING}), None)
             if duplicate is not None:
