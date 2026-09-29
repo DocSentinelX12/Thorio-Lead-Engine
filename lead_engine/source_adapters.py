@@ -17,6 +17,7 @@ from urllib.request import Request
 from xml.etree import ElementTree
 
 from .http_retry import HTTPRetryError, fetch_url
+from .free_sources import HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS
 from .source_definition import SourceDefinition
 
 
@@ -443,6 +444,32 @@ def _next_checkpoint(
     return None
 
 
+def _commercial_signal_matches(text: str) -> List[str]:
+    """Return exact configured commercial triggers observed in normalized source text."""
+    normalized = " ".join(_text(text).lower().split())
+    return [
+        term
+        for term in HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS
+        if term in normalized
+    ]
+
+
+def _commercial_signal_context(text: str, matches: List[str]) -> List[str]:
+    """Preserve bounded observed context around each exact trigger without inventing claims."""
+    normalized = _text(text)
+    contexts: List[str] = []
+    for term in matches:
+        match = re.search(re.escape(term), normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        start = max(0, match.start() - 180)
+        end = min(len(normalized), match.end() + 180)
+        context = " ".join(normalized[start:end].split())
+        if context and context not in contexts:
+            contexts.append(context)
+    return contexts
+
+
 def normalize_job_record(
     item: Dict[str, Any],
     *,
@@ -615,17 +642,36 @@ def normalize_job_record(
             f"Location: {location}"
         )
 
-    return {
+    signal = " | ".join(signal_parts)
+    evidence = "\n".join(evidence_parts)
+    commercial_matches = _commercial_signal_matches(
+        " ".join((signal, evidence))
+    )
+
+    record = {
         "source": source,
         "source_id": source_id,
         "url": url,
         "company": company,
-        "signal": " | ".join(signal_parts),
-        "evidence": "\n".join(evidence_parts),
+        "signal": signal,
+        "evidence": evidence,
         "signal_type": "hiring",
         "source_url": source_url,
         "job_title": title,
     }
+
+    if commercial_matches:
+        record["signal_type"] = "commercial_intent"
+        record["signal_strength"] = (
+            "compound" if len(commercial_matches) >= 2 else "explicit"
+        )
+        record["signal_matches"] = commercial_matches
+        record["signal_context"] = _commercial_signal_context(
+            " ".join((signal, evidence)),
+            commercial_matches,
+        )
+
+    return record
 
 
 class JsonSourceAdapter:
