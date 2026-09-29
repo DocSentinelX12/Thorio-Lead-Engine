@@ -22,6 +22,19 @@ def _lead(source_id, company="Integration Corp", person="Alex"):
     }
 
 
+def _scheduler_lead(source_id, company="Integration Scheduler Corp"):
+    """A scheduler-path fixture with no specialist fan-out dependency."""
+    return {
+        "source": "integration",
+        "source_id": source_id,
+        "url": f"https://example.com/{source_id}",
+        "company": company,
+        "person": "Alex",
+        "signal": "general company update",
+        "evidence": "Company published a general company update.",
+    }
+
+
 def test_production_path_processes_multiple_sources_and_preserves_isolation(tmp_path):
     config = LeadEngineConfig(database_dir=str(tmp_path / "database"), sync_enabled=False, batch_size=50)
     application = LeadEngineApplication(config=config)
@@ -58,7 +71,6 @@ def test_production_path_deduplicates_qualified_lead_only_at_finalization(tmp_pa
     qualified = application.service.runner.pipeline.qualify(first_fingerprint, qualified=True, business_need="hire a remote software engineer")
     assert qualified["qualified"] is True
 
-    # This is deliberately a fresh observation. Discovery must accept it.
     second = application.run_sources([StaticLeadSource([_lead("integration-qualified-2")])])
     assert second["results"][0]["result"]["accepted_count"] == 1
     assert second["results"][0]["result"]["duplicate_count"] == 0
@@ -147,7 +159,7 @@ def test_production_end_to_end_scheduled_path(tmp_path, monkeypatch):
     config = LeadEngineConfig(database_dir=str(tmp_path / "database"), sync_enabled=True, batch_size=50)
     monkeypatch.setattr("lead_engine.scheduler.sync_pending", lambda db, limit=50: {"synced": [{"status": "synced"}], "already_exists": [], "failed": [], "synced_count": 1, "already_exists_count": 0, "failed_count": 0})
     application = LeadEngineApplication(config=config)
-    source = StaticLeadSource([_lead("production-e2e-001", "Production E2E Corp")])
+    source = StaticLeadSource([_scheduler_lead("production-e2e-001", "Production E2E Corp")])
     from .runner import LeadEngineRunner
     from .scheduler import LeadScheduler
     scheduler = LeadScheduler(LeadEngineRunner(pipeline=application.service.runner.pipeline))
