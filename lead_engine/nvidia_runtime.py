@@ -221,7 +221,7 @@ class NvidiaRuntime:
                 bandwidth_lines.append(line)
                 continue
             latency_match = re.search(
-                r"^Latency\\s*\\[[^\\]]+\\]\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*$",
+                r"^Latency\s*\[[^\]]+\]\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*$",
                 line,
                 re.IGNORECASE,
             )
