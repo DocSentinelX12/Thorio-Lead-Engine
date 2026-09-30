@@ -11,6 +11,8 @@ import platform
 import re
 import socket
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, asdict, field
@@ -142,6 +144,59 @@ def local_worker_identity(worker_id: Optional[str] = None) -> WorkerIdentity:
     if acquisition_id:
         physical_fabric_evidence = dict(physical_fabric_evidence)
         physical_fabric_evidence["acquisition_id"] = acquisition_id
+        if not gpu_resources:
+            raise RuntimeError("external GPU acquisition cannot be enrolled without observed GPU resources")
+        execution_evidence = []
+        for gpu in gpu_resources:
+            environment = os.environ.copy()
+            environment["CUDA_VISIBLE_DEVICES"] = str(gpu.gpu_id).removeprefix("gpu-")
+            environment["THORIO_EXPECTED_GPU_UUID"] = str(gpu.gpu_uuid or "")
+            try:
+                probe = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "lead_engine.gpu_execution_probe",
+                        "--expected-gpu-uuid",
+                        str(gpu.gpu_uuid or ""),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                    timeout=60,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise RuntimeError(f"external GPU execution probe failed for {gpu.gpu_uuid}: {exc}") from exc
+            if probe.returncode != 0:
+                raise RuntimeError(
+                    f"external GPU execution probe failed for {gpu.gpu_uuid}: "
+                    f"{(probe.stderr or probe.stdout).strip()[-2000:]}"
+                )
+            marker = "THORIO_GPU_EXECUTION_PROBE_OK "
+            payload = next(
+                (line[len(marker):].strip() for line in probe.stdout.splitlines() if line.startswith(marker)),
+                "",
+            )
+            if not payload:
+                raise RuntimeError(f"external GPU execution probe returned no evidence for {gpu.gpu_uuid}")
+            try:
+                evidence = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"external GPU execution probe returned invalid evidence for {gpu.gpu_uuid}") from exc
+            if (
+                not isinstance(evidence, dict)
+                or evidence.get("verified") is not True
+                or str(evidence.get("execution_backend") or "").strip().lower() != "cuda"
+                or str(evidence.get("gpu_uuid") or "").strip() != str(gpu.gpu_uuid or "").strip()
+                or not str(evidence.get("operation") or "").strip()
+                or not isinstance(evidence.get("checksum"), (int, float))
+                or not isinstance(evidence.get("elapsed_ms"), (int, float))
+                or float(evidence.get("elapsed_ms", -1)) < 0
+            ):
+                raise RuntimeError(f"external GPU execution probe did not prove physical CUDA execution for {gpu.gpu_uuid}")
+            execution_evidence.append(evidence)
+        physical_fabric_evidence["physical_gpu_execution"] = execution_evidence
 
     return WorkerIdentity(
         capacity.node_id, socket.gethostname(), capacity.architecture,
