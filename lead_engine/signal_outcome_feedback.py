@@ -56,7 +56,7 @@ def build_signal_outcome_feedback(graph: Mapping[str, Any]) -> dict[str, Any]:
     outcomes = {str(node["id"]): node for node in _outcome_nodes(graph)}
     associations = [
         edge for edge in _edges_for(graph, edge_type="signal_observed_with_outcome")
-        if _text(edge.get("temporal_relation")) == "prior_or_same_time"
+        if _text(edge.get("temporal_relation")) in {"prior_or_same_time", "temporal_order_unknown"}
     ]
 
     by_signal: dict[str, dict[str, Any]] = {}
@@ -100,7 +100,7 @@ def build_signal_outcome_feedback(graph: Mapping[str, Any]) -> dict[str, Any]:
         )
         bucket["collection_priority"] = bucket["research_priority"]
         bucket["feedback_rule"] = (
-            "Historical prior-or-same-time co-occurrence only. Priority increases evidence "
+            "Historical co-occurrence only; known post-outcome signals are excluded, while unknown temporal order remains explicitly unknown. Priority increases evidence "
             "collection and research verification for recurring signals; it does not "
             "assert that the signal caused the outcome."
         )
