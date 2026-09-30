@@ -369,7 +369,7 @@ def build_unified_opportunity_signal_graph(
                 route=_text(item.get("route")),
                 channel=_text(item.get("channel")),
                 status=_text(item.get("status")),
-                kind=_text(item.get("kind")) or "outreach",
+                action_kind=_text(item.get("kind")) or "outreach",
                 provider_result=dict(item.get("provider_result") or {}) if isinstance(item.get("provider_result"), Mapping) else {},
             )
             nodes.setdefault(action_id, action_node)
@@ -405,7 +405,7 @@ def build_unified_opportunity_signal_graph(
                 event_key,
                 opportunity_id=opportunity_id,
                 outcome=outcome,
-                kind=_text(item.get("kind")),
+                outcome_kind=_text(item.get("kind")),
                 observed_at=_text(item.get("at") or item.get("observed_at")),
                 event_id=_text(item.get("event_id")),
                 action_id=_text(item.get("action_id")),
