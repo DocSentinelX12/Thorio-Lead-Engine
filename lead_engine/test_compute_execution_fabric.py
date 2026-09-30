@@ -40,6 +40,39 @@ def test_nccl_probe_evidence_builder_contains_only_observed_core_fields():
     }
 
 
+def test_active_gdrdma_measurement_parser_extracts_explicit_perftest_rows_and_latency():
+    output = """
+RDMA_Write BW Test
+---------------------------------------------------------------------------------------
+                    RDMA_Write BW Test
+ Dual-port       : OFF          Device         : mlx5_0
+ Number of qps   : 1            Transport type : IB
+ Connection type : RC           Using SRQ      : OFF
+ PCIe relax order: ON
+---------------------------------------------------------------------------------------
+ local address: LID 0x0000, QPN 0x0001, PSN 0x000001
+ remote address: LID 0x0000, QPN 0x0002, PSN 0x000002
+---------------------------------------------------------------------------------------
+ #bytes     #iterations    BW peak[Gb/sec]    BW average[Gb/sec]   MsgRate[Mpps]
+ 65536      1000           198.50             195.25               0.372
+Latency [usec] : 4.25
+"""
+    measurement = NvidiaRuntime._parse_active_gdrdma_measurement(output)
+    assert measurement["measurement_status"] == "measured"
+    assert measurement["bandwidth_gbps"] == 195.25
+    assert measurement["latency_us"] == 4.25
+    assert measurement["bandwidth_samples"] == (
+        {
+            "message_size_bytes": 65536,
+            "iterations": 1000,
+            "peak_bandwidth_gbps": 198.50,
+            "bandwidth_gbps": 195.25,
+            "message_rate_mpps": 0.372,
+        },
+    )
+    assert measurement["latency_samples_us"] == (4.25,)
+
+
 def test_nccl_network_evidence_records_only_explicit_remote_rank_edges():
     evidence = NvidiaRuntime.parse_nccl_network_evidence(
         """
