@@ -188,3 +188,39 @@ def test_configuration_rejects_paid_or_unknown_accelerator():
     with pytest.raises(ValueError, match="accelerator"):
         KaggleFreeComputeConfig(username="user", accelerator="A100-paid")
 
+
+
+def test_acquire_free_rejects_provider_run_that_does_not_reach_running_state():
+    status_calls = 0
+    commands: list[list[str]] = []
+
+    def runner(command, *, timeout, cwd=None):
+        nonlocal status_calls
+        commands.append(list(command))
+        if command[1:3] == ["quota", "--format"]:
+            payload = [{
+                "resource": "GPU",
+                "used": "10.00h",
+                "remaining": "20.00h",
+                "total": "30.00h",
+                "refreshAt": "2099-01-01T00:00:00+00:00",
+            }]
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[1:3] == ["kernels", "status"]:
+            status_calls += 1
+            if status_calls <= 2:
+                return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
+            return subprocess.CompletedProcess(command, 0, "Status: Error", "")
+        if command[1:3] == ["kernels", "push"]:
+            return subprocess.CompletedProcess(command, 0, "Kernel pushed", "")
+        if command[1:3] == ["kernels", "delete"]:
+            return subprocess.CompletedProcess(command, 0, "Deleted", "")
+        raise AssertionError(f"unexpected Kaggle command: {command}")
+
+    provider = _provider(runner)
+    offer = provider.discover_free()
+
+    with pytest.raises(KaggleFreeComputeError, match="did not reach running state"):
+        provider.acquire_free(offer[0])
+
+    assert any(command[1:3] == ["kernels", "delete"] for command in commands)
