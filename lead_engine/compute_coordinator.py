@@ -593,6 +593,7 @@ class ComputeCoordinator:
                     "nccl_version": identity.nccl_version,
                     "domain_id": identity.domain_id,
                     "physical_fabric_evidence": identity.physical_fabric_evidence,
+                    "physical_gpu_execution": identity.physical_fabric_evidence.get("physical_gpu_execution", []),
                 },
             )
         result = self.pool.register(identity)
