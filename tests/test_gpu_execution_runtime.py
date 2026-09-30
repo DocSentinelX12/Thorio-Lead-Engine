@@ -237,3 +237,28 @@ def test_gpu_process_termination_targets_process_group_on_posix(monkeypatch):
     assert killed == [(4321, __import__("signal").SIGTERM)]
     assert process.terminated is False
 
+
+
+def test_gpu_workload_requires_a_real_cuda_execution_probe_before_authorizing_workload():
+    client = Client()
+    calls = []
+
+    def runner(args, env, timeout):
+        calls.append((tuple(args), dict(env or {}), timeout))
+        if args[0] == "nvidia-smi":
+            return 0, "0, GPU-1\\n", ""
+        if args[:4] == ("python", "-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid"):
+            return 0, 'THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "gpu_uuid": "GPU-1"}', ""
+        return 0, "result", ""
+
+    result = execute_gpu_workload(client, task(), runner=runner)
+
+    assert result["physical_gpu_execution"]["verified"] is True
+    assert result["physical_gpu_execution"]["gpu_uuid"] == "GPU-1"
+    assert calls[1][0][:4] == (
+        "python",
+        "-m",
+        "lead_engine.gpu_execution_probe",
+        "--expected-gpu-uuid",
+    )
+    assert calls[2][0] == ("python", "-c", "print('gpu')")
