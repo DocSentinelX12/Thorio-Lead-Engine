@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
 from .opportunity_signal_intelligence import detect_compound_opportunities
+from .signal_outcome_feedback import build_signal_outcome_feedback
+from .unified_opportunity_signal_graph import build_unified_opportunity_signal_graph
 
 ATTRIBUTION_VERSION = "2"
 SIGNAL_OUTCOME_LEARNING_VERSION = "1"
@@ -105,53 +107,55 @@ def _trigger_groups(leads: Iterable[Mapping[str, Any]]) -> Dict[str, Dict[str, A
 
 
 def learn_signal_outcomes(db: Any) -> Dict[str, Any]:
-    """Describe observed lifecycle associations for exact persisted signals.
+    """Describe observed signal and lifecycle associations from the authoritative graph.
 
-    This function is descriptive only. It does not infer causation, rank signals,
-    change qualification, change routing, or mutate lead state. Signal membership
-    comes only from persisted exact ``signal_matches`` values.
+    This remains descriptive only. It does not infer causation, rank signals,
+    change qualification, change routing, or mutate lead state.
     """
     leads = [lead for lead in db.all_leads() if isinstance(lead, Mapping)]
+    graph = build_unified_opportunity_signal_graph(leads)
+    feedback = build_signal_outcome_feedback(graph)
     overall = _finalize(_accumulate_metrics(leads))
     overall_opportunities = int(overall["opportunities"])
     overall_converted = int(overall["converted"])
     overall_conversion_rate = overall_converted / overall_opportunities if overall_opportunities else 0.0
     by_signal: Dict[str, Dict[str, Any]] = {}
-    for signal, metrics in _trigger_groups(leads).items():
-        metrics = dict(metrics)
-        signal_opportunities = int(metrics["opportunities"])
-        signal_converted = int(metrics["converted"])
-        # Compute the rate delta from the persisted integer counts directly.
-        # This avoids subtracting two independently rounded binary floats while
-        # preserving the exact mathematical ratio represented by the test data.
+    for signal, learned in feedback.get("by_signal", {}).items():
+        if not isinstance(learned, Mapping):
+            continue
+        signal_opportunities = int(learned.get("distinct_opportunities", 0) or 0)
+        outcomes = learned.get("outcomes") if isinstance(learned.get("outcomes"), Mapping) else {}
+        signal_converted = int(outcomes.get("converted", 0) or 0)
         delta = (
             (signal_converted * overall_opportunities - overall_converted * signal_opportunities)
             / (signal_opportunities * overall_opportunities)
             if signal_opportunities and overall_opportunities
             else 0.0
         )
+        metrics = _new_metrics()
+        metrics["opportunities"] = signal_opportunities
+        metrics["converted"] = signal_converted
+        metrics = _finalize(metrics)
         metrics.update({
-            "observations": signal_opportunities,
+            "observations": int(learned.get("observations", 0) or 0),
             "overall_conversion_rate": overall_conversion_rate,
             "conversion_rate_delta_vs_overall": delta,
+            "outcomes": dict(outcomes),
             "association_only": True,
-            "interpretation_note": (
-                "Observed association only. The signal is not established as a "
-                "cause of any lifecycle outcome."
-            ),
+            "interpretation_note": "Observed association only. The signal is not established as a cause of any lifecycle outcome.",
+            "research_priority": int(learned.get("research_priority", 0) or 0),
+            "collection_priority": int(learned.get("collection_priority", 0) or 0),
         })
         by_signal[signal] = metrics
     return {
         "learning_version": SIGNAL_OUTCOME_LEARNING_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "association_note": (
-            "Historical lifecycle outcomes are descriptive associations with "
-            "persisted exact signals. They do not establish causation."
-        ),
+        "association_note": "Historical lifecycle outcomes are descriptive associations with persisted exact signals. They do not establish causation.",
+        "feedback_loop": feedback,
+        "unified_graph": graph,
         "overall": overall,
         "by_signal": by_signal,
     }
-
 
 def _accumulate_metrics(leads: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
     metrics = _new_metrics()
