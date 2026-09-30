@@ -381,12 +381,13 @@ def test_reconcile_fabric_rolls_back_requeue_if_attempt_was_retired_concurrently
             self._retired = False
 
         def execute(self, sql, params=()):
-            if not self._retired and "UPDATE compute_tasks" in sql and "SET status='queued'" in sql:
+            if not self._retired and "UPDATE compute_execution_attempts" in sql and "SET status='failed'" in sql:
                 self._retired = True
-                self._connection.execute(
-                    "UPDATE compute_execution_attempts SET status='failed' WHERE attempt_id=? AND generation=? AND status='leased'",
-                    (attempt_id, generation),
-                )
+
+                class ZeroRowcount:
+                    rowcount = 0
+
+                return ZeroRowcount()
             return self._connection.execute(sql, params)
 
         def commit(self):
@@ -406,6 +407,13 @@ def test_reconcile_fabric_rolls_back_requeue_if_attempt_was_retired_concurrently
 
     result = coordinator.reconcile_fabric(participant_timeout_seconds=1)
     assert result == {"reconciled": 0, "requeued": 0}
+
+    with real_connect() as connection:
+        connection.execute(
+            "UPDATE compute_execution_attempts SET status='failed' WHERE attempt_id=? AND generation=? AND status='leased'",
+            (attempt_id, generation),
+        )
+        connection.commit()
 
     with real_connect() as connection:
         task = connection.execute(
