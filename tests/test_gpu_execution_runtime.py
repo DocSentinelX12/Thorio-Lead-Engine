@@ -195,14 +195,14 @@ def test_gpu_verification_persists_immutable_artifact_and_checkpoint_refs(tmp_pa
         "execution_kind": "gpu_workload",
         "worker_id": "worker-1",
         "gpu_bindings": [{"resource_id": "node-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-1"}],
-        "physical_gpu_execution": {
+        "physical_gpu_execution": [{
             "verified": True,
             "execution_backend": "cuda",
             "operation": "torch_cuda_matmul",
             "gpu_uuid": "GPU-1",
             "checksum": 120.0,
             "elapsed_ms": 1.0,
-        },
+        }],
         "artifact_refs": [
             {"kind": "output", "sha256": "a" * 64, "size_bytes": 12, "immutable": True, "attempt_id": attempt_id, "generation": generation}
         ],
@@ -268,8 +268,8 @@ def test_gpu_workload_requires_a_real_cuda_execution_probe_before_authorizing_wo
 
     result = execute_gpu_workload(client, task(), runner=runner)
 
-    assert result["physical_gpu_execution"]["verified"] is True
-    assert result["physical_gpu_execution"]["gpu_uuid"] == "GPU-1"
+    assert result["physical_gpu_execution"][0]["verified"] is True
+    assert result["physical_gpu_execution"][0]["gpu_uuid"] == "GPU-1"
     assert calls[1][0][:4] == (
         "python",
         "-m",
@@ -277,3 +277,22 @@ def test_gpu_workload_requires_a_real_cuda_execution_probe_before_authorizing_wo
         "--expected-gpu-uuid",
     )
     assert calls[2][0] == ("python", "-c", "print('gpu')")
+
+
+def test_gpu_workload_rejects_probe_failure_before_authorized_workload_runs():
+    client = Client()
+    launched = []
+
+    def runner(args, env, timeout):
+        if args[0] == "nvidia-smi":
+            return 0, "0, GPU-1\n", ""
+        if args[:4] == ("python", "-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid"):
+            return 1, "", "CUDA unavailable"
+        launched.append(args)
+        return 0, "unexpected", ""
+
+    with pytest.raises(GpuExecutionError, match="physical CUDA execution probe failed"):
+        execute_gpu_workload(client, task(), runner=runner)
+
+    assert launched == []
+    assert client.verification is None
