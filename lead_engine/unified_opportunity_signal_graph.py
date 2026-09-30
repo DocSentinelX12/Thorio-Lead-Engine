@@ -61,22 +61,41 @@ def _list_mappings(value: Any) -> list[Mapping[str, Any]]:
 
 
 def _outcome_events(lead: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return explicit outcome events once, with deterministic source precedence.
+
+    A commercial outcome is the canonical terminal business outcome when present.
+    Conversation and outreach records remain useful outcome observations when they
+    are distinct events. Lifecycle states are never converted into outcomes because
+    states such as conversation_active and outreach_sent are not outcomes.
+    """
     events: list[dict[str, Any]] = []
-    for item in _list_mappings(lead.get("outreach_history")):
-        outcome = _text(item.get("outcome"))
-        if outcome:
-            events.append({"kind": "outreach_outcome", **dict(item), "outcome": outcome})
-    for item in _list_mappings(lead.get("conversation_events")):
-        outcome = _text(item.get("outcome"))
-        if outcome:
-            events.append({"kind": "conversation_outcome", **dict(item), "outcome": outcome})
+    seen: set[str] = set()
+
+    def add(kind: str, item: Mapping[str, Any], outcome: str) -> None:
+        normalized = _normalize(outcome)
+        if not normalized:
+            return
+        event_id = _text(item.get("event_id") or item.get("action_id"))
+        observed_at = _text(item.get("at") or item.get("observed_at"))
+        evidence = _text(item.get("evidence"))
+        key = (
+            f"id:{event_id}" if event_id else
+            f"event:{kind}|{observed_at}|{normalized}|{evidence}"
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        events.append({"kind": kind, **dict(item), "outcome": normalized})
+
     commercial = lead.get("commercial_outcome")
-    if isinstance(commercial, Mapping) and _text(commercial.get("type")):
-        events.append({"kind": "commercial_outcome", **dict(commercial), "outcome": _text(commercial.get("type"))})
-    if not events:
-        lifecycle = _text(lead.get("revenue_lifecycle_state")).lower()
-        if lifecycle:
-            events.append({"kind": "lifecycle_state", "outcome": lifecycle, "at": _text(lead.get("last_response_at") or lead.get("updated_at"))})
+    if isinstance(commercial, Mapping):
+        add("commercial_outcome", commercial, _text(commercial.get("type")))
+
+    for item in _list_mappings(lead.get("conversation_events")):
+        add("conversation_outcome", item, _text(item.get("outcome")))
+    for item in _list_mappings(lead.get("outreach_history")):
+        add("outreach_outcome", item, _text(item.get("outcome")))
+
     return events
 
 
@@ -196,12 +215,7 @@ def build_unified_opportunity_signal_graph(
         opportunity_id = _text(lead.get("opportunity_id") or lead.get("fingerprint"))
         if not opportunity_id:
             continue
-        try:
-            validate_materialized_opportunity_identity(lead)
-        except ValueError:
-            if not _text(lead.get("fingerprint")):
-                continue
-            opportunity_id = _text(lead.get("fingerprint"))
+        validate_materialized_opportunity_identity(lead)
 
         if opportunity_id not in opportunity_ids:
             opportunity_ids.append(opportunity_id)
@@ -413,8 +427,18 @@ def build_unified_opportunity_signal_graph(
             edge = _edge("opportunity_observed_outcome", opportunity_id_node, outcome_id)
             edges[edge["id"]] = edge
             for signal in _signal_entries(lead, opportunity_id):
+                signal_observed_at = _text(signal.get("observed_at"))
+                outcome_observed_at = _text(item.get("at") or item.get("observed_at"))
+                if signal_observed_at and outcome_observed_at and signal_observed_at > outcome_observed_at:
+                    continue
                 signal_id, _ = _node("signal", signal["signal_key"], category=signal["category"], signal_type=signal["signal_type"], phrase=signal["phrase"], signal_key=signal["signal_key"])
-                association = _edge("signal_observed_with_outcome", signal_id, outcome_id, association_only=True)
+                association = _edge(
+                    "signal_observed_with_outcome",
+                    signal_id,
+                    outcome_id,
+                    association_only=True,
+                    temporal_relation="prior_or_same_time" if signal_observed_at and outcome_observed_at else "temporal_order_unknown",
+                )
                 edges[association["id"]] = association
 
         revenue_id, revenue_node = _node(
