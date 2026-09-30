@@ -11,6 +11,7 @@ from .agent_specializations import get_specialization
 from .agent_workers import run_worker_once
 from .database import LeadDB
 from .worker_database import WorkerLeadDB
+from .signal_outcome_feedback import load_signal_outcome_feedback, signal_feedback_priority
 
 
 class AgentOrchestrator:
@@ -35,7 +36,10 @@ class AgentOrchestrator:
             raise ValueError("dispatch_discovery requires a discovery specialist")
         if not isinstance(record, Mapping):
             raise ValueError("record must be a mapping")
-        return self.dispatch(agent, {"record": dict(record), "lead": dict(record.get("lead", {})) if isinstance(record.get("lead"), Mapping) else {}, "evidence_events": list(record.get("evidence_events", [])) if isinstance(record.get("evidence_events"), list) else [], "specialization": role.name}, priority=priority)
+        feedback = load_signal_outcome_feedback(self.db)
+        feedback_priority = signal_feedback_priority(record, feedback)
+        effective_priority = int(priority) + feedback_priority
+        return self.dispatch(agent, {"record": dict(record), "lead": dict(record.get("lead", {})) if isinstance(record.get("lead"), Mapping) else {}, "evidence_events": list(record.get("evidence_events", [])) if isinstance(record.get("evidence_events"), list) else [], "specialization": role.name, "feedback_priority": feedback_priority}, priority=effective_priority)
 
     def dispatch_social_research(self, agent: str, payload: Mapping[str, Any], *, priority: int = 0) -> Dict[str, Any]:
         role = agent_registry().get(agent)
