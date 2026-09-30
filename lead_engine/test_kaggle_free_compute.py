@@ -14,6 +14,7 @@ from .kaggle_free_compute import (
 
 def _runner_factory(quota_remaining: str = "20.00h"):
     calls: list[list[str]] = []
+    status_calls = 0
 
     def runner(command, *, timeout, cwd=None):
         calls.append(list(command))
@@ -29,7 +30,11 @@ def _runner_factory(quota_remaining: str = "20.00h"):
             ]
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if command[1:3] == ["kernels", "status"]:
-            return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
+            nonlocal status_calls
+            status_calls += 1
+            if status_calls <= 2:
+                return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
+            return subprocess.CompletedProcess(command, 0, "Status: Running", "")
         if command[1:3] == ["kernels", "push"]:
             return subprocess.CompletedProcess(command, 0, "Kernel pushed", "")
         if command[1:3] == ["kernels", "delete"]:
