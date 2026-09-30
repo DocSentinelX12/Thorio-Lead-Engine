@@ -152,12 +152,16 @@ def signal_feedback_priority(
     priorities = []
     for raw in matches:
         key = _text(raw).lower()
-        item = by_signal.get(key)
-        if isinstance(item, Mapping):
+        candidates = (key, f"configured|{key}")
+        for candidate in candidates:
+            item = by_signal.get(candidate)
+            if not isinstance(item, Mapping):
+                continue
             try:
                 priorities.append(max(0, int(item.get("research_priority", 0) or 0)))
             except (TypeError, ValueError):
-                continue
+                pass
+            break
     return max(priorities, default=0)
 
 
