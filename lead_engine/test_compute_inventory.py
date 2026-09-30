@@ -353,7 +353,7 @@ def test_inventory_quarantines_one_failed_physical_path_with_durable_reason(tmp_
     assert resource["state"] == ResourceState.QUARANTINED.value
     evidence = json.loads(resource["evidence_json"])
     assert evidence["quarantine"]["reason"].startswith("NCCL selected an HCA")
-    assert evidence["quarantine"]["failure_class"] == "planned_actual_physical_path_mismatch"
+    assert evidence["quarantine"]["evidence"]["failure_class"] == "planned_actual_physical_path_mismatch"
     assert key not in {row["resource_key"] for row in inventory.eligible()}
 
 
