@@ -1,4 +1,5 @@
 from .database import LeadDB
+from .lead_identity import canonical_opportunity_identity
 from .signal_outcome_feedback import (
     build_signal_outcome_feedback,
     persist_signal_outcome_feedback,
@@ -7,10 +8,8 @@ from .signal_outcome_feedback import (
 from .unified_opportunity_signal_graph import build_unified_opportunity_signal_graph
 
 
-def _lead(fingerprint, outcome):
-    return {
-        "fingerprint": fingerprint,
-        "opportunity_id": fingerprint,
+def _lead(fingerprint, outcome, *, signal_observed_at="2026-09-29T12:00:00+00:00", outcome_at="2026-09-29T13:00:00+00:00"):
+    base = {
         "company": "Acme",
         "source": "LinkedIn",
         "source_id": fingerprint,
@@ -19,9 +18,25 @@ def _lead(fingerprint, outcome):
         "evidence": "We are looking for a development partner.",
         "signal_type": "commercial_intent",
         "signal_matches": ["looking for a development partner"],
-        "discovered_at": "2026-09-29T12:00:00+00:00",
+        "discovered_at": signal_observed_at,
+    }
+    identity = canonical_opportunity_identity(base)
+    return {
+        **base,
+        "fingerprint": identity["fingerprint"],
+        "opportunity_id": identity["opportunity_id"],
+        "identity_version": identity["identity_version"],
+        "identity_derivation": identity["identity_derivation"],
+        "company": "Acme",
+        "source": "LinkedIn",
+        "source_id": fingerprint,
+        "url": f"https://example.com/{fingerprint}",
+        "signal": "Acme is looking for a development partner.",
+        "evidence": "We are looking for a development partner.",
+        "signal_type": "commercial_intent",
+        "signal_matches": ["looking for a development partner"],
         "outreach_history": [{"action_id": f"action-{fingerprint}", "status": "sent"}],
-        "conversation_events": [{"event_id": f"event-{fingerprint}", "outcome": outcome, "at": "2026-09-29T13:00:00+00:00"}],
+        "conversation_events": [{"event_id": f"event-{fingerprint}", "outcome": outcome, "at": outcome_at}],
         "revenue_lifecycle_state": "converted" if outcome == "converted" else "conversation_active",
     }
 
@@ -83,3 +98,21 @@ def test_feedback_reaches_future_discovery_priority(tmp_path):
     assert task["priority"] == 6
     queued = pending(db)
     assert any(item["task_id"] == task["task_id"] and item["priority"] == 6 for item in queued)
+
+
+def test_feedback_does_not_learn_from_signal_observed_after_outcome():
+    graph = build_unified_opportunity_signal_graph([
+        _lead("later", "converted", signal_observed_at="2026-09-29T14:00:00+00:00", outcome_at="2026-09-29T13:00:00+00:00")
+    ])
+    feedback = build_signal_outcome_feedback(graph)
+    assert feedback["by_signal"] == {}
+
+
+def test_feedback_keeps_distinct_explicit_outcomes_but_deduplicates_same_event():
+    lead = _lead("dup", "interested")
+    lead["conversation_events"].append(dict(lead["conversation_events"][0]))
+    graph = build_unified_opportunity_signal_graph([lead])
+    feedback = build_signal_outcome_feedback(graph)
+    item = feedback["by_signal"]["configured|looking for a development partner"]
+    assert item["observations"] == 1
+    assert item["outcomes"]["interested"] == 1
