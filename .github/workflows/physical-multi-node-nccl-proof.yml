@@ -1,6 +1,9 @@
 name: Physical Multi-Node NCCL Proof
 
 on:
+  push:
+    branches:
+      - feature/gpu-fabric-foundation
   workflow_dispatch:
     inputs:
       master_addr:
