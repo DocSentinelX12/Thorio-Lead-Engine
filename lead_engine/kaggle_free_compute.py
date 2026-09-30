@@ -168,7 +168,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         text = str(value or "").strip()
         if not text:
             raise KaggleFreeComputeError("Kaggle quota response omitted a time value")
-        match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)h", text, re.IGNORECASE)
+        match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)h", text, re.IGNORECASE)
         if not match:
             raise KaggleFreeComputeError(f"unrecognized Kaggle quota time value: {text!r}")
         return float(match.group(1))
