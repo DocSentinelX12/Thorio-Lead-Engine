@@ -132,10 +132,39 @@ def refresh_signal_outcome_feedback(db: Any) -> dict[str, Any]:
 
 
 def load_signal_outcome_feedback(db: Any) -> dict[str, Any]:
+    """Read persisted feedback without constructing or mutating the graph.
+
+    Initial discovery and other pre-opportunity paths may legitimately have no
+    persisted feedback yet. Consumers receive an empty, association-only
+    projection until the explicit refresh boundary has materialized feedback.
+    Test doubles that do not implement durable state are treated the same way.
+    """
+    if not hasattr(db, "get_state"):
+        return {
+            "feedback_version": FEEDBACK_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "graph_version": "",
+            "association_only": True,
+            "by_signal": {},
+            "interpretation_note": (
+                "No durable feedback state is available. No outcome association "
+                "is inferred and no collection or research priority is changed."
+            ),
+        }
     feedback = db.get_state(FEEDBACK_STATE_KEY)
     if isinstance(feedback, Mapping):
         return dict(feedback)
-    return persist_signal_outcome_feedback(db)
+    return {
+        "feedback_version": FEEDBACK_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "graph_version": "",
+        "association_only": True,
+        "by_signal": {},
+        "interpretation_note": (
+            "No persisted feedback exists yet. No outcome association is inferred "
+            "and no collection or research priority is changed."
+        ),
+    }
 
 
 def signal_feedback_priority(
