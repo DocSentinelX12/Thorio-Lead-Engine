@@ -117,6 +117,13 @@ def test_unified_graph_rejects_invalid_materialized_identity():
 def test_unified_graph_excludes_signal_observed_after_outcome_from_association():
     lead = _lead()
     lead["discovered_at"] = "2026-09-29T14:00:00+00:00"
+    identity = canonical_opportunity_identity(lead)
+    lead.update({
+        "fingerprint": identity["fingerprint"],
+        "opportunity_id": identity["opportunity_id"],
+        "identity_version": identity["identity_version"],
+        "identity_derivation": identity["identity_derivation"],
+    })
     lead["conversation_events"] = [{"event_id": "event-late", "outcome": "converted", "at": "2026-09-29T13:00:00+00:00"}]
     graph = build_unified_opportunity_signal_graph([lead])
     assert not any(edge["type"] == "signal_observed_with_outcome" for edge in graph["edges"])
