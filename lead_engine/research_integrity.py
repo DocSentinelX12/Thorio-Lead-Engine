@@ -47,7 +47,7 @@ def install() -> None:
 
     original = public_research.research_public_web
 
-    def guarded_research(lead: Mapping[str, Any]) -> dict[str, Any]:
+    def guarded_research(lead: Mapping[str, Any], checkpoint: Any = None) -> dict[str, Any]:
         candidate = dict(lead)
         company = str(candidate.get("company") or "").strip()
         exact_url = str(
@@ -76,7 +76,7 @@ def install() -> None:
         if exact_url:
             candidate["source_url"] = exact_url
 
-        result = original(candidate)
+        result = original(candidate, checkpoint=checkpoint)
         pages = result.get("raw_pages", []) if isinstance(result, Mapping) else []
 
         # A blocked, failed, or otherwise uncollected page is a collection
@@ -88,37 +88,23 @@ def install() -> None:
         if not collected_pages:
             return dict(result)
 
-        safe_pages = [
-            page for page in collected_pages
-            if _page_identity_matches(page, company)
+        matching_pages = [page for page in collected_pages if _page_identity_matches(page, company)]
+        if matching_pages:
+            return dict(result)
+
+        guarded = dict(result)
+        guarded["status"] = "identity_mismatch"
+        guarded["identity_gate"] = "blocked_company_identity_mismatch"
+        guarded["facts"] = {"company": [], "product": [], "hiring": [], "decision_maker": [], "business_need": [], "commercial": []}
+        guarded["verified_fields"] = []
+        guarded["fabricated_fields"] = []
+        guarded["identity_mismatch_pages"] = [dict(page) for page in matching_pages]
+        guarded["raw_pages"] = [
+            {**dict(page), "evidence_admission_status": "rejected_company_identity_mismatch"}
+            for page in pages
+            if isinstance(page, Mapping)
         ]
-
-        # Never promote facts from a page that does not identify the target
-        # company. Rejected pages remain in the raw audit trail but cannot
-        # populate company/product/hiring/decision-maker/need/commercial facts.
-        classified = public_research._classify(safe_pages)
-        audited_pages = []
-        safe_ids = {str(page.get("url") or "") for page in safe_pages}
-        for page in pages:
-            audited = dict(page) if isinstance(page, Mapping) else {"value": page}
-            url = str(audited.get("url") or "")
-            if audited.get("status") != "collected":
-                audited["evidence_admission_status"] = "not_collected"
-            elif url in safe_ids:
-                audited["evidence_admission_status"] = "admitted_company_identity_match"
-            else:
-                audited["evidence_admission_status"] = "rejected_company_identity_mismatch"
-            audited_pages.append(audited)
-
-        updated = dict(result)
-        updated["facts"] = classified
-        updated["raw_pages"] = audited_pages
-        updated["pages_collected"] = len(safe_pages)
-        updated["status"] = "evidence_found" if safe_pages else "no_company_matched_evidence"
-        updated["identity_gate"] = "company_identity_required"
-        updated["company_identity_match_count"] = len(safe_pages)
-        updated["rejected_page_count"] = len(collected_pages) - len(safe_pages)
-        return updated
+        return guarded
 
     public_research.research_public_web = guarded_research
     public_research._THORIO_IDENTITY_GUARD = True
