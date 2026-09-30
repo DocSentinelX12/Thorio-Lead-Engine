@@ -1,0 +1,420 @@
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from lead_engine.free_compute_acquisition import (
+    AcquiredCompute,
+    FreeComputeAcquisitionError,
+    FreeComputeAcquisitionManager,
+    FreeComputeAcquisitionStore,
+    FreeComputeOffer,
+    FreeComputeProvider,
+)
+
+
+def offer(*, no_cost=True, expires_at=None):
+    return FreeComputeOffer(
+        provider_id="free-provider",
+        domain_id="domain-1",
+        offer_id="offer-1",
+        observed_at=100.0,
+        expires_at=expires_at,
+        gpu_capable=True,
+        no_cost=no_cost,
+        capacity_evidence={"source": "provider-observation", "gpu_count": 8},
+    )
+
+
+class Provider(FreeComputeProvider):
+    provider_id = "free-provider"
+
+    def __init__(self):
+        self.acquired = []
+        self.released = []
+
+    def discover_free(self):
+        return (offer(expires_at=200.0),)
+
+    def acquire_free(self, observed):
+        acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+        result = AcquiredCompute(
+            provider_id=observed.provider_id,
+            domain_id=observed.domain_id,
+            offer_id=observed.offer_id,
+            acquisition_id=acquisition_id,
+            acquired_at=110.0,
+            expires_at=200.0,
+            gpu_capable=True,
+            enrollment={"worker_id": "external-worker-1", "enrollment_mode": "authenticated"},
+        )
+        self.acquired.append(result)
+        return result
+
+    def release_free(self, acquisition):
+        self.released.append(acquisition.acquisition_id)
+
+
+def test_discovery_is_durable_and_repeats_without_duplicate_records(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    manager.register(Provider())
+
+    first = manager.discover()
+    second = manager.discover()
+
+    assert first["provider_count"] == 1
+    assert len(first["offers"]) == 1
+    assert len(second["offers"]) == 1
+    assert len(store.records()) == 1
+    assert store.records()[0]["status"] == "discovered"
+
+
+def test_acquisition_is_free_only_and_returns_existing_enrollment_handoff(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    provider = Provider()
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    manager.register(provider)
+
+    observed = offer(expires_at=200.0)
+    acquired = manager.acquire(observed)
+
+    assert acquired.enrollment["worker_id"] == "external-worker-1"
+    assert store.records()[0]["status"] == "acquired"
+    assert store.records()[0]["no_cost"] is True
+
+
+def test_acquisition_cannot_extend_observed_offer_lifetime(tmp_path):
+    class ExtendingProvider(Provider):
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=250.0,
+                gpu_capable=True,
+                enrollment={"worker_id": "external-worker-1"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    manager.register(ExtendingProvider())
+
+    with pytest.raises(FreeComputeAcquisitionError, match="expiry cannot extend"):
+        manager.acquire(offer(expires_at=200.0))
+
+    assert store.records()[0]["status"] == "retry_pending"
+
+
+def test_acquisition_cannot_drop_a_finite_offer_expiry(tmp_path):
+    class UnboundedProvider(Provider):
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=None,
+                gpu_capable=True,
+                enrollment={"worker_id": "external-worker-1"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    manager.register(UnboundedProvider())
+
+    with pytest.raises(FreeComputeAcquisitionError, match="expiry cannot extend"):
+        manager.acquire(offer(expires_at=200.0))
+
+    assert store.records()[0]["status"] == "retry_pending"
+
+
+def test_acquisition_cannot_claim_gpu_capability_absent_from_offer(tmp_path):
+    class GpuClaimingProvider(Provider):
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=200.0,
+                gpu_capable=True,
+                enrollment={"worker_id": "external-worker-1"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    manager.register(GpuClaimingProvider())
+
+    cpu_offer = FreeComputeOffer(
+        provider_id="free-provider",
+        domain_id="domain-1",
+        offer_id="offer-cpu",
+        observed_at=100.0,
+        expires_at=200.0,
+        gpu_capable=False,
+        no_cost=True,
+        capacity_evidence={"source": "provider-observation", "gpu_count": 0},
+    )
+
+    with pytest.raises(FreeComputeAcquisitionError, match="GPU capability"):
+        manager.acquire(cpu_offer)
+
+    assert store.records()[0]["status"] == "retry_pending"
+
+
+def test_paid_offer_is_rejected_before_provider_acquisition(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    provider = Provider()
+    manager.register(provider)
+
+    with pytest.raises(ValueError, match="no-cost"):
+        manager.acquire(offer(no_cost=False))
+
+
+def test_expired_offer_is_not_acquired(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 300.0)
+    manager.register(Provider())
+
+    with pytest.raises(FreeComputeAcquisitionError, match="expired"):
+        manager.acquire(offer(expires_at=200.0))
+
+    assert store.records() == []
+
+
+def test_provider_failure_becomes_retry_pending_without_fabricating_capacity(tmp_path):
+    class FailingProvider(Provider):
+        def acquire_free(self, observed):
+            raise RuntimeError("provider unavailable")
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    manager.register(FailingProvider())
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        manager.acquire(offer(expires_at=200.0))
+
+    records = store.records()
+    assert len(records) == 1
+    assert records[0]["status"] == "retry_pending"
+    assert records[0]["gpu_capable"] is True
+    assert records[0]["no_cost"] is True
+    assert records[0]["enrollment"] is None
+
+
+def test_release_uses_provider_and_durably_marks_release(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    provider = Provider()
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    manager.register(provider)
+    acquired = manager.acquire(offer(expires_at=200.0))
+
+    manager.release(acquired)
+
+    assert provider.released == [acquired.acquisition_id]
+    assert store.records()[0]["status"] == "released"
+
+
+def test_provider_identity_mismatch_is_rejected():
+    class WrongProvider(FreeComputeProvider):
+        provider_id = "free-provider"
+        def discover_free(self):
+            return (
+                FreeComputeOffer(
+                    provider_id="different-provider",
+                    domain_id="domain-1",
+                    offer_id="offer-1",
+                    observed_at=100.0,
+                    expires_at=200.0,
+                    gpu_capable=True,
+                    no_cost=True,
+                    capacity_evidence={"source": "observed"},
+                ),
+            )
+        def acquire_free(self, observed):
+            raise AssertionError("must not acquire a mismatched offer")
+
+    with tempfile.TemporaryDirectory() as directory:
+        store = FreeComputeAcquisitionStore(str(Path(directory) / "acquisition.sqlite3"))
+        manager = FreeComputeAcquisitionManager(store)
+        manager.register(WrongProvider())
+        result = manager.discover()
+        assert result["offers"] == ()
+        assert len(result["errors"]) == 1
+
+
+def test_expired_verified_gpu_is_not_eligible(tmp_path):
+    now = [150.0]
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: now[0])
+    provider = Provider()
+    manager.register(provider)
+
+    acquired = manager.acquire(offer(expires_at=200.0))
+    store.mark_worker_verified(
+        acquired.acquisition_id,
+        worker_id="external-worker-1",
+        verification={
+            "gpu_capable": True,
+            "gpu_discovery_state": "healthy",
+            "gpu_resources": [{"gpu_uuid": "GPU-real"}],
+            "physical_gpu_execution": [{
+                "verified": True,
+                "execution_backend": "cuda",
+                "operation": "torch_cuda_matmul",
+                "gpu_uuid": "GPU-real",
+                "checksum": 120.0,
+                "elapsed_ms": 1.0,
+            }],
+            "physical_fabric_evidence": {"physical_fabric": {"components": [{"component_type": "gpu", "identity": "gpu:GPU-real"}]}},
+        },
+    )
+
+    assert manager.status()["eligible_verified_count"] == 1
+    assert manager.status()["expired_verified_count"] == 0
+
+    now[0] = 200.0
+    status = manager.status()
+    assert status["eligible_verified_count"] == 0
+    assert status["expired_verified_count"] == 1
+    assert status["records"][0]["status"] == "verified"
+
+
+def test_continuous_hunter_discovers_and_acquires_without_stopping_on_provider_failure(tmp_path):
+    class FlakyProvider(Provider):
+        provider_id = "flaky-provider"
+
+        def __init__(self):
+            super().__init__()
+            self.discovery_calls = 0
+
+        def discover_free(self):
+            self.discovery_calls += 1
+            if self.discovery_calls == 1:
+                raise RuntimeError("temporarily unavailable")
+            return (
+                FreeComputeOffer(
+                    provider_id=self.provider_id,
+                    domain_id="domain-1",
+                    offer_id="offer-flaky",
+                    observed_at=100.0,
+                    expires_at=500.0,
+                    gpu_capable=True,
+                    no_cost=True,
+                    capacity_evidence={"source": "provider-observation", "gpu_count": 8},
+                ),
+            )
+
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=500.0,
+                gpu_capable=True,
+                enrollment={"worker_id": "flaky-worker", "enrollment_mode": "authenticated"},
+            )
+
+    class HealthyProvider(Provider):
+        provider_id = "healthy-provider"
+
+        def discover_free(self):
+            return (
+                FreeComputeOffer(
+                    provider_id=self.provider_id,
+                    domain_id="domain-1",
+                    offer_id="offer-healthy",
+                    observed_at=100.0,
+                    expires_at=500.0,
+                    gpu_capable=True,
+                    no_cost=True,
+                    capacity_evidence={"source": "provider-observation", "gpu_count": 4},
+                ),
+            )
+
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=500.0,
+                gpu_capable=True,
+                enrollment={"worker_id": "healthy-worker", "enrollment_mode": "authenticated"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    flaky = FlakyProvider()
+    manager.register(flaky)
+    manager.register(HealthyProvider())
+
+    first = manager.hunt_once()
+    assert first["provider_count"] == 2
+    assert first["acquired_count"] == 1
+    assert len(first["errors"]) == 1
+    assert first["errors"][0]["provider_id"] == "flaky-provider"
+
+    second = manager.hunt_once()
+    assert second["acquired_count"] == 1
+    records = {item["provider_id"]: item for item in store.records()}
+    assert records["flaky-provider"]["status"] == "acquired"
+    assert records["healthy-provider"]["status"] == "acquired"
+    assert flaky.discovery_calls == 2
+
+
+def test_continuous_hunter_runs_immediately_then_waits_between_cycles(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    provider = Provider()
+    manager.register(provider)
+
+    sleeps = []
+    cycles = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 2:
+            raise StopIteration
+
+    with pytest.raises(StopIteration):
+        manager.run_continuously(interval_seconds=7.0, sleep=sleep, on_cycle=lambda result: cycles.append(result))
+
+    assert len(cycles) == 2
+    assert sleeps == [7.0]
+
+
+def test_gpu_worker_verification_rejects_missing_physical_execution_evidence(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    provider = Provider()
+    manager.register(provider)
+    acquired = manager.acquire(offer(expires_at=200.0))
+
+    with pytest.raises(FreeComputeAcquisitionError, match="physical CUDA execution evidence"):
+        store.mark_worker_verified(
+            acquired.acquisition_id,
+            worker_id="external-worker-1",
+            verification={
+                "gpu_capable": True,
+                "gpu_discovery_state": "healthy",
+                "gpu_resources": [{"gpu_uuid": "GPU-real"}],
+                "physical_fabric_evidence": {"physical_fabric": {"components": [{"component_type": "gpu", "identity": "gpu:GPU-real"}]}},
+            },
+        )
+
+    assert store.records()[0]["status"] == "acquired"
