@@ -60,10 +60,25 @@ def test_active_gdrdma_measurement_requires_current_execution_participant_and_pe
 
     with coordinator._connect() as connection:
         connection.execute(
-            """UPDATE compute_execution_participants
-               SET status='running'
-               WHERE attempt_id=? AND worker_id=?""",
-            (claimed["attempt_id"], "worker-a"),
+            """INSERT INTO compute_execution_participants(
+                   attempt_id,task_id,generation,allocation_id,worker_id,node_id,rank,world_size,
+                   rendezvous_ref,status,resource_ids,bound_at,heartbeat_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                claimed["attempt_id"],
+                task_id,
+                claimed["generation"],
+                "allocation-1",
+                "worker-a",
+                "worker-a",
+                0,
+                1,
+                f"fabric:{claimed["attempt_id"]}:{claimed["generation"]}",
+                "running",
+                "[]",
+                1000.0,
+                1000.0,
+            ),
         )
         connection.commit()
 
