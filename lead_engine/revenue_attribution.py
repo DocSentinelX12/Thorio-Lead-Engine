@@ -120,7 +120,7 @@ def learn_signal_outcomes(db: Any) -> Dict[str, Any]:
     overall_converted = int(overall["converted"])
     overall_conversion_rate = overall_converted / overall_opportunities if overall_opportunities else 0.0
     by_signal: Dict[str, Dict[str, Any]] = {}
-    for signal, learned in feedback.get("by_signal", {}).items():
+    for signal_key, learned in feedback.get("by_signal", {}).items():
         if not isinstance(learned, Mapping):
             continue
         signal_opportunities = int(learned.get("distinct_opportunities", 0) or 0)
@@ -146,7 +146,8 @@ def learn_signal_outcomes(db: Any) -> Dict[str, Any]:
             "research_priority": int(learned.get("research_priority", 0) or 0),
             "collection_priority": int(learned.get("collection_priority", 0) or 0),
         })
-        by_signal[signal] = metrics
+        public_signal = signal_key.split("|", 2)[-1] if str(signal_key).startswith("configured|") else signal_key
+        by_signal[public_signal] = metrics
     return {
         "learning_version": SIGNAL_OUTCOME_LEARNING_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
