@@ -5,6 +5,7 @@ import pytest
 
 from lead_engine.compute_inventory import ComputeInventory
 from lead_engine.compute_coordinator import ComputeCoordinator
+from lead_engine.compute_pool import WorkerIdentity
 from lead_engine.compute_provider import ProviderResourceSnapshot
 from lead_engine.compute_resources import (
     ComputeRequirements,
@@ -282,6 +283,9 @@ def test_launch_plan_rejects_a_path_quarantined_after_allocation(tmp_path):
         authentication_state="authenticated",
         evidence={"source": "verified-test-discovery", "network": network_b},
     ))
+
+    coordinator.pool.register(WorkerIdentity("node-a", "node-a", "x86_64", 32, 128, domain_id="domain-a"))
+    coordinator.pool.register(WorkerIdentity("node-b", "node-b", "x86_64", 32, 128, domain_id="domain-a"))
 
     task_id = coordinator.enqueue({
         "compute_requirements": {
