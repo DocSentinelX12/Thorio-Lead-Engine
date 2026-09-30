@@ -158,3 +158,10 @@ def test_historical_funding_cannot_establish_funding_followed_by_execution():
     execution = _lead("execution", source="Product Hunt", when="2026-09-15T00:00:00+00:00", matches=[])
     execution["commercial_signal_broadening"] = {"matches": [{"category": "product_event", "phrase": "new product launch", "attribution": "company_named", "temporal_status": "current_or_unspecified", "certainty": "observed", "negated": False}]}
     assert detect_compound_opportunities([funding, execution])["cluster_count"] == 0
+
+def test_compound_detection_does_not_use_unrelated_source_as_corroboration():
+    first = _lead("a", source="Source A", matches=["Need AI integration"])
+    second = _lead("b", source="Source A", when="2026-09-29T00:00:00+00:00", matches=["Need MVP"])
+    unrelated = _lead("c", source="Source C", when="2026-09-29T12:00:00+00:00", matches=[])
+    result = detect_compound_opportunities([first, second, unrelated])
+    assert result["cluster_count"] == 0
