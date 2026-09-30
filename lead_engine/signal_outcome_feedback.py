@@ -61,7 +61,27 @@ def build_signal_outcome_feedback(graph: Mapping[str, Any]) -> dict[str, Any]:
 
     # An observation is a persisted signal occurrence on an opportunity, not an
     # outcome event. This keeps opportunities with no explicit outcome in the
-    # denominator without inventing a negative or unknown outcome.
+    # denominator without inventing a negative or unknown outcome. A signal that
+    # is known to occur only after every known outcome is excluded from learning.
+    def parse_observed_at(value: Any) -> datetime | None:
+        text = _text(value)
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    outcome_times: dict[str, list[datetime]] = {}
+    for outcome in outcomes.values():
+        opportunity_id = _text(outcome.get("opportunity_id"))
+        observed_at = parse_observed_at(outcome.get("observed_at"))
+        if opportunity_id and observed_at is not None:
+            outcome_times.setdefault(opportunity_id, []).append(observed_at)
+
     signal_opportunities: dict[str, set[str]] = {}
     for edge in _edges_for(graph, edge_type="observation_instantiates_signal"):
         observation = nodes.get(_text(edge.get("from")))
@@ -70,21 +90,27 @@ def build_signal_outcome_feedback(graph: Mapping[str, Any]) -> dict[str, Any]:
             continue
         key = _text(signal.get("signal_key")) or _text(signal.get("phrase"))
         opportunity_id = _text(observation.get("opportunity_id"))
-        if key and opportunity_id:
-            signal_opportunities.setdefault(key, set()).add(opportunity_id)
+        if not key or not opportunity_id:
+            continue
+        signal_at = parse_observed_at(observation.get("observed_at"))
+        known_outcomes = outcome_times.get(opportunity_id, [])
+        if signal_at is not None and known_outcomes and all(signal_at > outcome_at for outcome_at in known_outcomes):
+            continue
+        signal_opportunities.setdefault(key, set()).add(opportunity_id)
 
     by_signal: dict[str, dict[str, Any]] = {}
     for signal in signals.values():
         key = _text(signal.get("signal_key")) or _text(signal.get("phrase"))
-        if not key:
+        opportunities = signal_opportunities.get(key, set())
+        if not key or not opportunities:
             continue
         by_signal[key] = {
             "signal_key": key,
             "category": _text(signal.get("category")),
             "signal_type": _text(signal.get("signal_type")),
             "phrase": _text(signal.get("phrase")),
-            "observations": len(signal_opportunities.get(key, set())),
-            "distinct_opportunities": set(signal_opportunities.get(key, set())),
+            "observations": len(opportunities),
+            "distinct_opportunities": set(opportunities),
             "outcomes": {},
             "association_only": True,
         }
