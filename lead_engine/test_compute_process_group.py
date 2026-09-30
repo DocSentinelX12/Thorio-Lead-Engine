@@ -51,6 +51,9 @@ class Runtime:
     def distributed_process_command(self):
         return ["probe"]
 
+    def validate_distributed_probe_output(self, *args, **kwargs):
+        return {"verified": True}
+
 
 def test_fabric_subprocess_starts_in_its_own_process_group(monkeypatch):
     from lead_engine.compute_worker import run_fabric_verification
