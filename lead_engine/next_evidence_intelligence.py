@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-from .signal_outcome_feedback import apply_feedback_to_research_target, signal_feedback_priority
-
 
 VERSION = "1"
 
@@ -44,7 +42,7 @@ _ROUTE_TARGETS = {
 }
 
 
-def build_next_evidence_plan(lead: Mapping[str, Any], *, feedback: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+def build_next_evidence_plan(lead: Mapping[str, Any]) -> Dict[str, Any]:
     """Return concrete research targets for currently unresolved evidence gaps."""
     if not isinstance(lead, Mapping):
         raise ValueError("lead must be a mapping.")
@@ -76,8 +74,6 @@ def build_next_evidence_plan(lead: Mapping[str, Any], *, feedback: Mapping[str, 
             "evidence_to_find": [primary, secondary],
             "route": None,
         }
-        if feedback is not None:
-            target = apply_feedback_to_research_target(target, priority=signal_feedback_priority(lead, feedback))
         if section == "route_research":
             target["route_targets"] = [
                 {"route": route, "evidence_to_find": _ROUTE_TARGETS[route]}
@@ -93,10 +89,8 @@ def build_next_evidence_plan(lead: Mapping[str, Any], *, feedback: Mapping[str, 
         "missing_sections": missing,
         "targets": targets,
         "target_count": len(targets),
-        "feedback_applied": bool(feedback),
         "interpretation_note": (
             "These are evidence-search targets only. They are not evidence, "
-            "qualification decisions, urgency signals, budget estimates, or route claims. "
-            "Any feedback priority is historical association only and does not establish causality."
+            "qualification decisions, urgency signals, budget estimates, or route claims."
         ),
     }
