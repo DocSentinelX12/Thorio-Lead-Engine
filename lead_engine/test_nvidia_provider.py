@@ -957,3 +957,45 @@ def test_physical_fabric_graph_exposes_only_evidence_backed_gpu_to_nic_traversal
             "observed_at": 1234.5,
         },
     }]
+
+
+def test_local_worker_identity_runs_physical_gpu_probe_for_external_acquisition(monkeypatch):
+    node = SimpleNamespace(
+        gpus=(GpuResource(
+            node_id="node-01",
+            gpu_id="0",
+            gpu_uuid="GPU-aaa",
+            model="NVIDIA H100",
+            vram_bytes=80 * 1024**3,
+            compute_capability="9.0",
+            driver_version="580.95.05",
+            cuda_version="13.0",
+            pci_bus_id="0000:01:00.0",
+            numa_node=0,
+            nvlink_domain="nv0",
+            topology_domain="top0",
+        ),),
+        driver_version="580.95.05",
+        cuda_version="13.0",
+        nic_names=("eth0",),
+    )
+    monkeypatch.setattr(NvidiaProvider, "discover", lambda self: SimpleNamespace(nodes=(node,), evidence={"network": {}}))
+    monkeypatch.setenv("THORIO_COMPUTE_ACQUISITION_ID", "acq-123")
+    monkeypatch.setenv("THORIO_COMPUTE_DOMAIN", "kaggle:worker")
+
+    calls = []
+
+    def fake_run(command, *, capture_output, text, env, timeout, check):
+        calls.append((tuple(command), dict(env), timeout))
+        return SimpleNamespace(
+            returncode=0,
+            stdout='THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-aaa", "checksum": 120.0, "elapsed_ms": 1.0}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr("lead_engine.compute_pool.subprocess.run", fake_run)
+    identity = local_worker_identity("node-01")
+
+    assert identity.physical_fabric_evidence["acquisition_id"] == "acq-123"
+    assert identity.physical_fabric_evidence["physical_gpu_execution"][0]["gpu_uuid"] == "GPU-aaa"
+    assert calls[0][0][0] == "python"
