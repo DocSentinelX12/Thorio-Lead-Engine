@@ -6,7 +6,6 @@ are delegated to the high-ticket sales closer boundary.
 """
 from __future__ import annotations
 
-import inspect
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
@@ -24,6 +23,318 @@ DISCOVERY_TARGETS = {
     "astrivon_demand_discovery": (
         "dev agency", "tech partner", "mvp", "b2b outreach", "b2b sales",
         "lead generation", "sales automation", "ai/ml", "computer vision",
+        "business workflow", "crm", "full-stack software engineer", "scaling",
+        "seed funding", "non-technical founder", "outsource sales",
+        "in-house dev costs", "in-house sales costs",
     ),
+    "recent_inquiry_discovery": ("looking for", "need a", "need an", "seeking", "any recommendations", "can anyone recommend", "hiring", "we are hiring", "we're hiring", "urgent", "immediately"),
 }
 
+SOCIAL_TARGETS = {
+    "social_intelligence": (),
+    "social_hiring_research": ("hiring", "hire", "recruit", "recruiting", "open role", "opening", "job", "jobs", "career", "careers"),
+    "social_decision_maker_research": ("founder", "co-founder", "ceo", "cto", "cio", "cpo", "vp engineering", "head of engineering", "engineering manager", "recruiter", "talent"),
+    "social_inquiry_research": ("looking for", "need", "seeking", "recommend", "recommendation", "help wanted", "anyone know", "who can", "vendor", "team"),
+    "social_company_context": ("company", "startup", "saas", "product", "team", "funding", "launch", "customer", "customers"),
+}
+
+_SOURCE_SIGNAL_ALIASES = {
+    "x_signal": "X", "threads_signal": "Threads", "reddit_signal": "Reddit", "linkedin_signal": "LinkedIn", "facebook_signal": "Facebook", "instagram_signal": "Instagram", "hacker_news_signal": "Hacker News", "indie_hackers_signal": "Indie Hackers", "product_hunt_signal": "Product Hunt", "web_job_signal": "web",
+}
+
+
+def _text(value: Any) -> str:
+    if isinstance(value, Mapping):
+        return " ".join(_text(v) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(_text(v) for v in value)
+    return str(value or "").strip()
+
+
+def _events(payload: Mapping[str, Any]) -> list[Dict[str, Any]]:
+    raw = payload.get("evidence_events", payload.get("events", []))
+    if not isinstance(raw, Iterable) or isinstance(raw, (str, bytes, Mapping)):
+        return []
+    return [dict(item) for item in raw if isinstance(item, Mapping)]
+
+
+def _recent(event: Mapping[str, Any]) -> bool:
+    raw = event.get("observed_at") or event.get("discovery_timestamp") or event.get("collected_at") or event.get("published_at")
+    if not raw:
+        return False
+    try:
+        value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - value).total_seconds() <= 30 * 86400
+    except ValueError:
+        return False
+
+
+def _matches(text: str, terms: tuple[str, ...]) -> list[str]:
+    lowered = text.lower()
+    return [term for term in terms if re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", lowered)]
+
+
+def _fingerprint(payload: Mapping[str, Any]) -> str:
+    lead = payload.get("lead")
+    if isinstance(lead, Mapping):
+        return str(lead.get("fingerprint") or "").strip()
+    return str(payload.get("fingerprint") or "").strip()
+
+
+def _source_signal(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
+    record = dict(payload.get("record", payload)) if isinstance(payload.get("record", payload), Mapping) else {}
+    signal = str(record.get("signal") or record.get("evidence") or "").strip()
+    if not signal:
+        raise OutreachContractError(f"{agent} requires observed signal/evidence")
+    fingerprint = str(record.get("fingerprint") or payload.get("fingerprint") or "").strip()
+    lead = db.get(fingerprint) if db is not None and fingerprint else None
+    normalized = dict(record)
+    normalized["source_lane"] = agent
+    normalized["observed"] = True
+    normalized["qualification_performed"] = False
+    provenance = dict(record.get("provenance") or {}) if isinstance(record.get("provenance"), Mapping) else {}
+    provenance.update({"collector_agent": agent, "source_lane": agent, "collected_at": datetime.now(timezone.utc).isoformat()})
+    normalized["provenance"] = provenance
+    handoffs = []
+    if fingerprint and lead is not None:
+        tasks = [{"agent": "company_research", "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, "priority": 7, "dedupe_key": f"company_research:{fingerprint}"}]
+        handoffs.append("company_research")
+        for discovery_agent in DISCOVERY_TARGETS:
+            tasks.append({"agent": discovery_agent, "payload": {"lead": dict(lead), "evidence_events": [normalized], "source_lane": agent}, "priority": 3, "dedupe_key": f"{discovery_agent}:{fingerprint}:{agent}"})
+            handoffs.append(discovery_agent)
+        if agent != "web_job_signal":
+            for social_agent in SOCIAL_TARGETS:
+                tasks.append({"agent": social_agent, "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, "priority": 3, "dedupe_key": f"{social_agent}:{fingerprint}:{agent}"})
+                handoffs.append(social_agent)
+        enqueue_many(db, tasks)
+    return {"agent": agent, "role": "discovery", "source": record.get("source") or _SOURCE_SIGNAL_ALIASES.get(agent, agent), "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoffs": handoffs, "handoff": handoffs[0] if handoffs else "awaiting_persistence", "provenance": provenance}
+
+
+def discovery_finding(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
+    events = _events(payload)
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else {}
+    if not events and lead:
+        events = [dict(lead)]
+    terms = DISCOVERY_TARGETS[agent]
+    findings = []
+    for event in events:
+        text = _text(event.get("signal") or event.get("evidence") or event)
+        matches = _matches(text, terms)
+        if matches:
+            findings.append({"matches": matches, "source": event.get("source") or event.get("provider"), "url": event.get("url") or event.get("source_url"), "recent": _recent(event), "evidence": text[:2000]})
+    recent_count = sum(item["recent"] for item in findings)
+    fingerprint = _fingerprint(payload)
+    handoff = None
+    if findings and fingerprint and db is not None:
+        stored_lead = db.get(fingerprint) or dict(lead)
+        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "discovery_agent": agent, "discovery_findings": findings}, priority=7, dedupe_key=f"company_research:{fingerprint}")
+        handoff = "company_research"
+    return {"agent": agent, "role": "discovery_intelligence", "fingerprint": fingerprint, "target": agent.removesuffix("_discovery"), "matched_event_count": len(findings), "recent_event_count": recent_count, "findings": findings, "requires_verification": bool(findings), "no_match_is_not_rejection": True, "handoff": handoff}
+
+
+def social_research(agent: str, payload: Mapping[str, Any], db: Any = None) -> Dict[str, Any]:
+    events = _events(payload)
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else {}
+    if not events and lead:
+        events = [dict(lead)]
+    terms = SOCIAL_TARGETS[agent]
+    findings = []
+    sources = set()
+    recent = 0
+    for event in events:
+        text = _text(event.get("signal") or event.get("evidence") or event)
+        if not text:
+            continue
+        sources.add(str(event.get("source") or event.get("provider") or "unknown"))
+        matches = _matches(text, terms) if terms else []
+        if terms and not matches:
+            continue
+        is_recent = _recent(event)
+        recent += int(is_recent)
+        findings.append({"matches": matches, "source": event.get("source") or event.get("provider"), "url": event.get("url") or event.get("source_url"), "recent": is_recent, "evidence": text[:2000]})
+    fingerprint = _fingerprint(payload)
+    handoff = None
+    if findings and fingerprint and db is not None:
+        stored_lead = db.get(fingerprint) or dict(lead)
+        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "social_research_agent": agent, "social_findings": findings}, priority=7, dedupe_key=f"company_research:{fingerprint}")
+        handoff = "company_research"
+    return {"agent": agent, "role": "social_research", "fingerprint": fingerprint, "matched_event_count": len(findings), "recent_event_count": recent, "source_count": len(sources), "sources": sorted(sources), "findings": findings, "research_status": "evidence_found" if findings else "research_required", "verification_required": True, "fabricated_fields": [], "handoff": handoff}
+
+
+def _company_identity_verified(company: str, public_research: Mapping[str, Any]) -> tuple[bool, list[str]]:
+    """Verify company identity from collected company-domain content, not name presence."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", company.lower()).strip()
+    if not normalized:
+        return False, []
+    evidence_urls: list[str] = []
+    for page in public_research.get("raw_pages", []) if isinstance(public_research.get("raw_pages"), list) else []:
+        if not isinstance(page, Mapping) or page.get("status") != "collected":
+            continue
+        for fact in page.get("facts", []) if isinstance(page.get("facts"), list) else []:
+            value = str(fact.get("value") or "") if isinstance(fact, Mapping) else ""
+            candidate = re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+            if normalized and normalized in candidate:
+                url = str(page.get("url") or "").strip()
+                if url and url not in evidence_urls:
+                    evidence_urls.append(url)
+    return bool(evidence_urls), evidence_urls
+
+
+def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
+    """Acquire real public evidence, preserve observed evidence separately, and persist explicit verification state."""
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
+    events = _events(payload)
+    social_findings = payload.get("social_findings", [])
+    if not isinstance(social_findings, list):
+        social_findings = []
+    company = str(lead.get("company") or "").strip()
+    source_url = str(lead.get("source_url") or lead.get("url") or "").strip()
+    fingerprint = str(lead.get("fingerprint") or "").strip()
+    if not fingerprint:
+        raise ValueError("company_research requires lead fingerprint")
+    existing = lead.get("company_research")
+    prior = dict(existing) if isinstance(existing, Mapping) else {}
+    def checkpoint_public_research(progress: Mapping[str, Any]) -> None:
+        existing_research = dict(prior)
+        existing_research["public_web_research_checkpoint"] = {
+            "pages": [dict(page) for page in progress.get("pages", []) if isinstance(page, Mapping)],
+            "sources": [dict(source) for source in progress.get("sources", []) if isinstance(source, Mapping)],
+            "pages_attempted": int(progress.get("pages_attempted", 0) or 0),
+            "pages_collected": int(progress.get("pages_collected", 0) or 0),
+            "checkpointed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        prior["public_web_research_checkpoint"] = dict(existing_research["public_web_research_checkpoint"])
+        stored = ctx.db.update_payload(fingerprint, {"company_research": existing_research, "research_status": "researching"})
+        if stored is None:
+            raise ValueError(f"Lead disappeared while checkpointing public research: {fingerprint}")
+
+    public_research = research_public_web(lead, checkpoint=checkpoint_public_research)
+    public_facts = public_research.get("facts", {}) if isinstance(public_research, Mapping) else {}
+    observed_input = {"company": company, "source_url": source_url, "signal": str(lead.get("signal") or "").strip(), "evidence": str(lead.get("evidence") or "").strip(), "evidence_event_count": len(events), "provenance": [dict(event.get("provenance") or {}) for event in events if isinstance(event.get("provenance"), Mapping)]}
+    company_verified, company_verification_evidence = _company_identity_verified(company, public_research)
+    facts: Dict[str, Any] = {
+        "observed_input": observed_input,
+        "social_findings": social_findings,
+        "researched_at": datetime.now(timezone.utc).isoformat(),
+        "public_web_research": public_research,
+        "public_web_sources": public_research.get("sources", []) if isinstance(public_research, Mapping) else [],
+        "public_company_facts": public_facts.get("company", []) if isinstance(public_facts, Mapping) else [],
+        "public_product_facts": public_facts.get("product", []) if isinstance(public_facts, Mapping) else [],
+        "public_hiring_facts": public_facts.get("hiring", []) if isinstance(public_facts, Mapping) else [],
+        "public_decision_maker_facts": public_facts.get("decision_maker", []) if isinstance(public_facts, Mapping) else [],
+        "public_business_need_facts": public_facts.get("business_need", []) if isinstance(public_facts, Mapping) else [],
+        "public_commercial_facts": public_facts.get("commercial", []) if isinstance(public_facts, Mapping) else [],
+        "company_verified": company_verified,
+        "company_verification_evidence": company_verification_evidence,
+        "fabricated_fields": [],
+    }
+    checkpoint = prior.get("public_web_research_checkpoint")
+    if isinstance(checkpoint, Mapping):
+        facts["public_web_research_checkpoint"] = dict(checkpoint)
+    if social_findings:
+        facts["social_evidence_sources"] = sorted({str(item.get("source")) for item in social_findings if isinstance(item, Mapping) and item.get("source")})
+        facts["social_evidence_count"] = len(social_findings)
+    if prior.get("decision_maker_verification_status") == "verified" and str(prior.get("decision_maker") or "").strip() and str(prior.get("decision_maker_evidence") or "").strip():
+        facts["decision_maker"] = prior["decision_maker"]
+        facts["decision_maker_evidence"] = prior["decision_maker_evidence"]
+        facts["decision_maker_verification_status"] = "verified"
+        if prior.get("decision_maker_email"):
+            facts["decision_maker_email"] = prior["decision_maker_email"]
+    else:
+        observed_person = str(lead.get("contact_name") or lead.get("person") or "").strip()
+        if observed_person:
+            facts["observed_decision_maker"] = observed_person
+            facts["observed_decision_maker_evidence"] = "Named person was directly observed in collector evidence; role remains unverified."
+        facts["decision_maker_verification_status"] = "observed_needs_role_verification"
+    if prior:
+        prior_social = prior.get("social_findings") if isinstance(prior.get("social_findings"), list) else []
+        merged_social = list(prior_social)
+        for item in social_findings:
+            if item not in merged_social:
+                merged_social.append(item)
+        facts = {**prior, **facts}
+        facts["social_findings"] = merged_social
+    decision_maker_verified = bool(facts.get("decision_maker")) and bool(facts.get("decision_maker_evidence")) and str(facts.get("decision_maker_verification_status") or "").lower() == "verified"
+    status = "research_complete" if company_verified and decision_maker_verified else "research_required"
+    verification_exclusions = {"observed_input", "researched_at", "public_web_research", "public_web_sources", "public_company_facts", "public_product_facts", "public_hiring_facts", "public_decision_maker_facts", "public_business_need_facts", "public_commercial_facts", "fabricated_fields", "social_findings", "social_evidence_sources", "social_evidence_count", "observed_decision_maker", "observed_decision_maker_evidence", "decision_maker_verification_status"}
+    verified_fields = []
+    existing_verified = lead.get("research_verified_fields")
+    if isinstance(existing_verified, (list, tuple, set)):
+        for field in existing_verified:
+            field_name = str(field).strip()
+            if field_name in {"current_intent_research", "business_need_research", "technical_product_hiring_research", "commercial_research", "route_research", "closer_package"}:
+                section = lead.get(field_name)
+                if isinstance(section, Mapping):
+                    section_status = str(section.get("verification_status") or section.get("status") or "").strip().lower()
+                    if section.get("verified") is True or section_status in {"verified", "research_verified", "complete"}:
+                        verified_fields.append(field_name)
+    if company_verified:
+        verified_fields.append("company_verified")
+    if decision_maker_verified:
+        verified_fields.append("decision_maker")
+    verified_fields = list(dict.fromkeys(verified_fields))
+    stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": verified_fields})
+    if stored is None:
+        raise ValueError(f"Lead not found for company research: {fingerprint}")
+    if status == "research_complete":
+        enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": events, "research_result": {"status": status, "verified_fields": verified_fields}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
+    return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": decision_maker_verified, "verified_fields": verified_fields, "fabricated_fields": [], "public_research_status": public_research.get("status"), "handoff": "verification" if status == "research_complete" else "research_required"}
+
+
+def outreach_closing(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
+    if payload.get("authorized") is not True:
+        raise OutreachContractError("outreach_closer requires explicit authorized=True")
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
+    decision = build_outreach_decision(lead)
+    updated = dict(lead)
+    updated.update({"outreach_route": decision.route, "outreach_state": decision.next_state, "outreach_attempt": int(lead.get("outreach_attempt", 0) or 0), "next_follow_up_at": decision.next_follow_up_at, "outreach_draft_subject": decision.subject, "outreach_draft_body": decision.body})
+    if ctx is not None:
+        fingerprint = str(updated.get("fingerprint") or "").strip()
+        if fingerprint:
+            stored = ctx.db.update_payload(fingerprint, updated)
+            if stored is None:
+                raise OutreachContractError(f"Lead not found for authorized outreach preparation: {fingerprint}")
+            updated = stored
+    return {"role": "outreach_closer", "lead": dict(updated), "action": "prepare_authorized_outreach", "autonomous": True, "authorized": True, "route": decision.route, "contact": {"name": decision.contact_name, "email": decision.contact_email}, "subject": decision.subject, "body": decision.body, "evidence_refs": list(decision.evidence_refs), "buying_signal": decision.buying_signal, "next_state": decision.next_state, "next_follow_up_at": decision.next_follow_up_at, "stop_reason": decision.stop_reason, "truthfulness_guard": "verified_research_only"}
+
+
+def follow_up_action(payload: Mapping[str, Any], ctx: Any = None) -> Dict[str, Any]:
+    if payload.get("authorized") is not True or str(payload.get("authorized_by_role") or "").strip().lower() != "high_ticket_sales_closer":
+        raise OutreachContractError("follow_up requires authorization by high_ticket_sales_closer")
+    lead = payload.get("lead") if isinstance(payload.get("lead"), Mapping) else payload
+    outcome = str(payload.get("outcome") or lead.get("outreach_state") or "").strip().lower()
+    if not outcome:
+        raise OutreachContractError("follow_up requires an observed outreach outcome")
+    updated = apply_outcome(lead, outcome)
+    if ctx is not None:
+        fingerprint = str(updated.get("fingerprint") or "").strip()
+        if fingerprint:
+            stored = ctx.db.update_payload(fingerprint, updated)
+            if stored is None:
+                raise OutreachContractError(f"Lead not found for follow-up update: {fingerprint}")
+            updated = stored
+    result: Dict[str, Any] = {"role": "follow_up", "lead": updated, "autonomous": True, "authorized": True, "authorized_by_role": "high_ticket_sales_closer", "outreach_state": updated.get("outreach_state"), "next_follow_up_at": updated.get("next_follow_up_at"), "stop_reason": updated.get("outreach_stop_reason"), "action": "stop" if updated.get("outreach_state") in {"declined", "opted_out", "irrelevant", "exhausted", "converted"} else "prepare_authorized_follow_up", "outcome_recorded": True}
+    objection = payload.get("objection")
+    if objection:
+        result["objection_response"] = objection_response(str(objection), str(updated.get("outreach_route") or "the selected service"))
+    return result
+
+
+def advanced_handler_registry():
+    handlers = {}
+    for agent in _SOURCE_SIGNAL_ALIASES:
+        handlers[agent] = lambda _agent, payload, ctx, name=agent: _source_signal(name, payload, ctx.db)
+    for agent in DISCOVERY_TARGETS:
+        handlers[agent] = lambda _agent, payload, ctx, name=agent: discovery_finding(name, payload, ctx.db)
+    for agent in SOCIAL_TARGETS:
+        handlers[agent] = lambda _agent, payload, ctx, name=agent: social_research(name, payload, ctx.db)
+    handlers["company_research"] = lambda _agent, payload, ctx: company_research(payload, ctx)
+    handlers["priority"] = priority
+    handlers["verification"] = verification
+    handlers["routing"] = routing
+    handlers["airtable_integrity"] = airtable_integrity
+    handlers["outreach_closer"] = lambda _agent, payload, ctx: outreach_closing(payload, ctx)
+    handlers["follow_up"] = lambda _agent, payload, ctx: follow_up_action(payload, ctx)
+    return handlers
