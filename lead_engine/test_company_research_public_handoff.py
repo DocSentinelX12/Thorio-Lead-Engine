@@ -18,7 +18,7 @@ def test_company_research_persists_public_evidence_without_fabrication(monkeypat
     monkeypatch.setattr(
         advanced_agent_logic,
         "research_public_web",
-        lambda value: {
+        lambda value, checkpoint=None: {
             "status": "evidence_found",
             "researched_at": "2026-09-13T00:00:00+00:00",
             "sources": [{"url": "https://observed.example/", "observed_at": "2026-09-13T00:00:00+00:00", "status": "collected"}],
