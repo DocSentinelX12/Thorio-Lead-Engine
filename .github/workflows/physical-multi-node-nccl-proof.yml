@@ -231,8 +231,8 @@ jobs:
 
   aggregate:
     name: Aggregate physical multi-node NCCL evidence
-    needs: rank
-    if: always()
+    needs: [runner_preflight, rank]
+    if: always() && needs.runner_preflight.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
