@@ -7,7 +7,6 @@ from typing import Any, Dict, Mapping, Optional
 from .agent_queue import enqueue
 from .outreach_engine import STOP_STATES, objection_response
 from .sales_closer_intelligence import build_commercial_strategy
-from .signal_outcome_feedback import refresh_signal_outcome_feedback
 
 STATE_KEY = "revenue_conversations"
 
@@ -205,7 +204,6 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
     # lead or conversation persistence operation.
     with db.batch_writes():
         stored = db.update_payload(opportunity_id, updated) or updated
-        refresh_signal_outcome_feedback(db)
         if classified in {"interested", "replied", "objection"}:
             enqueue(
                 db,
