@@ -121,6 +121,30 @@ def test_acquire_free_creates_bounded_private_gpu_kernel_without_persisting_secr
     assert "THORIO_COMPUTE_AUTH_TOKEN" not in json.dumps(acquired.enrollment)
 
 
+def test_acquire_free_passes_the_durable_acquisition_id_to_worker(tmp_path):
+    runner, calls = _runner_factory()
+    captured_script = {}
+
+    def capturing_runner(command, *, timeout, cwd=None):
+        if command[1:3] == ["kernels", "push"]:
+            from pathlib import Path
+
+            script_path = Path(command[command.index("-p") + 1]) / "thorio_worker.py"
+            captured_script["content"] = script_path.read_text(encoding="utf-8")
+        return runner(command, timeout=timeout, cwd=cwd)
+
+    provider = _provider(capturing_runner)
+    offer = provider.discover_free()[0]
+    acquired = provider.acquire_free(offer)
+
+    from .free_compute_acquisition import FreeComputeAcquisitionStore
+
+    expected = FreeComputeAcquisitionStore.acquisition_id(offer)
+    assert f'"acquisition_id": "{expected}"' in captured_script["content"]
+    assert acquired.acquisition_id == expected
+
+
+
 def test_acquire_free_rejects_stale_offer_identity():
     runner, _ = _runner_factory()
     provider = _provider(runner)
