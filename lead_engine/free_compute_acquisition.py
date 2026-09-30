@@ -466,6 +466,7 @@ class FreeComputeAcquisitionManager:
         expired_verified = [item for item in verified if not active(item)]
         return {
             "provider_count": len(self._providers),
+            "provider_ids": tuple(sorted({str(provider.provider_id).strip() for provider in self._providers.values()})),
             "records": tuple(records),
             "free_only": True,
             "paid_capacity_allowed": False,
