@@ -398,16 +398,24 @@ class FreeComputeAcquisitionManager:
             raise FreeComputeAcquisitionError("paid capacity is permanently forbidden")
         if offer.expires_at is not None and offer.expires_at <= self._clock():
             raise FreeComputeAcquisitionError("free compute offer is expired")
-        provider = next(
-            (
-                candidate
-                for candidate in self._providers.values()
-                if str(candidate.provider_id).strip() == offer.provider_id
-                and self._provider_key(candidate) == f"{offer.provider_id}:{offer.domain_id}"
-            ),
-            None,
-        )
-        if provider is None:
+        matching = [
+            candidate
+            for candidate in self._providers.values()
+            if str(candidate.provider_id).strip() == offer.provider_id
+        ]
+        exact = [
+            candidate
+            for candidate in matching
+            if self._provider_key(candidate) == f"{offer.provider_id}:{offer.domain_id}"
+        ]
+        if len(exact) == 1:
+            provider = exact[0]
+        elif len(matching) == 1:
+            # Backward-compatible provider adapters may expose a single
+            # provider-wide identity rather than a domain method. The offer
+            # remains the authoritative domain identity in the durable ledger.
+            provider = matching[0]
+        else:
             raise FreeComputeAcquisitionError(
                 f"free compute provider domain is not registered: {offer.provider_id}:{offer.domain_id}"
             )
