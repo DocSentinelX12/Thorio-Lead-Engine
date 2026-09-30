@@ -52,7 +52,7 @@ def test_active_gdrdma_measurement_requires_current_execution_participant_and_pe
 
     coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
     coordinator.register_worker(WorkerIdentity(
-        "worker-a", "host", "x86_64", 2, 4096, ("lead-processing",)
+        "worker-a", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
     ))
     task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
     claimed = coordinator.claim("worker-a")
@@ -292,7 +292,7 @@ def test_expired_attempt_is_recoverable_without_completion(tmp_path):
 def test_participant_binding_rejects_resource_set_that_differs_from_allocation(tmp_path, monkeypatch):
     coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
     coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
-        "node-a", "host", "x86_64", 2, 4096, ("lead-processing",)
+        "node-a", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
     ))
     task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
     claimed = coordinator.claim("node-a")
@@ -340,7 +340,7 @@ def test_participant_binding_rejects_resource_set_that_differs_from_allocation(t
 def test_reconcile_fabric_rolls_back_requeue_if_attempt_was_retired_concurrently(tmp_path, monkeypatch):
     coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", lease_seconds=30)
     coordinator.register_worker(__import__("lead_engine.compute_pool", fromlist=["WorkerIdentity"]).WorkerIdentity(
-        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing",)
+        "worker-1", "host", "x86_64", 2, 4096, ("lead-processing", "lead_prepare")
     ))
     task_id = coordinator.enqueue({"kind": "lead_prepare", "leads": []})
     claimed = coordinator.claim("worker-1")
