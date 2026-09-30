@@ -226,9 +226,24 @@ def detect_compound_opportunities(
                 triggers.append("funding_followed_by_execution")
                 triggers = sorted(set(triggers))
 
-            if len(opportunity_ids) < 2 or len(sources) < 2 or len(triggers) < 2:
+            contributing_sources = {
+                _text(item.get("source"))
+                for item in members
+                if _text(item.get("source")) and (
+                    bool(_triggers(item))
+                    or (
+                        bool(structural_events)
+                        and any(
+                            event["opportunity_id"]
+                            == _text(item.get("opportunity_id") or item.get("fingerprint"))
+                            for event in structural_events
+                        )
+                        and bool(qualifying_non_structural_triggers or funding_followed_by_execution)
+                    )
+                )
+            }
+            if len(opportunity_ids) < 2 or len(contributing_sources) < 2 or len(triggers) < 2:
                 continue
-
             clusters.append({
                 "entity_key": entity_key,
                 "opportunity_ids": opportunity_ids,
