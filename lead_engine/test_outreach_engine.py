@@ -69,7 +69,15 @@ def test_no_response_advances_cadence_and_exhausts():
     assert exhausted["outreach_state"] == "exhausted" and exhausted["next_follow_up_at"] is None and exhausted["follow_up_due"] is False
 
 
-\n\ndef test_terminal_outcomes_clear_follow_up_due():\n    for outcome in ("declined", "opted_out", "irrelevant", "converted", "exhausted"):\n        value = lead(outreach_attempt=3, follow_up_due=True, next_follow_up_at="2026-09-09T00:00:00+00:00")\n        updated = apply_outcome(value, outcome, now=datetime(2026, 9, 9, tzinfo=timezone.utc))\n        assert updated["next_follow_up_at"] is None\n        assert updated["follow_up_due"] is False\n\ndef test_objection_handler_stops_on_opt_out_language(): assert "not follow up" in objection_response("Please stop and remove me", "Thorio").lower()
+
+
+def test_terminal_outcomes_clear_follow_up_due():
+    for outcome in ("declined", "opted_out", "irrelevant", "converted", "exhausted"):
+        value = lead(outreach_attempt=3, follow_up_due=True, next_follow_up_at="2026-09-09T00:00:00+00:00")
+        updated = apply_outcome(value, outcome, now=datetime(2026, 9, 9, tzinfo=timezone.utc))
+        assert updated["next_follow_up_at"] is None
+        assert updated["follow_up_due"] is False
+\ndef test_objection_handler_stops_on_opt_out_language(): assert "not follow up" in objection_response("Please stop and remove me", "Thorio").lower()
 def test_objection_handler_does_not_make_unsupported_price_claims(): assert "assumptions" in objection_response("That sounds too expensive", "Shiftr").lower()
 
 
