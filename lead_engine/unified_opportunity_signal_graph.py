@@ -369,9 +369,9 @@ def build_unified_opportunity_signal_graph(
                 route=_text(item.get("route")),
                 channel=_text(item.get("channel")),
                 status=_text(item.get("status")),
-                action_kind=_text(item.get("kind")) or "outreach",
                 provider_result=dict(item.get("provider_result") or {}) if isinstance(item.get("provider_result"), Mapping) else {},
             )
+            action_node["action_kind"] = _text(item.get("kind")) or "outreach"
             nodes.setdefault(action_id, action_node)
             edge = _edge("opportunity_has_outreach_action", opportunity_id_node, action_id)
             edges[edge["id"]] = edge
