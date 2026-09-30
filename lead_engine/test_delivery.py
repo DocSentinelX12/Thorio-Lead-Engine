@@ -78,7 +78,6 @@ def test_delivery_counts():
         "Paxus": 1,
         "Thorio": 1,
         "Astrivon Labs": 0,
-        "Review": 0,
     }
 
 
@@ -88,5 +87,4 @@ def test_delivery_counts_empty():
         "Paxus": 0,
         "Thorio": 0,
         "Astrivon Labs": 0,
-        "Review": 0,
     }
