@@ -239,6 +239,32 @@ class FreeComputeAcquisitionStore:
             for gpu in gpu_resources:
                 if not isinstance(gpu, Mapping) or not str(gpu.get("gpu_uuid") or "").strip():
                     raise FreeComputeAcquisitionError("GPU acquisition requires stable observed GPU UUIDs")
+            physical_execution = verification.get("physical_gpu_execution")
+            if not isinstance(physical_execution, (list, tuple)) or len(physical_execution) != len(gpu_resources):
+                raise FreeComputeAcquisitionError("GPU acquisition requires physical CUDA execution evidence for every observed GPU")
+            observed_uuids = {
+                str(gpu.get("gpu_uuid") or "").strip()
+                for gpu in gpu_resources
+                if isinstance(gpu, Mapping)
+            }
+            executed_uuids = {
+                str(item.get("gpu_uuid") or "").strip()
+                for item in physical_execution
+                if isinstance(item, Mapping)
+            }
+            if executed_uuids != observed_uuids:
+                raise FreeComputeAcquisitionError("GPU execution evidence does not match observed physical GPU identities")
+            for item in physical_execution:
+                if (
+                    not isinstance(item, Mapping)
+                    or item.get("verified") is not True
+                    or str(item.get("execution_backend") or "").strip().lower() != "cuda"
+                    or not str(item.get("operation") or "").strip()
+                    or not isinstance(item.get("checksum"), (int, float))
+                    or not isinstance(item.get("elapsed_ms"), (int, float))
+                    or float(item.get("elapsed_ms", -1)) < 0
+                ):
+                    raise FreeComputeAcquisitionError("GPU acquisition requires verified CUDA execution evidence")
         verification_payload = dict(verification)
         verification_payload["worker_id"] = worker
         payload = json.dumps(verification_payload, sort_keys=True, ensure_ascii=False)
