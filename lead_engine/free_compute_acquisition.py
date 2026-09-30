@@ -182,6 +182,15 @@ class FreeComputeAcquisitionStore:
             raise FreeComputeAcquisitionError("acquisition identity does not match observed offer")
         if acquired.provider_id != offer.provider_id or acquired.domain_id != offer.domain_id or acquired.offer_id != offer.offer_id:
             raise FreeComputeAcquisitionError("acquisition identity does not match observed offer")
+        if acquired.acquired_at < offer.observed_at:
+            raise FreeComputeAcquisitionError("acquisition cannot predate the observed offer")
+        if offer.expires_at is not None:
+            if acquired.expires_at is None or acquired.expires_at > offer.expires_at:
+                raise FreeComputeAcquisitionError("acquisition expiry cannot extend beyond the observed offer")
+            if acquired.acquired_at >= offer.expires_at:
+                raise FreeComputeAcquisitionError("acquisition must begin before the observed offer expires")
+        if acquired.gpu_capable and not offer.gpu_capable:
+            raise FreeComputeAcquisitionError("acquisition cannot claim GPU capability absent from the observed offer")
         enrollment = json.dumps(dict(acquired.enrollment), sort_keys=True, ensure_ascii=False)
         with self._connect() as connection:
             row = connection.execute(
