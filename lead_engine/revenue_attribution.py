@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
 
+from .lead_identity import canonical_opportunity_identity
 from .opportunity_signal_intelligence import detect_compound_opportunities
 from .signal_outcome_feedback import build_signal_outcome_feedback
 from .unified_opportunity_signal_graph import build_unified_opportunity_signal_graph
@@ -146,11 +147,13 @@ def learn_signal_outcomes(db: Any) -> Dict[str, Any]:
             continue
         opportunity_ids_by_signal.setdefault(signal_key, set()).update(opportunity_by_observation.get(observation_id, set()))
 
-    leads_by_opportunity = {
-        str(lead.get("opportunity_id") or lead.get("fingerprint") or ""): lead
-        for lead in leads
-        if str(lead.get("opportunity_id") or lead.get("fingerprint") or "")
-    }
+    leads_by_opportunity = {}
+    for lead in leads:
+        try:
+            opportunity_id = canonical_opportunity_identity(dict(lead))["opportunity_id"]
+        except ValueError:
+            continue
+        leads_by_opportunity[opportunity_id] = lead
 
     by_signal: Dict[str, Dict[str, Any]] = {}
     signal_keys = set(opportunity_ids_by_signal) | set((feedback.get("by_signal") or {}).keys())
