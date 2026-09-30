@@ -52,8 +52,28 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
     durable_events = lead.get("conversation_events") if isinstance(lead.get("conversation_events"), list) else []
     if event_id in conversation["processed_event_ids"] or any(isinstance(item, Mapping) and str(item.get("event_id") or "").strip() == event_id for item in durable_events):
         if event_id not in conversation["processed_event_ids"]:
-            conversation["processed_event_ids"].append(event_id)
-            conversation["events"] = list(durable_events)
+            durable_by_id = {
+                str(item.get("event_id") or "").strip(): dict(item)
+                for item in durable_events
+                if isinstance(item, Mapping) and str(item.get("event_id") or "").strip()
+            }
+            conversation["events"] = list(durable_by_id.values())
+            conversation["processed_event_ids"] = list(durable_by_id)
+            conversation["response_count"] = max(
+                int(conversation.get("response_count", 0) or 0),
+                int(lead.get("response_count", 0) or 0),
+                sum(
+                    1
+                    for item in conversation["events"]
+                    if str(item.get("direction") or "inbound").strip().lower() == "inbound"
+                ),
+            )
+            inbound_events = [
+                item for item in conversation["events"]
+                if str(item.get("direction") or "inbound").strip().lower() == "inbound"
+            ]
+            if inbound_events:
+                conversation["last_inbound_at"] = str(inbound_events[-1].get("at") or "").strip() or conversation.get("last_inbound_at")
             conversation["updated_at"] = _now()
             _save(db, state)
         return dict(conversation)
