@@ -910,10 +910,7 @@ def test_multi_node_placement_evaluates_complete_gpu_candidate_space(tmp_path):
         tuple(item["resource_keys"])
         for item in accepted
     } == {
-        ("provider-a/domain-a/node-a/cpu", "provider-a/domain-a/node-a/gpu/ua",
-         "provider-a/domain-a/node-b/cpu", "provider-a/domain-a/node-b/gpu/ub"),
-        ("provider-a/domain-a/node-a/cpu", "provider-a/domain-a/node-a/gpu/ua",
-         "provider-a/domain-a/node-c/cpu", "provider-a/domain-a/node-c/gpu/uc"),
-        ("provider-a/domain-a/node-b/cpu", "provider-a/domain-a/node-b/gpu/ub",
-         "provider-a/domain-a/node-c/cpu", "provider-a/domain-a/node-c/gpu/uc"),
+        ("provider-a/domain-a/node-a/gpu/ua", "provider-a/domain-a/node-b/gpu/ub"),
+        ("provider-a/domain-a/node-a/gpu/ua", "provider-a/domain-a/node-c/gpu/uc"),
+        ("provider-a/domain-a/node-b/gpu/ub", "provider-a/domain-a/node-c/gpu/uc"),
     }
