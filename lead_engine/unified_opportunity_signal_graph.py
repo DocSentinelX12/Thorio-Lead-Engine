@@ -414,7 +414,7 @@ def build_unified_opportunity_signal_graph(
             )
             nodes.setdefault(outcome_id, outcome_node)
             edge = _edge("opportunity_observed_outcome", opportunity_id_node, outcome_id)
-            edges[edge["id"]] = edge)
+            edges[edge["id"]] = edge
             for signal in _signal_entries(lead, opportunity_id):
                 signal_id, _ = _node("signal", signal["signal_key"], category=signal["category"], signal_type=signal["signal_type"], phrase=signal["phrase"], signal_key=signal["signal_key"])
                 association = _edge("signal_observed_with_outcome", signal_id, outcome_id, association_only=True)
