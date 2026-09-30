@@ -57,6 +57,69 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     finally: register_revenue_transport(None)
     output = result["results"][0]; stored = db.get(lead["fingerprint"]); assert result["completed_count"] == 1 and result["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_follow_up"; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["outreach_attempt"] == 2 and stored["next_follow_up_at"] is not None and stored["follow_up_due"] is True and len(stored["outreach_history"]) == 3 and stored["outreach_history"][-1]["kind"] == "follow_up" and stored["outreach_history"][-1]["status"] == "sent"
 
+def test_prepared_follow_up_persists_observed_outcome(tmp_path):
+    db = _db(tmp_path)
+    now = _recent()
+    lead = {
+        "fingerprint": "prepared-follow-up-persistence",
+        "company": "Acme",
+        "qualified": True,
+        "sales_eligibility": "eligible",
+        "signal": "Acme is hiring a remote software engineer",
+        "business_need": "remote software engineer hiring",
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_email": "taylor@example.com",
+            "decision_maker_verification_status": "verified",
+        },
+        "current_intent_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "current_need": "remote software engineer hiring",
+            "observed_at": now,
+            "evidence_url": "https://example.com/need",
+        },
+        "route_research": {
+            "verified": True,
+            "verification_status": "verified",
+            "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current software engineering hiring need."}},
+        },
+        "qualification_results": {"Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Current software engineering hiring need."}}},
+        "outreach_route": "Thorio",
+        "outreach_state": "awaiting_response",
+        "outreach_history": [{"at": now, "outcome": "sent"}],
+        "outreach_attempt": 1,
+        "conversation_id": "conversation:prepared-follow-up-persistence:thorio",
+        "contact_email": "taylor@example.com",
+        "follow_up_due": True,
+        "next_follow_up_at": now,
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "follow_up", {
+        "lead": lead,
+        "outcome": "no_response",
+        "execute": False,
+        "authorized": True,
+        "authorized_by_role": "high_ticket_sales_closer",
+    })
+    result = run_worker_once(db, "follow_up", worker_id="follow-up-prepare-worker")
+    stored = db.get(lead["fingerprint"])
+    assert result["completed_count"] == 1
+    assert result["failed_count"] == 0
+    assert result["results"][0]["action"] == "prepare_follow_up"
+    assert result["results"][0]["outcome_recorded"] is True
+    assert stored["outreach_state"] == "ready"
+    assert stored["outreach_attempt"] == 2
+    assert stored["follow_up_due"] is True
+    assert stored["next_follow_up_at"] is not None
+    assert len(stored["outreach_history"]) == 2
+    assert stored["outreach_history"][-1]["outcome"] == "no_response"
+
+
 def test_company_research_does_not_mark_observed_person_as_verified_decision_maker(tmp_path):
     db = _db(tmp_path); lead = {"fingerprint": "research-verification-test", "company": "Acme", "person": "Taylor", "signal": "Acme is hiring a backend engineer"}; db.insert_if_new(lead); enqueue(db, "company_research", {"lead": lead, "evidence_events": [{"source": "linkedin", "signal": "Taylor is mentioned by Acme"}]}); result = run_worker_once(db, "company_research", worker_id="research-worker"); stored = db.get(lead["fingerprint"]); assert result["completed_count"] == 1; assert stored["research_status"] == "research_required" and stored["company_research"]["decision_maker_verification_status"] == "observed_needs_role_verification"
 
