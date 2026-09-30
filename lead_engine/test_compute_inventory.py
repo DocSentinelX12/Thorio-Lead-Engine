@@ -342,7 +342,7 @@ def test_inventory_quarantines_one_failed_physical_path_with_durable_reason(tmp_
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
     snapshot = _snapshot(gpus=(_gpu("0", "GPU-0"),))
     inventory.observe(snapshot)
-    key = "provider/domain/node-1/gpu/GPU-0"
+    key = "provider-a/domain-a/node-1/gpu/GPU-0"
     assert inventory.quarantine_resource(
         key,
         reason="NCCL selected an HCA port different from the scheduler's verified physical path",
