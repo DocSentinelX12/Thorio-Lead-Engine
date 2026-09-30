@@ -127,3 +127,23 @@ def test_unified_graph_excludes_signal_observed_after_outcome_from_association()
     lead["conversation_events"] = [{"event_id": "event-late", "outcome": "converted", "at": "2026-09-29T13:00:00+00:00"}]
     graph = build_unified_opportunity_signal_graph([lead])
     assert not any(edge["type"] == "signal_observed_with_outcome" for edge in graph["edges"])
+
+
+def test_unified_graph_scopes_identical_evidence_to_each_opportunity():
+    first = _lead()
+    second = _lead()
+    second["source_id"] = "post-2"
+    second["url"] = "https://example.com/post-2"
+    second_identity = canonical_opportunity_identity(second)
+    second.update({
+        "fingerprint": second_identity["fingerprint"],
+        "opportunity_id": second_identity["opportunity_id"],
+        "identity_version": second_identity["identity_version"],
+        "identity_derivation": second_identity["identity_derivation"],
+    })
+    graph = build_unified_opportunity_signal_graph([first, second])
+    evidence_nodes = [node for node in graph["nodes"].values() if node["type"] == "evidence"]
+    opportunity_ids = {node["opportunity_id"] for node in evidence_nodes}
+    assert first["opportunity_id"] in opportunity_ids
+    assert second["opportunity_id"] in opportunity_ids
+    assert len([node for node in evidence_nodes if node["evidence"] == "We are looking for a development partner for our product."]) == 2
