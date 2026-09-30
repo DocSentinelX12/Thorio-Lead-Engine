@@ -175,25 +175,39 @@ def signal_feedback_priority(
     feedback: Mapping[str, Any],
 ) -> int:
     """Return the highest observed association priority for this lead's signals."""
-    matches = lead.get("signal_matches")
-    if not isinstance(matches, list):
-        return 0
     by_signal = feedback.get("by_signal")
     if not isinstance(by_signal, Mapping):
         return 0
+
+    signal_keys: list[str] = []
+    matches = lead.get("signal_matches")
+    if isinstance(matches, list):
+        for raw in matches:
+            key = _text(raw).lower()
+            if key:
+                signal_keys.append(f"configured|{key}")
+
+    broadening = lead.get("commercial_signal_broadening")
+    if isinstance(broadening, Mapping):
+        raw_matches = broadening.get("matches")
+        if isinstance(raw_matches, list):
+            for raw in raw_matches:
+                if not isinstance(raw, Mapping):
+                    continue
+                phrase = _text(raw.get("phrase"))
+                category = _text(raw.get("category") or raw.get("signal_id"))
+                if phrase and category:
+                    signal_keys.append(f"broadened|{' '.join(category.lower().split())}|{' '.join(phrase.lower().split())}")
+
     priorities = []
-    for raw in matches:
-        key = _text(raw).lower()
-        candidates = (key, f"configured|{key}")
-        for candidate in candidates:
-            item = by_signal.get(candidate)
-            if not isinstance(item, Mapping):
-                continue
-            try:
-                priorities.append(max(0, int(item.get("research_priority", 0) or 0)))
-            except (TypeError, ValueError):
-                pass
-            break
+    for key in dict.fromkeys(signal_keys):
+        item = by_signal.get(key)
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            priorities.append(max(0, int(item.get("research_priority", 0) or 0)))
+        except (TypeError, ValueError):
+            continue
     return max(priorities, default=0)
 
 
