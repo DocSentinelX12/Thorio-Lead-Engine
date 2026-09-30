@@ -998,4 +998,4 @@ def test_local_worker_identity_runs_physical_gpu_probe_for_external_acquisition(
 
     assert identity.physical_fabric_evidence["acquisition_id"] == "acq-123"
     assert identity.physical_fabric_evidence["physical_gpu_execution"][0]["gpu_uuid"] == "GPU-aaa"
-    assert calls[0][0][0] == "python"
+    assert calls[0][0][1:4] == ("-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid")
