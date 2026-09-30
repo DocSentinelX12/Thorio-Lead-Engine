@@ -57,6 +57,52 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path):
     finally: register_revenue_transport(None)
     output = result["results"][0]; stored = db.get(lead["fingerprint"]); assert result["completed_count"] == 1 and result["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_follow_up"; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["outreach_attempt"] == 2 and stored["next_follow_up_at"] is not None and stored["follow_up_due"] is True and len(stored["outreach_history"]) == 3 and stored["outreach_history"][-1]["kind"] == "follow_up" and stored["outreach_history"][-1]["status"] == "sent"
 
+def test_follow_up_worker_stops_for_terminal_revenue_lifecycle(tmp_path):
+    db = _db(tmp_path)
+    lead = {
+        "fingerprint": "terminal-follow-up-lifecycle-worker",
+        "company": "Acme",
+        "qualified": True,
+        "sales_eligibility": "eligible",
+        "signal": "remote software engineer hiring",
+        "business_need": "remote software engineer hiring",
+        "research_status": "complete",
+        "research_verified_fields": ["current_intent_research", "route_research"],
+        "company_research": {
+            "company_verified": True,
+            "decision_maker": "Taylor",
+            "decision_maker_evidence": "https://example.com/taylor",
+            "decision_maker_email": "taylor@example.com",
+            "decision_maker_verification_status": "verified",
+        },
+        "outreach_route": "Thorio",
+        "outreach_state": "awaiting_response",
+        "revenue_lifecycle_state": "referred",
+        "outreach_history": [{"at": _recent(), "outcome": "sent"}],
+        "outreach_attempt": 1,
+        "conversation_id": "conversation:terminal-follow-up-lifecycle-worker:thorio",
+        "contact_email": "taylor@example.com",
+        "follow_up_due": True,
+        "next_follow_up_at": _recent(),
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "follow_up", {
+        "lead": lead,
+        "outcome": "no_response",
+        "execute": False,
+        "authorized": True,
+        "authorized_by_role": "high_ticket_sales_closer",
+    })
+    result = run_worker_once(db, "follow_up", worker_id="terminal-lifecycle-worker")
+    stored = db.get(lead["fingerprint"])
+    assert result["completed_count"] == 1
+    assert result["failed_count"] == 0
+    assert result["results"][0]["action"] == "stop"
+    assert result["results"][0]["outcome_recorded"] is False
+    assert stored["revenue_lifecycle_state"] == "referred"
+    assert stored["outreach_state"] == "awaiting_response"
+
+
 def test_prepared_follow_up_persists_observed_outcome(tmp_path):
     db = _db(tmp_path)
     now = _recent()
