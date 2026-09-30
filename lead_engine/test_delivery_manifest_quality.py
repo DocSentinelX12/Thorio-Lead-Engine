@@ -33,7 +33,7 @@ def test_high_quality_leads_are_delivered_to_correct_partners():
 
     manifest = build_delivery_manifest(leads)
 
-    assert manifest["counts"] == {"Shiftr": 1, "Paxus": 1, "Thorio": 1, "Review": 0}
+    assert manifest["counts"] == {"Shiftr": 1, "Paxus": 1, "Thorio": 1, "Astrivon Labs": 0, "Review": 0}
     assert manifest["Shiftr"][0]["delivery_status"] == "approved"
     assert manifest["Paxus"][0]["delivery_status"] == "approved"
     assert manifest["Thorio"][0]["delivery_status"] == "approved"
