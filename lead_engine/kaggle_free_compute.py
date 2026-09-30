@@ -47,6 +47,8 @@ class KaggleFreeComputeConfig:
     minimum_remaining_hours: float = 1.0
     maximum_runtime_hours: float = 6.0
     command_timeout_seconds: int = 120
+    acquisition_ready_timeout_seconds: int = 60
+    acquisition_ready_poll_interval_seconds: float = 5.0
     kaggle_binary: str = "kaggle"
 
     def __post_init__(self) -> None:
@@ -74,6 +76,10 @@ class KaggleFreeComputeConfig:
             raise ValueError("maximum_runtime_hours must be positive")
         if self.command_timeout_seconds <= 0:
             raise ValueError("command_timeout_seconds must be positive")
+        if self.acquisition_ready_timeout_seconds <= 0:
+            raise ValueError("acquisition_ready_timeout_seconds must be positive")
+        if self.acquisition_ready_poll_interval_seconds <= 0:
+            raise ValueError("acquisition_ready_poll_interval_seconds must be positive")
 
 
 class KaggleFreeComputeProvider(FreeComputeProvider):
@@ -87,10 +93,12 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         *,
         runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
         clock=time.time,
+        sleeper=time.sleep,
     ):
         self.config = config
         self._runner = runner or self._subprocess_runner
         self._clock = clock
+        self._sleeper = sleeper
 
     @classmethod
     def from_environment(cls) -> "KaggleFreeComputeProvider":
@@ -129,6 +137,12 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                 ),
                 command_timeout_seconds=int(
                     os.environ.get("THORIO_KAGGLE_COMMAND_TIMEOUT_SECONDS", "120")
+                ),
+                acquisition_ready_timeout_seconds=int(
+                    os.environ.get("THORIO_KAGGLE_ACQUISITION_READY_TIMEOUT_SECONDS", "60")
+                ),
+                acquisition_ready_poll_interval_seconds=float(
+                    os.environ.get("THORIO_KAGGLE_ACQUISITION_READY_POLL_INTERVAL_SECONDS", "5")
                 ),
                 kaggle_binary=os.environ.get("THORIO_KAGGLE_BINARY", "kaggle").strip(),
             )
@@ -353,6 +367,24 @@ os.chdir(ROOT)
 run(sys.executable, "-m", "lead_engine.compute_worker")
 '''
 
+    def _wait_for_running(self, kernel_ref: str) -> str:
+        deadline = self._clock() + self.config.acquisition_ready_timeout_seconds
+        last_status = "unknown"
+        while True:
+            last_status = self._kernel_status(kernel_ref)
+            if last_status == "running":
+                return last_status
+            if last_status in {"failed", "cancelled", "complete", "unknown", "not_found"}:
+                raise KaggleFreeComputeError(
+                    f"Kaggle provider run did not reach running state: {last_status}"
+                )
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                raise KaggleFreeComputeError(
+                    f"Kaggle provider run did not reach running state before timeout: {last_status}"
+                )
+            self._sleeper(min(self.config.acquisition_ready_poll_interval_seconds, remaining))
+
     def acquire_free(self, offer: FreeComputeOffer) -> AcquiredCompute:
         if offer.provider_id != self.provider_id:
             raise KaggleFreeComputeError("offer belongs to a different provider")
@@ -426,6 +458,15 @@ run(sys.executable, "-m", "lead_engine.compute_worker")
                 ]
             )
 
+        try:
+            provider_run_status = self._wait_for_running(kernel_ref)
+        except Exception:
+            try:
+                self._run(["kernels", "delete", kernel_ref, "--yes"])
+            except Exception:
+                pass
+            raise
+
         expires_at = None
         if offer.expires_at is not None:
             expires_at = min(offer.expires_at, now + timeout_seconds)
@@ -448,6 +489,9 @@ run(sys.executable, "-m", "lead_engine.compute_worker")
                 "runtime_timeout_seconds": timeout_seconds,
                 "authentication": "Kaggle Secrets",
                 "physical_verification_required": True,
+                "provider_submission_accepted": True,
+                "provider_run_status": provider_run_status,
+                "external_capacity_acquired": True,
                 "free_only": True,
             },
         )
