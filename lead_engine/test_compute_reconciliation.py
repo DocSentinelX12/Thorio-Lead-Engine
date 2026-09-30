@@ -212,7 +212,7 @@ def test_reconcile_old_generation_cannot_release_new_generation_allocation(tmp_p
         )
         connection.execute(
             "UPDATE compute_tasks SET status='queued',worker_id=NULL,attempt_id=NULL,"
-            "lease_token_digest=NULL,lease_until=NULL WHERE task_id=?",
+            "lease_until=NULL WHERE task_id=?",
             (task_id,),
         )
         connection.commit()
