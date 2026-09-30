@@ -2,6 +2,9 @@ name: Physical Multi-Node NCCL Proof
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/physical-multi-node-nccl-proof.yml
     inputs:
       master_addr:
         description: "Routable address of the rank-0 fabric node, reachable from rank 1"
