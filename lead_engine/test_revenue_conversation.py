@@ -162,6 +162,51 @@ def test_inbound_event_reconciles_durable_events_when_controller_state_lags(tmp_
     assert recovered["processed_event_ids"] == ["evt-1", "evt-2", "evt-3"]
 
 
+def test_controller_checkpoint_recovers_event_missing_from_durable_lead(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead("controller-only-event-test")
+    db.insert_if_new(lead)
+    event = {
+        "event_id": "evt-controller-only",
+        "direction": "inbound",
+        "at": datetime.now(timezone.utc).isoformat(),
+        "text": "Yes, I am interested",
+        "outcome": "interested",
+    }
+    key = f"{lead['fingerprint']}::{lead['conversation_id']}"
+    db.set_state(
+        "revenue_conversations",
+        {
+            "conversations": {
+                key: {
+                    "opportunity_id": lead["fingerprint"],
+                    "conversation_id": lead["conversation_id"],
+                    "events": [event],
+                    "processed_event_ids": ["evt-controller-only"],
+                    "response_count": 1,
+                    "created_at": event["at"],
+                }
+            }
+        },
+    )
+
+    result = record_inbound_event(
+        db,
+        opportunity_id=lead["fingerprint"],
+        conversation_id=lead["conversation_id"],
+        event_id="evt-controller-only",
+        text=event["text"],
+        outcome=event["outcome"],
+    )
+
+    stored = db.get(lead["fingerprint"])
+    assert [item["event_id"] for item in stored["conversation_events"]] == ["evt-controller-only"]
+    assert stored["response_count"] == 1
+    assert [item["event_id"] for item in result["events"]] == ["evt-controller-only"]
+    assert result["processed_event_ids"] == ["evt-controller-only"]
+    assert pending(db, "follow_up") == []
+
+
 def test_inbound_event_persists_before_follow_up_enqueue_failure(tmp_path, monkeypatch):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("handoff-crash-test")
