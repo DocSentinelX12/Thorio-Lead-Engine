@@ -79,35 +79,28 @@ def test_inbound_event_remains_idempotent_from_durable_lead_after_conversation_s
 def test_inbound_event_reconciles_durable_events_when_controller_state_lags(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("partial-recovery-test")
-    db.insert_if_new(lead)
-    record_inbound_event(
-        db,
-        opportunity_id=lead["fingerprint"],
-        conversation_id=lead["conversation_id"],
-        event_id="evt-1",
-        text="We have a current need",
-        outcome="replied",
-    )
-    state = db.get_state("revenue_conversations")
-    key = f"{lead['fingerprint']}::{lead['conversation_id']}"
-    conversation = state["conversations"][key]
-    durable = db.get(lead["fingerprint"])
-    durable_events = list(durable["conversation_events"])
-    durable_events.append(
+    lead["conversation_events"] = [
+        {
+            "event_id": "evt-1",
+            "direction": "inbound",
+            "at": datetime.now(timezone.utc).isoformat(),
+            "text": "We have a current need",
+            "outcome": "replied",
+        },
         {
             "event_id": "evt-2",
             "direction": "inbound",
             "at": datetime.now(timezone.utc).isoformat(),
             "text": "We are comparing options",
             "outcome": "replied",
-        }
-    )
-    db.update_payload(
-        lead["fingerprint"],
-        {"conversation_events": durable_events, "response_count": 2},
-    )
-    conversation["events"] = [conversation["events"][0]]
-    conversation["processed_event_ids"] = ["evt-1"]
+        },
+    ]
+    lead["response_count"] = 2
+    db.insert_if_new(lead)
+    state = db.get_state("revenue_conversations")
+    key = f"{lead['fingerprint']}::{lead['conversation_id']}"
+    state["conversations"][key]["events"] = [lead["conversation_events"][0]]
+    state["conversations"][key]["processed_event_ids"] = ["evt-1"]
     db.set_state("revenue_conversations", state)
 
     record_inbound_event(
