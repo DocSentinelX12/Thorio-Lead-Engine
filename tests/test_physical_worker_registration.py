@@ -137,7 +137,7 @@ def test_local_worker_identity_carries_authoritative_nvidia_physical_evidence(mo
     def fake_run(command, *, capture_output, text, env, timeout, check):
         return __import__("types").SimpleNamespace(
             returncode=0,
-            stdout='THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-real", "checksum": 120.0, "elapsed_ms": 1.0}\\n',
+            stdout='THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-real", "checksum": 120.0, "elapsed_ms": 1.0}\n',
             stderr="",
         )
 
