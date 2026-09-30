@@ -577,7 +577,7 @@ def test_recovery_action_claim_is_single_owner_and_expiry_allows_reclaim(tmp_pat
     )
     inventory.persist_physical_path(path)
     inventory.fail_physical_path(path.path_id, reason="active failure", observed_at=10.0)
-    action = inventory.ensure_active_path_recovery_action(path_id=path.path_id)
+    action = inventory.ensure_active_path_recovery_action(path_id=path.path_id, now=20.0)
 
     claimed = inventory.claim_active_path_recovery_action(action_id=action["action_id"], owner="worker-1", now=20.0, lease_seconds=30.0)
     blocked = inventory.claim_active_path_recovery_action(action_id=action["action_id"], owner="worker-2", now=21.0, lease_seconds=30.0)
