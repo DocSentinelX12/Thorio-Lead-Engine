@@ -52,6 +52,10 @@ jobs:
       - name: Run GPU discovery and physical host contract tests
         run: |
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_nvidia_provider.py lead_engine/test_physical_host_discovery.py
+
+      - name: Run concrete free GPU provider contract tests
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_kaggle_free_compute.py
       - name: Run recovery orchestrator tests
         run: |
           python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_recovery_orchestrator.py
