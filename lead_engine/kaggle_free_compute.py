@@ -379,10 +379,13 @@ run(sys.executable, "-m", "lead_engine.compute_worker")
         if timeout_seconds < int(self.config.minimum_remaining_hours * 3600):
             raise KaggleFreeComputeError("Kaggle quota is too small for the configured minimum worker lifetime")
 
+        acquisition_id = hashlib.sha256(
+            f"{offer.provider_id}\x00{offer.domain_id}\x00{offer.offer_id}".encode("utf-8")
+        ).hexdigest()
         worker_script = self._worker_script(
             repository_url=self.config.repository_url,
             repository_ref=self.config.repository_ref,
-            acquisition_id=offer.offer_id,
+            acquisition_id=acquisition_id,
             domain_id=offer.domain_id,
             worker_id=offer.domain_id,
             coordinator_token_secret=self.config.coordinator_secret_label,
@@ -428,9 +431,6 @@ run(sys.executable, "-m", "lead_engine.compute_worker")
             expires_at = min(offer.expires_at, now + timeout_seconds)
         else:
             expires_at = now + timeout_seconds
-        acquisition_id = hashlib.sha256(
-            f"{offer.provider_id}\x00{offer.domain_id}\x00{offer.offer_id}".encode("utf-8")
-        ).hexdigest()
         return AcquiredCompute(
             provider_id=self.provider_id,
             domain_id=offer.domain_id,
