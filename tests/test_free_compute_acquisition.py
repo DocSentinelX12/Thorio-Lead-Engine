@@ -267,6 +267,14 @@ def test_expired_verified_gpu_is_not_eligible(tmp_path):
             "gpu_capable": True,
             "gpu_discovery_state": "healthy",
             "gpu_resources": [{"gpu_uuid": "GPU-real"}],
+            "physical_gpu_execution": [{
+                "verified": True,
+                "execution_backend": "cuda",
+                "operation": "torch_cuda_matmul",
+                "gpu_uuid": "GPU-real",
+                "checksum": 120.0,
+                "elapsed_ms": 1.0,
+            }],
             "physical_fabric_evidence": {"physical_fabric": {"components": [{"component_type": "gpu", "identity": "gpu:GPU-real"}]}},
         },
     )
@@ -389,3 +397,25 @@ def test_continuous_hunter_runs_immediately_then_waits_between_cycles(tmp_path):
 
     assert len(cycles) == 2
     assert sleeps == [7.0]
+
+
+def test_gpu_worker_verification_rejects_missing_physical_execution_evidence(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    provider = Provider()
+    manager.register(provider)
+    acquired = manager.acquire(offer(expires_at=200.0))
+
+    with pytest.raises(FreeComputeAcquisitionError, match="physical CUDA execution evidence"):
+        store.mark_worker_verified(
+            acquired.acquisition_id,
+            worker_id="external-worker-1",
+            verification={
+                "gpu_capable": True,
+                "gpu_discovery_state": "healthy",
+                "gpu_resources": [{"gpu_uuid": "GPU-real"}],
+                "physical_fabric_evidence": {"physical_fabric": {"components": [{"component_type": "gpu", "identity": "gpu:GPU-real"}]}},
+            },
+        )
+
+    assert store.records()[0]["status"] == "acquired"
