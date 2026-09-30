@@ -594,6 +594,32 @@ class PlacementEvaluator:
             "preferred": str(item["candidate_key"]) in preferred,
         } for item in sorted(records, key=lambda item: str(item["candidate_key"])))
 
+    def _candidate_structural_placement(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Preserve deterministic topology/path placement preferences after enumeration."""
+        node_counts: dict[str, int] = {}
+        topology_counts: dict[str, int] = {}
+        numa_counts: dict[tuple[str, Any], int] = {}
+        physical_paths = 0
+        for gpu in candidate:
+            node_id = str(gpu["node_id"])
+            node_counts[node_id] = node_counts.get(node_id, 0) + 1
+            payload = self._payload(gpu)
+            topology = self.scheduler._topology_group_key(gpu)
+            topology_counts[topology] = topology_counts.get(topology, 0) + 1
+            numa_key = (topology, payload.get("numa_node"))
+            numa_counts[numa_key] = numa_counts.get(numa_key, 0) + 1
+            if self._verified_paths(gpu):
+                physical_paths += 1
+
+        return (
+            len(node_counts),
+            -max(node_counts.values(), default=0),
+            -max(topology_counts.values(), default=0),
+            -max(numa_counts.values(), default=0),
+            -physical_paths,
+            tuple(sorted(str(row["resource_key"]) for row in candidate)),
+        )
+
     def _candidate_continuous_optimization(
         self,
         candidate: tuple[dict[str, Any], ...],
@@ -730,6 +756,7 @@ class PlacementEvaluator:
                 self._candidate_multidimensional_workload(item[0]),
                 self._candidate_concrete_performance(item[0]),
                 self._candidate_continuous_optimization(item[0], optimization_records),
+                self._candidate_structural_placement(item[0]),
                 self._stable_key(item[0]),
             ),
         )
