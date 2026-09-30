@@ -64,11 +64,8 @@ def _outcome_events(lead: Mapping[str, Any]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for item in _list_mappings(lead.get("outreach_history")):
         outcome = _text(item.get("outcome"))
-        status = _text(item.get("status"))
         if outcome:
             events.append({"kind": "outreach_outcome", **dict(item), "outcome": outcome})
-        elif status:
-            events.append({"kind": "outreach_delivery", **dict(item), "outcome": status})
     for item in _list_mappings(lead.get("conversation_events")):
         outcome = _text(item.get("outcome"))
         if outcome:
