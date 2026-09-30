@@ -237,11 +237,12 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         return f"kaggle:{self.config.username}:{self.config.kernel_slug}"
 
     def _offer_id(self, quota: Mapping[str, Any]) -> str:
+        refresh_at = quota.get("refresh_at") or quota.get("gpu_quota_refresh_at")
         material = {
             "provider": self.provider_id,
             "domain": self._domain_id(),
             "accelerator": self.config.accelerator,
-            "refresh_at": quota.get("refresh_at"),
+            "refresh_at": refresh_at,
         }
         return hashlib.sha256(
             json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
