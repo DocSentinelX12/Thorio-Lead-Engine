@@ -619,9 +619,17 @@ class PlacementEvaluator:
         return sorted(candidates, key=lambda gpu: (self.scheduler._gpu_placement_structure_key(gpu, candidates), self.scheduler._gpu_performance_key(gpu, self.performance_history, self.requirements), self.scheduler._gpu_route_health_key(gpu, self.route_health), str(gpu.get("resource_key") or "")))
 
     def _candidate_sets(self, nodes: list[dict[str, Any]]) -> Iterable[tuple[dict[str, Any], ...]]:
+        """Enumerate the complete finite GPU candidate space.
+
+        Candidate generation is intentionally exhaustive. Ranking and optimization
+        happen only after every eligible combination has been evaluated, so a
+        locally attractive node/GPU ordering cannot silently remove a globally
+        better feasible placement from consideration.
+        """
         needed = int(self.requirements.gpu.gpu_count)
         if needed < 1:
             return ()
+
         valid_nodes: list[dict[str, Any]] = []
         for node in nodes:
             valid_gpus = []
@@ -630,54 +638,61 @@ class PlacementEvaluator:
                 if valid:
                     valid_gpus.append(gpu)
                 else:
-                    self._trace("complete_communication_path_validity", "rejected", reason=reason, resource_keys=(str(gpu["resource_key"],),), evidence=evidence)
+                    self._trace(
+                        "complete_communication_path_validity",
+                        "rejected",
+                        reason=reason,
+                        resource_keys=(str(gpu["resource_key"]),),
+                        evidence=evidence,
+                    )
             ranked = self._rank_gpu_rows(valid_gpus)
             if ranked:
                 valid_nodes.append({**node, "gpus": ranked})
-        if self.requirements.workload_class.value != "multi_node_gpu":
-            for node in valid_nodes:
-                if len(node["gpus"]) >= needed:
-                    yield tuple(node["gpus"][:needed])
-            return
-        if len(valid_nodes) < 2:
-            return
+
+        if not valid_nodes:
+            return ()
+
+        # Candidate enumeration is scoped by the durable provider/domain
+        # boundary. The evaluator must never manufacture a candidate that spans
+        # independent provider or domain authorities.
         provider_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for node in valid_nodes:
             key = (str(node["cpu"]["provider_id"]), str(node["cpu"]["domain_id"]))
-            provider_groups.setdefault(key, []).append(node)
-        viable_groups = [group for group in provider_groups.values() if len(group) >= 2 and sum(len(node["gpus"]) for node in group) >= needed]
-        if not viable_groups:
-            self._trace("resource_eligibility", "rejected", reason="no_provider_and_domain_can_satisfy_complete_placement")
-            raise RuntimeError("no provider and domain can satisfy complete placement")
-        network_group_options: list[tuple[str, list[dict[str, Any]]]] = []
-        for group in viable_groups:
-            domains: dict[str, list[dict[str, Any]]] = {}
-            for node in group:
-                for domain in self._network_domains(node):
-                    domains.setdefault(domain, []).append(node)
-            for domain, members in domains.items():
-                if len(members) >= 2 and sum(len(node["gpus"]) for node in members) >= needed:
-                    network_group_options.append((domain, members))
-        if network_group_options:
-            network_group_options.sort(key=lambda item: (-sum(len(node["gpus"]) for node in item[1]), -sum(self.scheduler._node_topology_score(node)[0] for node in item[1]), str(item[0])))
-            ranked_group = network_group_options[0][1]
-        else:
-            ranked_group = max(viable_groups, key=lambda group: (sum(len(node["gpus"]) for node in group), tuple(sorted(str(node["node_id"]) for node in group))))
-        ranked_nodes = sorted(ranked_group, key=lambda node: (tuple(-value for value in self.scheduler._node_topology_score(node)), self.scheduler._gpu_performance_key(node["gpus"][0], self.performance_history, self.requirements), self.scheduler._gpu_route_health_key(node["gpus"][0], self.route_health), str(node["node_id"])))
-        selected_nodes = []; total = 0
-        for node in ranked_nodes:
-            selected_nodes.append(node); total += len(node["gpus"])
-            if len(selected_nodes) >= 2 and total >= needed:
-                break
-        if len(selected_nodes) < 2 or total < needed:
+            provider_groups.setdefault(key, []).extend(node["gpus"])
+
+        if self.requirements.workload_class.value != "multi_node_gpu":
+            for rows in provider_groups.values():
+                by_node: dict[str, list[dict[str, Any]]] = {}
+                for gpu in rows:
+                    by_node.setdefault(str(gpu["node_id"]), []).append(gpu)
+                for node_gpus in by_node.values():
+                    if len(node_gpus) < needed:
+                        continue
+                    for candidate in itertools.combinations(node_gpus, needed):
+                        yield tuple(candidate)
             return
-        selected: list[dict[str, Any]] = []; remaining = needed
-        for node in selected_nodes:
-            take = min(remaining, len(node["gpus"])); selected.extend(node["gpus"][:take]); remaining -= take
-            if remaining == 0:
-                break
-        if remaining == 0:
-            yield tuple(selected)
+
+        emitted = False
+        for rows in provider_groups.values():
+            node_ids = {str(gpu["node_id"]) for gpu in rows}
+            if len(node_ids) < 2 or len(rows) < needed:
+                continue
+            # Every exact GPU subset is a candidate. _valid_candidate() owns the
+            # higher-order communication/topology/path checks, so candidate
+            # generation must not pre-prune on a single greedy network choice.
+            for candidate in itertools.combinations(rows, needed):
+                if len({str(gpu["node_id"]) for gpu in candidate}) < 2:
+                    continue
+                emitted = True
+                yield tuple(candidate)
+
+        if not emitted:
+            self._trace(
+                "resource_eligibility",
+                "rejected",
+                reason="no_provider_and_domain_can_satisfy_complete_placement",
+            )
+            raise RuntimeError("no provider and domain can satisfy complete placement")
 
     def evaluate(self) -> PlacementDecision:
         nodes = []
