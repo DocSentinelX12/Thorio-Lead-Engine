@@ -1,0 +1,186 @@
+name: Physical External GPU Execution Proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kaggle-physical-gpu-proof:
+    name: Execute Thorio CUDA probe on external Kaggle GPU
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.THORIO_KAGGLE_KEY }}
+      THORIO_KAGGLE_KERNEL_SLUG: thorio-physical-gpu-proof
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v5
+        with:
+          ref: feature/gpu-fabric-foundation
+
+      - name: Install Kaggle CLI
+        run: python -m pip install --upgrade kaggle
+
+      - name: Verify Kaggle authentication without exposing credentials
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_USERNAME}"
+          test -n "${KAGGLE_KEY}"
+          kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
+          echo "Kaggle authentication verified."
+
+      - name: Build real physical GPU proof kernel
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/thorio-kaggle-proof
+          cat > /tmp/thorio-kaggle-proof/kernel-metadata.json <<EOF
+          {
+            "id": "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}",
+            "title": "Thorio Physical GPU Execution Proof",
+            "code_file": "kernel.py",
+            "language": "python",
+            "kernel_type": "script",
+            "is_private": true,
+            "enable_gpu": true,
+            "enable_internet": true,
+            "dataset_sources": [],
+            "competition_sources": [],
+            "kernel_sources": [],
+            "model_sources": []
+          }
+          EOF
+          cat > /tmp/thorio-kaggle-proof/kernel.py <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          REPO = "/kaggle/working/thorio-lead-engine"
+          subprocess.run(
+              ["git", "clone", "--depth", "1", "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git", REPO],
+              check=True,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          subprocess.run(
+              ["git", "-C", REPO, "fetch", "--depth", "1", "origin", "feature/gpu-fabric-foundation"],
+              check=True,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          subprocess.run(
+              ["git", "-C", REPO, "checkout", "--detach", "feature/gpu-fabric-foundation"],
+              check=True,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          result = subprocess.run(
+              [
+                  sys.executable,
+                  "-m",
+                  "lead_engine.gpu_execution_probe",
+              ],
+              cwd=REPO,
+              capture_output=True,
+              text=True,
+              check=False,
+          )
+          print(result.stdout, end="")
+          print(result.stderr, end="", file=sys.stderr)
+          if result.returncode != 0:
+              raise SystemExit(result.returncode)
+          marker = "THORIO_GPU_EXECUTION_PROBE_OK "
+          evidence_line = next(
+              (line for line in result.stdout.splitlines() if line.startswith(marker)),
+              "",
+          )
+          if not evidence_line:
+              raise RuntimeError("Thorio physical GPU probe produced no evidence marker")
+          evidence = json.loads(evidence_line[len(marker):])
+          if evidence.get("verified") is not True:
+              raise RuntimeError("Thorio physical GPU probe did not verify execution")
+          if evidence.get("execution_backend") != "cuda":
+              raise RuntimeError("Thorio physical GPU probe did not execute through CUDA")
+          print("THORIO_PHYSICAL_GPU_EXECUTION_PROOF " + json.dumps(evidence, sort_keys=True), flush=True)
+          PY
+
+      - name: Submit external GPU execution
+        run: |
+          set -euo pipefail
+          kaggle kernels push -p /tmp/thorio-kaggle-proof --accelerator NvidiaTeslaT4
+
+      - name: Wait for external GPU execution to finish
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            output="$(kaggle kernels status "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" 2>&1 || true)"
+            printf '%s\n' "$output"
+            lowered="$(printf '%s' "$output" | tr '[:upper:]' '[:lower:]')"
+            if printf '%s' "$lowered" | grep -Eq 'error|failed|cancelled'; then
+              echo "Kaggle external GPU execution failed."
+              exit 1
+            fi
+            if printf '%s' "$lowered" | grep -Eq 'complete|completed'; then
+              echo "Kaggle external GPU execution completed."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Kaggle external GPU execution did not complete before the bounded verification timeout."
+          exit 1
+
+      - name: Retrieve and verify physical execution evidence
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/thorio-kaggle-output
+          kaggle kernels output "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" -p /tmp/thorio-kaggle-output --force
+          grep -R -F "THORIO_PHYSICAL_GPU_EXECUTION_PROOF " /tmp/thorio-kaggle-output
+          python - <<'PY'
+          import json
+          import pathlib
+
+          marker = "THORIO_PHYSICAL_GPU_EXECUTION_PROOF "
+          matches = []
+          for path in pathlib.Path("/tmp/thorio-kaggle-output").rglob("*"):
+              if not path.is_file():
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8", errors="replace")
+              except OSError:
+                  continue
+              for line in text.splitlines():
+                  if line.startswith(marker):
+                      matches.append(json.loads(line[len(marker):]))
+
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one physical execution proof record, found {len(matches)}")
+
+          evidence = matches[0]
+          required = ("verified", "execution_backend", "operation", "gpu_uuid", "checksum", "elapsed_ms")
+          missing = [key for key in required if key not in evidence]
+          if missing:
+              raise SystemExit(f"Physical execution evidence is incomplete: missing {missing}")
+          if evidence["verified"] is not True:
+              raise SystemExit("Physical execution evidence is not verified")
+          if evidence["execution_backend"] != "cuda":
+              raise SystemExit("Physical execution evidence backend is not CUDA")
+          if not evidence["gpu_uuid"]:
+              raise SystemExit("Physical execution evidence has no physical GPU UUID")
+          if evidence["checksum"] != 120.0:
+              raise SystemExit(f"Unexpected CUDA execution checksum: {evidence['checksum']}")
+          if float(evidence["elapsed_ms"]) < 0:
+              raise SystemExit("Physical execution timing is invalid")
+          print("PHYSICAL GPU EXECUTION VERIFIED")
+          print(json.dumps(evidence, sort_keys=True))
+
+      - name: Delete external proof kernel
+        if: always()
+        run: |
+          kaggle kernels delete "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" --yes || true
