@@ -185,7 +185,8 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         if latest_event_id and latest_event_id != task_event_id: return {"role": "follow_up", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
     outcome = str(payload.get("outcome") or lead.get("outreach_state") or "no_response").strip().lower()
     if outcome == "no_response" and snapshot.get("next_follow_up_at") != lead.get("next_follow_up_at"): return {"role": "follow_up", "lead": lead, "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "superseded", "outcome_recorded": False}
-    if str(lead.get("outreach_state") or "").strip().lower() in {"declined", "opted_out", "irrelevant", "converted", "exhausted"}:
+    terminal_lifecycle_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
+    if str(lead.get("revenue_lifecycle_state") or "").strip().lower() in terminal_lifecycle_states or str(lead.get("outreach_state") or "").strip().lower() in {"declined", "opted_out", "irrelevant", "converted", "exhausted"}:
         stored = _persist_lead(ctx.db, lead); return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": False}
     if not lead.get("outreach_history"): raise AgentContractError("follow_up requires an existing outreach history")
     if not outcome: raise AgentContractError("follow_up requires an observed outreach outcome")
