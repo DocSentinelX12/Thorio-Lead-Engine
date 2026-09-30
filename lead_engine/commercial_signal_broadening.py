@@ -59,12 +59,14 @@ def _near(text, start, markers, radius):
 
 def _sentence_has_marker(text, start, end, markers):
     sentence = _normalize(_sentence_context(text, start, end))
-    return next(
-        (marker for marker in markers if re.search(r"(?<!\w)" + re.escape(marker) + r"(?!\w)", sentence)),
-        "",
-    )
-
-
+    for marker in markers:
+        for match in re.finditer(r"(?<!\\w)" + re.escape(marker) + r"(?!\\w)", sentence):
+            if marker == "may":
+                following = sentence[match.end():].lstrip()
+                if re.match(r"^(?:,?\\s*)\\d{4}\\b", following):
+                    continue
+            return marker
+    return ""
 def _has_technical_context(sentence):
     normalized = _normalize(sentence)
     return any(
