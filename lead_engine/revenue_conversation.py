@@ -185,8 +185,9 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
 
 def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> list[Dict[str, Any]]:
     now = now or datetime.now(timezone.utc); due: list[Dict[str, Any]] = []
+    terminal_lifecycle_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
     for lead in db.all_leads():
-        if len(due) >= limit or lead.get("follow_up_due") is not True or str(lead.get("outreach_state") or "").lower() in STOP_STATES: continue
+        if len(due) >= limit or lead.get("follow_up_due") is not True or str(lead.get("outreach_state") or "").lower() in STOP_STATES or str(lead.get("revenue_lifecycle_state") or "").strip().lower() in terminal_lifecycle_states: continue
         raw = str(lead.get("next_follow_up_at") or "").strip()
         if not raw: continue
         try: when = datetime.fromisoformat(raw.replace("Z", "+00:00")); when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
