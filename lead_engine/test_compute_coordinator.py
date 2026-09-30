@@ -73,7 +73,7 @@ def test_active_gdrdma_measurement_requires_current_execution_participant_and_pe
                 "worker-a",
                 0,
                 1,
-                f"fabric:{claimed["attempt_id"]}:{claimed["generation"]}",
+                f"fabric:{claimed['attempt_id']}:{claimed['generation']}",
                 "running",
                 "[]",
                 1000.0,
