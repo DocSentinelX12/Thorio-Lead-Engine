@@ -1,0 +1,457 @@
+"""Concrete zero-cost Kaggle GPU provider adapter.
+
+Kaggle Notebooks expose free GPU compute with a provider-enforced weekly GPU
+quota. This adapter treats that quota as the only acquisition budget. It never
+uses a paid fallback, never stores Kaggle credentials in durable acquisition
+records, and hands acquired workers to the existing authenticated worker
+registration and physical GPU discovery path.
+
+The adapter intentionally uses the Kaggle CLI as an external process. The
+repository remains Python 3.10 compatible while current Kaggle CLI releases
+may require a newer Python runtime.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+from .free_compute_acquisition import (
+    AcquiredCompute,
+    FreeComputeAcquisitionError,
+    FreeComputeOffer,
+    FreeComputeProvider,
+)
+
+
+class KaggleFreeComputeError(FreeComputeAcquisitionError):
+    """Raised when Kaggle cannot satisfy the zero-cost acquisition contract."""
+
+
+@dataclass(frozen=True)
+class KaggleFreeComputeConfig:
+    username: str
+    kernel_slug: str = "thorio-free-gpu-worker"
+    accelerator: str = "NvidiaTeslaT4"
+    repository_url: str = "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git"
+    repository_ref: str = "feature/gpu-fabric-foundation"
+    coordinator_secret_label: str = "THORIO_COMPUTE_AUTH_TOKEN"
+    coordinator_url_secret_label: str = "THORIO_COMPUTE_COORDINATOR_URL"
+    minimum_remaining_hours: float = 1.0
+    maximum_runtime_hours: float = 6.0
+    command_timeout_seconds: int = 120
+    kaggle_binary: str = "kaggle"
+
+    def __post_init__(self) -> None:
+        if not self.username.strip():
+            raise ValueError("Kaggle username is required")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,49}", self.kernel_slug):
+            raise ValueError("kernel_slug must be a valid Kaggle kernel slug")
+        if self.accelerator not in {
+            "NvidiaTeslaT4",
+            "NvidiaL4",
+            "NvidiaTeslaA100",
+            "NvidiaH100",
+            "NvidiaRtxPro6000",
+        }:
+            raise ValueError("accelerator is not an allowed non-competition Kaggle GPU")
+        if not self.repository_url.startswith("https://"):
+            raise ValueError("repository_url must use HTTPS")
+        if not self.repository_ref.strip():
+            raise ValueError("repository_ref is required")
+        if not self.coordinator_secret_label.strip() or not self.coordinator_url_secret_label.strip():
+            raise ValueError("Kaggle secret labels are required")
+        if self.minimum_remaining_hours <= 0:
+            raise ValueError("minimum_remaining_hours must be positive")
+        if self.maximum_runtime_hours <= 0:
+            raise ValueError("maximum_runtime_hours must be positive")
+        if self.command_timeout_seconds <= 0:
+            raise ValueError("command_timeout_seconds must be positive")
+
+
+class KaggleFreeComputeProvider(FreeComputeProvider):
+    """Acquire one bounded Kaggle GPU kernel as a free external worker."""
+
+    provider_id = "kaggle"
+
+    def __init__(
+        self,
+        config: KaggleFreeComputeConfig,
+        *,
+        runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+        clock=time.time,
+    ):
+        self.config = config
+        self._runner = runner or self._subprocess_runner
+        self._clock = clock
+
+    @classmethod
+    def from_environment(cls) -> "KaggleFreeComputeProvider":
+        enabled = os.environ.get("THORIO_KAGGLE_ENABLED", "0").strip().lower()
+        if enabled not in {"1", "true", "yes", "on"}:
+            raise KaggleFreeComputeError("THORIO_KAGGLE_ENABLED must be enabled to register Kaggle")
+        username = os.environ.get("THORIO_KAGGLE_USERNAME", "").strip()
+        if not username:
+            raise KaggleFreeComputeError("THORIO_KAGGLE_USERNAME is required")
+        return cls(
+            KaggleFreeComputeConfig(
+                username=username,
+                kernel_slug=os.environ.get("THORIO_KAGGLE_KERNEL_SLUG", "thorio-free-gpu-worker").strip(),
+                accelerator=os.environ.get("THORIO_KAGGLE_ACCELERATOR", "NvidiaTeslaT4").strip(),
+                repository_url=os.environ.get(
+                    "THORIO_KAGGLE_REPOSITORY_URL",
+                    "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git",
+                ).strip(),
+                repository_ref=os.environ.get(
+                    "THORIO_KAGGLE_REPOSITORY_REF",
+                    "feature/gpu-fabric-foundation",
+                ).strip(),
+                coordinator_secret_label=os.environ.get(
+                    "THORIO_KAGGLE_COORDINATOR_TOKEN_SECRET",
+                    "THORIO_COMPUTE_AUTH_TOKEN",
+                ).strip(),
+                coordinator_url_secret_label=os.environ.get(
+                    "THORIO_KAGGLE_COORDINATOR_URL_SECRET",
+                    "THORIO_COMPUTE_COORDINATOR_URL",
+                ).strip(),
+                minimum_remaining_hours=float(
+                    os.environ.get("THORIO_KAGGLE_MINIMUM_REMAINING_HOURS", "1")
+                ),
+                maximum_runtime_hours=float(
+                    os.environ.get("THORIO_KAGGLE_MAXIMUM_RUNTIME_HOURS", "6")
+                ),
+                command_timeout_seconds=int(
+                    os.environ.get("THORIO_KAGGLE_COMMAND_TIMEOUT_SECONDS", "120")
+                ),
+                kaggle_binary=os.environ.get("THORIO_KAGGLE_BINARY", "kaggle").strip(),
+            )
+        )
+
+    @staticmethod
+    def _subprocess_runner(
+        command: list[str],
+        *,
+        timeout: int,
+        cwd: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    def _run(self, args: list[str], *, cwd: str | None = None) -> str:
+        command = [self.config.kaggle_binary, *args]
+        try:
+            result = self._runner(command, timeout=self.config.command_timeout_seconds, cwd=cwd)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise KaggleFreeComputeError(f"Kaggle CLI execution failed: {exc}") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[-4000:]
+            raise KaggleFreeComputeError(
+                f"Kaggle CLI command failed with exit code {result.returncode}: {detail}"
+            )
+        return result.stdout
+
+    @staticmethod
+    def _hours(value: Any) -> float:
+        text = str(value or "").strip()
+        if not text:
+            raise KaggleFreeComputeError("Kaggle quota response omitted a time value")
+        match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)h", text, re.IGNORECASE)
+        if not match:
+            raise KaggleFreeComputeError(f"unrecognized Kaggle quota time value: {text!r}")
+        return float(match.group(1))
+
+    def _quota(self) -> dict[str, Any]:
+        raw = self._run(["quota", "--format", "json"])
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise KaggleFreeComputeError("Kaggle quota command returned invalid JSON") from exc
+        if isinstance(payload, dict):
+            rows = payload.get("rows") if isinstance(payload.get("rows"), list) else payload.get("data")
+            if rows is None and all(key in payload for key in ("resource", "remaining")):
+                rows = [payload]
+        elif isinstance(payload, list):
+            rows = payload
+        else:
+            rows = None
+        if not isinstance(rows, list):
+            raise KaggleFreeComputeError("Kaggle quota response contains no structured quota rows")
+        gpu = next(
+            (row for row in rows if isinstance(row, Mapping) and str(row.get("resource", "")).strip().upper() == "GPU"),
+            None,
+        )
+        if gpu is None:
+            raise KaggleFreeComputeError("Kaggle account has no reported GPU quota")
+        remaining = self._hours(gpu.get("remaining"))
+        total = self._hours(gpu.get("total"))
+        used = self._hours(gpu.get("used"))
+        refresh_at = str(gpu.get("refreshAt") or "").strip()
+        if remaining <= 0:
+            raise KaggleFreeComputeError("Kaggle GPU quota is exhausted")
+        return {
+            "resource": "GPU",
+            "remaining_hours": remaining,
+            "total_hours": total,
+            "used_hours": used,
+            "refresh_at": refresh_at,
+        }
+
+    def _kernel_status(self, kernel_ref: str) -> str:
+        try:
+            output = self._run(["kernels", "status", kernel_ref])
+        except KaggleFreeComputeError as exc:
+            message = str(exc).lower()
+            if "not found" in message or "404" in message:
+                return "not_found"
+            raise
+        lowered = output.lower()
+        if "running" in lowered:
+            return "running"
+        if "queued" in lowered or "pending" in lowered:
+            return "queued"
+        if "complete" in lowered or "completed" in lowered:
+            return "complete"
+        if "error" in lowered or "failed" in lowered:
+            return "failed"
+        if "cancel" in lowered:
+            return "cancelled"
+        return "unknown"
+
+    def _kernel_ref(self) -> str:
+        return f"{self.config.username}/{self.config.kernel_slug}"
+
+    def _domain_id(self) -> str:
+        return f"kaggle:{self.config.username}:{self.config.kernel_slug}"
+
+    def _offer_id(self, quota: Mapping[str, Any]) -> str:
+        material = {
+            "provider": self.provider_id,
+            "domain": self._domain_id(),
+            "accelerator": self.config.accelerator,
+            "refresh_at": quota.get("refresh_at"),
+        }
+        return hashlib.sha256(
+            json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
+    def discover_free(self) -> tuple[FreeComputeOffer, ...]:
+        quota = self._quota()
+        if quota["remaining_hours"] < self.config.minimum_remaining_hours:
+            return ()
+        status = self._kernel_status(self._kernel_ref())
+        if status in {"running", "queued"}:
+            return ()
+        observed_at = self._clock()
+        expires_at = None
+        if quota["refresh_at"]:
+            try:
+                from datetime import datetime
+                expires_at = datetime.fromisoformat(quota["refresh_at"].replace("Z", "+00:00")).timestamp()
+                if expires_at <= observed_at:
+                    expires_at = None
+            except (TypeError, ValueError, OverflowError):
+                expires_at = None
+        return (
+            FreeComputeOffer(
+                provider_id=self.provider_id,
+                domain_id=self._domain_id(),
+                offer_id=self._offer_id(quota),
+                observed_at=observed_at,
+                expires_at=expires_at,
+                gpu_capable=True,
+                no_cost=True,
+                capacity_evidence={
+                    "provider": "Kaggle",
+                    "provider_account": self.config.username,
+                    "resource": quota["resource"],
+                    "accelerator_requested": self.config.accelerator,
+                    "gpu_quota_remaining_hours": quota["remaining_hours"],
+                    "gpu_quota_total_hours": quota["total_hours"],
+                    "gpu_quota_used_hours": quota["used_hours"],
+                    "gpu_quota_refresh_at": quota["refresh_at"],
+                    "kernel_ref": self._kernel_ref(),
+                    "kernel_status": status,
+                    "quota_source": "kaggle quota",
+                    "no_cost_source": "Kaggle free GPU notebook quota",
+                },
+            ),
+        )
+
+    @staticmethod
+    def _worker_script(
+        *,
+        repository_url: str,
+        repository_ref: str,
+        acquisition_id: str,
+        domain_id: str,
+        worker_id: str,
+        coordinator_token_secret: str,
+        coordinator_url_secret: str,
+    ) -> str:
+        values = {
+            "repository_url": repository_url,
+            "repository_ref": repository_ref,
+            "acquisition_id": acquisition_id,
+            "domain_id": domain_id,
+            "worker_id": worker_id,
+            "coordinator_token_secret": coordinator_token_secret,
+            "coordinator_url_secret": coordinator_url_secret,
+        }
+        encoded = json.dumps(values, sort_keys=True)
+        return f'''import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from kaggle_secrets import UserSecretsClient
+
+CONFIG = json.loads({encoded!r})
+ROOT = Path("/kaggle/working/thorio-lead-engine")
+
+def run(*args):
+    subprocess.run(list(args), check=True)
+
+token = UserSecretsClient().get_secret(CONFIG["coordinator_token_secret"]).strip()
+coordinator_url = UserSecretsClient().get_secret(CONFIG["coordinator_url_secret"]).strip()
+if not token:
+    raise RuntimeError("Kaggle coordinator token secret is empty")
+if not coordinator_url.startswith(("http://", "https://")):
+    raise RuntimeError("Kaggle coordinator URL secret must use HTTP or HTTPS")
+
+if ROOT.exists():
+    shutil.rmtree(ROOT)
+run("git", "clone", "--depth", "1", CONFIG["repository_url"], str(ROOT))
+run("git", "-C", str(ROOT), "fetch", "--depth", "1", "origin", CONFIG["repository_ref"])
+run("git", "-C", str(ROOT), "checkout", "--detach", CONFIG["repository_ref"])
+run(sys.executable, "-m", "pip", "install", "-r", str(ROOT / "requirements.txt"))
+
+os.environ["THORIO_COMPUTE_COORDINATOR_URL"] = coordinator_url
+os.environ["THORIO_COMPUTE_AUTH_TOKEN"] = token
+os.environ["THORIO_COMPUTE_ACQUISITION_ID"] = CONFIG["acquisition_id"]
+os.environ["THORIO_COMPUTE_DOMAIN"] = CONFIG["domain_id"]
+os.environ["THORIO_WORKER_ID"] = CONFIG["worker_id"]
+os.environ["THORIO_FREE_ONLY"] = "1"
+os.environ["PYTHONUNBUFFERED"] = "1"
+
+os.chdir(ROOT)
+run(sys.executable, "-m", "lead_engine.compute_worker")
+'''
+
+    def acquire_free(self, offer: FreeComputeOffer) -> AcquiredCompute:
+        if offer.provider_id != self.provider_id:
+            raise KaggleFreeComputeError("offer belongs to a different provider")
+        if not offer.no_cost:
+            raise KaggleFreeComputeError("Kaggle paid capacity is outside the free provider boundary")
+        if offer.domain_id != self._domain_id():
+            raise KaggleFreeComputeError("offer domain does not match the configured Kaggle worker")
+        if offer.offer_id != self._offer_id(offer.capacity_evidence):
+            raise KaggleFreeComputeError("offer identity is stale or was not issued by this adapter")
+
+        quota = self._quota()
+        if quota["remaining_hours"] < self.config.minimum_remaining_hours:
+            raise KaggleFreeComputeError("Kaggle GPU quota no longer satisfies the minimum acquisition budget")
+
+        kernel_ref = self._kernel_ref()
+        status = self._kernel_status(kernel_ref)
+        if status in {"running", "queued"}:
+            raise KaggleFreeComputeError(f"Kaggle worker kernel is already {status}")
+
+        now = self._clock()
+        max_seconds = int(self.config.maximum_runtime_hours * 3600)
+        quota_seconds = int(quota["remaining_hours"] * 3600)
+        timeout_seconds = min(max_seconds, quota_seconds, 12 * 3600)
+        if timeout_seconds < int(self.config.minimum_remaining_hours * 3600):
+            raise KaggleFreeComputeError("Kaggle quota is too small for the configured minimum worker lifetime")
+
+        worker_script = self._worker_script(
+            repository_url=self.config.repository_url,
+            repository_ref=self.config.repository_ref,
+            acquisition_id=offer.offer_id,
+            domain_id=offer.domain_id,
+            worker_id=offer.domain_id,
+            coordinator_token_secret=self.config.coordinator_secret_label,
+            coordinator_url_secret=self.config.coordinator_url_secret_label,
+        )
+        metadata = {
+            "id": kernel_ref,
+            "title": self.config.kernel_slug,
+            "code_file": "thorio_worker.py",
+            "language": "python",
+            "kernel_type": "script",
+            "is_private": True,
+            "enable_gpu": True,
+            "enable_internet": True,
+            "machine_shape": self.config.accelerator,
+            "dataset_sources": [],
+            "competition_sources": [],
+            "kernel_sources": [],
+            "model_sources": [],
+        }
+        with tempfile.TemporaryDirectory(prefix="thorio-kaggle-") as directory:
+            path = Path(directory)
+            (path / "kernel-metadata.json").write_text(
+                json.dumps(metadata, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            (path / "thorio_worker.py").write_text(worker_script, encoding="utf-8")
+            self._run(
+                [
+                    "kernels",
+                    "push",
+                    "-p",
+                    str(path),
+                    "--accelerator",
+                    self.config.accelerator,
+                    "--timeout",
+                    str(timeout_seconds),
+                ]
+            )
+
+        expires_at = None
+        if offer.expires_at is not None:
+            expires_at = min(offer.expires_at, now + timeout_seconds)
+        else:
+            expires_at = now + timeout_seconds
+        acquisition_id = hashlib.sha256(
+            f"{offer.provider_id}\x00{offer.domain_id}\x00{offer.offer_id}".encode("utf-8")
+        ).hexdigest()
+        return AcquiredCompute(
+            provider_id=self.provider_id,
+            domain_id=offer.domain_id,
+            offer_id=offer.offer_id,
+            acquisition_id=acquisition_id,
+            acquired_at=now,
+            expires_at=expires_at,
+            gpu_capable=True,
+            enrollment={
+                "provider": "Kaggle",
+                "kernel_ref": kernel_ref,
+                "worker_id": offer.domain_id,
+                "domain_id": offer.domain_id,
+                "accelerator": self.config.accelerator,
+                "runtime_timeout_seconds": timeout_seconds,
+                "authentication": "Kaggle Secrets",
+                "physical_verification_required": True,
+                "free_only": True,
+            },
+        )
+
+    def release_free(self, acquisition: AcquiredCompute) -> None:
+        if acquisition.provider_id != self.provider_id:
+            raise KaggleFreeComputeError("acquisition belongs to a different provider")
+        self._run(["kernels", "delete", self._kernel_ref(), "--yes"])
