@@ -32,7 +32,7 @@ jobs:
             runner_label: thorio-fabric-rank-0
           - rank: 1
             runner_label: thorio-fabric-rank-1
-    runs-on: [self-hosted, linux, x64, gpu, ${{ matrix.runner_label }}]
+    runs-on: [self-hosted, linux, x64, gpu, "${{ matrix.runner_label }}"]
     timeout-minutes: 15
     env:
       RANK: ${{ matrix.rank }}
