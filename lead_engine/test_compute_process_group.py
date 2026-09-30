@@ -48,6 +48,9 @@ class Runtime:
     def distributed_command(self, **kwargs):
         return ["torchrun"]
 
+    def distributed_process_command(self):
+        return ["probe"]
+
 
 def test_fabric_subprocess_starts_in_its_own_process_group(monkeypatch):
     from lead_engine.compute_worker import run_fabric_verification
