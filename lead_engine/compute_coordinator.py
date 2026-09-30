@@ -135,6 +135,11 @@ class ComputeCoordinator:
         with self._lock:
             return self.free_compute_acquisition.status()
 
+    def hunt_free_compute_once(self) -> Dict[str, Any]:
+        """Discover and acquire one bounded no-cost offer per provider."""
+        with self._lock:
+            return self.free_compute_acquisition.hunt_once()
+
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
         with self._lock:
@@ -3182,6 +3187,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, self.server.coordinator.inventory.fleet_resource_intelligence(now=time.time()))
             elif self.path == "/fabric/acquisition/status":
                 self._send(200, self.server.coordinator.free_compute_status())
+            elif self.path == "/fabric/acquisition/hunt":
+                self._send(200, self.server.coordinator.hunt_free_compute_once())
             elif self.path == "/fabric/heartbeat":
                 ok = self.server.coordinator.heartbeat_execution_participant(
                     attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
