@@ -148,6 +148,21 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         inbound_event_count,
     )
     classified = str(outcome or _classify(text)).strip().lower()
+    terminal_lifecycle_states = {"converted", "closed_lost", "disqualified", "stopped", "referred"}
+    current_lifecycle_state = str(lead.get("revenue_lifecycle_state") or "").strip().lower()
+    if current_lifecycle_state in terminal_lifecycle_states:
+        event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified, "ignored_after_terminal_state": current_lifecycle_state}
+        if objection:
+            event["objection"] = str(objection)
+        conversation["events"].append(event)
+        conversation["processed_event_ids"].append(event_id)
+        conversation["last_inbound_at"] = event["at"]
+        conversation["response_count"] = int(conversation.get("response_count", 0) or 0) + 1
+        conversation["outreach_route"] = lead.get("outreach_route")
+        conversation["next_action"] = "stop"
+        conversation["updated_at"] = _now()
+        _save(db, state)
+        return dict(conversation)
     event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified}
     if objection: event["objection"] = str(objection)
     conversation["events"].append(event); conversation["processed_event_ids"].append(event_id); conversation["last_inbound_at"] = event["at"]; conversation["response_count"] = int(conversation.get("response_count", 0) or 0) + 1
