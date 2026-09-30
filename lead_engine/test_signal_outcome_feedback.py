@@ -54,10 +54,11 @@ def test_feedback_is_derived_from_graph_and_remains_association_only():
 
 def test_feedback_persists_and_drives_future_research_priority(tmp_path):
     db = LeadDB(data_dir=tmp_path)
-    db.insert_if_new(_lead("a", "converted"))
+    lead = _lead("a", "converted")
+    db.insert_if_new(lead)
     feedback = persist_signal_outcome_feedback(db)
     assert feedback["by_signal"]["configured|looking for a development partner"]["research_priority"] == 2
-    assert signal_feedback_priority(db.get("a"), feedback) == 2
+    assert signal_feedback_priority(db.get(lead["fingerprint"]), feedback) == 2
     assert db.get_state("unified_opportunity_signal_graph")["authoritative"] is True
     assert db.get_state("signal_outcome_feedback")["association_only"] is True
 
