@@ -117,3 +117,22 @@ def test_feedback_keeps_distinct_explicit_outcomes_but_deduplicates_same_event()
     item = feedback["by_signal"]["configured|looking for a development partner"]
     assert item["observations"] == 1
     assert item["outcomes"]["interested"] == 1
+
+
+def test_feedback_priority_matches_broadened_signal_keys():
+    lead = _lead("broad", "converted")
+    lead["signal_matches"] = []
+    lead["commercial_signal_broadening"] = {
+        "matches": [{
+            "category": "development_partner_need",
+            "phrase": "seeking implementation capacity",
+        }]
+    }
+    feedback = {
+        "by_signal": {
+            "broadened|development_partner_need|seeking implementation capacity": {
+                "research_priority": 2,
+            }
+        }
+    }
+    assert signal_feedback_priority(lead, feedback) == 2
