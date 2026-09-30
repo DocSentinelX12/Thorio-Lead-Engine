@@ -48,7 +48,15 @@ def _identity(*, worker_id: str = "node-a") -> WorkerIdentity:
                     {"relationship_type": "nic_to_rdma_device", "source": "nic:eth0", "target": "rdma:mlx5_0"},
                     {"relationship_type": "rdma_device_to_port", "source": "rdma:mlx5_0", "target": "rdma:mlx5_0:1"},
                 ],
-            }
+            },
+            "physical_gpu_execution": [{
+                "verified": True,
+                "execution_backend": "cuda",
+                "operation": "torch_cuda_matmul",
+                "gpu_uuid": "GPU-0",
+                "checksum": 120.0,
+                "elapsed_ms": 1.0,
+            }],
         },
     )
 
@@ -126,6 +134,14 @@ def test_local_worker_identity_carries_authoritative_nvidia_physical_evidence(mo
     monkeypatch.setenv("THORIO_COMPUTE_ACQUISITION_ID", "acquisition-123")
     monkeypatch.setattr(nvidia_provider.NvidiaProvider, "discover", lambda self: snapshot)
 
+    def fake_run(command, *, capture_output, text, env, timeout, check):
+        return __import__("types").SimpleNamespace(
+            returncode=0,
+            stdout='THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-real", "checksum": 120.0, "elapsed_ms": 1.0}\\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr("lead_engine.compute_pool.subprocess.run", fake_run)
     identity = local_worker_identity("node-a")
     assert identity.domain_id == "supercomputer-a"
     assert identity.physical_fabric_evidence["physical_fabric"]["components"][0]["identity"] == "gpu:GPU-real"
@@ -172,7 +188,22 @@ def test_acquired_external_gpu_is_not_trusted_until_authenticated_physical_enrol
 
     identity = _identity()
     identity = WorkerIdentity(
-        **{**identity.__dict__, "gpu_discovery_state": "healthy", "physical_fabric_evidence": {**identity.physical_fabric_evidence, "acquisition_id": acquired.acquisition_id}}
+        **{
+            **identity.__dict__,
+            "gpu_discovery_state": "healthy",
+            "physical_fabric_evidence": {
+                **identity.physical_fabric_evidence,
+                "acquisition_id": acquired.acquisition_id,
+                "physical_gpu_execution": [{
+                    "verified": True,
+                    "execution_backend": "cuda",
+                    "operation": "torch_cuda_matmul",
+                    "gpu_uuid": "GPU-0",
+                    "checksum": 120.0,
+                    "elapsed_ms": 1.0,
+                }],
+            },
+        }
     )
     coordinator.register_worker(identity)
 
