@@ -96,3 +96,16 @@ def test_unified_graph_rejects_dangling_edges():
         assert "dangling edge" in str(exc)
     else:
         raise AssertionError("dangling edge must be rejected")
+
+    
+def test_unified_graph_does_not_treat_outreach_delivery_status_as_outcome():
+    lead = _lead()
+    lead["conversation_events"] = []
+    lead["commercial_outcome"] = {}
+    lead["revenue_lifecycle_state"] = ""
+    graph = build_unified_opportunity_signal_graph([lead])
+    outcome_nodes = [
+        node for node in graph["nodes"].values()
+        if node["type"] == "outcome"
+    ]
+    assert outcome_nodes == []
