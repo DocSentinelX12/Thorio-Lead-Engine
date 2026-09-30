@@ -58,6 +58,7 @@ def test_valid_multi_node_plan_has_contiguous_global_ranks():
         (lambda p: p["workers"][0].update(process_count=1), "GPU/process binding count mismatch"),
         (lambda p: p["workers"][0]["gpu_bindings"][0].update(local_rank=1), "local rank set is invalid or duplicated"),
         (lambda p: p["workers"][0]["gpu_bindings"][0].update(gpu_uuid=""), "GPU binding requires gpu_uuid and gpu_id"),
+        (lambda p: p["workers"][1]["gpu_bindings"][0].update(gpu_uuid="GPU-a0"), "GPU identity is duplicated across process bindings"),
     ],
 )
 def test_invalid_global_launch_contract_is_rejected(mutate, message):
