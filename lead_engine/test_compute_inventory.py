@@ -340,7 +340,7 @@ def test_provider_observation_preserves_reserved_resource_state(tmp_path):
 
 def test_inventory_quarantines_one_failed_physical_path_with_durable_reason(tmp_path):
     inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
-    snapshot = _snapshot_with_gpu("GPU-0")
+    snapshot = _snapshot(gpus=(_gpu("0", "GPU-0"),))
     inventory.observe(snapshot)
     key = "provider/domain/node-1/gpu/GPU-0"
     assert inventory.quarantine_resource(
