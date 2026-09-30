@@ -122,7 +122,10 @@ def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[dateti
         updated["current_need"] = verified_signal
         updated["verified_follow_up_signal"] = verified_signal
     history.append({"at": now.isoformat(), "outcome": outcome}); updated["outreach_history"] = history; updated["outreach_state"] = outcome
-    if outcome in STOP_STATES:\n        updated["outreach_stop_reason"] = outcome\n        updated["next_follow_up_at"] = None\n        updated["follow_up_due"] = False
+    if outcome in STOP_STATES:
+        updated["outreach_stop_reason"] = outcome
+        updated["next_follow_up_at"] = None
+        updated["follow_up_due"] = False
     elif outcome == "no_response":
         attempt = int(lead.get("outreach_attempt", 0) or 0) + 1; updated["outreach_attempt"] = attempt
         if attempt >= len(CADENCE_DAYS): updated["outreach_state"] = "exhausted"; updated["outreach_stop_reason"] = "exhausted"; updated["next_follow_up_at"] = None
