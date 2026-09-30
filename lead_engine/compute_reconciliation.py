@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 
-TERMINAL_ATTEMPT_STATES = frozenset({"completed", "released", "expired"})
+TERMINAL_ATTEMPT_STATES = frozenset({"completed", "released", "expired", "failed"})
 
 
 def reconcile_allocations(
