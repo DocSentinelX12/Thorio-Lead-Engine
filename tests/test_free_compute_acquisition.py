@@ -84,6 +84,92 @@ def test_acquisition_is_free_only_and_returns_existing_enrollment_handoff(tmp_pa
     assert store.records()[0]["no_cost"] is True
 
 
+def test_acquisition_cannot_extend_observed_offer_lifetime(tmp_path):
+    class ExtendingProvider(Provider):
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=250.0,
+                gpu_capable=True,
+                enrollment={"worker_id": "external-worker-1"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    manager.register(ExtendingProvider())
+
+    with pytest.raises(FreeComputeAcquisitionError, match="expiry cannot extend"):
+        manager.acquire(offer(expires_at=200.0))
+
+    assert store.records()[0]["status"] == "retry_pending"
+
+
+def test_acquisition_cannot_drop_a_finite_offer_expiry(tmp_path):
+    class UnboundedProvider(Provider):
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=None,
+                gpu_capable=True,
+                enrollment={"worker_id": "external-worker-1"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    manager.register(UnboundedProvider())
+
+    with pytest.raises(FreeComputeAcquisitionError, match="expiry cannot extend"):
+        manager.acquire(offer(expires_at=200.0))
+
+    assert store.records()[0]["status"] == "retry_pending"
+
+
+def test_acquisition_cannot_claim_gpu_capability_absent_from_offer(tmp_path):
+    class GpuClaimingProvider(Provider):
+        def acquire_free(self, observed):
+            acquisition_id = FreeComputeAcquisitionStore.acquisition_id(observed)
+            return AcquiredCompute(
+                provider_id=observed.provider_id,
+                domain_id=observed.domain_id,
+                offer_id=observed.offer_id,
+                acquisition_id=acquisition_id,
+                acquired_at=110.0,
+                expires_at=200.0,
+                gpu_capable=True,
+                enrollment={"worker_id": "external-worker-1"},
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    manager.register(GpuClaimingProvider())
+
+    cpu_offer = FreeComputeOffer(
+        provider_id="free-provider",
+        domain_id="domain-1",
+        offer_id="offer-cpu",
+        observed_at=100.0,
+        expires_at=200.0,
+        gpu_capable=False,
+        no_cost=True,
+        capacity_evidence={"source": "provider-observation", "gpu_count": 0},
+    )
+
+    with pytest.raises(FreeComputeAcquisitionError, match="GPU capability"):
+        manager.acquire(cpu_offer)
+
+    assert store.records()[0]["status"] == "retry_pending"
+
+
 def test_paid_offer_is_rejected_before_provider_acquisition(tmp_path):
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
     manager = FreeComputeAcquisitionManager(store)
