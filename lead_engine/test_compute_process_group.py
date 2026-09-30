@@ -20,7 +20,7 @@ class Client:
                     "local_rank": 0,
                 }],
             }],
-            "world_size": 1,
+            "world_size": 2,
             "nnodes": 1,
             "rendezvous_endpoint": "10.0.0.5:29400",
             "rendezvous_id": "fabric:attempt-1:1",
