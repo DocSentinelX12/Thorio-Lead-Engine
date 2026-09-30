@@ -57,6 +57,37 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
             conversation["updated_at"] = _now()
             _save(db, state)
         return dict(conversation)
+    durable_by_id = {
+        str(item.get("event_id") or "").strip(): dict(item)
+        for item in durable_events
+        if isinstance(item, Mapping) and str(item.get("event_id") or "").strip()
+    }
+    state_events = conversation.get("events")
+    state_events = state_events if isinstance(state_events, list) else []
+    merged_events = list(durable_by_id.values())
+    seen_event_ids = set(durable_by_id)
+    for item in state_events:
+        if not isinstance(item, Mapping):
+            continue
+        existing_event_id = str(item.get("event_id") or "").strip()
+        if existing_event_id and existing_event_id not in seen_event_ids:
+            merged_events.append(dict(item))
+            seen_event_ids.add(existing_event_id)
+    conversation["events"] = merged_events
+    conversation["processed_event_ids"] = list(dict.fromkeys(
+        [str(item).strip() for item in conversation.get("processed_event_ids", []) if str(item).strip()]
+        + list(seen_event_ids)
+    ))
+    durable_response_count = int(lead.get("response_count", 0) or 0)
+    inbound_event_count = sum(
+        1 for item in merged_events
+        if isinstance(item, Mapping) and str(item.get("direction") or "inbound").strip().lower() == "inbound"
+    )
+    conversation["response_count"] = max(
+        int(conversation.get("response_count", 0) or 0),
+        durable_response_count,
+        inbound_event_count,
+    )
     classified = str(outcome or _classify(text)).strip().lower()
     event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified}
     if objection: event["objection"] = str(objection)
