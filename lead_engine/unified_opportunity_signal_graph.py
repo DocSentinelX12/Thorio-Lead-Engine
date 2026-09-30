@@ -12,7 +12,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .lead_identity import validate_materialized_opportunity_identity
+from .lead_identity import canonical_opportunity_identity, validate_materialized_opportunity_identity
 from .opportunity_provenance import canonical_evidence_key, normalize_evidence_event
 from .revenue_signal_observation import build_revenue_signal_observation
 
@@ -213,10 +213,13 @@ def build_unified_opportunity_signal_graph(
         if not isinstance(raw_lead, Mapping):
             continue
         lead = dict(raw_lead)
-        opportunity_id = _text(lead.get("opportunity_id") or lead.get("fingerprint"))
-        if not opportunity_id:
-            continue
-        validate_materialized_opportunity_identity(lead)
+        required_identity = ("opportunity_id", "fingerprint", "identity_version", "identity_derivation")
+        if all(field in lead and lead.get(field) not in (None, "") for field in required_identity):
+            opportunity_id = validate_materialized_opportunity_identity(lead)
+            canonical_identity = canonical_opportunity_identity(lead)
+        else:
+            canonical_identity = canonical_opportunity_identity(lead)
+            opportunity_id = canonical_identity["opportunity_id"]
 
         if opportunity_id not in opportunity_ids:
             opportunity_ids.append(opportunity_id)
@@ -225,8 +228,8 @@ def build_unified_opportunity_signal_graph(
             "opportunity",
             opportunity_id,
             opportunity_id=opportunity_id,
-            fingerprint=_text(lead.get("fingerprint")),
-            identity_version=_text(lead.get("identity_version")),
+            fingerprint=canonical_identity["fingerprint"],
+            identity_version=canonical_identity["identity_version"],
             company=_text(lead.get("company")),
             company_website=_text(lead.get("company_website") or lead.get("website") or lead.get("domain")),
         )
