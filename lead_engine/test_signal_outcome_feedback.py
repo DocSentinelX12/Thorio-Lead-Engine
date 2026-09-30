@@ -62,3 +62,24 @@ def test_feedback_priority_is_applied_to_future_research_targets():
     assert plan["feedback_applied"] is True
     assert all(target["priority"] == 3 for target in plan["targets"])
     assert all(target["feedback"]["association_only"] is True for target in plan["targets"])
+
+
+def test_feedback_reaches_future_discovery_priority(tmp_path):
+    from .agent_orchestrator import AgentOrchestrator
+    from .agent_queue import pending
+
+    db = LeadDB(data_dir=tmp_path)
+    db.insert_if_new(_lead("prior", "converted"))
+    persist_signal_outcome_feedback(db)
+    record = {
+        "source": "LinkedIn",
+        "source_id": "new-signal",
+        "url": "https://example.com/new-signal",
+        "signal": "Looking for a development partner.",
+        "evidence": "Looking for a development partner.",
+        "signal_matches": ["looking for a development partner"],
+    }
+    task = AgentOrchestrator(db).dispatch_discovery("linkedin_signal", record, priority=4)
+    assert task["priority"] == 6
+    queued = pending(db)
+    assert any(item["task_id"] == task["task_id"] and item["priority"] == 6 for item in queued)
