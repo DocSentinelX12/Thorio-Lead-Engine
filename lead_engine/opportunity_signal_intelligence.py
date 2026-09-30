@@ -226,11 +226,13 @@ def detect_compound_opportunities(
                 triggers.append("funding_followed_by_execution")
                 triggers = sorted(set(triggers))
 
+            repeated_hiring_sources = hiring_sources if "repeated_hiring_activity" in triggers else set()
             contributing_sources = {
                 _text(item.get("source"))
                 for item in members
                 if _text(item.get("source")) and (
                     bool(_triggers(item))
+                    or _text(item.get("source")) in repeated_hiring_sources
                     or (
                         bool(structural_events)
                         and any(
