@@ -2150,6 +2150,25 @@ class ComputeCoordinator:
                 }
                 if not reported_resources or not reported_resources.issubset(allowed):
                     return False
+                physical_execution = verification.get("physical_gpu_execution")
+                if not isinstance(physical_execution, dict) or physical_execution.get("verified") is not True:
+                    return False
+                if str(physical_execution.get("execution_backend") or "").strip().lower() != "cuda":
+                    return False
+                if not str(physical_execution.get("operation") or "").strip():
+                    return False
+                if not isinstance(physical_execution.get("checksum"), (int, float)):
+                    return False
+                if not isinstance(physical_execution.get("elapsed_ms"), (int, float)) or float(physical_execution["elapsed_ms"]) < 0:
+                    return False
+                reported_uuids = {
+                    str(item.get("gpu_uuid") or "").strip()
+                    for item in reported
+                    if isinstance(item, dict) and str(item.get("gpu_uuid") or "").strip()
+                }
+                physical_gpu_uuid = str(physical_execution.get("gpu_uuid") or "").strip()
+                if len(reported_uuids) != 1 or physical_gpu_uuid not in reported_uuids:
+                    return False
                 if str(verification.get("worker_id") or "").strip() != worker_id:
                     return False
                 artifact_refs = verification.get("artifact_refs", [])
