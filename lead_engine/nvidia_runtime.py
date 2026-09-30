@@ -199,10 +199,10 @@ class NvidiaRuntime:
         bandwidth_lines = []
         latency_lines = []
         table_row = re.compile(
-            r"^\\s*(\\d+)\\s+(\\d+)\\s+"
-            r"([0-9]+(?:\\.[0-9]+)?)\\s+"
-            r"([0-9]+(?:\\.[0-9]+)?)\\s+"
-            r"([0-9]+(?:\\.[0-9]+)?)\\s*$"
+            r"^\s*(\d+)\s+(\d+)\s+"
+            r"([0-9]+(?:\.[0-9]+)?)\s+"
+            r"([0-9]+(?:\.[0-9]+)?)\s+"
+            r"([0-9]+(?:\.[0-9]+)?)\s*$"
         )
         for raw_line in str(output).splitlines():
             line = raw_line.strip()
