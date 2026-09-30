@@ -116,6 +116,9 @@ def test_acquire_free_creates_bounded_private_gpu_kernel_without_persisting_secr
     assert acquired.enrollment["kernel_ref"] == "example-user/thorio-free-gpu-worker"
     assert acquired.enrollment["free_only"] is True
     assert acquired.enrollment["physical_verification_required"] is True
+    assert acquired.enrollment["provider_submission_accepted"] is True
+    assert acquired.enrollment["provider_run_status"] == "running"
+    assert acquired.enrollment["external_capacity_acquired"] is True
 
     push = next(command for command in calls if command[1:3] == ["kernels", "push"])
     assert "--accelerator" in push
@@ -193,6 +196,60 @@ def test_configuration_rejects_paid_or_unknown_accelerator():
     with pytest.raises(ValueError, match="accelerator"):
         KaggleFreeComputeConfig(username="user", accelerator="A100-paid")
 
+
+
+def test_acquire_free_waits_for_queued_provider_run_then_confirms_external_capacity():
+    now = [1_700_000_000.0]
+    status_calls = 0
+    commands: list[list[str]] = []
+
+    def runner(command, *, timeout, cwd=None):
+        nonlocal status_calls
+        commands.append(list(command))
+        if command[1:3] == ["quota", "--format"]:
+            payload = [{
+                "resource": "GPU",
+                "used": "10.00h",
+                "remaining": "20.00h",
+                "total": "30.00h",
+                "refreshAt": "2099-01-01T00:00:00+00:00",
+            }]
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[1:3] == ["kernels", "status"]:
+            status_calls += 1
+            if status_calls <= 2:
+                return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
+            if status_calls == 3:
+                return subprocess.CompletedProcess(command, 0, "Status: Queued", "")
+            return subprocess.CompletedProcess(command, 0, "Status: Running", "")
+        if command[1:3] == ["kernels", "push"]:
+            return subprocess.CompletedProcess(command, 0, "Kernel pushed", "")
+        if command[1:3] == ["kernels", "delete"]:
+            return subprocess.CompletedProcess(command, 0, "Deleted", "")
+        raise AssertionError(f"unexpected Kaggle command: {command}")
+
+    def sleeper(seconds):
+        now[0] += seconds
+
+    provider = KaggleFreeComputeProvider(
+        KaggleFreeComputeConfig(
+            username="example-user",
+            kernel_slug="thorio-free-gpu-worker",
+            repository_ref="feature/gpu-fabric-foundation",
+            acquisition_ready_timeout_seconds=10,
+            acquisition_ready_poll_interval_seconds=5,
+        ),
+        runner=runner,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+    offer = provider.discover_free()[0]
+
+    acquired = provider.acquire_free(offer)
+
+    assert acquired.enrollment["provider_run_status"] == "running"
+    assert acquired.enrollment["external_capacity_acquired"] is True
+    assert not any(command[1:3] == ["kernels", "delete"] for command in commands)
 
 
 def test_acquire_free_rejects_provider_run_that_does_not_reach_running_state():
