@@ -9,7 +9,6 @@ on:
       - "lead_engine/free_compute_fleet.py"
       - "lead_engine/test_free_compute_fleet.py"
       - "lead_engine/test_kaggle_free_compute.py"
-      - "lead_engine/test_free_compute_acquisition.py"
   workflow_dispatch:
 
 permissions:
