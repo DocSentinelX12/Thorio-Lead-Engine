@@ -69,6 +69,10 @@ def test_inbound_event_remains_idempotent_from_durable_lead_after_conversation_s
     stored = db.get(lead["fingerprint"])
     assert len(result["events"]) == 1
     assert stored["response_count"] == 1
+    recovered_state = db.get_state("revenue_conversations")
+    recovered = recovered_state["conversations"][f"{lead['fingerprint']}::{lead['conversation_id']}"]
+    assert recovered["processed_event_ids"] == ["evt-durable"]
+    assert len(recovered["events"]) == 1
     assert len(pending(db, "follow_up")) == 1
 
 
