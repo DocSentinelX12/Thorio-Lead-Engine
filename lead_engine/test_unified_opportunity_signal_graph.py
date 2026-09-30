@@ -100,7 +100,10 @@ def test_unified_graph_does_not_treat_outreach_delivery_status_as_outcome():
         if node["type"] == "outcome"
     ]
     assert outcome_nodes == []
-\n\n\ndef test_unified_graph_rejects_invalid_materialized_identity():
+
+
+
+def test_unified_graph_rejects_invalid_materialized_identity():
     lead = _lead()
     lead["opportunity_id"] = "wrong-opportunity"
     try:
