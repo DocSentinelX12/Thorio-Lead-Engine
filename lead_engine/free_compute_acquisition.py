@@ -356,10 +356,10 @@ class FreeComputeAcquisitionManager:
             username = str(getattr(config, "username", "")).strip()
             kernel_slug = str(getattr(config, "kernel_slug", "")).strip()
             if username and kernel_slug:
-                domain_id = `${provider_id}:${username}:${kernel_slug}`
+                domain_id = f"{provider_id}:{username}:{kernel_slug}"
         if not domain_id:
             domain_id = provider_id
-        return f"${provider_id}:${domain_id}"
+        return f"{provider_id}:{domain_id}"
 
     def register(self, provider: FreeComputeProvider) -> None:
         key = self._provider_key(provider)
@@ -398,9 +398,19 @@ class FreeComputeAcquisitionManager:
             raise FreeComputeAcquisitionError("paid capacity is permanently forbidden")
         if offer.expires_at is not None and offer.expires_at <= self._clock():
             raise FreeComputeAcquisitionError("free compute offer is expired")
-        provider = self._providers.get(offer.provider_id)
+        provider = next(
+            (
+                candidate
+                for candidate in self._providers.values()
+                if str(candidate.provider_id).strip() == offer.provider_id
+                and self._provider_key(candidate) == f"{offer.provider_id}:{offer.domain_id}"
+            ),
+            None,
+        )
         if provider is None:
-            raise FreeComputeAcquisitionError(f"free compute provider is not registered: {offer.provider_id}")
+            raise FreeComputeAcquisitionError(
+                f"free compute provider domain is not registered: {offer.provider_id}:{offer.domain_id}"
+            )
         acquisition_id = self.store.record_offer(offer)
         try:
             acquired = provider.acquire_free(offer)
