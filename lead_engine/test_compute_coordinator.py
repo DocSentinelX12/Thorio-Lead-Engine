@@ -381,14 +381,12 @@ def test_reconcile_fabric_rolls_back_requeue_if_attempt_was_retired_concurrently
             self._retired = False
 
         def execute(self, sql, params=()):
-            if not self._retired and "UPDATE compute_execution_attempts" in sql and "SET status='failed'" in sql:
+            if not self._retired and "UPDATE compute_tasks" in sql and "SET status='queued'" in sql:
                 self._retired = True
-                with sqlite3.connect(coordinator.db_path) as race:
-                    race.execute(
-                        "UPDATE compute_execution_attempts SET status='failed' WHERE attempt_id=? AND generation=? AND status='leased'",
-                        (attempt_id, generation),
-                    )
-                    race.commit()
+                self._connection.execute(
+                    "UPDATE compute_execution_attempts SET status='failed' WHERE attempt_id=? AND generation=? AND status='leased'",
+                    (attempt_id, generation),
+                )
             return self._connection.execute(sql, params)
 
         def commit(self):
