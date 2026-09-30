@@ -54,6 +54,8 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
         if event_id not in conversation["processed_event_ids"]:
             conversation["processed_event_ids"].append(event_id)
             conversation["events"] = list(durable_events)
+            conversation["updated_at"] = _now()
+            _save(db, state)
         return dict(conversation)
     classified = str(outcome or _classify(text)).strip().lower()
     event = {"event_id": event_id, "direction": "inbound", "at": _now(), "text": str(text or ""), "outcome": classified}
