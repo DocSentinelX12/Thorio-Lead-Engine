@@ -128,6 +128,13 @@ def apply_outcome(lead: Mapping[str, Any], outcome: str, *, now: Optional[dateti
         updated["follow_up_due"] = False
     elif outcome == "no_response":
         attempt = int(lead.get("outreach_attempt", 0) or 0) + 1; updated["outreach_attempt"] = attempt
-        if attempt >= len(CADENCE_DAYS): updated["outreach_state"] = "exhausted"; updated["outreach_stop_reason"] = "exhausted"; updated["next_follow_up_at"] = None
-        else: updated["outreach_state"] = "ready"; updated["next_follow_up_at"] = (now + timedelta(days=CADENCE_DAYS[attempt])).isoformat()
+        if attempt >= len(CADENCE_DAYS):
+            updated["outreach_state"] = "exhausted"
+            updated["outreach_stop_reason"] = "exhausted"
+            updated["next_follow_up_at"] = None
+            updated["follow_up_due"] = False
+        else:
+            updated["outreach_state"] = "ready"
+            updated["next_follow_up_at"] = (now + timedelta(days=CADENCE_DAYS[attempt])).isoformat()
+            updated["follow_up_due"] = True
     return updated
