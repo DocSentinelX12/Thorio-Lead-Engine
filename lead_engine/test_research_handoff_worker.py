@@ -39,7 +39,7 @@ def test_company_research_worker_persists_canonical_sections_from_specialist_fin
     assert stored["current_intent_research"]["evidence"]
     assert stored["business_need_research"]["evidence"]
     assert stored["technical_product_hiring_research"]["evidence"]
-    assert set(stored["route_research"]["routes"]) == {"Shiftr", "Paxus", "Thorio"}
+    assert set(stored["route_research"]["routes"]) == {"Shiftr", "Paxus", "Thorio", "Astrivon Labs"}
     assert stored["research_gaps"]["verification_status"] == "observed_evidence"
     assert stored["research_gaps"]["missing_sections"] == []
     assert stored["closer_package"]["ready"] is False
