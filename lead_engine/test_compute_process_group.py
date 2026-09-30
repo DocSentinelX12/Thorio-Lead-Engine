@@ -8,8 +8,19 @@ class Client:
 
     def fabric_launch_plan(self, *args):
         return {
-            "workers": [{"worker_id": "worker-1", "node_rank": 0, "process_count": 1}],
-            "world_size": 2,
+            "workers": [{
+                "worker_id": "worker-1",
+                "node_rank": 0,
+                "process_count": 1,
+                "gpu_bindings": [{
+                    "resource_id": "worker-1/gpu-0",
+                    "gpu_id": "0",
+                    "gpu_uuid": "GPU-0",
+                    "rank": 0,
+                    "local_rank": 0,
+                }],
+            }],
+            "world_size": 1,
             "nnodes": 1,
             "rendezvous_endpoint": "10.0.0.5:29400",
             "rendezvous_id": "fabric:attempt-1:1",
