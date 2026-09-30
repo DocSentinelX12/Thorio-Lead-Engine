@@ -195,6 +195,14 @@ def test_gpu_verification_persists_immutable_artifact_and_checkpoint_refs(tmp_pa
         "execution_kind": "gpu_workload",
         "worker_id": "worker-1",
         "gpu_bindings": [{"resource_id": "node-1/gpu-0", "gpu_id": "0", "gpu_uuid": "GPU-1"}],
+        "physical_gpu_execution": {
+            "verified": True,
+            "execution_backend": "cuda",
+            "operation": "torch_cuda_matmul",
+            "gpu_uuid": "GPU-1",
+            "checksum": 120.0,
+            "elapsed_ms": 1.0,
+        },
         "artifact_refs": [
             {"kind": "output", "sha256": "a" * 64, "size_bytes": 12, "immutable": True, "attempt_id": attempt_id, "generation": generation}
         ],
