@@ -73,7 +73,7 @@ def test_discovery_is_durable_and_repeats_without_duplicate_records(tmp_path):
 def test_acquisition_is_free_only_and_returns_existing_enrollment_handoff(tmp_path):
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
     provider = Provider()
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     manager.register(provider)
 
     observed = offer(expires_at=200.0)
