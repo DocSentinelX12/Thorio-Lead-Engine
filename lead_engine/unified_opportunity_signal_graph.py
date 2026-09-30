@@ -235,6 +235,11 @@ def build_unified_opportunity_signal_graph(
             edge = _edge("opportunity_observed_by_source", opportunity_id_node, source_id)
             edges[edge["id"]] = edge
 
+        for raw in _list_mappings(lead.get("evidence_events")):
+            evidence_id = _add_evidence(nodes, raw, opportunity_id=opportunity_id, research_section="evidence_events")
+            edge = _edge("opportunity_supported_by_evidence", opportunity_id_node, evidence_id)
+            edges[edge["id"]] = edge
+
         observation = build_revenue_signal_observation(lead)
         observation_key = _hash("signal_observation", [
             opportunity_id,
