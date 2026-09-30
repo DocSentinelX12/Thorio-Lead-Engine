@@ -1193,7 +1193,7 @@ def _recommended_partner(
     has_thorio = "Thorio" in routes
     has_astrivon = "Astrivon Labs" in routes
 
-    if has_paxus and has_shiftr and not has_thorio and not has_astrivon:
+    if has_paxus and has_shiftr:
         return "Both"
     if len(routes) > 1:
         return "Multiple"
