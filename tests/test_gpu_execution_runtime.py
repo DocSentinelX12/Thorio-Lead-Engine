@@ -79,6 +79,8 @@ def test_gpu_workload_runs_only_after_exact_identity_verification():
         calls.append((tuple(args), dict(env or {}), timeout))
         if args[0] == "nvidia-smi":
             return 0, "0, GPU-1\n", ""
+        if args[:4] == ("python", "-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid"):
+            return 0, 'THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-1", "checksum": 120.0, "elapsed_ms": 1.0}', ""
         return 0, "result", ""
 
     result = execute_gpu_workload(client, task(), runner=runner)
@@ -113,6 +115,8 @@ def test_gpu_workload_failure_is_not_reported_as_success():
     def runner(args, env, timeout):
         if args[0] == "nvidia-smi":
             return 0, "0, GPU-1\n", ""
+        if args[:4] == ("python", "-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid"):
+            return 0, 'THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-1", "checksum": 120.0, "elapsed_ms": 1.0}', ""
         return 17, "", "workload failed"
 
     with pytest.raises(GpuExecutionError, match="exited with code 17"):
@@ -135,6 +139,8 @@ def test_declared_artifact_and_checkpoint_are_content_addressed(tmp_path):
     def runner(args, env, timeout):
         if args[0] == "nvidia-smi":
             return 0, "0, GPU-1\n", ""
+        if args[:4] == ("python", "-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid"):
+            return 0, 'THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-1", "checksum": 120.0, "elapsed_ms": 1.0}', ""
         return 0, "done", ""
 
     result = execute_gpu_workload(client, payload, runner=runner)
