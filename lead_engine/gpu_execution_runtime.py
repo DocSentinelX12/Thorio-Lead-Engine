@@ -177,6 +177,68 @@ def execute_gpu_workload(
         bindings,
         runner=lambda args: run_command(args, None, 15.0),
     )
+    probe_evidence: dict[str, Any] | None = None
+    for binding in identity["gpu_bindings"]:
+        probe_command = (
+            "python",
+            "-m",
+            "lead_engine.gpu_execution_probe",
+            "--expected-gpu-uuid",
+            str(binding["gpu_uuid"]),
+        )
+        probe_env = os.environ.copy()
+        probe_env["CUDA_VISIBLE_DEVICES"] = str(binding["gpu_id"])
+        probe_env["THORIO_EXPECTED_GPU_UUID"] = str(binding["gpu_uuid"])
+        rc, stdout, stderr = run_command(probe_command, probe_env, 60.0)
+        if int(rc) != 0:
+            raise GpuExecutionError(
+                f"physical CUDA execution probe failed for {binding['gpu_uuid']}: "
+                f"{str(stderr or stdout)[-4000:]}"
+            )
+        marker = "THORIO_GPU_EXECUTION_PROBE_OK "
+        probe_line = next(
+            (line[len(marker):].strip() for line in str(stdout).splitlines() if line.startswith(marker)),
+            "",
+        )
+        if not probe_line:
+            raise GpuExecutionError(
+                f"physical CUDA execution probe returned no evidence marker for {binding['gpu_uuid']}"
+            )
+        try:
+            candidate = json.loads(probe_line)
+        except json.JSONDecodeError as exc:
+            raise GpuExecutionError(
+                f"physical CUDA execution probe returned invalid evidence for {binding['gpu_uuid']}"
+            ) from exc
+        if not isinstance(candidate, dict) or candidate.get("verified") is not True:
+            raise GpuExecutionError(
+                f"physical CUDA execution probe did not verify GPU execution for {binding['gpu_uuid']}"
+            )
+        if str(candidate.get("execution_backend") or "").strip().lower() != "cuda":
+            raise GpuExecutionError(
+                f"physical CUDA execution probe reported an unexpected backend for {binding['gpu_uuid']}"
+            )
+        if str(candidate.get("gpu_uuid") or "").strip() != str(binding["gpu_uuid"]):
+            raise GpuExecutionError(
+                f"physical CUDA execution probe reported the wrong GPU UUID for {binding['gpu_uuid']}"
+            )
+        if not str(candidate.get("operation") or "").strip():
+            raise GpuExecutionError(
+                f"physical CUDA execution probe did not report an executed operation for {binding['gpu_uuid']}"
+            )
+        if not isinstance(candidate.get("checksum"), (int, float)):
+            raise GpuExecutionError(
+                f"physical CUDA execution probe did not report a numeric checksum for {binding['gpu_uuid']}"
+            )
+        if not isinstance(candidate.get("elapsed_ms"), (int, float)) or float(candidate["elapsed_ms"]) < 0:
+            raise GpuExecutionError(
+                f"physical CUDA execution probe did not report valid execution timing for {binding['gpu_uuid']}"
+            )
+        if probe_evidence is not None:
+            raise GpuExecutionError("GPU workload execution currently supports exactly one allocated GPU")
+        probe_evidence = dict(candidate)
+    if probe_evidence is None:
+        raise GpuExecutionError("physical CUDA execution probe produced no evidence")
     client.fabric_state(attempt_id, generation, lease_token, "launching")
     stop = threading.Event()
     heartbeat_error: list[str] = []
@@ -255,6 +317,7 @@ def execute_gpu_workload(
             "task_id": task_id,
             "worker_id": client.worker_id,
             "gpu_bindings": identity["gpu_bindings"],
+            "physical_gpu_execution": probe_evidence,
             "cuda_visible_devices": env["CUDA_VISIBLE_DEVICES"],
             "command": list(command),
             "started_at": started_at,
