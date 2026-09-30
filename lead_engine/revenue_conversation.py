@@ -50,33 +50,72 @@ def record_inbound_event(db: Any, *, opportunity_id: str, conversation_id: str, 
     state = _load(db); key = _conversation_key(opportunity_id, conversation_id)
     conversation = state["conversations"].setdefault(key, {"opportunity_id": opportunity_id, "conversation_id": conversation_id, "events": [], "processed_event_ids": [], "created_at": _now()})
     durable_events = lead.get("conversation_events") if isinstance(lead.get("conversation_events"), list) else []
-    if event_id in conversation["processed_event_ids"] or any(isinstance(item, Mapping) and str(item.get("event_id") or "").strip() == event_id for item in durable_events):
-        if event_id not in conversation["processed_event_ids"]:
-            durable_by_id = {
-                str(item.get("event_id") or "").strip(): dict(item)
-                for item in durable_events
-                if isinstance(item, Mapping) and str(item.get("event_id") or "").strip()
-            }
-            conversation["events"] = list(durable_by_id.values())
-            conversation["processed_event_ids"] = list(durable_by_id)
-            conversation["response_count"] = max(
-                int(conversation.get("response_count", 0) or 0),
-                int(lead.get("response_count", 0) or 0),
-                sum(
-                    1
-                    for item in conversation["events"]
-                    if str(item.get("direction") or "inbound").strip().lower() == "inbound"
-                ),
-            )
-            inbound_events = [
-                item for item in conversation["events"]
+    durable_by_id = {
+        str(item.get("event_id") or "").strip(): dict(item)
+        for item in durable_events
+        if isinstance(item, Mapping) and str(item.get("event_id") or "").strip()
+    }
+    controller_events = {
+        str(item.get("event_id") or "").strip(): dict(item)
+        for item in conversation.get("events", [])
+        if isinstance(item, Mapping) and str(item.get("event_id") or "").strip()
+    }
+    if event_id in durable_by_id:
+        conversation["events"] = list(durable_by_id.values())
+        conversation["processed_event_ids"] = list(durable_by_id)
+        conversation["response_count"] = max(
+            int(conversation.get("response_count", 0) or 0),
+            int(lead.get("response_count", 0) or 0),
+            sum(
+                1
+                for item in conversation["events"]
                 if str(item.get("direction") or "inbound").strip().lower() == "inbound"
-            ]
-            if inbound_events:
-                conversation["last_inbound_at"] = str(inbound_events[-1].get("at") or "").strip() or conversation.get("last_inbound_at")
-            conversation["updated_at"] = _now()
-            _save(db, state)
+            ),
+        )
+        inbound_events = [
+            item for item in conversation["events"]
+            if str(item.get("direction") or "inbound").strip().lower() == "inbound"
+        ]
+        if inbound_events:
+            conversation["last_inbound_at"] = str(inbound_events[-1].get("at") or "").strip() or conversation.get("last_inbound_at")
+        conversation["updated_at"] = _now()
+        _save(db, state)
         return dict(conversation)
+    if event_id in conversation["processed_event_ids"] and event_id in controller_events:
+        recovered_event = controller_events[event_id]
+        conversation["events"] = list(durable_by_id.values()) + [
+            item for item_id, item in controller_events.items() if item_id not in durable_by_id
+        ]
+        conversation["processed_event_ids"] = list(dict.fromkeys(
+            [item_id for item_id in conversation["processed_event_ids"] if item_id]
+            + list(controller_events)
+        ))
+        conversation["response_count"] = max(
+            int(conversation.get("response_count", 0) or 0),
+            int(lead.get("response_count", 0) or 0),
+            sum(
+                1
+                for item in conversation["events"]
+                if str(item.get("direction") or "inbound").strip().lower() == "inbound"
+            ),
+        )
+        inbound_events = [
+            item for item in conversation["events"]
+            if str(item.get("direction") or "inbound").strip().lower() == "inbound"
+        ]
+        if inbound_events:
+            conversation["last_inbound_at"] = str(inbound_events[-1].get("at") or "").strip() or conversation.get("last_inbound_at")
+        updated = dict(lead)
+        updated["conversation_events"] = list(conversation["events"])
+        updated["response_count"] = conversation["response_count"]
+        stored = db.update_payload(opportunity_id, updated) or updated
+        conversation["events"] = list(stored.get("conversation_events") or conversation["events"])
+        conversation["updated_at"] = _now()
+        _save(db, state)
+        return dict(conversation)
+    conversation["processed_event_ids"] = [
+        item_id for item_id in conversation["processed_event_ids"] if item_id != event_id
+    ]
     durable_by_id = {
         str(item.get("event_id") or "").strip(): dict(item)
         for item in durable_events
