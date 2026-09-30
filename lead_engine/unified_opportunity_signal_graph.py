@@ -113,7 +113,8 @@ def _add_evidence(
         route=_text(evidence.get("route")) or None,
         collector="unified_opportunity_signal_graph",
     )
-    key = _text(normalized.get("canonical_evidence_key")) or canonical_evidence_key(normalized)
+    canonical_key = _text(normalized.get("canonical_evidence_key")) or canonical_evidence_key(normalized)
+    key = [opportunity_id, canonical_key]
     node_id, node = _node(
         "evidence",
         key,
