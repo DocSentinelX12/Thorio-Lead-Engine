@@ -155,6 +155,11 @@ class ActivePathIntelligence:
             latest_status = str(latest_measurement.get("measurement_status") or "").strip().lower()
             if latest_status in {"failed", "unavailable"} or latest_measurement.get("verified") is False:
                 state = "failed"
+                # A failed or unavailable observation is connectivity evidence,
+                # not a bandwidth sample. Do not expose a performance delta
+                # computed from the preceding healthy observation.
+                bandwidth_delta = None
+                bandwidth_change_ratio = None
 
         prior_failure = bool(failed_observations and latest is not None and failed_observations[-1]["observed_at"] < latest["observed_at"])
         if prior_failure and latest is not None and len([row for row in comparable if row["observed_at"] > failed_observations[-1]["observed_at"]]) >= 2:
@@ -186,7 +191,7 @@ class ActivePathIntelligence:
                     "failed": "exact path failed or became unavailable",
                     "degrading": "measured bandwidth declined against this path's observed history",
                     "unstable": "repeated measured bandwidth is materially variable",
-                    "recovered": "path produced verified measurements after a prior failure",
+                    "recovered": "recovered path produced verified measurements after a prior failure",
                 }.get(state, "no active-path reverification trigger"),
             },
             "synthetic_baseline": False,
