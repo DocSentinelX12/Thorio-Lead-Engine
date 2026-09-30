@@ -141,7 +141,8 @@ def test_fabric_timeout_escalates_to_process_group_kill(monkeypatch):
 
 
 def test_fabric_rank_failure_terminates_other_ranks_without_waiting_for_timeout(monkeypatch):
-    from lead_engine.compute_worker import ComputeWorkerError, run_fabric_verification
+    from lead_engine.compute_worker import run_fabric_verification
+    from lead_engine.nvidia_runtime import NvidiaRuntimeError
     import subprocess
     import time
 
@@ -195,8 +196,8 @@ def test_fabric_rank_failure_terminates_other_ranks_without_waiting_for_timeout(
             {"attempt_id":"attempt-1","generation":1,"lease_token":"lease-1"},
             rendezvous_endpoint="10.0.0.5:29400", heartbeat_seconds=1, runtime=Runtime(),
         )
-    except ComputeWorkerError:
-        pass
+    except NvidiaRuntimeError as error:
+        assert "distributed NCCL launch failed" in str(error)
     else:
         raise AssertionError("distributed rank failure was not surfaced")
 
