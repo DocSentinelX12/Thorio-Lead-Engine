@@ -339,13 +339,33 @@ class FreeComputeAcquisitionManager:
         self._clock = clock
         self._providers: dict[str, FreeComputeProvider] = {}
 
-    def register(self, provider: FreeComputeProvider) -> None:
+    @staticmethod
+    def _provider_key(provider: FreeComputeProvider) -> str:
         provider_id = str(provider.provider_id).strip()
         if not provider_id:
             raise ValueError("provider_id is required")
-        if provider_id in self._providers:
-            raise ValueError(f"free compute provider already registered: {provider_id}")
-        self._providers[provider_id] = provider
+        domain_id = ""
+        domain_method = getattr(provider, "_domain_id", None)
+        if callable(domain_method):
+            try:
+                domain_id = str(domain_method()).strip()
+            except Exception:
+                domain_id = ""
+        config = getattr(provider, "config", None)
+        if not domain_id and config is not None:
+            username = str(getattr(config, "username", "")).strip()
+            kernel_slug = str(getattr(config, "kernel_slug", "")).strip()
+            if username and kernel_slug:
+                domain_id = `${provider_id}:${username}:${kernel_slug}`
+        if not domain_id:
+            domain_id = provider_id
+        return f"${provider_id}:${domain_id}"
+
+    def register(self, provider: FreeComputeProvider) -> None:
+        key = self._provider_key(provider)
+        if key in self._providers:
+            raise ValueError(f"free compute provider already registered: {key}")
+        self._providers[key] = provider
 
     def providers(self) -> tuple[FreeComputeProvider, ...]:
         return tuple(self._providers[key] for key in sorted(self._providers))
@@ -353,7 +373,8 @@ class FreeComputeAcquisitionManager:
     def discover(self) -> dict[str, Any]:
         offers: list[dict[str, Any]] = []
         errors: list[dict[str, str]] = []
-        for provider_id, provider in sorted(self._providers.items()):
+        for provider_key, provider in sorted(self._providers.items()):
+            provider_id = str(provider.provider_id).strip()
             try:
                 observed = provider.discover_free()
                 for offer in observed:
@@ -364,8 +385,13 @@ class FreeComputeAcquisitionManager:
                     self.store.record_offer(offer)
                     offers.append(asdict(offer))
             except Exception as exc:
-                errors.append({"provider_id": provider_id, "error": f"{type(exc).__name__}: {exc}"})
-        return {"offers": tuple(offers), "errors": tuple(errors), "provider_count": len(self._providers)}
+                errors.append({"provider_id": provider_id, "provider_key": provider_key, "error": f"{type(exc).__name__}: {exc}"})
+        return {
+            "offers": tuple(offers),
+            "errors": tuple(errors),
+            "provider_count": len(self._providers),
+            "provider_ids": tuple(sorted({str(provider.provider_id).strip() for provider in self._providers.values()})),
+        }
 
     def acquire(self, offer: FreeComputeOffer) -> AcquiredCompute:
         if not offer.no_cost:
