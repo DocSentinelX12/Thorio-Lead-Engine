@@ -20,7 +20,7 @@ class _FakeTransport:
 
 
 def test_every_specialist_has_an_executable_handler():
-    assert set(specialization_registry()) == set(handler_registry()); assert len(handler_registry()) == 34
+    assert set(specialization_registry()) == set(handler_registry()); assert len(handler_registry()) == 35
 
 def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
     db = _db(tmp_path); orchestrator = AgentOrchestrator(db); task = orchestrator.dispatch_discovery("x_signal", {"source": "x", "signal": "Company is hiring a software engineer", "source_id": "1"}); result = run_worker_once(db, "x_signal", worker_id="x-worker")
