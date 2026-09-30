@@ -15,6 +15,7 @@ from .agent_queue import enqueue, enqueue_many
 from .active_processing import airtable_integrity, priority, routing, verification
 from .public_research import research_public_web
 from .next_evidence_intelligence import build_next_evidence_plan
+from .signal_outcome_feedback import load_signal_outcome_feedback, signal_feedback_priority
 
 DISCOVERY_TARGETS = {
     "engineering_demand_discovery": ("software", "engineer", "developer", "backend", "frontend", "full stack", "devops", "platform", "engineering"),
@@ -124,7 +125,9 @@ def discovery_finding(agent: str, payload: Mapping[str, Any], db: Any = None) ->
     handoff = None
     if findings and fingerprint and db is not None:
         stored_lead = db.get(fingerprint) or dict(lead)
-        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "discovery_agent": agent, "discovery_findings": findings}, priority=7, dedupe_key=f"company_research:{fingerprint}")
+        feedback = load_signal_outcome_feedback(db)
+        feedback_priority = signal_feedback_priority(stored_lead, feedback)
+        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "discovery_agent": agent, "discovery_findings": findings, "feedback_priority": feedback_priority}, priority=7 + feedback_priority, dedupe_key=f"company_research:{fingerprint}")
         handoff = "company_research"
     return {"agent": agent, "role": "discovery_intelligence", "fingerprint": fingerprint, "target": agent.removesuffix("_discovery"), "matched_event_count": len(findings), "recent_event_count": recent_count, "findings": findings, "requires_verification": bool(findings), "no_match_is_not_rejection": True, "handoff": handoff}
 
@@ -200,7 +203,8 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         raise ValueError("company_research requires lead fingerprint")
     existing = lead.get("company_research")
     prior = dict(existing) if isinstance(existing, Mapping) else {}
-    research_focus = build_next_evidence_plan(lead)
+    feedback = load_signal_outcome_feedback(ctx.db)
+    research_focus = build_next_evidence_plan(lead, feedback=feedback)
     research_input = dict(lead)
     research_input["research_focus"] = research_focus
     public_research = research_public_web(research_input)
