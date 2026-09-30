@@ -63,7 +63,7 @@ def _sentence_has_marker(text, start, end, markers):
         for match in re.finditer(r"(?<!\w)" + re.escape(marker) + r"(?!\w)", sentence):
             if marker == "may":
                 following = sentence[match.end():].lstrip()
-                if re.match(r"^(?:,?\\s*)\\d{4}\\b", following):
+                if re.match(r"^(?:,?\s*)\d{4}\b", following):
                     continue
             return marker
     return ""
