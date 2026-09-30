@@ -119,35 +119,71 @@ def learn_signal_outcomes(db: Any) -> Dict[str, Any]:
     overall_opportunities = int(overall["opportunities"])
     overall_converted = int(overall["converted"])
     overall_conversion_rate = overall_converted / overall_opportunities if overall_opportunities else 0.0
-    by_signal: Dict[str, Dict[str, Any]] = {}
-    for signal_key, learned in feedback.get("by_signal", {}).items():
-        if not isinstance(learned, Mapping):
+
+    nodes = graph.get("nodes", {})
+    edges = graph.get("edges", [])
+    opportunity_by_observation: Dict[str, set[str]] = {}
+    for edge in edges:
+        if not isinstance(edge, Mapping):
             continue
-        signal_opportunities = int(learned.get("distinct_opportunities", 0) or 0)
-        outcomes = learned.get("outcomes") if isinstance(learned.get("outcomes"), Mapping) else {}
-        signal_converted = int(outcomes.get("converted", 0) or 0)
+        if edge.get("type") != "opportunity_has_signal_observation":
+            continue
+        opportunity_node = nodes.get(edge.get("from"))
+        observation_id = str(edge.get("to") or "")
+        if isinstance(opportunity_node, Mapping) and observation_id:
+            opportunity_by_observation.setdefault(observation_id, set()).add(str(opportunity_node.get("opportunity_id") or ""))
+
+    opportunity_ids_by_signal: Dict[str, set[str]] = {}
+    for edge in edges:
+        if not isinstance(edge, Mapping) or edge.get("type") != "observation_instantiates_signal":
+            continue
+        observation_id = str(edge.get("from") or "")
+        signal_node = nodes.get(edge.get("to"))
+        if not isinstance(signal_node, Mapping):
+            continue
+        signal_key = str(signal_node.get("signal_key") or "")
+        if not signal_key:
+            continue
+        opportunity_ids_by_signal.setdefault(signal_key, set()).update(opportunity_by_observation.get(observation_id, set()))
+
+    leads_by_opportunity = {
+        str(lead.get("opportunity_id") or lead.get("fingerprint") or ""): lead
+        for lead in leads
+        if str(lead.get("opportunity_id") or lead.get("fingerprint") or "")
+    }
+
+    by_signal: Dict[str, Dict[str, Any]] = {}
+    signal_keys = set(opportunity_ids_by_signal) | set((feedback.get("by_signal") or {}).keys())
+    for signal_key in sorted(signal_keys):
+        opportunity_ids = opportunity_ids_by_signal.get(signal_key, set())
+        signal_leads = [
+            lead for opportunity_id, lead in leads_by_opportunity.items()
+            if opportunity_id in opportunity_ids
+        ]
+        metrics = _finalize(_accumulate_metrics(signal_leads))
+        signal_feedback = (feedback.get("by_signal") or {}).get(signal_key)
+        outcomes = signal_feedback.get("outcomes", {}) if isinstance(signal_feedback, Mapping) else {}
+        signal_converted = int(metrics["converted"])
+        signal_opportunities = int(metrics["opportunities"])
         delta = (
             (signal_converted * overall_opportunities - overall_converted * signal_opportunities)
             / (signal_opportunities * overall_opportunities)
             if signal_opportunities and overall_opportunities
             else 0.0
         )
-        metrics = _new_metrics()
-        metrics["opportunities"] = signal_opportunities
-        metrics["converted"] = signal_converted
-        metrics = _finalize(metrics)
         metrics.update({
-            "observations": int(learned.get("observations", 0) or 0),
+            "observations": int(signal_feedback.get("observations", 0) or 0) if isinstance(signal_feedback, Mapping) else 0,
             "overall_conversion_rate": overall_conversion_rate,
             "conversion_rate_delta_vs_overall": delta,
             "outcomes": dict(outcomes),
             "association_only": True,
             "interpretation_note": "Observed association only. The signal is not established as a cause of any lifecycle outcome.",
-            "research_priority": int(learned.get("research_priority", 0) or 0),
-            "collection_priority": int(learned.get("collection_priority", 0) or 0),
+            "research_priority": int(signal_feedback.get("research_priority", 0) or 0) if isinstance(signal_feedback, Mapping) else 0,
+            "collection_priority": int(signal_feedback.get("collection_priority", 0) or 0) if isinstance(signal_feedback, Mapping) else 0,
         })
-        public_signal = signal_key.split("|", 2)[-1] if str(signal_key).startswith("configured|") else signal_key
+        public_signal = signal_key.split("|", 2)[-1] if signal_key.startswith("configured|") else signal_key
         by_signal[public_signal] = metrics
+
     return {
         "learning_version": SIGNAL_OUTCOME_LEARNING_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
