@@ -1,4 +1,4 @@
-"""Professional capability contracts for every lead-engine agent."""
+""""Professional capability contracts for every lead-engine agent."""
 
 from dataclasses import dataclass
 from typing import Dict, Tuple
@@ -13,7 +13,7 @@ class AgentSpecialization:
     forbidden_actions: Tuple[str, ...]
 
 _SOURCE_ROLES = {"x_signal": "X", "threads_signal": "Threads", "reddit_signal": "Reddit", "linkedin_signal": "LinkedIn", "facebook_signal": "Facebook", "instagram_signal": "Instagram", "hacker_news_signal": "Hacker News", "indie_hackers_signal": "Indie Hackers", "product_hunt_signal": "Product Hunt", "web_job_signal": "web and job sources"}
-_DISCOVERY_INTELLIGENCE = {"engineering_demand_discovery": "engineering demand", "ai_demand_discovery": "AI, ML, data, and automation demand", "product_design_demand_discovery": "product, design, and UX demand", "contract_team_demand_discovery": "contractor, staff augmentation, outsourcing, and team demand", "recent_inquiry_discovery": "recent explicit inquiries and current buying or hiring need"}
+_DISCOVERY_INTELLIGENCE = {"engineering_demand_discovery": "engineering demand", "ai_demand_discovery": "AI, ML, data, and automation demand", "product_design_demand_discovery": "product, design, and UX demand", "contract_team_demand_discovery": "contractor, staff augmentation, outsourcing, and team demand", "recent_inquiry_discovery": "recent explicit inquiries and current buying or hiring need", "astrivon_demand_discovery": "Astrivon-specific agency, MVP, AI/ML, automation, product development, B2B outreach, and funding demand"}
 _SOCIAL_ROLES = {"social_intelligence": "correlate permitted social evidence across sources", "social_hiring_research": "verify current hiring intent and recency from social evidence", "social_decision_maker_research": "resolve decision-maker identity and role from permitted social evidence", "social_inquiry_research": "investigate recent inquiries and explicit need statements", "social_company_context": "build verified company context from social evidence"}
 _SPECIALIZATIONS = []
 
@@ -28,7 +28,6 @@ _PROCESSING = {
     "qualification_a": ("Perform the primary independent evidence-based qualification review for Thorio, Shiftr, Paxus, and Astrivon Labs.", ("current need", "recent inquiry", "destination categories", "multi-route qualification")),
     "qualification_b": ("Independently validate qualification decisions and challenge unsupported conclusions.", ("recheck evidence", "challenge stale evidence", "verify route logic", "flag disagreement")),
     "company_research": ("Resolve company identity, context, people, products, hiring activity, and evidence.", ("verify company", "research decision makers", "enrich context", "record evidence")),
-    "astrivon_demand_discovery": ("Research Astrivon-specific agency, MVP, B2B sales, automation, AI/ML, product scaling, and funding needs.", ("dev agency", "MVP", "B2B outreach", "sales automation", "AI/ML", "computer vision", "seed funding", "non-technical founder")),
     "paxus_research": ("Resolve unknown Paxus referral requirements without turning unknown into failure or pass.", ("verify company", "find hiring contact", "verify communication evidence", "verify consent evidence")),
     "identity_resolution": ("Resolve company, person, and opportunity identity before semantic duplicate analysis.", ("compare identity keys", "resolve aliases", "preserve distinct opportunities", "record provenance")),
     "duplicate_resolution": ("Distinguish duplicate evidence from related but distinct opportunities.", ("compare identity", "compare opportunity context", "merge duplicate evidence", "preserve separate needs")),
