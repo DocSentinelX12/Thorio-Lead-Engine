@@ -330,7 +330,7 @@ class ComputePool:
         """Readmit only after fresh heartbeat and physical GPU evidence are present."""
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT status,last_heartbeat,gpu_discovery_state,physical_fabric_evidence_json "
+                "SELECT status,last_heartbeat,gpu_discovery_state,physical_fabric_evidence_json,gpu_resources_json "
                 "FROM compute_workers WHERE worker_id=?",
                 (worker_id,),
             ).fetchone()
