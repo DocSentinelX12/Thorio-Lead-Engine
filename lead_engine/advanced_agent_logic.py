@@ -125,7 +125,7 @@ def discovery_finding(agent: str, payload: Mapping[str, Any], db: Any = None) ->
     handoff = None
     if findings and fingerprint and db is not None:
         stored_lead = db.get(fingerprint) or dict(lead)
-        feedback = load_signal_outcome_feedback(db)
+        feedback = load_signal_outcome_feedback(db) if hasattr(db, "get_state") else {"by_signal": {}}
         feedback_priority = signal_feedback_priority(stored_lead, feedback)
         enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "discovery_agent": agent, "discovery_findings": findings, "feedback_priority": feedback_priority}, priority=7 + feedback_priority, dedupe_key=f"company_research:{fingerprint}")
         handoff = "company_research"
@@ -203,7 +203,7 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         raise ValueError("company_research requires lead fingerprint")
     existing = lead.get("company_research")
     prior = dict(existing) if isinstance(existing, Mapping) else {}
-    feedback = load_signal_outcome_feedback(ctx.db)
+    feedback = load_signal_outcome_feedback(ctx.db) if hasattr(ctx.db, "get_state") else None
     research_focus = build_next_evidence_plan(lead, feedback=feedback)
     research_input = dict(lead)
     research_input["research_focus"] = research_focus
