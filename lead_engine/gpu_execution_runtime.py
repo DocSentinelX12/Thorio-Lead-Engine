@@ -177,7 +177,7 @@ def execute_gpu_workload(
         bindings,
         runner=lambda args: run_command(args, None, 15.0),
     )
-    probe_evidence: dict[str, Any] | None = None
+    probe_evidence: list[dict[str, Any]] = []
     for binding in identity["gpu_bindings"]:
         probe_command = (
             "python",
@@ -234,11 +234,9 @@ def execute_gpu_workload(
             raise GpuExecutionError(
                 f"physical CUDA execution probe did not report valid execution timing for {binding['gpu_uuid']}"
             )
-        if probe_evidence is not None:
-            raise GpuExecutionError("GPU workload execution currently supports exactly one allocated GPU")
-        probe_evidence = dict(candidate)
-    if probe_evidence is None:
-        raise GpuExecutionError("physical CUDA execution probe produced no evidence")
+        probe_evidence.append(dict(candidate))
+    if len(probe_evidence) != len(identity["gpu_bindings"]):
+        raise GpuExecutionError("physical CUDA execution probe did not verify every allocated GPU")
     client.fabric_state(attempt_id, generation, lease_token, "launching")
     stop = threading.Event()
     heartbeat_error: list[str] = []
