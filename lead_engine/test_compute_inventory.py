@@ -379,6 +379,50 @@ def test_fabric_path_quarantine_is_durable_and_revalidation_is_explicit(tmp_path
     assert rows[0]["gpu_uuid"] == "u0"
     assert rows[0]["rdma_device"] == "mlx5_1"
     assert rows[0]["rdma_port"] == 1
+
+    # Revalidation requires a newer authenticated inventory observation carrying
+    # the exact GPU-to-NIC locality and active physical RDMA-link evidence.
+    inventory.observe(ProviderResourceSnapshot(
+        provider_id="provider-a",
+        domain_id="domain-a",
+        observed_at=time.time(),
+        nodes=(NodeResource(
+            node_id="node-a",
+            architecture="x86_64",
+            cpu=CpuResource("node-a", 16, 64 * 1024**3),
+            gpus=(GpuResource(
+                node_id="node-a",
+                gpu_id="0",
+                gpu_uuid="u0",
+                model="NVIDIA Test GPU",
+                vram_bytes=24 * 1024**3,
+            ),),
+        ),),
+        ephemeral=False,
+        expires_at=None,
+        authentication_state="authenticated",
+        evidence={
+            "network": {
+                "gpu_nic_locality": [{
+                    "gpu_uuid": "u0",
+                    "nic": "eth1",
+                    "rdma_device": "mlx5_1",
+                    "rdma_port": 1,
+                    "link_layer": "InfiniBand",
+                }],
+                "rdma": {
+                    "links": [{
+                        "rdma_device": "mlx5_1",
+                        "port": 1,
+                        "link_layer": "InfiniBand",
+                        "state": "ACTIVE",
+                        "physical_state": "LINK_UP",
+                    }],
+                },
+            },
+        },
+    ))
+
     with pytest.raises(ValueError):
         inventory.revalidate_fabric_path(path, verification={"verified": False})
     assert inventory.is_fabric_path_quarantined(path) is True
