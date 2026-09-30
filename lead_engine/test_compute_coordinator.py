@@ -518,3 +518,16 @@ def test_recover_expired_tasks_does_not_release_concurrently_renewed_task(tmp_pa
     assert task["status"] == "leased"
     assert float(task["lease_until"]) > __import__("time").time()
     assert coordinator.pool.worker("worker-1")["current_load"] == 1
+
+def test_coordinator_from_environment_registers_kaggle_free_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("THORIO_COMPUTE_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("THORIO_COMPUTE_DB", str(tmp_path / "coordinator.sqlite3"))
+    monkeypatch.setenv("THORIO_KAGGLE_ENABLED", "1")
+    monkeypatch.setenv("THORIO_KAGGLE_USERNAME", "example-user")
+
+    from lead_engine.compute_coordinator import coordinator_from_environment
+
+    coordinator = coordinator_from_environment()
+    providers = coordinator.free_compute_acquisition.providers()
+
+    assert [provider.provider_id for provider in providers] == ["kaggle"]
