@@ -358,7 +358,36 @@ def build_unified_opportunity_signal_graph(
                 edge = _edge("opportunity_has_route", opportunity_id_node, route_id)
                 edges[edge["id"]] = edge
 
-        for item in _list_mappings(lead.get("outreach_history")):\n            action_key = [opportunity_id, item.get("action_id"), item.get("conversation_id"), item.get("route"), item.get("channel"), item.get("status"), item.get("kind")]\n            action_id, action_node = _node(\n                "outreach_action",\n                action_key,\n                opportunity_id=opportunity_id,\n                action_id=_text(item.get("action_id")),\n                conversation_id=_text(item.get("conversation_id")),\n                route=_text(item.get("route")),\n                channel=_text(item.get("channel")),\n                status=_text(item.get("status")),\n                kind=_text(item.get("kind")) or "outreach",\n                provider_result=dict(item.get("provider_result") or {}) if isinstance(item.get("provider_result"), Mapping) else {},\n            )\n            nodes.setdefault(action_id, action_node)\n            edge = _edge("opportunity_has_outreach_action", opportunity_id_node, action_id)\n            edges[edge["id"]] = edge\n        if isinstance(lead.get("commercial_strategy"), Mapping):\n            closer_id, closer_node = _node(\n                "closer_strategy",\n                [opportunity_id, lead.get("outreach_route"), lead.get("commercial_strategy")],\n                opportunity_id=opportunity_id,\n                route=_text(lead.get("outreach_route") or lead.get("active_route")),\n                strategy=dict(lead.get("commercial_strategy")),\n            )\n            nodes.setdefault(closer_id, closer_node)\n            edge = _edge("opportunity_has_closer_strategy", opportunity_id_node, closer_id)\n            edges[edge["id"]] = edge\n\n        for item in _outcome_events(lead):
+        for item in _list_mappings(lead.get("outreach_history")):
+            action_key = [opportunity_id, item.get("action_id"), item.get("conversation_id"), item.get("route"), item.get("channel"), item.get("status"), item.get("kind")]
+            action_id, action_node = _node(
+                "outreach_action",
+                action_key,
+                opportunity_id=opportunity_id,
+                action_id=_text(item.get("action_id")),
+                conversation_id=_text(item.get("conversation_id")),
+                route=_text(item.get("route")),
+                channel=_text(item.get("channel")),
+                status=_text(item.get("status")),
+                kind=_text(item.get("kind")) or "outreach",
+                provider_result=dict(item.get("provider_result") or {}) if isinstance(item.get("provider_result"), Mapping) else {},
+            )
+            nodes.setdefault(action_id, action_node)
+            edge = _edge("opportunity_has_outreach_action", opportunity_id_node, action_id)
+            edges[edge["id"]] = edge
+        if isinstance(lead.get("commercial_strategy"), Mapping):
+            closer_id, closer_node = _node(
+                "closer_strategy",
+                [opportunity_id, lead.get("outreach_route"), lead.get("commercial_strategy")],
+                opportunity_id=opportunity_id,
+                route=_text(lead.get("outreach_route") or lead.get("active_route")),
+                strategy=dict(lead.get("commercial_strategy")),
+            )
+            nodes.setdefault(closer_id, closer_node)
+            edge = _edge("opportunity_has_closer_strategy", opportunity_id_node, closer_id)
+            edges[edge["id"]] = edge
+
+        for item in _outcome_events(lead):
             outcome = _text(item.get("outcome")).lower()
             if not outcome:
                 continue
