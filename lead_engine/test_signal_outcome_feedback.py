@@ -45,3 +45,20 @@ def test_feedback_persists_and_drives_future_research_priority(tmp_path):
     assert signal_feedback_priority(db.get("a"), feedback) == 2
     assert db.get_state("unified_opportunity_signal_graph")["authoritative"] is True
     assert db.get_state("signal_outcome_feedback")["association_only"] is True
+
+
+def test_feedback_priority_is_applied_to_future_research_targets():
+    from .next_evidence_intelligence import build_next_evidence_plan
+
+    feedback = {
+        "by_signal": {
+            "configured|looking for a development partner": {
+                "research_priority": 2,
+            }
+        }
+    }
+    lead = _lead("future", "converted")
+    plan = build_next_evidence_plan(lead, feedback=feedback)
+    assert plan["feedback_applied"] is True
+    assert all(target["priority"] == 3 for target in plan["targets"])
+    assert all(target["feedback"]["association_only"] is True for target in plan["targets"])
