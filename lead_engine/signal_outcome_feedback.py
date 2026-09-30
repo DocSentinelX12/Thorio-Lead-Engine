@@ -59,7 +59,36 @@ def build_signal_outcome_feedback(graph: Mapping[str, Any]) -> dict[str, Any]:
         if _text(edge.get("temporal_relation")) in {"prior_or_same_time", "temporal_order_unknown"}
     ]
 
+    # An observation is a persisted signal occurrence on an opportunity, not an
+    # outcome event. This keeps opportunities with no explicit outcome in the
+    # denominator without inventing a negative or unknown outcome.
+    signal_opportunities: dict[str, set[str]] = {}
+    for edge in _edges_for(graph, edge_type="observation_instantiates_signal"):
+        observation = nodes.get(_text(edge.get("from")))
+        signal = signals.get(_text(edge.get("to")))
+        if not observation or not signal:
+            continue
+        key = _text(signal.get("signal_key")) or _text(signal.get("phrase"))
+        opportunity_id = _text(observation.get("opportunity_id"))
+        if key and opportunity_id:
+            signal_opportunities.setdefault(key, set()).add(opportunity_id)
+
     by_signal: dict[str, dict[str, Any]] = {}
+    for signal in signals.values():
+        key = _text(signal.get("signal_key")) or _text(signal.get("phrase"))
+        if not key:
+            continue
+        by_signal[key] = {
+            "signal_key": key,
+            "category": _text(signal.get("category")),
+            "signal_type": _text(signal.get("signal_type")),
+            "phrase": _text(signal.get("phrase")),
+            "observations": len(signal_opportunities.get(key, set())),
+            "distinct_opportunities": set(signal_opportunities.get(key, set())),
+            "outcomes": {},
+            "association_only": True,
+        }
+
     for edge in associations:
         signal = signals.get(_text(edge.get("from")))
         outcome = outcomes.get(_text(edge.get("to")))
@@ -74,15 +103,11 @@ def build_signal_outcome_feedback(graph: Mapping[str, Any]) -> dict[str, Any]:
             "category": _text(signal.get("category")),
             "signal_type": _text(signal.get("signal_type")),
             "phrase": _text(signal.get("phrase")),
-            "observations": 0,
-            "distinct_opportunities": set(),
+            "observations": len(signal_opportunities.get(key, set())),
+            "distinct_opportunities": set(signal_opportunities.get(key, set())),
             "outcomes": {},
             "association_only": True,
         })
-        bucket["observations"] += 1
-        opportunity_id = _text(outcome.get("opportunity_id"))
-        if opportunity_id:
-            bucket["distinct_opportunities"].add(opportunity_id)
         bucket["outcomes"][outcome_name] = int(bucket["outcomes"].get(outcome_name, 0)) + 1
 
     for bucket in by_signal.values():
