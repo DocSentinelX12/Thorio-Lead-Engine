@@ -881,3 +881,39 @@ def test_fabric_performance_requirements_reject_unmeasured_path(tmp_path):
             ),
             "allocation-unmeasured",
         )
+
+
+def test_multi_node_placement_evaluates_complete_gpu_candidate_space(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    inventory.observe(_snapshot([
+        _node("node-a", [_ready_gpu("node-a", "gpu-0", gpu_uuid="ua")]),
+        _node("node-b", [_ready_gpu("node-b", "gpu-0", gpu_uuid="ub")]),
+        _node("node-c", [_ready_gpu("node-c", "gpu-0", gpu_uuid="uc")]),
+    ]))
+
+    placement = ComputeScheduler(inventory).placement(
+        ComputeRequirements(
+            WorkloadClass.MULTI_NODE_GPU,
+            GpuRequirements(gpu_count=2, require_nccl=True),
+            same_node=False,
+        )
+    )
+
+    accepted = [
+        item
+        for item in placement.decision_trace
+        if item.get("stage") == "complete_physical_validation"
+        and item.get("status") == "accepted"
+    ]
+    assert len(accepted) == 3
+    assert {
+        tuple(item["resource_keys"])
+        for item in accepted
+    } == {
+        ("provider-a/domain-a/node-a/cpu", "provider-a/domain-a/node-a/gpu/ua",
+         "provider-a/domain-a/node-b/cpu", "provider-a/domain-a/node-b/gpu/ub"),
+        ("provider-a/domain-a/node-a/cpu", "provider-a/domain-a/node-a/gpu/ua",
+         "provider-a/domain-a/node-c/cpu", "provider-a/domain-a/node-c/gpu/uc"),
+        ("provider-a/domain-a/node-b/cpu", "provider-a/domain-a/node-b/gpu/ub",
+         "provider-a/domain-a/node-c/cpu", "provider-a/domain-a/node-c/gpu/uc"),
+    }
