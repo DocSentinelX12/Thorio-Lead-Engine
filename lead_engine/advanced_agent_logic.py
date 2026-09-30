@@ -15,6 +15,7 @@ from .agent_queue import enqueue, enqueue_many
 from .active_processing import airtable_integrity, priority, routing, verification
 from .public_research import research_public_web
 from .next_evidence_intelligence import build_next_evidence_plan
+from .signal_outcome_feedback import load_signal_outcome_feedback
 
 DISCOVERY_TARGETS = {
     "engineering_demand_discovery": ("software", "engineer", "developer", "backend", "frontend", "full stack", "devops", "platform", "engineering"),
@@ -200,7 +201,8 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         raise ValueError("company_research requires lead fingerprint")
     existing = lead.get("company_research")
     prior = dict(existing) if isinstance(existing, Mapping) else {}
-    research_focus = build_next_evidence_plan(lead)
+    feedback = load_signal_outcome_feedback(ctx.db)
+    research_focus = build_next_evidence_plan(lead, feedback=feedback)
     research_input = dict(lead)
     research_input["research_focus"] = research_focus
     public_research = research_public_web(research_input)
