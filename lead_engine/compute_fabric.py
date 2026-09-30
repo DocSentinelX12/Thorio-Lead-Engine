@@ -49,6 +49,11 @@ class FabricControllerCycle:
     requeued_tasks: int
     scheduled_allocations: tuple[dict[str, Any], ...]
 
+    @property
+    def closed_loop(self) -> dict[str, Any]:
+        """Expose the cycle's durable closed-loop evidence without duplicating it."""
+        return self.refresh.closed_loop
+
 
 class ComputeProviderRegistry:
     """Deterministic registry for authorized provider adapters."""
