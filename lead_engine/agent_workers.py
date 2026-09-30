@@ -195,7 +195,8 @@ def _follow_up(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) -
         stored = _persist_lead(ctx.db, updated); return {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "stop", "outcome_recorded": True}
     execute = bool(payload.get("execute"))
     if not execute:
-        result = {"role": "follow_up", "lead": dict(lead), "autonomous": True, "approval_required": False, "outreach_state": lead.get("outreach_state"), "next_follow_up_at": lead.get("next_follow_up_at"), "stop_reason": lead.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
+        stored = _persist_lead(ctx.db, updated)
+        result = {"role": "follow_up", "lead": stored, "autonomous": True, "approval_required": False, "outreach_state": stored.get("outreach_state"), "next_follow_up_at": stored.get("next_follow_up_at"), "stop_reason": stored.get("outreach_stop_reason"), "action": "prepare_follow_up", "outcome_recorded": True}
         if objection: result["objection_response"] = objection_response(objection, str(lead.get("outreach_route") or "the selected service"))
         return result
     research = updated.get("company_research")
