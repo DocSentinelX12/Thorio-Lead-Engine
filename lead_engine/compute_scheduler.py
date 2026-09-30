@@ -86,6 +86,8 @@ class ComputeScheduler:
             placement = evaluator.evaluate()
         except RuntimeError as error:
             self._last_placement_trace = tuple(evaluator.trace)
+            if requirements.workload_class == WorkloadClass.MULTI_NODE_GPU:
+                raise ComputeSchedulingError(f"no compatible multi-node allocation: {error}") from error
             raise ComputeSchedulingError(str(error)) from error
         self._last_placement_trace = placement.decision_trace
         return placement
