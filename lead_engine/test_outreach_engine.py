@@ -77,7 +77,8 @@ def test_terminal_outcomes_clear_follow_up_due():
         updated = apply_outcome(value, outcome, now=datetime(2026, 9, 9, tzinfo=timezone.utc))
         assert updated["next_follow_up_at"] is None
         assert updated["follow_up_due"] is False
-\ndef test_objection_handler_stops_on_opt_out_language(): assert "not follow up" in objection_response("Please stop and remove me", "Thorio").lower()
+
+def test_objection_handler_stops_on_opt_out_language(): assert "not follow up" in objection_response("Please stop and remove me", "Thorio").lower()
 def test_objection_handler_does_not_make_unsupported_price_claims(): assert "assumptions" in objection_response("That sounds too expensive", "Shiftr").lower()
 
 
