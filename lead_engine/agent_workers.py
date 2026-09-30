@@ -17,6 +17,7 @@ from .sales_closer_intelligence import build_commercial_strategy, evaluate_close
 from .revenue_conversation import objection_reply
 from .revenue_execution import RevenueTransportUnavailable, _issue_closer_capability, configured_revenue_transport, execute_outbound
 from .sales_handoff import package_digest, package_is_ready
+from .signal_outcome_feedback import refresh_signal_outcome_feedback
 
 class AgentContractError(ValueError): pass
 @dataclass(frozen=True)
@@ -41,6 +42,8 @@ def _persist_lead(db: Any, lead: Dict[str, Any]) -> Dict[str, Any]:
     if not fingerprint: raise AgentContractError("lead requires fingerprint for persistent processing")
     stored = db.update_payload(fingerprint, lead)
     if stored is None: raise AgentContractError(f"lead not found for persistent update: {fingerprint}")
+    if stored.get("signal_matches") or stored.get("revenue_lifecycle_state") or stored.get("outreach_state"):
+        refresh_signal_outcome_feedback(db)
     return stored
 
 _DISCOVERY_SOURCE_ALIASES = {"x_signal": ("x", "twitter"), "threads_signal": ("threads",), "reddit_signal": ("reddit",), "linkedin_signal": ("linkedin",), "facebook_signal": ("facebook",), "instagram_signal": ("instagram",), "hacker_news_signal": ("hacker news", "hacker_news", "news.ycombinator.com", "hn"), "indie_hackers_signal": ("indie hackers", "indie_hackers", "indiehackers"), "product_hunt_signal": ("product hunt", "product_hunt", "producthunt")}
