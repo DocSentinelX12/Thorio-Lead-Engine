@@ -1,3 +1,4 @@
+from .lead_identity import canonical_opportunity_identity
 from .unified_opportunity_signal_graph import (
     build_unified_opportunity_signal_graph,
     validate_unified_opportunity_signal_graph,
@@ -5,9 +6,7 @@ from .unified_opportunity_signal_graph import (
 
 
 def _lead():
-    return {
-        "fingerprint": "graph-opportunity-1",
-        "opportunity_id": "graph-opportunity-1",
+    base = {
         "company": "Acme",
         "source": "LinkedIn",
         "source_id": "post-1",
@@ -18,6 +17,14 @@ def _lead():
         "signal_matches": ["looking for a development partner"],
         "signal_context": ["We are looking for a development partner for our product."],
         "discovered_at": "2026-09-29T12:00:00+00:00",
+    }
+    identity = canonical_opportunity_identity(base)
+    return {
+        **base,
+        "fingerprint": identity["fingerprint"],
+        "opportunity_id": identity["opportunity_id"],
+        "identity_version": identity["identity_version"],
+        "identity_derivation": identity["identity_derivation"],
         "evidence_events": [
             {
                 "source_id": "evt-1",
@@ -43,27 +50,11 @@ def _lead():
         "eligible_routes": ["Shiftr"],
         "outreach_route": "Shiftr",
         "commercial_strategy": {"approach": "evidence_first"},
-        "outreach_history": [
-            {
-                "action_id": "action-1",
-                "conversation_id": "conversation-1",
-                "route": "Shiftr",
-                "channel": "email",
-                "status": "sent",
-            }
-        ],
-        "conversation_events": [
-            {
-                "event_id": "event-1",
-                "at": "2026-09-29T13:00:00+00:00",
-                "outcome": "interested",
-                "text": "Yes, let's talk.",
-            }
-        ],
+        "outreach_history": [{"action_id": "action-1", "conversation_id": "conversation-1", "route": "Shiftr", "channel": "email", "status": "sent"}],
+        "conversation_events": [{"event_id": "event-1", "at": "2026-09-29T13:00:00+00:00", "outcome": "interested", "text": "Yes, let's talk."}],
         "revenue_lifecycle_state": "conversation_active",
         "sales_eligibility": "eligible",
     }
-
 
 def test_unified_graph_connects_identity_signal_evidence_research_route_outreach_outcome_and_revenue():
     graph = build_unified_opportunity_signal_graph([_lead()], generated_at="2026-09-29T14:00:00+00:00")
@@ -109,3 +100,20 @@ def test_unified_graph_does_not_treat_outreach_delivery_status_as_outcome():
         if node["type"] == "outcome"
     ]
     assert outcome_nodes == []
+\n\n\ndef test_unified_graph_rejects_invalid_materialized_identity():
+    lead = _lead()
+    lead["opportunity_id"] = "wrong-opportunity"
+    try:
+        build_unified_opportunity_signal_graph([lead])
+    except ValueError as exc:
+        assert "opportunity_id does not match canonical opportunity identity" in str(exc)
+    else:
+        raise AssertionError("invalid materialized identity must be rejected")
+
+
+def test_unified_graph_excludes_signal_observed_after_outcome_from_association():
+    lead = _lead()
+    lead["discovered_at"] = "2026-09-29T14:00:00+00:00"
+    lead["conversation_events"] = [{"event_id": "event-late", "outcome": "converted", "at": "2026-09-29T13:00:00+00:00"}]
+    graph = build_unified_opportunity_signal_graph([lead])
+    assert not any(edge["type"] == "signal_observed_with_outcome" for edge in graph["edges"])
