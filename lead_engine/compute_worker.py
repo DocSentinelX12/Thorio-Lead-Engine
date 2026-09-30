@@ -176,7 +176,13 @@ def run_fabric_verification(client: ComputeWorkerClient, assignment: Mapping[str
         for process in processes:
             try: process.wait(timeout=2)
             except Exception:
-                try: process.kill(); process.wait(timeout=2)
+                try:
+                    if os.name == "posix" and getattr(process, "pid", None) is not None:
+                        try: os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError: pass
+                    else:
+                        process.kill()
+                    process.wait(timeout=2)
                 except Exception: pass
     def beat():
         while not stop_heartbeat.wait(heartbeat_seconds):
