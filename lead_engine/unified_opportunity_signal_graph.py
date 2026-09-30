@@ -96,6 +96,15 @@ def _outcome_events(lead: Mapping[str, Any]) -> list[dict[str, Any]]:
     for item in _list_mappings(lead.get("outreach_history")):
         add("outreach_outcome", item, _text(item.get("outcome")))
 
+    if not events:
+        lifecycle = _normalize(lead.get("revenue_lifecycle_state"))
+        if lifecycle in {"converted", "referred", "closed_lost", "disqualified", "stopped"}:
+            add(
+                "lifecycle_outcome",
+                {"at": _text(lead.get("updated_at") or lead.get("last_response_at"))},
+                lifecycle,
+            )
+
     return events
 
 
