@@ -36,7 +36,6 @@ def validate_launch_plan(
     node_ids: set[str] = set()
     global_ranks: set[int] = set()
     gpu_uuids: set[str] = set()
-    gpu_ids: set[str] = set()
     total_processes = 0
 
     for worker in workers:
@@ -91,10 +90,9 @@ def validate_launch_plan(
                 raise DistributedExecutionContractError("local rank set is invalid or duplicated")
             if not gpu_uuid or not gpu_id:
                 raise DistributedExecutionContractError("GPU binding requires gpu_uuid and gpu_id")
-            if gpu_uuid in gpu_uuids or gpu_id in gpu_ids:
-                raise DistributedExecutionContractError("GPU identity is duplicated across process bindings")
+            if gpu_uuid in gpu_uuids:
+                raise DistributedExecutionContractError("GPU UUID is duplicated across process bindings")
             gpu_uuids.add(gpu_uuid)
-            gpu_ids.add(gpu_id)
             global_ranks.add(rank)
             local_ranks.add(local_rank)
             total_processes += 1
