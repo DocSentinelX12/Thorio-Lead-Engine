@@ -261,9 +261,9 @@ def test_gpu_workload_requires_a_real_cuda_execution_probe_before_authorizing_wo
     def runner(args, env, timeout):
         calls.append((tuple(args), dict(env or {}), timeout))
         if args[0] == "nvidia-smi":
-            return 0, "0, GPU-1\\n", ""
+            return 0, "0, GPU-1\n", ""
         if args[:4] == ("python", "-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid"):
-            return 0, 'THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "gpu_uuid": "GPU-1"}', ""
+            return 0, 'THORIO_GPU_EXECUTION_PROBE_OK {"verified": true, "execution_backend": "cuda", "operation": "torch_cuda_matmul", "gpu_uuid": "GPU-1", "checksum": 120.0, "elapsed_ms": 1.0}', ""
         return 0, "result", ""
 
     result = execute_gpu_workload(client, task(), runner=runner)
