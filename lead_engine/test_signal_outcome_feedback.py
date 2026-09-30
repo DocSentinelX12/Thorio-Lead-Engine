@@ -136,3 +136,16 @@ def test_feedback_priority_matches_broadened_signal_keys():
         }
     }
     assert signal_feedback_priority(lead, feedback) == 2
+
+
+def test_feedback_counts_signal_observation_without_inventing_outcome():
+    lead = _lead("observed-only", "no_response")
+    lead["conversation_events"] = []
+    lead["revenue_lifecycle_state"] = "outreach_sent"
+    graph = build_unified_opportunity_signal_graph([lead])
+    feedback = build_signal_outcome_feedback(graph)
+    item = feedback["by_signal"]["configured|looking for a development partner"]
+    assert item["observations"] == 1
+    assert item["distinct_opportunities"] == 1
+    assert item["outcomes"] == {}
+    assert item["research_priority"] == 0
