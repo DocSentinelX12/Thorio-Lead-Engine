@@ -1,4 +1,4 @@
-from .agent_registry import ALL_AGENT_ROLES, DISCOVERY_AGENT_ROLES, SOCIAL_RESEARCH_AGENT_ROLES
+from .agent_registry import ALL_AGENT_ROLES, DISCOVERY_AGENT_ROLES, SOCIAL_RESEARCH_AGENT_ROLES, PROCESSING_AGENT_ROLES
 from .agent_specializations import get_specialization
 from .agent_workers import handler_registry
 
@@ -7,7 +7,7 @@ def test_every_registered_agent_has_a_specialized_handler_and_distinct_queue():
     handlers = handler_registry()
     queues = set()
 
-    assert len(ALL_AGENT_ROLES) == len(DISCOVERY_AGENT_ROLES) + len(SOCIAL_RESEARCH_AGENT_ROLES) + 14
+    assert len(ALL_AGENT_ROLES) == len(DISCOVERY_AGENT_ROLES) + len(SOCIAL_RESEARCH_AGENT_ROLES) + len(PROCESSING_AGENT_ROLES)
     assert len(handlers) >= len(ALL_AGENT_ROLES)
 
     for role in ALL_AGENT_ROLES:
