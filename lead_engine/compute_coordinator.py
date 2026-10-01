@@ -2817,43 +2817,57 @@ class ComputeCoordinator:
                         attempt_id,
                         str(attempt["rendezvous_endpoint"] or "").strip(),
                     )
-                    aggregated_process_evidence = []
-                    for row in participants:
-                        verification = json.loads(row["verification"])
-                        process_evidence = verification.get("process_evidence")
-                        if not isinstance(process_evidence, list):
-                            raise NvidiaRuntimeError(
-                                f"participant {row['worker_id']} has no process evidence for path reconciliation"
+                    execution = launch.get("execution") if isinstance(launch.get("execution"), dict) else {}
+                    execution_mode = str(execution.get("mode") or "").strip()
+                    if execution_mode == "nccl":
+                        aggregated_process_evidence = []
+                        for row in participants:
+                            verification = json.loads(row["verification"])
+                            process_evidence = verification.get("process_evidence")
+                            if not isinstance(process_evidence, list):
+                                raise NvidiaRuntimeError(
+                                    f"participant {row['worker_id']} has no process evidence for NCCL path reconciliation"
+                                )
+                            aggregated_process_evidence.extend(
+                                item for item in process_evidence if isinstance(item, dict)
                             )
-                        aggregated_process_evidence.extend(
-                            item for item in process_evidence if isinstance(item, dict)
+                        NvidiaRuntime.reconcile_distributed_network_paths(
+                            aggregated_process_evidence,
+                            world_size=int(launch["world_size"]),
+                            nnodes=int(launch["nnodes"]),
                         )
-                    path_reconciliation = NvidiaRuntime.reconcile_distributed_network_paths(
-                        aggregated_process_evidence,
-                        world_size=int(launch["world_size"]),
-                        nnodes=int(launch["nnodes"]),
-                    )
-                    exact_process_evidence = NvidiaRuntime.reconcile_exact_planned_fabric_paths(
-                        aggregated_process_evidence,
-                        self.inventory.physical_paths(),
-                    )
-                    exact_observations = []
-                    for item in exact_process_evidence:
-                        verification = {
-                            "placement_id": str(attempt["placement_id"] or ""),
-                            "execution_attempt_id": attempt_id,
-                            "generation": int(generation),
-                            "process_evidence": [item],
-                        }
-                        exact_observations.extend(
-                            extract_execution_path_observations(verification, observed_at=now)
+                        exact_process_evidence = NvidiaRuntime.reconcile_exact_planned_fabric_paths(
+                            aggregated_process_evidence,
+                            self.inventory.physical_paths(),
                         )
-                    for observation in exact_observations:
-                        self.inventory.record_execution_path_observations((observation,))
+                        exact_observations = []
+                        for item in exact_process_evidence:
+                            verification = {
+                                "placement_id": str(attempt["placement_id"] or ""),
+                                "execution_attempt_id": attempt_id,
+                                "generation": int(generation),
+                                "process_evidence": [item],
+                            }
+                            exact_observations.extend(
+                                extract_execution_path_observations(verification, observed_at=now)
+                            )
+                        for observation in exact_observations:
+                            self.inventory.record_execution_path_observations((observation,))
+                    else:
+                        for row in participants:
+                            verification = json.loads(row["verification"])
+                            if verification.get("execution_kind") != "gpu_workload":
+                                raise ValueError(
+                                    f"participant {row['worker_id']} did not submit generic GPU execution evidence"
+                                )
+                            if verification.get("execution_mode") != execution_mode:
+                                raise ValueError(
+                                    f"participant {row['worker_id']} execution mode does not match launch plan"
+                                )
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError, NvidiaRuntimeError) as error:
                     return {
                         "converged": False,
-                        "reason": "network_path_reconciliation_failed",
+                        "reason": "execution_verification_reconciliation_failed",
                         "detail": str(error)[:4000],
                     }
 
