@@ -186,11 +186,16 @@ jobs:
           grep -F "THORIO_NCCL_PROBE_OK " /tmp/thorio-nccl-rank.log
 
       - name: Capture physical rank evidence
+        if: success()
         shell: bash
+        env:
+          THORIO_PROOF_REF: ${{ env.THORIO_PROOF_REF }}
+          THORIO_CHECKED_OUT_SHA: ${{ env.THORIO_CHECKED_OUT_SHA }}
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
+          import os
           import pathlib
           import socket
           import subprocess
@@ -228,8 +233,8 @@ jobs:
               raise SystemExit("NCCL debug output is missing.")
           evidence = {
               "verified": True,
-              "proof_ref": "${THORIO_PROOF_REF}",
-              "proof_sha": "${THORIO_CHECKED_OUT_SHA}",
+              "proof_ref": os.environ["THORIO_PROOF_REF"],
+              "proof_sha": os.environ["THORIO_CHECKED_OUT_SHA"],
               "rank": int(probe["rank"]),
               "world_size": int(probe["world_size"]),
               "nnodes": int(probe["nnodes"]),
@@ -275,6 +280,18 @@ jobs:
         with:
           ref: ${{ env.THORIO_PROOF_REF }}
 
+      - name: Verify aggregate checked-out proof revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "Proof ref: ${THORIO_PROOF_REF}"
+          echo "Aggregate checked-out proof SHA: ${actual}"
+          if [ -z "${actual}" ]; then
+            exit 1
+          fi
+          printf 'THORIO_AGGREGATE_CHECKED_OUT_SHA=%s\n' "${actual}" >> "${GITHUB_ENV}"
+
       - name: Download both physical rank evidence bundles
         uses: actions/download-artifact@v5
         with:
@@ -284,10 +301,13 @@ jobs:
 
       - name: Validate complete physical multi-node proof
         shell: bash
+        env:
+          THORIO_AGGREGATE_CHECKED_OUT_SHA: ${{ env.THORIO_AGGREGATE_CHECKED_OUT_SHA }}
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
+          import os
           import pathlib
 
           root = pathlib.Path("/tmp/thorio-nccl-evidence")
@@ -303,9 +323,9 @@ jobs:
           proof_shas = {str(item.get("proof_sha") or "").strip() for item in records}
           if len(proof_shas) != 1 or "" in proof_shas:
               raise SystemExit(f"Physical rank evidence was not bound to one proof SHA: {sorted(proof_shas)}")
-          aggregate_sha = "${THORIO_PROOF_SHA}"
-          if "${GITHUB_EVENT_NAME}" != "workflow_dispatch" and proof_shas != {aggregate_sha}:
-              raise SystemExit(f"Physical evidence SHA does not match triggering SHA: expected {aggregate_sha}, got {sorted(proof_shas)}")
+          aggregate_sha = os.environ["THORIO_AGGREGATE_CHECKED_OUT_SHA"]
+          if proof_shas != {aggregate_sha}:
+              raise SystemExit(f"Physical evidence SHA does not match aggregate checked-out SHA: expected {aggregate_sha}, got {sorted(proof_shas)}")
           ranks = sorted(int(item.get("rank", -1)) for item in records)
           if ranks != [0, 1]:
               raise SystemExit(f"Physical rank coverage is invalid: {ranks}")
