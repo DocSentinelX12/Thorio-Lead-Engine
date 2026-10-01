@@ -257,6 +257,7 @@ def test_probe_evidence_contains_only_observed_execution_identity():
         "verified_on_gpu": True,
         "gpu_uuid": "GPU-b",
         "hostname": "node-b",
+        "all_reduce_elapsed_ms": 1.0,
     }
     assert evidence["all_reduce_elapsed_ms"] == 1.0
     assert "network_transport" not in evidence
