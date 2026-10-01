@@ -80,6 +80,39 @@ def test_lightning_bootstrap_evidence_requires_physical_cuda_execution():
         )
 
 
+def test_lightning_failed_bootstrap_stops_started_studio(monkeypatch):
+    class FakeMachine:
+        T4 = "T4"
+
+    class FakeStudio:
+        started = False
+        stopped = False
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def start(self, machine):
+            self.started = True
+            type(self).started = True
+
+        def run_with_exit_code(self, command):
+            return ("", "bootstrap failed", 1)
+
+        def stop(self):
+            self.stopped = True
+            type(self).stopped = True
+
+    provider = LightningFreeComputeProvider(_config())
+    monkeypatch.setattr(provider, "_sdk", lambda: (FakeMachine, FakeStudio))
+    offer = provider.discover_free()[0]
+
+    with pytest.raises(LightningFreeComputeError, match="bootstrap exited 1"):
+        provider.acquire_free(offer)
+
+    assert FakeStudio.started is True
+    assert FakeStudio.stopped is True
+
+
 def test_lightning_bootstrap_command_contains_exact_branch_and_acquisition_identity():
     provider = LightningFreeComputeProvider(_config())
     command = provider._bootstrap_command("acq-123")
