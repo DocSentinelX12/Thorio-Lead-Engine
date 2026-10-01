@@ -428,16 +428,21 @@ def run_integrated_fabric_execution(
         checkpoint_path = payload.get("checkpoint_path")
         if checkpoint_path:
             artifact_paths.append(checkpoint_path)
-        for raw_path in artifact_paths:
-            path = Path(str(raw_path).replace("{rank}", str(0)))
-            if not path.exists() or not path.is_file():
-                continue
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            artifact_refs.append({
-                "path": str(path),
-                "sha256": digest,
-                "size_bytes": path.stat().st_size,
-            })
+        seen_artifacts = set()
+        ranks = sorted({int(item["rank"]) for item in results}) or [0]
+        for rank in ranks:
+            for raw_path in artifact_paths:
+                path = Path(str(raw_path).replace("{rank}", str(rank)))
+                if str(path) in seen_artifacts or not path.exists() or not path.is_file():
+                    continue
+                seen_artifacts.add(str(path))
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                artifact_refs.append({
+                    "path": str(path),
+                    "sha256": digest,
+                    "size_bytes": path.stat().st_size,
+                    "rank": rank,
+                })
         mode_details = execution.get("mode_details") if isinstance(execution.get("mode_details"), dict) else {}
         matrix_evidence = {
             "physical_gpu_execution": bool(probe_evidence),
