@@ -472,15 +472,15 @@ def run_integrated_fabric_execution(
             raise ComputeWorkerError("coordinator rejected integrated GPU execution evidence")
         deadline = time.monotonic() + max(60.0, heartbeat_seconds * 4)
         convergence = client.fabric_converge(attempt_id, generation, lease_token)
-            while convergence.get("converged") is not True and time.monotonic() < deadline:
-                if heartbeat_error:
-                    raise ComputeWorkerError(heartbeat_error[-1])
-                if heartbeat_stop.wait(min(heartbeat_seconds, 1.0)):
-                    break
-                convergence = client.fabric_converge(attempt_id, generation, lease_token)
-            if convergence.get("converged") is not True:
-                raise ComputeWorkerError(f"integrated execution did not converge: {convergence.get('reason', 'unknown')}")
-            verification["convergence"] = convergence
+        while convergence.get("converged") is not True and time.monotonic() < deadline:
+            if heartbeat_error:
+                raise ComputeWorkerError(heartbeat_error[-1])
+            if heartbeat_stop.wait(min(heartbeat_seconds, 1.0)):
+                break
+            convergence = client.fabric_converge(attempt_id, generation, lease_token)
+        if convergence.get("converged") is not True:
+            raise ComputeWorkerError(f"integrated execution did not converge: {convergence.get('reason', 'unknown')}")
+        verification["convergence"] = convergence
         return verification
     except Exception as exc:
         for _, process in processes:
