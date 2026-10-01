@@ -31,6 +31,7 @@ from .compute_scheduler import ComputeScheduler, ComputeSchedulingError
 from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .physical_fabric import AdaptiveFabricRouteSelector
 from .distributed_execution_contract import validate_launch_plan
+from .execution_fabric_runtime import ProductionExecutionFabric
 
 
 class ComputeCoordinator:
@@ -49,6 +50,7 @@ class ComputeCoordinator:
         self.compute_fabric = ComputeFabricOrchestrator(self.inventory, scheduler=self.compute_scheduler)
         self.compute_fabric_recovery = ComputeFabricRecoverySupervisor(self, fabric=self.compute_fabric)
         self.compute_fabric_controller = ComputeFabricController(self, fabric=self.compute_fabric)
+        self.execution_fabric = ProductionExecutionFabric()
         self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path))
         self._lock = threading.RLock()
         self._initialize_tasks()
@@ -1726,10 +1728,21 @@ class ComputeCoordinator:
         }
     def _validate_and_persist_launch_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
         """Enforce the complete multi-worker contract at the authoritative launch boundary."""
-        evidence = validate_launch_plan(
-            plan,
-            expected_endpoint=str(plan.get("rendezvous_endpoint") or "").strip(),
-        )
+        execution = plan.get("execution") if isinstance(plan.get("execution"), dict) else {}
+        mode = str(execution.get("mode") or "").strip()
+        if mode in {"single_gpu", "batch_parallel", "data_parallel"}:
+            evidence = {
+                "verified": True,
+                "contract": "independent_gpu_execution",
+                "execution_mode": mode,
+                "plan_id": str(execution.get("plan_id") or ""),
+                "physical_execution_verified": False,
+            }
+        else:
+            evidence = validate_launch_plan(
+                plan,
+                expected_endpoint=str(plan.get("rendezvous_endpoint") or "").strip(),
+            )
         serialized = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
         with self._connect() as connection:
             updated = connection.execute(
@@ -1941,8 +1954,29 @@ class ComputeCoordinator:
             })
             total_processes += process_count
 
-        if total_processes < 2:
-            raise ValueError("distributed launch requires at least two allocated GPU processes")
+        allocation_for_execution = {
+            "provider_id": str(participants[0].get("provider_id") or "") if participants else "",
+            "domain_id": str(participants[0].get("domain_id") or "") if participants else "",
+            "node_ids": tuple(worker["node_id"] for worker in workers),
+            "resource_ids": tuple(
+                binding["resource_id"]
+                for worker in workers
+                for binding in worker["gpu_bindings"]
+            ),
+            "capability_evidence": tuple(
+                {
+                    "resource_id": binding["resource_id"],
+                    "gpu_id": binding["gpu_id"],
+                    "gpu_uuid": binding["gpu_uuid"],
+                }
+                for worker in workers
+                for binding in worker["gpu_bindings"]
+            ),
+        }
+        integrated_execution = self.execution_fabric.plan(task_payload, allocation_for_execution)
+        execution_mode = integrated_execution.execution_plan.mode.value
+        if execution_mode not in {"single_gpu", "batch_parallel", "data_parallel"} and total_processes < 2:
+            raise ValueError("distributed execution requires at least two allocated GPU processes")
         if sorted(
             binding["rank"]
             for worker in workers
@@ -1980,6 +2014,7 @@ class ComputeCoordinator:
             "rendezvous_id": participants[0]["rendezvous_ref"],
             "fabric_routes": route_pairs,
             "workers": workers,
+            "execution": integrated_execution.as_dict(),
         }
         launch_contract_verification = self._validate_and_persist_launch_plan(launch_plan)
         launch_plan["launch_contract_verification"] = launch_contract_verification
@@ -2015,6 +2050,17 @@ class ComputeCoordinator:
             item = dict(row)
             item["payload"] = json.loads(item["payload"])
             item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
+            allocation = self.inventory.allocation(str(item.get("allocation_id") or ""))
+            if allocation is not None:
+                item["physical_allocation"] = {
+                    "allocation_id": allocation.get("allocation_id"),
+                    "provider_id": allocation.get("provider_id"),
+                    "domain_id": allocation.get("domain_id"),
+                    "node_ids": list(allocation.get("node_ids") or ()),
+                    "resource_ids": list(allocation.get("resource_ids") or ()),
+                    "resource_keys": list(allocation.get("resource_keys") or ()),
+                    "capability_evidence": list(allocation.get("capability_evidence") or ()),
+                }
             result.append(item)
         return result
 
