@@ -61,3 +61,67 @@ def test_integrated_planning_never_claims_execution():
         _allocation(),
     )
     assert result.execution_plan.physical_execution_verified is False
+
+
+def test_integrated_context_expert_sharded_and_nccl_plans():
+    fabric = ProductionExecutionFabric()
+    context = fabric.plan(
+        {
+            "workload_id": "context",
+            "execution_mode": "context_parallel",
+            "context_partition": {"sequence_length": 1024, "partition_count": 2},
+        },
+        _allocation(),
+    )
+    assert "context_partition_plan" in context.mode_details
+
+    expert = fabric.plan(
+        {
+            "workload_id": "expert",
+            "execution_mode": "expert_parallel",
+            "experts": [{"expert_id": "e0", "rank": 0}, {"expert_id": "e1", "rank": 1}],
+        },
+        _allocation(),
+    )
+    assert "expert_parallel_plan" in expert.mode_details
+
+    sharded = fabric.plan(
+        {
+            "workload_id": "sharded",
+            "execution_mode": "sharded_state",
+            "sharded_state": {
+                "parameter_bytes": 100,
+                "gradient_bytes": 100,
+                "optimizer_bytes": 100,
+                "shard_count": 2,
+            },
+        },
+        _allocation(),
+    )
+    assert "sharded_state_plan" in sharded.mode_details
+
+    nccl = fabric.plan(
+        {
+            "workload_id": "nccl",
+            "execution_mode": "nccl",
+            "nccl_launch": {"collective": "all_reduce"},
+        },
+        _allocation(),
+        rendezvous_endpoint="10.0.0.1:29500",
+    )
+    assert nccl.mode_details["nccl_execution_plan"]["master_addr"] == "10.0.0.1"
+
+
+def test_integrated_hybrid_plan_validates_composed_stage_capabilities():
+    result = ProductionExecutionFabric().plan(
+        {
+            "workload_id": "hybrid",
+            "execution_mode": "hybrid",
+            "hybrid_stages": ["data_parallel", "pipeline_parallel"],
+        },
+        _allocation(),
+    )
+    assert tuple(result.mode_details["hybrid_execution_plan"]["stages"]) == (
+        ExecutionMode.DATA_PARALLEL,
+        ExecutionMode.PIPELINE_PARALLEL,
+    )
