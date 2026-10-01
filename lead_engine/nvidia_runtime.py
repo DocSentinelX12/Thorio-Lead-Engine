@@ -204,7 +204,8 @@ class NvidiaRuntime:
             r"([0-9]+(?:\.[0-9]+)?)\s+"
             r"([0-9]+(?:\.[0-9]+)?)\s*$"
         )
-        for raw_line in str(output).splitlines():
+        normalized_output = str(output).replace("\\n", "\n")
+        for raw_line in normalized_output.splitlines():
             line = raw_line.strip()
             if not line:
                 continue
