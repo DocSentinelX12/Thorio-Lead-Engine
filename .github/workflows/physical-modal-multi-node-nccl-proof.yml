@@ -1,0 +1,164 @@
+name: Physical Modal Multi-Node NCCL Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      proof_ref:
+        description: "Exact GPU branch ref to prove"
+        required: true
+        default: "feature/gpu-fabric-foundation"
+        type: string
+      gpu_type:
+        description: "Modal GPU type for the two-node proof"
+        required: true
+        default: "T4"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: physical-modal-multi-node-nccl-proof
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    name: Real two-node Modal NCCL proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      THORIO_MODAL_GPU: ${{ inputs.gpu_type }}
+      THORIO_PROOF_REF: ${{ inputs.proof_ref }}
+    steps:
+      - name: Check out exact proof ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.THORIO_PROOF_REF }}
+
+      - name: Verify proof revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "Proof ref: ${THORIO_PROOF_REF}"
+          echo "Proof SHA: ${actual}"
+          printf 'THORIO_PROOF_SHA=%s\n' "${actual}" >> "${GITHUB_ENV}"
+
+      - name: Validate Modal credentials are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${MODAL_TOKEN_ID}" || { echo "MODAL_TOKEN_ID secret is required." >&2; exit 1; }
+          test -n "${MODAL_TOKEN_SECRET}" || { echo "MODAL_TOKEN_SECRET secret is required." >&2; exit 1; }
+
+      - name: Install Modal client
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "modal>=1.5.3"
+
+      - name: Preflight current Modal billing state
+        shell: bash
+        run: |
+          set -euo pipefail
+          modal billing summary --for "this month" --json | tee /tmp/modal-billing-before.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("/tmp/modal-billing-before.json").read_text())
+          billed = str(data.get("billed_cost", "0"))
+          if billed not in {"0", "0.0", "0.00", "0E-8"}:
+              raise SystemExit(
+                  "Modal workspace already has a non-zero billed cost this month. "
+                  "Refusing to run the physical proof because this workflow must remain $0."
+              )
+          print("Modal billed cost before proof:", billed)
+          PY
+
+      - name: Run actual two-node NCCL proof on Modal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m modal run tools/modal_physical_nccl_proof.py             --proof-sha "${THORIO_PROOF_SHA}"             2>&1 | tee /tmp/modal-nccl-proof.log
+
+      - name: Require Modal physical cluster evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "THORIO_MODAL_NCCL_RANK0 " /tmp/modal-nccl-proof.log
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          log = Path("/tmp/modal-nccl-proof.log").read_text(encoding="utf-8", errors="replace")
+          marker = "THORIO_MODAL_NCCL_RANK0 "
+          rows = [json.loads(line[len(marker):]) for line in log.splitlines() if line.startswith(marker)]
+          if len(rows) != 1:
+              raise SystemExit(f"Expected exactly one Modal proof record, found {len(rows)}")
+          row = rows[0]
+          required = {
+              "verified": True,
+              "world_size": 2,
+              "nnodes": 2,
+              "modal_cluster_size": 2,
+              "collective": "all_reduce",
+              "expected_sum": 3,
+          }
+          for key, value in required.items():
+              if row.get(key) != value:
+                  raise SystemExit(f"Modal proof field {key!r} expected {value!r}, got {row.get(key)!r}")
+          proof_sha = "${THORIO_PROOF_SHA}"
+          if row.get("proof_sha") != proof_sha:
+              raise SystemExit("Modal evidence is not bound to the checked-out GPU branch SHA.")
+          if len(set(row.get("modal_container_ids") or [])) != 2:
+              raise SystemExit("Modal did not expose two distinct cluster container identities.")
+          if len(set(row.get("modal_container_ips") or [])) != 2:
+              raise SystemExit("Modal did not expose two distinct intra-cluster IPs.")
+          if len(set(row.get("distinct_physical_gpu_uuids") or [])) != 2:
+              raise SystemExit("Modal did not expose two distinct physical GPU UUIDs.")
+          if not row.get("network_transport"):
+              raise SystemExit("Modal did not expose NCCL network transport evidence.")
+          for rank in row.get("rank_evidence") or []:
+              peers = [
+                  edge for edge in rank.get("peer_connections") or []
+                  if isinstance(edge, dict)
+              ]
+              if not any(int(edge.get("peer_rank", -1)) == (1 - int(rank["rank"])) for edge in peers):
+                  raise SystemExit(
+                      f"Rank {rank.get('rank')} did not expose cross-rank NCCL peer evidence."
+                  )
+              if any(
+                  str(edge.get("transport") or "").strip().upper()
+                  != str(row["network_transport"]).strip().upper()
+                  for edge in peers
+                  if int(edge.get("peer_rank", -1)) == (1 - int(rank["rank"]))
+              ):
+                  raise SystemExit("Cross-rank NCCL peer evidence uses an inconsistent transport.")
+              if "NCCL INFO" not in str(rank.get("nccl_log") or ""):
+                  raise SystemExit(f"Rank {rank.get('rank')} NCCL log lacks NCCL INFO evidence.")
+          if len(row.get("rank_evidence") or []) != 2:
+              raise SystemExit("Modal aggregate did not contain exactly two physical rank records.")
+          print("MODAL PHYSICAL MULTI-NODE NCCL VERIFIED")
+          print(json.dumps(row, sort_keys=True))
+          PY
+
+      - name: Postflight Modal billing state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          modal billing summary --for "this month" --json | tee /tmp/modal-billing-after.json
+
+      - name: Upload proof log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-modal-multi-node-nccl-proof
+          path: |
+            /tmp/modal-nccl-proof.log
+            /tmp/modal-billing-before.json
+            /tmp/modal-billing-after.json
+          if-no-files-found: warn
