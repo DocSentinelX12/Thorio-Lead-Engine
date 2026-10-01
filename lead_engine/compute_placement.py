@@ -595,7 +595,7 @@ class PlacementEvaluator:
         } for item in sorted(records, key=lambda item: str(item["candidate_key"])))
 
     def _candidate_structural_placement(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
-        """Apply the scheduler's existing physical/topology authority to full candidates."""
+        """Preserve the scheduler's existing structural placement authority."""
         node_ids = tuple(dict.fromkeys(str(gpu["node_id"]) for gpu in candidate))
         node_rows = self._node_rows()
         node_candidates = [
@@ -606,31 +606,48 @@ class PlacementEvaluator:
         shared_network = self.scheduler._shared_verified_network_domain(node_candidates)
         network_known = any(self._network_domains(node) for node in node_candidates)
         network_rank = 0 if shared_network is not None else 1 if network_known else 2
-        node_counts = tuple(sorted(
-            (sum(1 for gpu in candidate if str(gpu["node_id"]) == node_id) for node_id in node_ids),
-            reverse=True,
-        ))
-        topology_scores = tuple(sorted(
-            (
-                -score[0],
-                -score[1],
-                -score[2],
+
+        node_signatures = []
+        gpu_structures = []
+        for node in node_candidates:
+            node_id = str(node["node_id"])
+            selected = [
+                gpu for gpu in candidate
+                if str(gpu["node_id"]) == node_id
+            ]
+            available = list(node["gpus"])
+            top_gpu = self.scheduler._rank_gpus_for_placement(available)[0] if available else None
+            node_topology = self.scheduler._node_topology_score(node)
+            node_performance = (
+                self.scheduler._gpu_performance_key(
+                    top_gpu,
+                    self.performance_history,
+                    self.requirements,
+                )
+                if top_gpu is not None
+                else (1, float("inf"), 0)
             )
-            for score in (
-                self.scheduler._node_topology_score(node)
-                for node in node_candidates
+            node_health = (
+                self.scheduler._gpu_route_health_key(top_gpu, self.route_health)
+                if top_gpu is not None
+                else (1, float("inf"), float("inf"), 0)
             )
-        ))
-        gpu_structure = tuple(sorted(
-            self.scheduler._gpu_placement_structure_key(gpu, list(candidate))
-            for gpu in candidate
-        ))
+            node_signatures.append((
+                tuple(-value for value in node_topology),
+                node_performance,
+                node_health,
+                node_id,
+            ))
+            gpu_structures.extend(
+                self.scheduler._gpu_placement_structure_key(gpu, available)
+                for gpu in selected
+            )
+
         return (
             network_rank,
             len(node_ids),
-            tuple(-count for count in node_counts),
-            topology_scores,
-            gpu_structure,
+            tuple(sorted(node_signatures)),
+            tuple(sorted(gpu_structures)),
         )
 
     def _candidate_continuous_optimization(
@@ -768,8 +785,8 @@ class PlacementEvaluator:
                 self._candidate_predictive_failure(item[0]),
                 self._candidate_multidimensional_workload(item[0]),
                 self._candidate_concrete_performance(item[0]),
-                self._candidate_continuous_optimization(item[0], optimization_records),
                 self._candidate_structural_placement(item[0]),
+                self._candidate_continuous_optimization(item[0], optimization_records),
                 self._stable_key(item[0]),
             ),
         )
