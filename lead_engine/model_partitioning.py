@@ -1,13 +1,7 @@
-"""Deterministic model partitioning plans for pipeline and P2P execution.
-
-Planning only: this module assigns model layers to already-verified workers.
-It never starts execution or claims physical evidence.
-"""
+"""Deterministic model partitioning plans for pipeline and P2P execution."""
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Sequence
-
 from .execution_fabric_contract import ExecutionMode, ExecutionPlan
 
 
@@ -16,7 +10,6 @@ class ModelLayer:
     layer_id: str
     ordinal: int
     parameter_bytes: int
-
     def __post_init__(self) -> None:
         if not self.layer_id.strip():
             raise ValueError("layer_id is required")
@@ -40,18 +33,17 @@ class ModelPartitionPlan:
     mode: ExecutionMode
     partitions: tuple[ModelPartition, ...]
     boundary_count: int
-
     def __post_init__(self) -> None:
         if self.mode not in {ExecutionMode.PIPELINE_PARALLEL, ExecutionMode.P2P_MODEL_PARTITION}:
             raise ValueError("model partition plan requires pipeline_parallel or p2p_model_partition")
         if not self.partitions:
             raise ValueError("partitions are required")
-        if self.boundary_count != max(0, len(self.partitions) - 1):
+        if self.boundary_count != len(self.partitions) - 1:
             raise ValueError("boundary_count must match partition boundaries")
 
 
 class ModelPartitionPlanner:
-    """Assign contiguous ordered layers with deterministic greedy balancing."""
+    """Assign contiguous ordered layers using deterministic target-weight cuts."""
 
     def plan(self, execution_plan: ExecutionPlan, layers: Sequence[ModelLayer]) -> ModelPartitionPlan:
         if execution_plan.mode not in {ExecutionMode.PIPELINE_PARALLEL, ExecutionMode.P2P_MODEL_PARTITION}:
@@ -61,34 +53,46 @@ class ModelPartitionPlanner:
             raise ValueError("layers are required")
         if len({layer.layer_id for layer in ordered}) != len(ordered):
             raise ValueError("layer IDs must be unique")
-        if tuple(sorted(layer.ordinal for layer in ordered)) != tuple(range(len(ordered))):
+        if tuple(layer.ordinal for layer in ordered) != tuple(range(len(ordered))):
             raise ValueError("layer ordinals must be contiguous from zero")
         nodes = tuple(execution_plan.node_ids)
         if len(nodes) > len(ordered):
             raise ValueError("worker count cannot exceed layer count")
 
-        buckets: list[list[ModelLayer]] = [[] for _ in nodes]
-        totals = [0 for _ in nodes]
-        for layer in ordered:
-            index = min(range(len(nodes)), key=lambda i: (totals[i], i))
-            buckets[index].append(layer)
-            totals[index] += layer.parameter_bytes
-
-        if any(not bucket for bucket in buckets):
-            raise ValueError("every partition must contain at least one layer")
+        total = sum(layer.parameter_bytes for layer in ordered)
+        buckets: list[list[ModelLayer]] = []
+        start = 0
+        remaining_total = total
+        for partition_index in range(len(nodes)):
+            remaining_partitions = len(nodes) - partition_index
+            remaining_layers = len(ordered) - start
+            if remaining_layers < remaining_partitions:
+                raise ValueError("cannot give every partition a layer")
+            if remaining_partitions == 1:
+                bucket = list(ordered[start:])
+            else:
+                target = remaining_total / remaining_partitions
+                end = start + 1
+                current = ordered[start].parameter_bytes
+                while end < len(ordered) - (remaining_partitions - 1):
+                    next_total = current + ordered[end].parameter_bytes
+                    if abs(target - next_total) <= abs(target - current):
+                        current = next_total
+                        end += 1
+                    else:
+                        break
+                bucket = list(ordered[start:end])
+            buckets.append(bucket)
+            start += len(bucket)
+            remaining_total -= sum(layer.parameter_bytes for layer in bucket)
 
         partitions = tuple(
             ModelPartition(
                 partition_id=f"{execution_plan.plan_id}:partition:{index}",
                 worker_node_id=node,
                 layer_ids=tuple(layer.layer_id for layer in bucket),
-                parameter_bytes=totals[index],
+                parameter_bytes=sum(layer.parameter_bytes for layer in bucket),
             )
             for index, (node, bucket) in enumerate(zip(nodes, buckets))
         )
-        return ModelPartitionPlan(
-            execution_plan_id=execution_plan.plan_id,
-            mode=execution_plan.mode,
-            partitions=partitions,
-            boundary_count=len(partitions) - 1,
-        )
+        return ModelPartitionPlan(execution_plan.plan_id, execution_plan.mode, partitions, len(partitions) - 1)
