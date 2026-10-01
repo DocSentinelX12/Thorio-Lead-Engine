@@ -149,11 +149,12 @@ class ProductionExecutionFabric:
         allocation: Mapping[str, Any],
         *,
         rendezvous_endpoint: str | None = None,
+        workload_id: str | None = None,
     ) -> IntegratedExecutionPlan:
         if not isinstance(payload, Mapping) or not isinstance(allocation, Mapping):
             raise TypeError("payload and allocation must be mappings")
         mode = self._mode(payload)
-        workload_id = str(payload.get("workload_id") or payload.get("task_id") or "").strip()
+        workload_id = str(workload_id or payload.get("workload_id") or payload.get("task_id") or "").strip()
         if not workload_id:
             raise ValueError("workload_id is required for execution planning")
         resource_count = len(tuple(allocation.get("resource_ids") or ()))
