@@ -91,7 +91,7 @@ def validate_launch_plan(
             if not gpu_uuid or not gpu_id:
                 raise DistributedExecutionContractError("GPU binding requires gpu_uuid and gpu_id")
             if gpu_uuid in gpu_uuids:
-                raise DistributedExecutionContractError("GPU UUID is duplicated across process bindings")
+                raise DistributedExecutionContractError("GPU identity is duplicated across process bindings")
             gpu_uuids.add(gpu_uuid)
             global_ranks.add(rank)
             local_ranks.add(local_rank)
