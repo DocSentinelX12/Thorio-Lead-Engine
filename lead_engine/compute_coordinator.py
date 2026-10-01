@@ -2873,6 +2873,12 @@ class ComputeCoordinator:
                                 raise ValueError(
                                     f"participant {row['worker_id']} did not submit generic GPU execution evidence"
                                 )
+                            fabric_verification = verification.get("fabric_verification")
+                            if not isinstance(fabric_verification, dict) or fabric_verification.get("passed") is not True:
+                                raise ValueError(
+                                    f"participant {row['worker_id']} did not satisfy the execution verification matrix: "
+                                    f"{fabric_verification.get('missing', []) if isinstance(fabric_verification, dict) else 'missing'}"
+                                )
                             if verification.get("execution_mode") != execution_mode:
                                 raise ValueError(
                                     f"participant {row['worker_id']} execution mode does not match launch plan"
