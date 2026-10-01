@@ -34,7 +34,7 @@ class WorkUnit:
         if self.item_index < 0:
             raise ValueError("item_index must not be negative")
         if self.mode not in _INDEPENDENT_MODES:
-            raise ValueError("work unit mode must be an independent execution mode")
+            raise ValueError("work unit mode must be an independently executable GPU mode")
 
 
 def build_independent_work_units(
