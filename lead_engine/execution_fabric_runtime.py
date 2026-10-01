@@ -104,10 +104,15 @@ class ProductionExecutionFabric:
         evidence = tuple(x for x in allocation.get("capability_evidence") or () if isinstance(x, Mapping))
         if not evidence:
             raise ValueError("physical allocation must contain capability evidence")
+        gpu_evidence = tuple(
+            item for item in evidence
+            if "/gpu/" in str(item.get("resource_id") or "") or "/gpu-" in str(item.get("resource_id") or "")
+        )
+        if not gpu_evidence:
+            raise ValueError("physical allocation contains no GPU capability evidence")
         physical_gpu_verified = all(
             str(item.get("gpu_uuid") or "").strip() and str(item.get("resource_id") or "").strip()
-            for item in evidence
-            if "/gpu/" in str(item.get("resource_id") or "") or "/gpu-" in str(item.get("resource_id") or "")
+            for item in gpu_evidence
         )
         raw_backends = payload.get("backends") or payload.get("compute_requirements", {}).get("gpu", {}).get("backends") or ()
         backends = tuple(str(x).strip().lower() for x in raw_backends if str(x).strip())
