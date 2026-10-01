@@ -82,9 +82,15 @@ class ProductionExecutionFabric:
 
     @staticmethod
     def _mode(payload: Mapping[str, Any]) -> ExecutionMode:
-        raw = str(payload.get("execution_mode") or "").strip()
+        raw = str(payload.get("execution_mode") or payload.get("execution_strategy") or "").strip()
         if not raw and str(payload.get("kind") or "").strip() == "gpu_workload":
             raw = ExecutionMode.SINGLE_GPU.value
+        if not raw:
+            gpu_requirements = payload.get("compute_requirements", {}).get("gpu", {})
+            if isinstance(gpu_requirements, Mapping) and bool(gpu_requirements.get("require_nccl")):
+                raw = ExecutionMode.NCCL.value
+            else:
+                raw = ExecutionMode.SINGLE_GPU.value
         try:
             return ExecutionMode(raw)
         except ValueError as exc:
