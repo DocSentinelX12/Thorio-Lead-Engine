@@ -25,6 +25,15 @@ def test_lightning_worker_enrollment_can_be_disabled_without_faking_registration
     }
 
 
+def test_lightning_worker_enrollment_required_mode_rejects_missing_configuration(monkeypatch):
+    monkeypatch.delenv("THORIO_COMPUTE_COORDINATOR_URL", raising=False)
+    monkeypatch.delenv("THORIO_COMPUTE_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("THORIO_LIGHTNING_REQUIRE_COORDINATOR_ENROLLMENT", "1")
+
+    with pytest.raises(RuntimeError, match="coordinator enrollment is required"):
+        _enroll_with_coordinator({"worker_id": "node-1"})
+
+
 def test_lightning_worker_enrollment_posts_authenticated_evidence(monkeypatch):
     class Response:
         status = 200
