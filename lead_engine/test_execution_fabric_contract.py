@@ -109,3 +109,24 @@ def test_planner_requires_physical_verification_for_gpu_execution():
 
     with pytest.raises(ValueError, match="physical GPU verification"):
         ExecutionPlanner().plan(workload, (capability,))
+
+
+def test_execution_contract_allows_multiple_gpus_on_one_physical_node():
+    capability = ExecutionCapability(
+        resource_ids=("node-a/gpu-0", "node-a/gpu-1"),
+        node_ids=("node-a", "node-a"),
+        provider_id="provider-a",
+        domain_id="domain-a",
+        supported_modes=(ExecutionMode.TENSOR_PARALLEL,),
+        physical_gpu_verified=True,
+    )
+    workload = ExecutionWorkload(
+        workload_id="job-multi-gpu",
+        allowed_modes=(ExecutionMode.TENSOR_PARALLEL,),
+        min_workers=2,
+        max_workers=2,
+    )
+    plan = ExecutionPlanner().plan(workload, (capability,))
+    assert plan.worker_count == 2
+    assert plan.node_ids == ("node-a", "node-a")
+    assert plan.resource_ids == ("node-a/gpu-0", "node-a/gpu-1")
