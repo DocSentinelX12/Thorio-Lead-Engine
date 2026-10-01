@@ -43,3 +43,19 @@ def test_elastic_recovery_returns_deterministic_rank_reassignments():
     )
     assert result.rank_reassignments == (("n1", "n2"),)
     assert result.checkpoint_digest == _checkpoint().digest
+
+
+def test_non_elastic_recovery_preserves_checkpoint_identity():
+    checkpoint = _checkpoint()
+    decision = ExecutionRecoveryPlanner().decide(
+        checkpoint=checkpoint,
+        active_node_ids=("n0", "n1"),
+        unavailable_node_ids=("n1",),
+        candidate_node_ids=("n2",),
+        elastic=False,
+    )
+    assert decision.action == "restore"
+    assert decision.checkpoint_digest == checkpoint.digest
+    assert decision.unavailable_node_ids == ("n1",)
+    assert decision.replacement_node_ids == ()
+    assert decision.rank_reassignments == ()
