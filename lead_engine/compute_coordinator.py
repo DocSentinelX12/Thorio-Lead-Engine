@@ -32,6 +32,8 @@ from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .physical_fabric import AdaptiveFabricRouteSelector
 from .distributed_execution_contract import validate_launch_plan
 from .execution_fabric_runtime import ProductionExecutionFabric
+from .execution_fabric_contract import ExecutionMode
+from .execution_work_units import build_gpu_workload_payload, build_independent_work_units
 
 
 class ComputeCoordinator:
@@ -505,6 +507,31 @@ class ComputeCoordinator:
                 connection.execute("INSERT INTO compute_tasks(task_id,payload,created_at,updated_at) VALUES(?,?,?,?)", (resolved_id, serialized, now, now))
                 connection.commit()
         return resolved_id
+
+    def enqueue_gpu_work_units(
+        self,
+        *,
+        workload_id: str,
+        items: Any,
+        mode: ExecutionMode,
+        command: Any,
+        timeout_seconds: float | None = None,
+    ) -> tuple[str, ...]:
+        """Materialize independent GPU work units into the durable coordinator queue."""
+        units = build_independent_work_units(
+            workload_id=workload_id,
+            items=items,
+            mode=mode,
+        )
+        task_ids = []
+        for unit in units:
+            payload = build_gpu_workload_payload(
+                unit,
+                command=command,
+                timeout_seconds=timeout_seconds,
+            )
+            task_ids.append(self.enqueue(payload, task_id=unit.unit_id))
+        return tuple(task_ids)
 
     def task(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as connection:
