@@ -166,6 +166,8 @@ def test_lightning_ssh_bootstrap_requires_an_actual_authenticated_session(monkey
     offer = provider.discover_free()[0]
     acquisition_id = provider._acquisition_id(offer)
     calls = []
+    monkeypatch.setenv("THORIO_COMPUTE_COORDINATOR_URL", "https://coordinator.example")
+    monkeypatch.setenv("THORIO_COMPUTE_AUTH_TOKEN", "secret-token")
 
     class Result:
         def __init__(self, returncode=0, stdout="", stderr=""):
@@ -212,6 +214,9 @@ def test_lightning_ssh_bootstrap_requires_an_actual_authenticated_session(monkey
     assert "BatchMode=yes" in calls[2][0]
     assert "thorio-gpu-test" in calls[2][0]
     assert "--acquisition-id" in calls[2][0][-1]
+    assert "secret-token" not in " ".join(calls[2][0])
+    assert calls[2][1]["input"] == "secret-token"
+    assert "THORIO_COMPUTE_COORDINATOR_URL=https://coordinator.example" in calls[2][0][-1]
 
 
 def test_lightning_worker_evidence_no_longer_claims_ssh_from_provider_documentation():
