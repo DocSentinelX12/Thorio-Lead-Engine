@@ -10,7 +10,6 @@ import argparse
 import json
 import os
 import socket
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -18,29 +17,6 @@ from dataclasses import asdict
 
 from .compute_pool import local_worker_identity
 
-
-def _ssh_evidence() -> dict[str, object]:
-    command = os.environ.get("THORIO_LIGHTNING_SSH_COMMAND", "").strip()
-    if not command:
-        return {"available": True, "verification": "provider_documented_ssh"}
-    try:
-        completed = subprocess.run(
-            ["sh", "-lc", f"{command} -V"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(f"Lightning SSH verification failed: {exc}") from exc
-    if completed.returncode != 0:
-        raise RuntimeError(f"Lightning SSH verification command failed: {(completed.stderr or completed.stdout).strip()[-1000:]}")
-    return {
-        "available": True,
-        "verification": "operator_supplied_ssh_command",
-        "command_fingerprint": str(hash(command)),
-        "version": (completed.stdout or completed.stderr).strip()[-1000:],
-    }
 
 
 def _enroll_with_coordinator(evidence: dict[str, object]) -> dict[str, object]:
@@ -122,7 +98,6 @@ def main() -> int:
         "domain_id": identity.domain_id,
         "physical_fabric_evidence": dict(identity.physical_fabric_evidence),
         "physical_gpu_execution": execution,
-        "ssh": _ssh_evidence(),
         "enrollment_contract": "/workers/register",
     }
     enrollment = _enroll_with_coordinator(evidence)
