@@ -144,6 +144,8 @@ class ProductionExecutionFabric:
         self,
         payload: Mapping[str, Any],
         allocation: Mapping[str, Any],
+        *,
+        rendezvous_endpoint: str | None = None,
     ) -> IntegratedExecutionPlan:
         if not isinstance(payload, Mapping) or not isinstance(allocation, Mapping):
             raise TypeError("payload and allocation must be mappings")
@@ -235,9 +237,16 @@ class ProductionExecutionFabric:
 
         elif mode is ExecutionMode.NCCL:
             launch = payload.get("nccl_launch") or {}
+            master_addr = str(launch.get("master_addr") or "").strip()
+            master_port = int(launch.get("master_port", 29500))
+            if rendezvous_endpoint:
+                master_addr, port_text = str(rendezvous_endpoint).rsplit(":", 1)
+                master_port = int(port_text)
+            if not master_addr:
+                master_addr = "127.0.0.1"
             spec = NCCLLaunchSpec(
-                master_addr=str(launch.get("master_addr") or "127.0.0.1"),
-                master_port=int(launch.get("master_port", 29500)),
+                master_addr=master_addr,
+                master_port=master_port,
                 socket_interface=str(launch.get("socket_interface") or "auto"),
                 collective=str(launch.get("collective") or "all_reduce"),
             )
