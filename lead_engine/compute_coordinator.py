@@ -1976,7 +1976,7 @@ class ComputeCoordinator:
                 for binding in worker["gpu_bindings"]
             ),
         }
-        integrated_execution = self.execution_fabric.plan(task_payload, allocation_for_execution)
+        integrated_execution = self.execution_fabric.plan(task_payload, allocation_for_execution, rendezvous_endpoint=durable_endpoint)
         execution_mode = integrated_execution.execution_plan.mode.value
         if execution_mode not in {"single_gpu", "batch_parallel", "data_parallel"} and total_processes < 2:
             raise ValueError("distributed execution requires at least two allocated GPU processes")
