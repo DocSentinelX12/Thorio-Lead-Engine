@@ -90,8 +90,12 @@ class ProductionExecutionFabric:
             raw = ExecutionMode.SINGLE_GPU.value
         if not raw:
             gpu_requirements = payload.get("compute_requirements", {}).get("gpu", {})
-            if isinstance(gpu_requirements, Mapping) and bool(gpu_requirements.get("require_nccl")):
-                raw = ExecutionMode.NCCL.value
+            if isinstance(gpu_requirements, Mapping):
+                gpu_count = int(gpu_requirements.get("gpu_count", 0) or 0)
+                if bool(gpu_requirements.get("require_nccl")) or gpu_count > 1:
+                    raw = ExecutionMode.NCCL.value
+                else:
+                    raw = ExecutionMode.SINGLE_GPU.value
             else:
                 raw = ExecutionMode.SINGLE_GPU.value
         try:
