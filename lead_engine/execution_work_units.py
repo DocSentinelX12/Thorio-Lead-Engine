@@ -1,9 +1,4 @@
-"""Deterministic partitioning for independent GPU work units.
-
-This is deliberately narrower than model-parallel execution. It creates durable,
-independent units that can be assigned to separate physical GPUs without
-requiring inter-worker synchronization.
-"""
+"""Deterministic partitioning for independent GPU work units."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,13 +6,11 @@ from typing import Any, Iterable, Sequence
 
 from .execution_fabric_contract import ExecutionMode
 
-
-_INDEPENDENT_MODES = frozenset(
-    {
-        ExecutionMode.BATCH_PARALLEL,
-        ExecutionMode.DATA_PARALLEL,
-    }
-)
+_INDEPENDENT_MODES = frozenset({
+    ExecutionMode.SINGLE_GPU,
+    ExecutionMode.BATCH_PARALLEL,
+    ExecutionMode.DATA_PARALLEL,
+})
 
 
 @dataclass(frozen=True)
@@ -37,47 +30,24 @@ class WorkUnit:
             raise ValueError("work unit mode must be an independently executable GPU mode")
 
 
-def build_independent_work_units(
-    *,
-    workload_id: str,
-    items: Iterable[Any],
-    mode: ExecutionMode,
-) -> tuple[WorkUnit, ...]:
+def build_independent_work_units(*, workload_id: str, items: Iterable[Any],
+                                 mode: ExecutionMode) -> tuple[WorkUnit, ...]:
     workload_id = str(workload_id).strip()
     if not workload_id:
         raise ValueError("workload_id is required")
     if mode not in _INDEPENDENT_MODES:
-        raise ValueError(
-            f"{mode.value} is not an independent work-unit execution mode"
-        )
-
+        raise ValueError(f"{mode.value} is not an independent work-unit execution mode")
     materialized = tuple(items)
     if not materialized:
         raise ValueError("at least one item is required")
-
     return tuple(
-        WorkUnit(
-            unit_id=f"{workload_id}:{index}",
-            workload_id=workload_id,
-            item_index=index,
-            item=item,
-            mode=mode,
-        )
+        WorkUnit(f"{workload_id}:{index}", workload_id, index, item, mode)
         for index, item in enumerate(materialized)
     )
 
 
-def build_gpu_workload_payload(
-    unit: WorkUnit,
-    *,
-    command: Sequence[str],
-    timeout_seconds: float | None = None,
-) -> dict[str, Any]:
-    """Create one existing coordinator-compatible physical GPU task.
-
-    The function only constructs the durable payload. The existing coordinator
-    remains authoritative for reservation, leasing, execution, and evidence.
-    """
+def build_gpu_workload_payload(unit: WorkUnit, *, command: Sequence[str],
+                               timeout_seconds: float | None = None) -> dict[str, Any]:
     if not isinstance(unit, WorkUnit):
         raise TypeError("unit must be a WorkUnit")
     normalized_command = tuple(str(item).strip() for item in command)
@@ -85,7 +55,6 @@ def build_gpu_workload_payload(
         raise ValueError("command must contain at least one non-empty argument")
     if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
-
     payload: dict[str, Any] = {
         "kind": "gpu_workload",
         "workload_id": unit.workload_id,
