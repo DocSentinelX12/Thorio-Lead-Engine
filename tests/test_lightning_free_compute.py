@@ -62,6 +62,7 @@ def test_lightning_bootstrap_evidence_requires_physical_cuda_execution():
     valid = {
         "gpu_discovery_state": "healthy",
         "physical_gpu_execution": [{"verified": True, "execution_backend": "cuda", "gpu_uuid": "GPU-1"}],
+        "coordinator_enrollment": {"attempted": True, "status": "registered"},
     }
     assert LightningFreeComputeProvider._parse_bootstrap_evidence(
         "THORIO_LIGHTNING_WORKER_EVIDENCE " + json.dumps(valid)
@@ -69,6 +70,13 @@ def test_lightning_bootstrap_evidence_requires_physical_cuda_execution():
     with pytest.raises(LightningFreeComputeError, match="physical CUDA execution"):
         LightningFreeComputeProvider._parse_bootstrap_evidence(
             "THORIO_LIGHTNING_WORKER_EVIDENCE " + json.dumps({"gpu_discovery_state": "healthy"})
+        )
+    with pytest.raises(LightningFreeComputeError, match="coordinator enrollment"):
+        LightningFreeComputeProvider._parse_bootstrap_evidence(
+            "THORIO_LIGHTNING_WORKER_EVIDENCE " + json.dumps({
+                "gpu_discovery_state": "healthy",
+                "physical_gpu_execution": [{"verified": True, "execution_backend": "cuda", "gpu_uuid": "GPU-1"}],
+            })
         )
 
 
