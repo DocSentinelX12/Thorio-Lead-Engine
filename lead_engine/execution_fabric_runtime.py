@@ -47,7 +47,7 @@ class IntegratedExecutionPlan:
             "evidence_state": self.execution_plan.evidence_state,
             "execution_started": self.execution_plan.execution_started,
             "physical_execution_verified": self.execution_plan.physical_execution_verified,
-            "mode_details": self._jsonable(self.mode_details),
+            "mode_details": ProductionExecutionFabric._jsonable(self.mode_details),
         }
 
 
