@@ -594,6 +594,45 @@ class PlacementEvaluator:
             "preferred": str(item["candidate_key"]) in preferred,
         } for item in sorted(records, key=lambda item: str(item["candidate_key"])))
 
+    def _candidate_structural_placement(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Apply the scheduler's existing physical/topology authority to full candidates."""
+        node_ids = tuple(dict.fromkeys(str(gpu["node_id"]) for gpu in candidate))
+        node_rows = self._node_rows()
+        node_candidates = [
+            self._node_candidate(node_id, node_rows[node_id])
+            for node_id in node_ids
+        ]
+        node_candidates = [item for item in node_candidates if item is not None]
+        shared_network = self.scheduler._shared_verified_network_domain(node_candidates)
+        network_known = any(self._network_domains(node) for node in node_candidates)
+        network_rank = 0 if shared_network is not None else 1 if network_known else 2
+        node_counts = tuple(sorted(
+            (sum(1 for gpu in candidate if str(gpu["node_id"]) == node_id) for node_id in node_ids),
+            reverse=True,
+        ))
+        topology_scores = tuple(sorted(
+            (
+                -score[0],
+                -score[1],
+                -score[2],
+            )
+            for score in (
+                self.scheduler._node_topology_score(node)
+                for node in node_candidates
+            )
+        ))
+        gpu_structure = tuple(sorted(
+            self.scheduler._gpu_placement_structure_key(gpu, list(candidate))
+            for gpu in candidate
+        ))
+        return (
+            network_rank,
+            len(node_ids),
+            tuple(-count for count in node_counts),
+            topology_scores,
+            gpu_structure,
+        )
+
     def _candidate_continuous_optimization(
         self,
         candidate: tuple[dict[str, Any], ...],
@@ -730,6 +769,7 @@ class PlacementEvaluator:
                 self._candidate_multidimensional_workload(item[0]),
                 self._candidate_concrete_performance(item[0]),
                 self._candidate_continuous_optimization(item[0], optimization_records),
+                self._candidate_structural_placement(item[0]),
                 self._stable_key(item[0]),
             ),
         )
