@@ -1,6 +1,7 @@
 """Free remote worker client for the shared compute coordinator."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import signal
@@ -421,6 +422,21 @@ def run_integrated_fabric_execution(
         if failures:
             raise ComputeWorkerError("integrated execution failed: " + "; ".join(f"rank {item['rank']}: {item['stderr'] or item['stdout']}"[-2000:] for item in failures))
         finished_at = time.time()
+        artifact_refs = []
+        artifact_paths = list(payload.get("output_artifacts") or ())
+        checkpoint_path = payload.get("checkpoint_path")
+        if checkpoint_path:
+            artifact_paths.append(checkpoint_path)
+        for raw_path in artifact_paths:
+            path = Path(str(raw_path).replace("{rank}", str(0)))
+            if not path.exists() or not path.is_file():
+                continue
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            artifact_refs.append({
+                "path": str(path),
+                "sha256": digest,
+                "size_bytes": path.stat().st_size,
+            })
         mode_details = execution.get("mode_details") if isinstance(execution.get("mode_details"), dict) else {}
         matrix_evidence = {
             "physical_gpu_execution": bool(probe_evidence),
@@ -466,6 +482,7 @@ def run_integrated_fabric_execution(
             "finished_at": finished_at,
             "elapsed_seconds": finished_at - started_at,
             "return_code": 0,
+            "artifact_refs": artifact_refs,
         }
         response = client.gpu_record_verification(attempt_id, generation, lease_token, verification)
         if response.get("ok", True) is not True:
