@@ -401,6 +401,8 @@ def run_integrated_fabric_execution(
             env["LOCAL_RANK"] = str(binding["local_rank"])
             env["CUDA_VISIBLE_DEVICES"] = str(binding.get("device_id") or str(binding["gpu_id"]).removeprefix("gpu-"))
             env["THORIO_EXPECTED_GPU_UUID"] = str(binding["gpu_uuid"])
+            if checkpoint_path:
+                env["THORIO_CHECKPOINT_PATH"] = str(checkpoint_path).replace("{rank}", str(binding["rank"]))
             process = subprocess.Popen(list(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=(os.name == "posix"))
             processes.append((binding, process))
         client.fabric_state(attempt_id, generation, lease_token, "active")
