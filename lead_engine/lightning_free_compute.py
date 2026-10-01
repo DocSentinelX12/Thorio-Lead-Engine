@@ -254,6 +254,7 @@ class LightningFreeComputeProvider(FreeComputeProvider):
                 command,
                 capture_output=True,
                 text=True,
+                input=coordinator_token,
                 timeout=int(os.environ.get("THORIO_LIGHTNING_SSH_TIMEOUT_SECONDS", "900")),
                 check=False,
             )
@@ -313,13 +314,16 @@ class LightningFreeComputeProvider(FreeComputeProvider):
         if callable(stop):
             stop()
 
-    def _bootstrap_command(self, acquisition_id: str) -> str:
+    def _bootstrap_command(self, acquisition_id: str, coordinator_url: str) -> str:
         repo = shlex.quote(self.config.repo)
         ref = shlex.quote(self.config.ref)
         aid = shlex.quote(acquisition_id)
+        coordinator = shlex.quote(coordinator_url)
         return (
             "set -eu; "
             "export THORIO_LIGHTNING_REQUIRE_COORDINATOR_ENROLLMENT=1; "
+            f"export THORIO_COMPUTE_COORDINATOR_URL={coordinator}; "
+            "export THORIO_COMPUTE_AUTH_TOKEN=$(cat); "
             "rm -rf /tmp/thorio-worker; "
             f"git clone --depth 1 --branch {ref} {repo} /tmp/thorio-worker; "
             "cd /tmp/thorio-worker; "
