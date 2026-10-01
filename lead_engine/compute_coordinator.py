@@ -1954,9 +1954,12 @@ class ComputeCoordinator:
             })
             total_processes += process_count
 
+        first_allocation = self.inventory.allocation(str(participants[0]["allocation_id"])) if participants else None
+        if first_allocation is None:
+            raise ValueError("execution participants have no durable physical allocation")
         allocation_for_execution = {
-            "provider_id": str(participants[0].get("provider_id") or "") if participants else "",
-            "domain_id": str(participants[0].get("domain_id") or "") if participants else "",
+            "provider_id": str(first_allocation.get("provider_id") or ""),
+            "domain_id": str(first_allocation.get("domain_id") or ""),
             "node_ids": tuple(worker["node_id"] for worker in workers),
             "resource_ids": tuple(
                 binding["resource_id"]
