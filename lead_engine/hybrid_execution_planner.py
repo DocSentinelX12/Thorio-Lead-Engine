@@ -40,6 +40,8 @@ class HybridExecutionPlanner:
             raise ValueError("at least one hybrid stage is required")
         if any(not isinstance(stage, ExecutionMode) for stage in ordered):
             raise ValueError("hybrid stages must be ExecutionMode values")
+        if ExecutionMode.SINGLE_GPU in ordered and len(ordered) > 1:
+            raise ValueError("single_gpu cannot be mixed with other hybrid stages")
         selected = []
         for node_id in base_plan.node_ids:
             matches = [c for c in capabilities if node_id in c.node_ids]
