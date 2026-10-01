@@ -1796,7 +1796,7 @@ class ComputeCoordinator:
         with self._connect() as connection:
             attempt_row = connection.execute(
                 """SELECT a.status,a.generation,a.lease_token_digest,a.rendezvous_endpoint,a.placement_id,
-                          t.status AS task_status,t.lease_until,t.payload
+                          t.task_id,t.status AS task_status,t.lease_until,t.payload
                    FROM compute_execution_attempts a
                    JOIN compute_tasks t ON t.attempt_id=a.attempt_id
                    WHERE a.attempt_id=?""",
@@ -2003,7 +2003,7 @@ class ComputeCoordinator:
                 for binding in worker["gpu_bindings"]
             ),
         }
-        integrated_execution = self.execution_fabric.plan(task_payload, allocation_for_execution, rendezvous_endpoint=durable_endpoint, workload_id=str(attempt['task_id']))
+        integrated_execution = self.execution_fabric.plan(task_payload, allocation_for_execution, rendezvous_endpoint=durable_endpoint, workload_id=str(attempt_row['task_id']))
         execution_mode = integrated_execution.execution_plan.mode.value
         if execution_mode not in {"single_gpu", "batch_parallel", "data_parallel"} and total_processes < 2:
             raise ValueError("distributed execution requires at least two allocated GPU processes")
