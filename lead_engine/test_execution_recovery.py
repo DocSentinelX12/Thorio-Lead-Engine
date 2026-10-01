@@ -31,3 +31,15 @@ def test_non_elastic_recovery_does_not_invent_replacements():
     )
     assert result.action == "restore"
     assert result.replacement_node_ids == ()
+
+
+def test_elastic_recovery_returns_deterministic_rank_reassignments():
+    result = ExecutionRecoveryPlanner().decide(
+        checkpoint=_checkpoint(),
+        active_node_ids=("n0", "n1"),
+        unavailable_node_ids=("n1",),
+        candidate_node_ids=("n2", "n3"),
+        elastic=True,
+    )
+    assert result.rank_reassignments == (("n1", "n2"),)
+    assert result.checkpoint_digest == _checkpoint().digest
