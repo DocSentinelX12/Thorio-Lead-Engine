@@ -125,3 +125,23 @@ def test_integrated_hybrid_plan_validates_composed_stage_capabilities():
         ExecutionMode.DATA_PARALLEL,
         ExecutionMode.PIPELINE_PARALLEL,
     )
+
+
+def test_legacy_gpu_payload_defaults_to_single_gpu_mode():
+    result = ProductionExecutionFabric().plan(
+        {"task_id": "legacy-gpu", "kind": "gpu_workload"},
+        _allocation(1),
+    )
+    assert result.execution_plan.mode is ExecutionMode.SINGLE_GPU
+
+
+def test_legacy_nccl_requirement_defaults_to_nccl_mode():
+    result = ProductionExecutionFabric().plan(
+        {
+            "task_id": "legacy-nccl",
+            "compute_requirements": {"gpu": {"gpu_count": 2, "require_nccl": True}},
+        },
+        _allocation(),
+        rendezvous_endpoint="10.0.0.1:29500",
+    )
+    assert result.execution_plan.mode is ExecutionMode.NCCL
