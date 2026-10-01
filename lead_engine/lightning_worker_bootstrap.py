@@ -51,6 +51,11 @@ def _enroll_with_coordinator(evidence: dict[str, object]) -> dict[str, object]:
             "THORIO_COMPUTE_COORDINATOR_URL and THORIO_COMPUTE_AUTH_TOKEN must be provided together"
         )
     if not coordinator_url:
+        required = os.environ.get("THORIO_LIGHTNING_REQUIRE_COORDINATOR_ENROLLMENT", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if required:
+            raise RuntimeError(
+                "Thorio coordinator enrollment is required for Lightning acquisition but is not configured"
+            )
         return {"attempted": False, "status": "not_configured"}
 
     payload = json.dumps(evidence, sort_keys=True).encode("utf-8")
