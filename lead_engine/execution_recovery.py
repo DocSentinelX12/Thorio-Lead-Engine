@@ -42,8 +42,10 @@ class CheckpointManifest:
 class RecoveryDecision:
     action: str
     checkpoint_id: str
+    checkpoint_digest: str
     unavailable_node_ids: tuple[str, ...]
     replacement_node_ids: tuple[str, ...]
+    rank_reassignments: tuple[tuple[str, str], ...]
 
 
 class ExecutionRecoveryPlanner:
@@ -58,13 +60,19 @@ class ExecutionRecoveryPlanner:
         if not checkpoint.digest:
             raise ValueError("checkpoint digest is required")
         if not unavailable:
-            return RecoveryDecision("resume", checkpoint.checkpoint_id, (), ())
+            return RecoveryDecision("resume", checkpoint.checkpoint_id, checkpoint.digest, (), (), ())
         if not elastic:
-            return RecoveryDecision("restore", checkpoint.checkpoint_id, unavailable, ())
+            return RecoveryDecision("restore", checkpoint.checkpoint_id, checkpoint.digest, unavailable, (), ())
         replacements = tuple(x for x in candidates if x not in active and x not in unavailable)
         if len(replacements) < len(unavailable):
             return RecoveryDecision("restore", checkpoint.checkpoint_id, unavailable, ())
+        replacement_tuple = replacements[:len(unavailable)]
+        reassignments = tuple(zip(unavailable, replacement_tuple))
         return RecoveryDecision(
-            "restore_and_rebalance", checkpoint.checkpoint_id, unavailable,
-            replacements[:len(unavailable)]
+            "restore_and_rebalance",
+            checkpoint.checkpoint_id,
+            checkpoint.digest,
+            unavailable,
+            replacement_tuple,
+            reassignments,
         )
