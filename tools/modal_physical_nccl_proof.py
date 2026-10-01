@@ -143,22 +143,77 @@ def _run_rank() -> dict[str, object]:
     timeout=240,
 )
 @modal.clustered(size=WORLD_SIZE, rdma=False)
-def physical_nccl_probe(proof_sha: str) -> dict[str, object]:
+def physical_nccl_probe(proof_sha: str, result_dict_id: str) -> dict[str, object]:
     record = _run_rank()
     record["proof_sha"] = proof_sha
-    return record
+    results = modal.Dict.from_id(result_dict_id)
+    results[str(record["rank"])] = record
+
+    if record["rank"] == 0:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if "1" in results:
+                break
+            time.sleep(0.25)
+        if "1" not in results:
+            raise RuntimeError("Rank 0 timed out waiting for rank 1 physical NCCL evidence")
+        rank_records = [results["0"], results["1"]]
+        if len({int(item["rank"]) for item in rank_records}) != WORLD_SIZE:
+            raise RuntimeError("Modal NCCL evidence does not cover ranks 0 and 1")
+        transports = {str(item.get("network_transport") or "").strip().upper() for item in rank_records}
+        if len(transports) != 1 or "" in transports:
+            raise RuntimeError(f"Modal NCCL ranks selected inconsistent transports: {sorted(transports)}")
+        gpu_uuids = {str(item.get("gpu_uuid") or "").strip() for item in rank_records}
+        if len(gpu_uuids) != WORLD_SIZE:
+            raise RuntimeError("Modal NCCL ranks did not expose two distinct physical GPU UUIDs")
+        container_ids = {
+            str(item.get("modal_container_id") or "").strip()
+            for item in rank_records
+        }
+        if container_ids != set(record["modal_container_ids"]):
+            raise RuntimeError("Modal NCCL rank evidence disagrees about cluster container membership")
+        ips = {
+            str(ip).strip() for item in rank_records for ip in item.get("modal_container_ips", [])
+        }
+        if len(ips) != WORLD_SIZE:
+            raise RuntimeError("Modal NCCL cluster did not expose two distinct intra-cluster IPs")
+        for item in rank_records:
+            cross_rank = [
+                edge for edge in item.get("peer_connections", [])
+                if isinstance(edge, dict) and int(edge.get("peer_rank", -1)) == (1 - int(item["rank"]))
+            ]
+            if not cross_rank:
+                raise RuntimeError(
+                    f"Rank {item['rank']} has no NCCL peer evidence to the other rank"
+                )
+            if any(
+                str(edge.get("transport") or "").strip().upper() != next(iter(transports))
+                for edge in cross_rank
+            ):
+                raise RuntimeError("Modal NCCL cross-rank peer transport disagrees with aggregate transport")
+        return {
+            "verified": True,
+            "proof_sha": proof_sha,
+            "world_size": WORLD_SIZE,
+            "nnodes": NNODES,
+            "modal_cluster_id": record["modal_cluster_id"],
+            "modal_cluster_size": WORLD_SIZE,
+            "modal_container_ids": record["modal_container_ids"],
+            "modal_container_ips": record["modal_container_ips"],
+            "distinct_physical_gpu_uuids": sorted(gpu_uuids),
+            "network_transport": next(iter(transports)),
+            "collective": "all_reduce",
+            "expected_sum": 3,
+            "rank_evidence": rank_records,
+        }
 
 
 @app.local_entrypoint()
 def main(proof_sha: str = "") -> None:
     if not proof_sha.strip():
         raise SystemExit("proof_sha is required")
-    records = list(physical_nccl_probe.remote(proof_sha))
-    if len(records) != WORLD_SIZE:
-        raise SystemExit(f"Expected {WORLD_SIZE} Modal rank results, received {len(records)}")
-
-    # Modal clustered functions return rank 0 output only, so this entrypoint
-    # intentionally validates the returned rank plus the cluster-level facts
-    # emitted by the provider. The workflow obtains rank 1 from Modal logs.
-    record = records[0] if isinstance(records[0], dict) else {}
-    print("THORIO_MODAL_NCCL_RANK0 " + json.dumps(record, sort_keys=True))
+    with modal.Dict.ephemeral() as results:
+        aggregate = physical_nccl_probe.remote(proof_sha, results.object_id)
+        if not isinstance(aggregate, dict) or aggregate.get("verified") is not True:
+            raise SystemExit("Modal physical NCCL proof did not return verified aggregate evidence")
+        print("THORIO_MODAL_NCCL_RANK0 " + json.dumps(aggregate, sort_keys=True))
