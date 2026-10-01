@@ -142,18 +142,30 @@ class LightningFreeComputeProvider(FreeComputeProvider):
         acquisition_id = self._acquisition_id(offer)
         bootstrap = self._bootstrap_command(acquisition_id)
         try:
-            result = studio.run_with_exit_code(bootstrap)
-        except AttributeError:
-            result = studio.run(bootstrap)
-        except Exception as exc:
-            raise LightningFreeComputeError(f"Lightning worker bootstrap failed: {type(exc).__name__}: {exc}") from exc
+            try:
+                result = studio.run_with_exit_code(bootstrap)
+            except AttributeError:
+                result = studio.run(bootstrap)
 
-        stdout = getattr(result, "stdout", None) if not isinstance(result, tuple) else result[0]
-        stderr = getattr(result, "stderr", None) if not isinstance(result, tuple) else (result[1] if len(result) > 1 else "")
-        exit_code = getattr(result, "exit_code", None) if not isinstance(result, tuple) else (result[2] if len(result) > 2 else 0)
-        if exit_code not in (None, 0):
-            raise LightningFreeComputeError(f"Lightning worker bootstrap exited {exit_code}: {(stderr or stdout or '')[-4000:]}")
-        payload = self._parse_bootstrap_evidence(str(stdout or ""))
+            stdout = getattr(result, "stdout", None) if not isinstance(result, tuple) else result[0]
+            stderr = getattr(result, "stderr", None) if not isinstance(result, tuple) else (result[1] if len(result) > 1 else "")
+            exit_code = getattr(result, "exit_code", None) if not isinstance(result, tuple) else (result[2] if len(result) > 2 else 0)
+            if exit_code not in (None, 0):
+                raise LightningFreeComputeError(f"Lightning worker bootstrap exited {exit_code}: {(stderr or stdout or '')[-4000:]}")
+            payload = self._parse_bootstrap_evidence(str(stdout or ""))
+        except Exception as exc:
+            try:
+                stop = getattr(studio, "stop", None)
+                if callable(stop):
+                    stop()
+            except Exception as cleanup_exc:
+                raise LightningFreeComputeError(
+                    f"Lightning worker bootstrap failed and Studio cleanup failed: {type(exc).__name__}: {exc}; "
+                    f"cleanup: {type(cleanup_exc).__name__}: {cleanup_exc}"
+                ) from exc
+            if isinstance(exc, LightningFreeComputeError):
+                raise
+            raise LightningFreeComputeError(f"Lightning worker bootstrap failed: {type(exc).__name__}: {exc}") from exc
         return AcquiredCompute(
             provider_id=offer.provider_id,
             domain_id=offer.domain_id,
