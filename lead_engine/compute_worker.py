@@ -289,6 +289,186 @@ def run_fabric_verification(client: ComputeWorkerClient, assignment: Mapping[str
         if thread.is_alive(): thread.join(timeout=2)
 
 
+def run_integrated_fabric_execution(
+    client: ComputeWorkerClient,
+    assignment: Mapping[str, Any],
+    *,
+    rendezvous_endpoint: str,
+    heartbeat_seconds: float = 15.0,
+) -> Dict[str, Any]:
+    """Execute every non-NCCL fabric mode through the common GPU evidence boundary."""
+    if heartbeat_seconds <= 0:
+        raise ValueError("heartbeat_seconds must be positive")
+    attempt_id = str(assignment["attempt_id"])
+    generation = int(assignment["generation"])
+    lease_token = str(assignment["lease_token"])
+    payload = assignment.get("payload")
+    allocation = assignment.get("physical_allocation")
+    if not isinstance(payload, Mapping) or not isinstance(allocation, Mapping):
+        raise ComputeWorkerError("integrated fabric execution requires payload and physical allocation")
+    launch = client.fabric_launch_plan(attempt_id, generation, lease_token, rendezvous_endpoint)
+    execution = launch.get("execution") if isinstance(launch.get("execution"), dict) else {}
+    mode = str(execution.get("mode") or payload.get("execution_mode") or "").strip()
+    if not mode:
+        raise ComputeWorkerError("launch plan did not declare an execution mode")
+    if mode == "nccl":
+        return run_fabric_verification(client, assignment, rendezvous_endpoint=rendezvous_endpoint, heartbeat_seconds=heartbeat_seconds)
+    participant = next((item for item in launch.get("workers", ()) if item.get("worker_id") == client.worker_id), None)
+    if not isinstance(participant, Mapping):
+        raise ComputeWorkerError("worker is not present in the integrated execution plan")
+    bindings = participant.get("gpu_bindings")
+    if not isinstance(bindings, list) or not bindings:
+        raise ComputeWorkerError("integrated execution plan has no GPU bindings")
+    command = payload.get("command")
+    if not isinstance(command, (list, tuple)) or not command or any(not str(item).strip() for item in command):
+        raise ComputeWorkerError("integrated fabric workload command must be a non-empty argument list")
+    command = tuple(str(item) for item in command)
+    runtime = NvidiaRuntime()
+    try:
+        identity = runtime.verify_gpu_bindings(bindings)
+    except Exception as exc:
+        raise ComputeWorkerError(f"integrated execution GPU identity verification failed: {exc}") from exc
+
+    def run(args, env=None, timeout=None):
+        try:
+            completed = subprocess.run(list(args), capture_output=True, text=True, env=None if env is None else dict(env), timeout=timeout, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ComputeWorkerError(f"integrated execution command failed: {exc}") from exc
+        return completed.returncode, completed.stdout, completed.stderr
+
+    probe_evidence = []
+    for binding in identity["gpu_bindings"]:
+        probe_env = os.environ.copy()
+        probe_env["CUDA_VISIBLE_DEVICES"] = str(binding["gpu_id"])
+        probe_env["THORIO_EXPECTED_GPU_UUID"] = str(binding["gpu_uuid"])
+        rc, stdout, stderr = run(("python", "-m", "lead_engine.gpu_execution_probe", "--expected-gpu-uuid", str(binding["gpu_uuid"])), probe_env, 60.0)
+        if int(rc) != 0:
+            raise ComputeWorkerError(f"integrated physical GPU probe failed for {binding['gpu_uuid']}: {(stderr or stdout)[-4000:]}")
+        marker = "THORIO_GPU_EXECUTION_PROBE_OK "
+        line = next((line[len(marker):].strip() for line in str(stdout).splitlines() if line.startswith(marker)), "")
+        if not line:
+            raise ComputeWorkerError("integrated physical GPU probe returned no evidence marker")
+        try:
+            evidence = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ComputeWorkerError("integrated physical GPU probe returned invalid JSON") from exc
+        if not isinstance(evidence, dict) or evidence.get("verified") is not True:
+            raise ComputeWorkerError("integrated physical GPU probe did not verify execution")
+        probe_evidence.append(evidence)
+
+    endpoint = str(launch["rendezvous_endpoint"]).strip()
+    master_addr, master_port_text = endpoint.rsplit(":", 1)
+    master_port = int(master_port_text)
+    world_size = int(launch["world_size"])
+    base_environment = {
+        "MASTER_ADDR": master_addr,
+        "MASTER_PORT": str(master_port),
+        "WORLD_SIZE": str(world_size),
+        "LOCAL_WORLD_SIZE": str(len(bindings)),
+        "THORIO_EXECUTION_MODE": mode,
+        "THORIO_EXECUTION_PLAN": json.dumps(execution, ensure_ascii=True, sort_keys=True),
+        "THORIO_FABRIC_ATTEMPT_ID": attempt_id,
+        "THORIO_FABRIC_GENERATION": str(generation),
+    }
+    client.fabric_state(attempt_id, generation, lease_token, "launching")
+    processes = []
+    started_at = time.time()
+    heartbeat_stop = threading.Event()
+    heartbeat_error = []
+
+    def beat():
+        while not heartbeat_stop.wait(heartbeat_seconds):
+            try:
+                response = client.fabric_heartbeat(attempt_id, generation, lease_token)
+                if response.get("ok") is not True:
+                    heartbeat_error.append("coordinator rejected integrated execution heartbeat")
+                    return
+            except Exception as exc:
+                heartbeat_error.append(str(exc))
+                return
+
+    heartbeat_thread = threading.Thread(target=beat, daemon=True)
+    heartbeat_thread.start()
+    try:
+        for binding in sorted(bindings, key=lambda item: int(item["rank"])):
+            env = os.environ.copy()
+            env.update(base_environment)
+            env["RANK"] = str(binding["rank"])
+            env["LOCAL_RANK"] = str(binding["local_rank"])
+            env["CUDA_VISIBLE_DEVICES"] = str(binding.get("device_id") or str(binding["gpu_id"]).removeprefix("gpu-"))
+            env["THORIO_EXPECTED_GPU_UUID"] = str(binding["gpu_uuid"])
+            process = subprocess.Popen(list(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=(os.name == "posix"))
+            processes.append((binding, process))
+        client.fabric_state(attempt_id, generation, lease_token, "active")
+        results = []
+        timeout = payload.get("timeout_seconds")
+        timeout_seconds = float(timeout) if timeout is not None else None
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        for binding, process in processes:
+            remaining = None if deadline is None else max(0.1, deadline - time.monotonic())
+            try:
+                stdout, stderr = process.communicate(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+                raise ComputeWorkerError(f"integrated execution rank {binding['rank']} timed out")
+            results.append({"rank": int(binding["rank"]), "gpu_uuid": str(binding["gpu_uuid"]), "return_code": int(process.returncode), "stdout": str(stdout)[-8000:], "stderr": str(stderr)[-8000:]})
+        if heartbeat_error:
+            raise ComputeWorkerError(heartbeat_error[-1])
+        failures = [item for item in results if item["return_code"] != 0]
+        if failures:
+            raise ComputeWorkerError("integrated execution failed: " + "; ".join(f"rank {item['rank']}: {item['stderr'] or item['stdout']}"[-2000:] for item in failures))
+        finished_at = time.time()
+        verification = {
+            "verified": True,
+            "execution_kind": "gpu_workload",
+            "execution_mode": mode,
+            "execution_plan": execution,
+            "attempt_id": attempt_id,
+            "generation": generation,
+            "task_id": str(assignment.get("task_id") or ""),
+            "worker_id": client.worker_id,
+            "gpu_bindings": [dict(binding) for binding in bindings],
+            "physical_gpu_execution": probe_evidence,
+            "process_evidence": results,
+            "command": list(command),
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "elapsed_seconds": finished_at - started_at,
+            "return_code": 0,
+        }
+        response = client.gpu_record_verification(attempt_id, generation, lease_token, verification)
+        if response.get("ok", True) is not True:
+            raise ComputeWorkerError("coordinator rejected integrated GPU execution evidence")
+        if world_size > 1:
+            deadline = time.monotonic() + max(60.0, heartbeat_seconds * 4)
+            convergence = client.fabric_converge(attempt_id, generation, lease_token)
+            while convergence.get("converged") is not True and time.monotonic() < deadline:
+                if heartbeat_error:
+                    raise ComputeWorkerError(heartbeat_error[-1])
+                if heartbeat_stop.wait(min(heartbeat_seconds, 1.0)):
+                    break
+                convergence = client.fabric_converge(attempt_id, generation, lease_token)
+            if convergence.get("converged") is not True:
+                raise ComputeWorkerError(f"integrated execution did not converge: {convergence.get('reason', 'unknown')}")
+            verification["convergence"] = convergence
+        return verification
+    except Exception as exc:
+        for _, process in processes:
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                except Exception:
+                    pass
+        try:
+            client.fabric_state(attempt_id, generation, lease_token, "failed", str(exc))
+        except Exception:
+            pass
+        raise
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=max(1.0, heartbeat_seconds))
+
 def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartbeat_seconds: float = 15.0, fabric_rendezvous_endpoint: str | None = None, stop_event=None) -> None:
     if idle_seconds <= 0 or heartbeat_seconds <= 0: raise ValueError("worker intervals must be positive")
     stop_event=stop_event or _NeverStop(); fabric_rendezvous_endpoint=(fabric_rendezvous_endpoint or os.environ.get("THORIO_FABRIC_RENDEZVOUS_ENDPOINT","")).strip(); backoff=1.0; last_heartbeat=0.0
@@ -305,7 +485,12 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                         if response.get("ok") is not True: raise ComputeWorkerError("coordinator rejected fabric failure state")
                 else:
                     for assignment in assignments:
-                        try: run_fabric_verification(client,assignment,rendezvous_endpoint=fabric_rendezvous_endpoint)
+                        try:
+                            mode = str((assignment.get("payload") or {}).get("execution_mode") or "").strip()
+                            if mode == "nccl":
+                                run_fabric_verification(client, assignment, rendezvous_endpoint=fabric_rendezvous_endpoint)
+                            else:
+                                run_integrated_fabric_execution(client, assignment, rendezvous_endpoint=fabric_rendezvous_endpoint, heartbeat_seconds=heartbeat_seconds)
                         except NvidiaRuntimeError:
                             if stop_event.wait(idle_seconds): break
                 backoff=1.0; continue
