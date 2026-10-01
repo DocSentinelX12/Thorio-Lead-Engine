@@ -24,7 +24,7 @@ def test_nccl_launch_spec_is_deterministic_and_plan_only():
 def test_nccl_requires_multiple_physical_nodes():
     plan = ExecutionPlan(
         "p", "w", ExecutionMode.NCCL, "provider", "domain",
-        ("g0", "g1"), ("same", "same2"), 2,
+        ("g0", "g1"), ("same", "same"), 2,
     )
     try:
         NCCLExecutionPlanner().plan(plan, NCCLLaunchSpec("10.0.0.1", 29500, "eth0"))
