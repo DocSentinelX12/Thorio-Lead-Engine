@@ -2,19 +2,18 @@ from lead_engine.execution_fabric_contract import ExecutionMode
 from lead_engine.fabric_verification import FabricVerificationMatrix
 
 
-def test_hybrid_requires_both_partition_and_nccl_evidence():
+def test_hybrid_requires_hybrid_plan_and_stage_evidence():
     report = FabricVerificationMatrix().evaluate(
         ExecutionMode.HYBRID,
         {
             "physical_gpu_execution": True,
             "execution_identity": True,
-            "model_partition_plan": True,
-            "nccl_physical_proof": False,
-            "distinct_physical_nodes": True,
+            "hybrid_plan": True,
+            "required_stage_evidence": False,
         },
     )
     assert not report.passed
-    assert report.missing == ("nccl_physical_proof",)
+    assert report.missing == ("required_stage_evidence",)
 
 
 def test_fabric_readiness_requires_external_physical_evidence():
