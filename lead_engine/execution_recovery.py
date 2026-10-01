@@ -65,7 +65,7 @@ class ExecutionRecoveryPlanner:
             return RecoveryDecision("restore", checkpoint.checkpoint_id, checkpoint.digest, unavailable, (), ())
         replacements = tuple(x for x in candidates if x not in active and x not in unavailable)
         if len(replacements) < len(unavailable):
-            return RecoveryDecision("restore", checkpoint.checkpoint_id, unavailable, ())
+            return RecoveryDecision("restore", checkpoint.checkpoint_id, checkpoint.digest, unavailable, (), ())
         replacement_tuple = replacements[:len(unavailable)]
         reassignments = tuple(zip(unavailable, replacement_tuple))
         return RecoveryDecision(
