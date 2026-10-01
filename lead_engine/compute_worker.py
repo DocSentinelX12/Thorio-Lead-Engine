@@ -19,6 +19,8 @@ from .nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from .nvidia_provider import CommandResult, NvidiaProvider
 from .lead_pipeline import process_leads
 from .gpu_execution_runtime import execute_gpu_workload
+from .fabric_verification import FabricVerificationMatrix
+from .execution_fabric_contract import ExecutionMode
 from .lead_sort import sort_by_score
 
 
@@ -419,10 +421,38 @@ def run_integrated_fabric_execution(
         if failures:
             raise ComputeWorkerError("integrated execution failed: " + "; ".join(f"rank {item['rank']}: {item['stderr'] or item['stdout']}"[-2000:] for item in failures))
         finished_at = time.time()
+        mode_details = execution.get("mode_details") if isinstance(execution.get("mode_details"), dict) else {}
+        matrix_evidence = {
+            "physical_gpu_execution": bool(probe_evidence),
+            "execution_identity": bool(attempt_id and generation > 0 and client.worker_id and execution.get("plan_id")),
+            "model_partition_plan": "model_partition_plan" in mode_details,
+            "tensor_shard_plan": "tensor_shard_plan" in mode_details,
+            "context_partition_plan": "context_partition_plan" in mode_details,
+            "expert_placement_plan": "expert_parallel_plan" in mode_details,
+            "state_shard_plan": "sharded_state_plan" in mode_details,
+            "checkpoint_compatible": bool(
+                isinstance(mode_details.get("sharded_state_plan"), dict)
+                and mode_details["sharded_state_plan"].get("checkpoint_compatible") is True
+            ),
+            "hybrid_plan": "hybrid_execution_plan" in mode_details,
+            "required_stage_evidence": bool(
+                isinstance(mode_details.get("hybrid_execution_plan"), dict)
+                and mode_details["hybrid_execution_plan"].get("stages")
+            ),
+        }
+        try:
+            fabric_report = FabricVerificationMatrix().evaluate(ExecutionMode(mode), matrix_evidence)
+        except ValueError as exc:
+            raise ComputeWorkerError(f"integrated execution verification mode is invalid: {exc}") from exc
         verification = {
             "verified": True,
             "execution_kind": "gpu_workload",
             "execution_mode": mode,
+            "fabric_verification": {
+                "passed": fabric_report.passed,
+                "maturity_state": fabric_report.maturity_state,
+                "missing": list(fabric_report.missing),
+            },
             "execution_plan": execution,
             "attempt_id": attempt_id,
             "generation": generation,
