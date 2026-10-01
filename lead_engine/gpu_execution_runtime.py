@@ -263,6 +263,16 @@ def execute_gpu_workload(
     thread.start()
     started_at = time.time()
     env = os.environ.copy()
+    requested_environment = payload.get("execution_environment")
+    if requested_environment is not None:
+        if not isinstance(requested_environment, Mapping):
+            raise GpuExecutionError("execution_environment must be an object")
+        allowed_keys = {"RANK", "LOCAL_RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE", "MASTER_ADDR", "MASTER_PORT", "THORIO_EXECUTION_MODE", "THORIO_EXECUTION_PLAN"}
+        for key, value in requested_environment.items():
+            normalized_key = str(key).strip()
+            if normalized_key not in allowed_keys:
+                raise GpuExecutionError(f"execution_environment contains an unauthorized variable: {normalized_key}")
+            env[normalized_key] = str(value)
     env["CUDA_VISIBLE_DEVICES"] = ",".join(item["gpu_id"] for item in identity["gpu_bindings"])
     env["THORIO_FABRIC_ATTEMPT_ID"] = attempt_id
     env["THORIO_FABRIC_GENERATION"] = str(generation)
