@@ -65,6 +65,10 @@ class LightningFreeComputeProvider(FreeComputeProvider):
         self.config = config or LightningFreeComputeConfig.from_environment()
         self._clock = clock
 
+    @classmethod
+    def from_environment(cls) -> "LightningFreeComputeProvider":
+        return cls(LightningFreeComputeConfig.from_environment())
+
     def _domain_id(self) -> str:
         teamspace = self.config.teamspace or "default"
         return f"lightning_ai:{teamspace}:{self.config.studio_name}"
