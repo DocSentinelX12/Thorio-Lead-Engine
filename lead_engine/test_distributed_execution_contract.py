@@ -166,3 +166,24 @@ def test_coordinator_launch_boundary_rejects_invalid_contract_before_persistence
     attempt = coordinator.execution_attempt(attempt_id)
     assert attempt["launch_plan_verification"] is None
 
+
+
+def test_launch_contract_allows_single_node_multi_gpu_execution():
+    plan = {
+        "rendezvous_endpoint": "node-a:29500",
+        "world_size": 2,
+        "nnodes": 1,
+        "workers": [{
+            "worker_id": "worker-a",
+            "node_id": "node-a",
+            "process_count": 2,
+            "rendezvous_endpoint": "node-a:29500",
+            "gpu_bindings": [
+                {"rank": 0, "local_rank": 0, "gpu_id": "0", "gpu_uuid": "GPU-a0"},
+                {"rank": 1, "local_rank": 1, "gpu_id": "1", "gpu_uuid": "GPU-a1"},
+            ],
+        }],
+    }
+    evidence = validate_launch_plan(plan, expected_endpoint="node-a:29500")
+    assert evidence["verified"] is True
+    assert evidence["nnodes"] == 1
