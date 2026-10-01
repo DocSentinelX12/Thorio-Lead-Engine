@@ -552,3 +552,24 @@ def test_coordinator_from_environment_registers_kaggle_free_provider(tmp_path, m
     providers = coordinator.free_compute_acquisition.providers()
 
     assert [provider.provider_id for provider in providers] == ["kaggle"]
+
+
+def test_enqueue_gpu_work_units_materializes_durable_independent_tasks(tmp_path):
+    from lead_engine.execution_fabric_contract import ExecutionMode
+
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        auth_token="test-token",
+        lease_seconds=30,
+    )
+    task_ids = coordinator.enqueue_gpu_work_units(
+        workload_id="gpu-batch",
+        items=({"x": 1}, {"x": 2}),
+        mode=ExecutionMode.BATCH_PARALLEL,
+        command=("python", "-m", "worker_task"),
+    )
+    assert task_ids == ("gpu-batch:0", "gpu-batch:1")
+    first = coordinator.task(task_ids[0])
+    assert first["payload"]["execution_mode"] == "batch_parallel"
+    assert first["payload"]["work_unit_id"] == "gpu-batch:0"
+    assert first["payload"]["compute_requirements"]["gpu"]["gpu_count"] == 1
