@@ -53,6 +53,7 @@ def test_integrated_pipeline_plan_uses_model_partition_planner():
         _allocation(),
     )
     assert "model_partition_plan" in result.mode_details
+    assert "partition_execution_spec" in result.mode_details
 
 
 def test_integrated_planning_never_claims_execution():
