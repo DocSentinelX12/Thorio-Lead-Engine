@@ -115,8 +115,8 @@ class ExecutionCapability:
             raise ValueError("resource_ids must be unique")
         if not node_ids or any(not item for item in node_ids):
             raise ValueError("node_ids must contain at least one node")
-        if len(set(node_ids)) != len(node_ids):
-            raise ValueError("node_ids must be unique")
+        if len(node_ids) != len(resource_ids):
+            raise ValueError("node_ids must align one-to-one with resource_ids")
         if not self.provider_id.strip() or not self.domain_id.strip():
             raise ValueError("provider_id and domain_id are required")
 
@@ -139,7 +139,7 @@ class ExecutionCapability:
 
     @property
     def worker_count(self) -> int:
-        return len(self.node_ids)
+        return len(self.resource_ids)
 
     @property
     def resource_count(self) -> int:
@@ -167,10 +167,12 @@ class ExecutionPlan:
             raise ValueError("mode must be an ExecutionMode")
         if not self.resource_ids or len(set(self.resource_ids)) != len(self.resource_ids):
             raise ValueError("plan resource_ids must be unique and non-empty")
-        if not self.node_ids or len(set(self.node_ids)) != len(self.node_ids):
-            raise ValueError("plan node_ids must be unique and non-empty")
-        if self.worker_count != len(self.node_ids):
-            raise ValueError("worker_count must match node_ids")
+        if not self.node_ids or any(not str(item).strip() for item in self.node_ids):
+            raise ValueError("plan node_ids must be non-empty")
+        if len(self.node_ids) != len(self.resource_ids):
+            raise ValueError("plan node_ids must align one-to-one with resource_ids")
+        if self.worker_count != len(self.resource_ids):
+            raise ValueError("worker_count must match resource_ids")
         if self.execution_started or self.physical_execution_verified:
             raise ValueError("planner cannot claim execution evidence")
 
@@ -280,7 +282,7 @@ class ExecutionPlanner:
             if len(selected) >= workload.min_workers and resource_count >= 2:
                 break
 
-        if len(selected) < workload.min_workers:
+        if resource_count < workload.min_workers:
             return None
         return tuple(selected)
 
