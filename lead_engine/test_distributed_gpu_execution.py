@@ -244,6 +244,7 @@ def test_probe_evidence_contains_only_observed_execution_identity():
         expected_sum=3,
         gpu_uuid="GPU-b",
         hostname="node-b",
+        all_reduce_elapsed_ms=1.0,
     )
     assert evidence == {
         "backend": "nccl",
