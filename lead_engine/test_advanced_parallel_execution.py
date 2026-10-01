@@ -53,7 +53,7 @@ def test_context_parallel_rejects_non_divisible_sequence():
     try:
         AdvancedParallelPlanner().context_plan(
             _plan(ExecutionMode.CONTEXT_PARALLEL),
-            ContextPartitionSpec(sequence_length=1000, partition_count=4, dimension="sequence"),
+            ContextPartitionSpec(sequence_length=1002, partition_count=4, dimension="sequence"),
         )
     except ValueError as exc:
         assert "divisible" in str(exc)
