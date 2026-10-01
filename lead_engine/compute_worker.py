@@ -541,7 +541,7 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                     for assignment in assignments:
                         try:
                             mode = str((assignment.get("payload") or {}).get("execution_mode") or "").strip()
-                            if mode == "nccl":
+                            if mode in {"", "nccl"}:
                                 run_fabric_verification(client, assignment, rendezvous_endpoint=fabric_rendezvous_endpoint)
                             else:
                                 run_integrated_fabric_execution(client, assignment, rendezvous_endpoint=fabric_rendezvous_endpoint, heartbeat_seconds=heartbeat_seconds)
