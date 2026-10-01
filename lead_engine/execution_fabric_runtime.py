@@ -95,6 +95,7 @@ class ProductionExecutionFabric:
         payload: Mapping[str, Any],
         allocation: Mapping[str, Any],
         mode: ExecutionMode,
+        supported_modes: Sequence[ExecutionMode] | None = None,
     ) -> ExecutionCapability:
         resource_ids = tuple(str(x).strip() for x in allocation.get("resource_ids") or ())
         node_ids = tuple(str(x).strip() for x in allocation.get("node_ids") or ())
@@ -117,7 +118,7 @@ class ProductionExecutionFabric:
             node_ids=node_ids,
             provider_id=str(allocation.get("provider_id") or "").strip(),
             domain_id=str(allocation.get("domain_id") or "").strip(),
-            supported_modes=(mode,),
+            supported_modes=tuple(supported_modes or (mode,)),
             physical_gpu_verified=physical_gpu_verified,
             backends=backends,
             interconnects=tuple(str(x).strip() for x in payload.get("interconnects") or () if str(x).strip()),
@@ -140,6 +141,8 @@ class ProductionExecutionFabric:
         if not workload_id:
             raise ValueError("workload_id is required for execution planning")
         resource_count = len(tuple(allocation.get("resource_ids") or ()))
+        hybrid_stages = tuple(ExecutionMode(str(item)) for item in payload.get("hybrid_stages") or ()) if mode is ExecutionMode.HYBRID else ()
+        supported_modes = (ExecutionMode.HYBRID, *hybrid_stages) if mode is ExecutionMode.HYBRID else (mode,)
         min_workers = 1 if mode in {
             ExecutionMode.SINGLE_GPU,
             ExecutionMode.BATCH_PARALLEL,
@@ -154,7 +157,7 @@ class ProductionExecutionFabric:
             elastic=bool(payload.get("elastic")),
             requires_physical_gpu=True,
         )
-        capability = self._allocation_capability(payload, allocation, mode)
+        capability = self._allocation_capability(payload, allocation, mode, supported_modes)
         base = self.planner.plan(workload, (capability,))
         details: dict[str, Any] = {"integration_version": 1}
 
@@ -230,7 +233,7 @@ class ProductionExecutionFabric:
             details["nccl_execution_plan"] = asdict(self.nccl.plan(base, spec))
 
         elif mode is ExecutionMode.HYBRID:
-            stages = tuple(ExecutionMode(str(item)) for item in payload.get("hybrid_stages") or ())
+            stages = hybrid_stages
             if not stages:
                 raise ValueError("hybrid_stages is required for hybrid execution")
             details["hybrid_execution_plan"] = asdict(self.hybrid.plan(base, stages, (capability,)))
