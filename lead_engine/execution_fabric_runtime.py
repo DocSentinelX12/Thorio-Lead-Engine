@@ -25,6 +25,7 @@ from .execution_fabric_contract import (
 )
 from .hybrid_execution_planner import HybridExecutionPlanner
 from .model_partitioning import ModelLayer, ModelPartitionPlanner
+from .model_partition_execution import ModelPartitionExecutionPlanner
 from .nccl_execution import NCCLExecutionPlanner, NCCLLaunchSpec
 
 
@@ -58,12 +59,14 @@ class ProductionExecutionFabric:
         *,
         planner: ExecutionPlanner | None = None,
         model_partitions: ModelPartitionPlanner | None = None,
+        partition_execution: ModelPartitionExecutionPlanner | None = None,
         advanced: AdvancedParallelPlanner | None = None,
         nccl: NCCLExecutionPlanner | None = None,
         hybrid: HybridExecutionPlanner | None = None,
     ) -> None:
         self.planner = planner or ExecutionPlanner()
         self.model_partitions = model_partitions or ModelPartitionPlanner()
+        self.partition_execution = partition_execution or ModelPartitionExecutionPlanner()
         self.advanced = advanced or AdvancedParallelPlanner()
         self.nccl = nccl or NCCLExecutionPlanner()
         self.hybrid = hybrid or HybridExecutionPlanner()
@@ -188,7 +191,12 @@ class ProductionExecutionFabric:
                     for item in raw_layers
                     if isinstance(item, Mapping)
                 )
-                details["model_partition_plan"] = asdict(self.model_partitions.plan(base, layers))
+                partition_plan = self.model_partitions.plan(base, layers)
+                details["model_partition_plan"] = asdict(partition_plan)
+                transport = str(payload.get("partition_transport") or "p2p")
+                details["partition_execution_spec"] = asdict(
+                    self.partition_execution.build(base, partition_plan, transport=transport)
+                )
 
         elif mode in {
             ExecutionMode.TENSOR_PARALLEL,
