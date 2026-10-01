@@ -2062,7 +2062,7 @@ class ComputeCoordinator:
                     "allocation_id": allocation.get("allocation_id"),
                     "provider_id": allocation.get("provider_id"),
                     "domain_id": allocation.get("domain_id"),
-                    "node_ids": list(dict.fromkeys(str(resource.get("node_id")) for resource in gpu_resources if resource.get("node_id"))),
+                    "node_ids": [str(resource.get("node_id")) for resource in gpu_resources if resource.get("node_id")],
                     "resource_ids": [f"{resource.get('node_id')}/gpu-{resource.get('gpu_id')}" for resource in gpu_resources],
                     "resource_keys": resource_keys,
                     "capability_evidence": [
