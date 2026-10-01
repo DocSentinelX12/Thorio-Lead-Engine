@@ -3323,6 +3323,9 @@ def coordinator_from_environment() -> ComputeCoordinator:
     if os.environ.get("THORIO_KAGGLE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         from .kaggle_free_compute import KaggleFreeComputeProvider
         coordinator.register_free_compute_provider(KaggleFreeComputeProvider.from_environment())
+    if os.environ.get("THORIO_LIGHTNING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .lightning_free_compute import LightningFreeComputeProvider
+        coordinator.register_free_compute_provider(LightningFreeComputeProvider.from_environment())
     return coordinator
 
 
