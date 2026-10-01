@@ -192,6 +192,7 @@ class LightningFreeComputeProvider(FreeComputeProvider):
         aid = shlex.quote(acquisition_id)
         return (
             "set -eu; "
+            "export THORIO_LIGHTNING_REQUIRE_COORDINATOR_ENROLLMENT=1; "
             "rm -rf /tmp/thorio-worker; "
             f"git clone --depth 1 --branch {ref} {repo} /tmp/thorio-worker; "
             "cd /tmp/thorio-worker; "
@@ -219,6 +220,9 @@ class LightningFreeComputeProvider(FreeComputeProvider):
             raise LightningFreeComputeError("Lightning worker did not prove healthy GPU discovery")
         if not evidence.get("physical_gpu_execution"):
             raise LightningFreeComputeError("Lightning worker did not prove physical CUDA execution")
+        enrollment = evidence.get("coordinator_enrollment")
+        if not isinstance(enrollment, Mapping) or enrollment.get("attempted") is not True or enrollment.get("status") != "registered":
+            raise LightningFreeComputeError("Lightning worker did not complete authenticated Thorio coordinator enrollment")
         return evidence
 
 
