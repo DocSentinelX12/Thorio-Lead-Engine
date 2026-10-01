@@ -160,19 +160,13 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import socket
           host = "${{ inputs.master_addr }}"
           port = int("${{ inputs.master_port }}")
           if not host.strip():
               raise SystemExit("master_addr is required.")
           if not 1 <= port <= 65535:
               raise SystemExit("master_port must be between 1 and 65535.")
-          if int("${{ matrix.rank }}") == 0:
-              print(f"Rank 0 will host the NCCL rendezvous on {host}:{port}.")
-          else:
-              print(f"Rank 1 will connect to the NCCL rendezvous at {host}:{port}.")
-              with socket.create_connection((host, port), timeout=10):
-                  print("Rank 1 reached the NCCL rendezvous endpoint.")
+          print(f"NCCL rendezvous configuration validated for {host}:{port}.")
           PY
 
       - name: Run exact Thorio NCCL all-reduce probe
@@ -353,6 +347,30 @@ jobs:
               raise SystemExit("One or more rank logs lacks NCCL debug evidence.")
           if len(logs) != 2:
               raise SystemExit(f"Expected two rank logs, found {len(logs)}")
+
+          by_rank = {int(item["rank"]): item for item in records}
+          aggregate_transport = next(iter(transports))
+          for rank in (0, 1):
+              peers = [
+                  edge for edge in (by_rank[rank].get("peer_connections") or ())
+                  if isinstance(edge, dict)
+              ]
+              cross_rank = [
+                  edge for edge in peers
+                  if int(edge.get("peer_rank", -1)) == (1 - rank)
+              ]
+              if not cross_rank:
+                  raise SystemExit(
+                      f"Rank {rank} has no NCCL peer-connection evidence to the other physical rank."
+                  )
+              if any(
+                  str(edge.get("transport") or "").strip().upper() != aggregate_transport
+                  for edge in cross_rank
+              ):
+                  raise SystemExit(
+                      f"Rank {rank} has a cross-rank NCCL peer connection using a transport "
+                      f"that does not match the verified aggregate transport."
+                  )
 
           print("PHYSICAL MULTI-NODE NCCL VERIFIED")
           print(json.dumps({
