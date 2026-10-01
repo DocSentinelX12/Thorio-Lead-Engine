@@ -6,7 +6,7 @@ and resource reservation remain owned by ComputeCoordinator/ComputeScheduler.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
 
 from .advanced_parallel_execution import (
@@ -46,7 +46,7 @@ class IntegratedExecutionPlan:
             "evidence_state": self.execution_plan.evidence_state,
             "execution_started": self.execution_plan.execution_started,
             "physical_execution_verified": self.execution_plan.physical_execution_verified,
-            "mode_details": dict(self.mode_details),
+            "mode_details": self._jsonable(self.mode_details),
         }
 
 
@@ -67,6 +67,18 @@ class ProductionExecutionFabric:
         self.advanced = advanced or AdvancedParallelPlanner()
         self.nccl = nccl or NCCLExecutionPlanner()
         self.hybrid = hybrid or HybridExecutionPlanner()
+
+    @staticmethod
+    def _jsonable(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {str(k): ProductionExecutionFabric._jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [ProductionExecutionFabric._jsonable(v) for v in value]
+        if isinstance(value, ExecutionMode):
+            return value.value
+        if hasattr(value, "__dataclass_fields__"):
+            return ProductionExecutionFabric._jsonable(asdict(value))
+        return value
 
     @staticmethod
     def _mode(payload: Mapping[str, Any]) -> ExecutionMode:
@@ -160,7 +172,7 @@ class ProductionExecutionFabric:
                     for item in raw_layers
                     if isinstance(item, Mapping)
                 )
-                details["model_partition_plan"] = self.model_partitions.plan(base, layers).__dict__
+                details["model_partition_plan"] = asdict(self.model_partitions.plan(base, layers))
 
         elif mode in {
             ExecutionMode.TENSOR_PARALLEL,
@@ -178,7 +190,7 @@ class ProductionExecutionFabric:
                     )
                     for item in payload["tensor_shards"]
                 )
-                advanced_payload["tensor_shard_plan"] = self.advanced.plan_tensor(base, specs).__dict__
+                advanced_payload["tensor_shard_plan"] = asdict(self.advanced.tensor_plan(base, specs))
             elif mode is ExecutionMode.CONTEXT_PARALLEL and payload.get("context_partition") is not None:
                 item = payload["context_partition"]
                 spec = ContextPartitionSpec(
@@ -186,13 +198,13 @@ class ProductionExecutionFabric:
                     partition_count=int(item.get("partition_count", base.worker_count)),
                     dimension=str(item.get("dimension", "sequence")),
                 )
-                advanced_payload["context_partition_plan"] = self.advanced.plan_context(base, spec).__dict__
+                advanced_payload["context_partition_plan"] = asdict(self.advanced.context_plan(base, spec))
             elif mode is ExecutionMode.EXPERT_PARALLEL and payload.get("experts") is not None:
                 specs = tuple(
                     ExpertSpec(expert_id=str(item["expert_id"]), rank=int(item["rank"]))
                     for item in payload["experts"]
                 )
-                advanced_payload["expert_parallel_plan"] = self.advanced.plan_experts(base, specs).__dict__
+                advanced_payload["expert_parallel_plan"] = asdict(self.advanced.expert_plan(base, specs))
             elif mode is ExecutionMode.SHARDED_STATE and payload.get("sharded_state") is not None:
                 item = payload["sharded_state"]
                 spec = ShardedStateSpec(
@@ -204,7 +216,7 @@ class ProductionExecutionFabric:
                     reshard_after_backward=bool(item.get("reshard_after_backward", True)),
                     checkpoint_required=bool(item.get("checkpoint_required", True)),
                 )
-                advanced_payload["sharded_state_plan"] = self.advanced.plan_sharded_state(base, spec).__dict__
+                advanced_payload["sharded_state_plan"] = asdict(self.advanced.sharded_state_plan(base, spec))
             details.update(advanced_payload)
 
         elif mode is ExecutionMode.NCCL:
@@ -215,15 +227,12 @@ class ProductionExecutionFabric:
                 socket_interface=str(launch.get("socket_interface") or "auto"),
                 collective=str(launch.get("collective") or "all_reduce"),
             )
-            details["nccl_execution_plan"] = self.nccl.plan(
-                base,
-                spec,
-            ).__dict__
+            details["nccl_execution_plan"] = asdict(self.nccl.plan(base, spec))
 
         elif mode is ExecutionMode.HYBRID:
             stages = tuple(ExecutionMode(str(item)) for item in payload.get("hybrid_stages") or ())
             if not stages:
                 raise ValueError("hybrid_stages is required for hybrid execution")
-            details["hybrid_execution_plan"] = self.hybrid.plan(base, stages, (capability,)).__dict__
+            details["hybrid_execution_plan"] = asdict(self.hybrid.plan(base, stages, (capability,)))
 
         return IntegratedExecutionPlan(base, details)
