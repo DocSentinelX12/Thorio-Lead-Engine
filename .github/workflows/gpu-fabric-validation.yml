@@ -120,7 +120,8 @@ jobs:
             lead_engine/test_fabric_verification.py \
             lead_engine/test_execution_fabric_runtime.py \
             lead_engine/test_distributed_execution_contract.py \
-            lead_engine/test_distributed_gpu_execution.py
+            lead_engine/test_distributed_gpu_execution.py \
+            lead_engine/test_compute_coordinator.py
 
       - name: Run compute remote and execution fabric regressions
         run: |
