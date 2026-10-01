@@ -25,8 +25,8 @@ def validate_launch_plan(
         raise DistributedExecutionContractError("world_size and nnodes must be integers") from exc
     if world_size < 2:
         raise DistributedExecutionContractError("world_size must be at least 2")
-    if nnodes < 2:
-        raise DistributedExecutionContractError("nnodes must be at least 2")
+    if nnodes < 1:
+        raise DistributedExecutionContractError("nnodes must be at least 1")
 
     endpoint = str(plan.get("rendezvous_endpoint") or expected_endpoint or "").strip()
     if not endpoint:
