@@ -55,6 +55,18 @@ def reconcile_allocations(
                         "reason": f"unexpected execution attempt state {attempt['status']!r}",
                     })
                     continue
+                if attempt["status"] == "leased":
+                    # An active coordinator attempt already owns this physical
+                    # reservation at the execution boundary. Do not mutate the
+                    # inventory reservation into a bound state during passive
+                    # reconciliation. The generation-specific binding remains
+                    # authoritative in the coordinator, and the reservation
+                    # stays intact until terminal release.
+                    worker = coordinator.pool.worker(attempt["worker_id"])
+                    if worker and worker["status"] == "stale":
+                        stale_workers.append(allocation_id)
+                    active.append(allocation_id)
+                    continue
                 bound = inventory.bind_allocation(
                     allocation_id,
                     task_id=attempt["task_id"],
