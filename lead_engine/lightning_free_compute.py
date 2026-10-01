@@ -15,8 +15,8 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -140,19 +140,8 @@ class LightningFreeComputeProvider(FreeComputeProvider):
             raise LightningFreeComputeError(f"Lightning Studio start failed: {type(exc).__name__}: {exc}") from exc
 
         acquisition_id = self._acquisition_id(offer)
-        bootstrap = self._bootstrap_command(acquisition_id)
         try:
-            try:
-                result = studio.run_with_exit_code(bootstrap)
-            except AttributeError:
-                result = studio.run(bootstrap)
-
-            stdout = getattr(result, "stdout", None) if not isinstance(result, tuple) else result[0]
-            stderr = getattr(result, "stderr", None) if not isinstance(result, tuple) else (result[1] if len(result) > 1 else "")
-            exit_code = getattr(result, "exit_code", None) if not isinstance(result, tuple) else (result[2] if len(result) > 2 else 0)
-            if exit_code not in (None, 0):
-                raise LightningFreeComputeError(f"Lightning worker bootstrap exited {exit_code}: {(stderr or stdout or '')[-4000:]}")
-            payload = self._parse_bootstrap_evidence(str(stdout or ""))
+            payload = self._ssh_bootstrap(acquisition_id)
         except Exception as exc:
             try:
                 stop = getattr(studio, "stop", None)
@@ -186,6 +175,132 @@ class LightningFreeComputeProvider(FreeComputeProvider):
                 "cuda_execution_required": True,
             },
         )
+
+    def _ssh_teamspace_args(self) -> list[str]:
+        teamspace = self.config.teamspace
+        if teamspace and "/" in teamspace:
+            return ["--teamspace", teamspace]
+        env_teamspace = os.environ.get("LIGHTNING_TEAMSPACE", "").strip()
+        if env_teamspace and "/" in env_teamspace:
+            return ["--teamspace", env_teamspace]
+        org = os.environ.get("LIGHTNING_ORG", "").strip()
+        if org and teamspace:
+            return ["--teamspace", f"{org}/{teamspace}"]
+        return []
+
+    def _configure_ssh(self) -> None:
+        command = ["lightning", "ssh", "configure", "--name", self.config.studio_name]
+        command.extend(self._ssh_teamspace_args())
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise LightningFreeComputeError(f"Lightning SSH configuration failed: {exc}") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[-4000:]
+            raise LightningFreeComputeError(
+                f"Lightning SSH configuration failed with exit code {result.returncode}: {detail}"
+            )
+
+    @staticmethod
+    def _ssh_connection_target(alias: str) -> Mapping[str, Any]:
+        try:
+            result = subprocess.run(
+                ["ssh", "-G", alias], capture_output=True, text=True, timeout=30, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise LightningFreeComputeError(f"Lightning SSH target resolution failed: {exc}") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[-4000:]
+            raise LightningFreeComputeError(
+                f"Lightning SSH target resolution failed with exit code {result.returncode}: {detail}"
+            )
+        values: dict[str, list[str]] = {}
+        for line in result.stdout.splitlines():
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            key, value = parts
+            values.setdefault(key, []).append(value.strip())
+        hostname = values.get("hostname", [""])[0]
+        user = values.get("user", [""])[0]
+        port = values.get("port", [""])[0]
+        if not hostname or not user or not port:
+            raise LightningFreeComputeError("Lightning SSH configuration did not expose a complete connection target")
+        identity_files = tuple(value for value in values.get("identityfile", ()) if value and value.lower() != "none")
+        return {
+            "alias": alias,
+            "hostname": hostname,
+            "user": user,
+            "port": port,
+            "identity_files": identity_files,
+            "authentication_mode": "identity_file" if identity_files else "ssh_agent_or_provider_config",
+        }
+
+    def _ssh_bootstrap(self, acquisition_id: str) -> Mapping[str, Any]:
+        self._configure_ssh()
+        target = self._ssh_connection_target(self.config.studio_name)
+        bootstrap = self._bootstrap_command(acquisition_id)
+        command = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=30",
+            "-o", "ServerAliveInterval=30",
+            "-o", "ServerAliveCountMax=3",
+            self.config.studio_name,
+            bootstrap,
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=int(os.environ.get("THORIO_LIGHTNING_SSH_TIMEOUT_SECONDS", "900")),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise LightningFreeComputeError(f"Lightning authenticated SSH session failed: {exc}") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[-4000:]
+            raise LightningFreeComputeError(
+                f"Lightning authenticated SSH bootstrap exited {result.returncode}: {detail}"
+            )
+        payload = self._parse_bootstrap_evidence(result.stdout or "")
+        gpu_resources = payload.get("gpu_resources")
+        execution = payload.get("physical_gpu_execution")
+        worker_id = str(payload.get("worker_id") or "").strip()
+        if not worker_id or not isinstance(gpu_resources, list) or not isinstance(execution, list):
+            raise LightningFreeComputeError("Lightning SSH bootstrap evidence is missing worker or GPU identity")
+        resource_uuids = {
+            str(item.get("gpu_uuid")).strip()
+            for item in gpu_resources
+            if isinstance(item, Mapping) and item.get("gpu_uuid")
+        }
+        execution_uuids = {
+            str(item.get("gpu_uuid")).strip()
+            for item in execution
+            if isinstance(item, Mapping) and item.get("gpu_uuid")
+        }
+        if not resource_uuids or resource_uuids != execution_uuids:
+            raise LightningFreeComputeError(
+                "Lightning SSH bootstrap evidence does not bind the physical CUDA execution to the discovered GPU identities"
+            )
+        if str(payload.get("acquisition_id") or "").strip() != acquisition_id:
+            raise LightningFreeComputeError("Lightning SSH bootstrap evidence has the wrong acquisition identity")
+        if str(payload.get("provider_id") or "").strip() != self.provider_id:
+            raise LightningFreeComputeError("Lightning SSH bootstrap evidence has the wrong provider identity")
+        payload = dict(payload)
+        payload["ssh"] = {
+            "available": True,
+            "verification": "authenticated_ssh_session",
+            "session_executed": True,
+            "studio_name": self.config.studio_name,
+            "connection_target": dict(target),
+            "acquisition_id": acquisition_id,
+            "worker_id": worker_id,
+            "gpu_uuids": sorted(resource_uuids),
+            "bootstrap_transport": "ssh",
+        }
+        return payload
 
     def release_free(self, acquisition: AcquiredCompute) -> None:
         Machine, Studio = self._sdk()
