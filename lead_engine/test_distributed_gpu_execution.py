@@ -232,7 +232,7 @@ def test_active_gdrdma_measurement_parses_only_explicit_bandwidth_and_latency():
 
     assert result["measurement_status"] == "measured"
     assert result["bandwidth_samples"] == ({"message_size_bytes": 64, "iterations": 5000, "peak_bandwidth_gbps": 201.0, "bandwidth_gbps": 187.5, "message_rate_mpps": 7.02},)
-    assert result["bandwidth_gbps"] is None
+    assert result["bandwidth_gbps"] == 187.5
     assert result["latency_us"] is None
     assert result["raw_measurement_evidence"]["bandwidth_lines"] == ("64         5000             201.0               187.5               7.02",)
 
@@ -257,6 +257,7 @@ def test_probe_evidence_contains_only_observed_execution_identity():
         "gpu_uuid": "GPU-b",
         "hostname": "node-b",
     }
+    assert evidence["all_reduce_elapsed_ms"] == 1.0
     assert "network_transport" not in evidence
     assert "gpu_direct_rdma" not in evidence
 
@@ -276,6 +277,7 @@ def test_distributed_execution_launches_exact_gpu_with_deterministic_rank_and_cu
             expected_sum=3,
             gpu_uuid=environment["THORIO_EXPECTED_GPU_UUID"],
             hostname="node-a",
+            all_reduce_elapsed_ms=1.0,
         )
         return 0, "THORIO_NCCL_PROBE_OK " + json.dumps(probe), "NCCL INFO Using network Socket"
 
