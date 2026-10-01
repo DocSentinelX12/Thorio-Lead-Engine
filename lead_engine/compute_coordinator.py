@@ -2055,14 +2055,24 @@ class ComputeCoordinator:
             item["resource_ids"] = json.loads(item["resource_ids"] or "[]")
             allocation = self.inventory.allocation(str(item.get("allocation_id") or ""))
             if allocation is not None:
+                resource_keys = [str(key) for key in allocation.get("resource_keys") or ()]
+                resources = [self.inventory.get(key) for key in resource_keys]
+                gpu_resources = [resource for resource in resources if resource and resource.get("resource_type") == "gpu"]
                 item["physical_allocation"] = {
                     "allocation_id": allocation.get("allocation_id"),
                     "provider_id": allocation.get("provider_id"),
                     "domain_id": allocation.get("domain_id"),
-                    "node_ids": list(allocation.get("node_ids") or ()),
-                    "resource_ids": list(allocation.get("resource_ids") or ()),
-                    "resource_keys": list(allocation.get("resource_keys") or ()),
-                    "capability_evidence": list(allocation.get("capability_evidence") or ()),
+                    "node_ids": list(dict.fromkeys(str(resource.get("node_id")) for resource in gpu_resources if resource.get("node_id"))),
+                    "resource_ids": [f"{resource.get('node_id')}/gpu-{resource.get('gpu_id')}" for resource in gpu_resources],
+                    "resource_keys": resource_keys,
+                    "capability_evidence": [
+                        {
+                            "resource_id": f"{resource.get('node_id')}/gpu-{resource.get('gpu_id')}",
+                            "gpu_id": str(resource.get("gpu_id") or ""),
+                            "gpu_uuid": str((json.loads(resource.get("payload_json") or "{}")).get("gpu_uuid") or ""),
+                        }
+                        for resource in gpu_resources
+                    ],
                 }
             result.append(item)
         return result
