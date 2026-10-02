@@ -474,8 +474,12 @@ class FreeComputeAcquisitionManager:
             expires_at = item.get("expires_at")
             return expires_at is None or float(expires_at) > now
 
+        acquired = [
+            item for item in records
+            if item["status"] in {"acquired", "verified"} and active(item)
+        ]
         verified = [item for item in records if item["status"] == "verified"]
-        eligible = [item for item in verified if active(item)]
+        eligible = [item for item in acquired if item["status"] == "verified"]
         expired_verified = [item for item in verified if not active(item)]
         return {
             "provider_count": len(self._providers),
@@ -491,7 +495,7 @@ class FreeComputeAcquisitionManager:
                 1 for item in records
                 if item["status"] == "acquired" and not active(item)
             ),
-            "eligible_acquired_count": len(eligible),
+            "eligible_acquired_count": len(acquired),
             "eligible_verified_count": len(eligible),
             "expired_verified_count": len(expired_verified),
         }
@@ -506,8 +510,16 @@ class FreeComputeAcquisitionManager:
         discovery = self.discover()
         acquired: list[dict[str, Any]] = []
         errors = list(discovery["errors"])
+        durable = {
+            str(item["acquisition_id"]): str(item["status"])
+            for item in self.store.records()
+            if str(item["status"]) in {"acquired", "verified"}
+        }
         for offer_data in discovery["offers"]:
             offer = FreeComputeOffer(**offer_data)
+            acquisition_id = self.store.acquisition_id(offer)
+            if acquisition_id in durable:
+                continue
             try:
                 result = self.acquire(offer)
                 acquired.append(asdict(result))
