@@ -35,7 +35,7 @@ class CoordinatorProvider(FreeComputeProvider):
 
 
 def test_coordinator_exposes_zero_cost_acquisition_without_bypassing_fabric_inventory(tmp_path):
-    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="token")
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="token", clock=lambda: 150.0)
     coordinator.register_free_compute_provider(CoordinatorProvider())
 
     discovered = coordinator.discover_free_compute()
