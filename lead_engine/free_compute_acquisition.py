@@ -476,10 +476,10 @@ class FreeComputeAcquisitionManager:
 
         acquired = [
             item for item in records
-            if item["status"] in {"acquired", "verified"} and active(item)
+            if item["status"] == "acquired" and active(item)
         ]
         verified = [item for item in records if item["status"] == "verified"]
-        eligible = [item for item in acquired if item["status"] == "verified"]
+        eligible = [item for item in verified if active(item)]
         expired_verified = [item for item in verified if not active(item)]
         return {
             "provider_count": len(self._providers),
@@ -495,7 +495,7 @@ class FreeComputeAcquisitionManager:
                 1 for item in records
                 if item["status"] == "acquired" and not active(item)
             ),
-            "eligible_acquired_count": len(acquired),
+            "eligible_acquired_count": len(eligible),
             "eligible_verified_count": len(eligible),
             "expired_verified_count": len(expired_verified),
         }
