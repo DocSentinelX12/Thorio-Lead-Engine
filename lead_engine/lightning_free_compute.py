@@ -314,7 +314,7 @@ class LightningFreeComputeProvider(FreeComputeProvider):
         if callable(stop):
             stop()
 
-    def _bootstrap_command(self, acquisition_id: str, coordinator_url: str) -> str:
+    def _bootstrap_command(self, acquisition_id: str, coordinator_url: str | None = None) -> str:
         repo = shlex.quote(self.config.repo)
         ref = shlex.quote(self.config.ref)
         aid = shlex.quote(acquisition_id)
