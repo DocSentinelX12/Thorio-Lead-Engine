@@ -239,7 +239,13 @@ class LightningFreeComputeProvider(FreeComputeProvider):
     def _ssh_bootstrap(self, acquisition_id: str) -> Mapping[str, Any]:
         self._configure_ssh()
         target = self._ssh_connection_target(self.config.studio_name)
-        bootstrap = self._bootstrap_command(acquisition_id)
+        coordinator_url = os.environ.get("THORIO_COMPUTE_COORDINATOR_URL", "").strip()
+        coordinator_token = os.environ.get("THORIO_COMPUTE_AUTH_TOKEN", "")
+        if not coordinator_url or not coordinator_token:
+            raise LightningFreeComputeError(
+                "Coordinator enrollment credentials are required for Lightning bootstrap"
+            )
+        bootstrap = self._bootstrap_command(acquisition_id, coordinator_url)
         command = [
             "ssh",
             "-o", "BatchMode=yes",
