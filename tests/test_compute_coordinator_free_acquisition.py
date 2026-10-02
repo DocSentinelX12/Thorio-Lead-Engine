@@ -27,7 +27,7 @@ class CoordinatorProvider(FreeComputeProvider):
             domain_id=offer.domain_id,
             offer_id=offer.offer_id,
             acquisition_id=FreeComputeAcquisitionStore.acquisition_id(offer),
-            acquired_at=time.time(),
+            acquired_at=150.0,
             expires_at=offer.expires_at,
             gpu_capable=offer.gpu_capable,
             enrollment={"worker_id": "external-worker", "enrollment_mode": "authenticated"},
