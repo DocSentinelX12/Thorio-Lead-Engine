@@ -37,7 +37,7 @@ from .execution_work_units import build_gpu_workload_payload, build_independent_
 
 
 class ComputeCoordinator:
-    def __init__(self, db_path: str, auth_token: str, lease_seconds: int = 300, inventory: ComputeInventory | None = None):
+    def __init__(self, db_path: str, auth_token: str, lease_seconds: int = 300, inventory: ComputeInventory | None = None, clock=time.time):
         if not auth_token:
             raise ValueError("auth_token is required")
         if lease_seconds < 1:
@@ -53,7 +53,7 @@ class ComputeCoordinator:
         self.compute_fabric_recovery = ComputeFabricRecoverySupervisor(self, fabric=self.compute_fabric)
         self.compute_fabric_controller = ComputeFabricController(self, fabric=self.compute_fabric)
         self.execution_fabric = ProductionExecutionFabric()
-        self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path))
+        self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path), clock=clock)
         self._lock = threading.RLock()
         self._initialize_tasks()
 
