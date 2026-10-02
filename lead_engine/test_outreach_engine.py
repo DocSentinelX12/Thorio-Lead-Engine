@@ -83,7 +83,7 @@ def test_objection_handler_does_not_make_unsupported_price_claims(): assert "ass
 
 
 def test_astrivon_outreach_requests_introductory_meeting():
-    lead = lead(
+    lead_data = lead(
         potential_routes=["Astrivon Labs"],
         qualification_results={
             "Astrivon Labs": {
@@ -95,21 +95,21 @@ def test_astrivon_outreach_requests_introductory_meeting():
             }
         },
     )
-    lead["research_status"] = "complete"
-    lead["research_verified_fields"] = [
+    lead_data["research_status"] = "complete"
+    lead_data["research_verified_fields"] = [
         "current_intent_research",
         "business_need_research",
     ]
-    lead["current_intent_research"] = {
+    lead_data["current_intent_research"] = {
         "verified": True,
         "current_need": "Looking for a dev agency",
         "evidence_url": "https://example.com/need",
     }
-    lead["business_need_research"] = {
+    lead_data["business_need_research"] = {
         "verified": True,
         "business_need": "Need an MVP built",
         "evidence_url": "https://example.com/mvp",
     }
-    decision = build_outreach_decision(lead)
+    decision = build_outreach_decision(lead_data)
     assert decision.route == "Astrivon Labs"
     assert "introductory meeting" in decision.body
