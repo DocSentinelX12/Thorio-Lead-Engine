@@ -6,7 +6,7 @@ on:
       run_physical_proof:
         description: "Confirm manual execution of the physical external GPU proof"
         required: true
-        default: "true"
+        default: true
         type: boolean
 
 permissions:
@@ -27,24 +27,71 @@ jobs:
         with:
           ref: feature/gpu-fabric-foundation
 
-      - name: Verify manual physical proof confirmation
+      - name: Set up Python for Kaggle CLI
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install and verify Kaggle CLI
+        id: install_kaggle
         run: |
           set -euo pipefail
-          if [ "${{ inputs.run_physical_proof }}" != "true" ]; then
-            echo "Manual physical GPU proof was not confirmed."
-            exit 1
-          fi
-
-      - name: Install Kaggle CLI
-        run: python -m pip install --upgrade kaggle
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade kaggle
+          command -v kaggle
+          kaggle --version
 
       - name: Verify Kaggle authentication without exposing credentials
         run: |
           set -euo pipefail
-          test -n "${KAGGLE_USERNAME}"
-          test -n "${KAGGLE_KEY}"
+          if [ -z "${KAGGLE_USERNAME}" ]; then
+            echo "THORIO_KAGGLE_USERNAME secret is not configured." >&2
+            exit 1
+          fi
+          if [ -z "${KAGGLE_KEY}" ]; then
+            echo "THORIO_KAGGLE_KEY secret is not configured." >&2
+            exit 1
+          fi
           kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
           echo "Kaggle authentication verified."
+
+      - name: Verify manual physical proof confirmation
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.run_physical_proof }}" != "true" ]; then
+            echo "Manual physical GPU proof was not confirmed." >&2
+            exit 1
+          fi
+          echo "Manual physical GPU proof confirmation verified."
+
+      - name: Verify free GPU quota
+        run: |
+          set -euo pipefail
+          quota_json="$(kaggle quota --format json)"
+          export KAGGLE_QUOTA_JSON="$quota_json"
+          python - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["KAGGLE_QUOTA_JSON"])
+          rows = payload.get("rows") if isinstance(payload, dict) else payload
+          if not isinstance(rows, list):
+              raise SystemExit("Kaggle quota response contains no structured rows.")
+          gpu = next(
+              (row for row in rows
+               if isinstance(row, dict) and str(row.get("resource", "")).strip().upper() == "GPU"),
+              None,
+          )
+          if gpu is None:
+              raise SystemExit("Kaggle account reported no GPU quota.")
+          remaining = str(gpu.get("remaining", "")).strip().lower()
+          if not remaining.endswith("h"):
+              raise SystemExit(f"Unrecognized Kaggle GPU quota value: {remaining!r}")
+          hours = float(remaining[:-1])
+          if hours <= 0:
+              raise SystemExit("Kaggle GPU quota is exhausted.")
+          print(f"Kaggle GPU quota available: {hours:.2f}h")
+          PY
 
       - name: Resolve exact proof revision
         id: proof_revision
@@ -248,6 +295,7 @@ jobs:
           EXPECTED_PROOF_SHA: ${{ steps.proof_revision.outputs.proof_sha }}
 
       - name: Delete external proof kernel
-        if: always()
+        if: ${{ always() && steps.install_kaggle.outcome == 'success' && env.KAGGLE_USERNAME != '' }}
         run: |
+          set -euo pipefail
           kaggle kernels delete "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" --yes || true
