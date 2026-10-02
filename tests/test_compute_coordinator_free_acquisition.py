@@ -59,5 +59,7 @@ def test_coordinator_exposes_zero_cost_acquisition_without_bypassing_fabric_inve
     status = coordinator.free_compute_status()
     assert status["free_only"] is True
     assert status["paid_capacity_allowed"] is False
-    assert status["eligible_acquired_count"] == 1
+    assert status["acquired_unverified_count"] == 1
+    assert status["eligible_acquired_count"] == 0
+    assert status["eligible_verified_count"] == 0
     assert coordinator.inventory.resources() == []
