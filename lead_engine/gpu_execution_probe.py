@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 
 
@@ -41,7 +42,7 @@ def run_probe(expected_gpu_uuid: str) -> dict[str, object]:
     if checksum != 120.0:
         raise RuntimeError(f"CUDA execution checksum mismatch: expected 120.0, got {checksum}")
 
-    return {
+    evidence = {
         "verified": True,
         "execution_backend": "cuda",
         "operation": "torch_cuda_matmul",
@@ -51,6 +52,10 @@ def run_probe(expected_gpu_uuid: str) -> dict[str, object]:
         "checksum": checksum,
         "elapsed_ms": elapsed_ms,
     }
+    proof_sha = os.environ.get("THORIO_PROOF_SHA", "").strip()
+    if proof_sha:
+        evidence["proof_sha"] = proof_sha
+    return evidence
 
 
 def main() -> None:
