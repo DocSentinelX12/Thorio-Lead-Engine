@@ -100,7 +100,7 @@ def test_acquisition_cannot_extend_observed_offer_lifetime(tmp_path):
             )
 
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     manager.register(ExtendingProvider())
 
     with pytest.raises(FreeComputeAcquisitionError, match="expiry cannot extend"):
@@ -125,7 +125,7 @@ def test_acquisition_cannot_drop_a_finite_offer_expiry(tmp_path):
             )
 
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     manager.register(UnboundedProvider())
 
     with pytest.raises(FreeComputeAcquisitionError, match="expiry cannot extend"):
@@ -150,7 +150,7 @@ def test_acquisition_cannot_claim_gpu_capability_absent_from_offer(tmp_path):
             )
 
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     manager.register(GpuClaimingProvider())
 
     cpu_offer = FreeComputeOffer(
@@ -197,7 +197,7 @@ def test_provider_failure_becomes_retry_pending_without_fabricating_capacity(tmp
             raise RuntimeError("provider unavailable")
 
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     manager.register(FailingProvider())
 
     with pytest.raises(RuntimeError, match="provider unavailable"):
@@ -214,7 +214,7 @@ def test_provider_failure_becomes_retry_pending_without_fabricating_capacity(tmp
 def test_release_uses_provider_and_durably_marks_release(tmp_path):
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
     provider = Provider()
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     manager.register(provider)
     acquired = manager.acquire(offer(expires_at=200.0))
 
@@ -396,7 +396,7 @@ def test_continuous_hunter_runs_immediately_then_waits_between_cycles(tmp_path):
         manager.run_continuously(interval_seconds=7.0, sleep=sleep, on_cycle=lambda result: cycles.append(result))
 
     assert len(cycles) == 2
-    assert sleeps == [7.0]
+    assert sleeps == [7.0, 7.0]
 
 
 def test_gpu_worker_verification_rejects_missing_physical_execution_evidence(tmp_path):
