@@ -447,9 +447,22 @@ class FreeComputeAcquisitionManager:
         )
 
     def release(self, acquisition: AcquiredCompute) -> None:
-        provider = self._providers.get(acquisition.provider_id)
+        provider_id = str(acquisition.provider_id).strip()
+        domain_id = str(acquisition.domain_id).strip()
+        exact_key = f"{provider_id}:{domain_id}"
+        provider = self._providers.get(exact_key)
         if provider is None:
-            raise FreeComputeAcquisitionError(f"free compute provider is not registered: {acquisition.provider_id}")
+            matching = [
+                candidate
+                for candidate in self._providers.values()
+                if str(candidate.provider_id).strip() == provider_id
+            ]
+            if len(matching) == 1:
+                provider = matching[0]
+        if provider is None:
+            raise FreeComputeAcquisitionError(
+                f"free compute provider domain is not registered: {provider_id}:{domain_id}"
+            )
         provider.release_free(acquisition)
         self.store.mark_released(acquisition.acquisition_id)
 
