@@ -354,12 +354,11 @@ def test_continuous_hunter_discovers_and_acquires_without_stopping_on_provider_f
                 acquired_at=110.0,
                 expires_at=500.0,
                 gpu_capable=True,
-                no_cost=True,
                 enrollment={"worker_id": "healthy-worker", "enrollment_mode": "authenticated"},
             )
 
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     flaky = FlakyProvider()
     manager.register(flaky)
     manager.register(HealthyProvider())
@@ -401,7 +400,7 @@ def test_continuous_hunter_runs_immediately_then_waits_between_cycles(tmp_path):
 
 def test_gpu_worker_verification_rejects_missing_physical_execution_evidence(tmp_path):
     store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
-    manager = FreeComputeAcquisitionManager(store)
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
     provider = Provider()
     manager.register(provider)
     acquired = manager.acquire(offer(expires_at=200.0))
