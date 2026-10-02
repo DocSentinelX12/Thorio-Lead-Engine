@@ -318,7 +318,7 @@ class LightningFreeComputeProvider(FreeComputeProvider):
         repo = shlex.quote(self.config.repo)
         ref = shlex.quote(self.config.ref)
         aid = shlex.quote(acquisition_id)
-        coordinator = shlex.quote(coordinator_url)
+        coordinator = shlex.quote(coordinator_url) if coordinator_url else ""
         return (
             "set -eu; "
             "export THORIO_LIGHTNING_REQUIRE_COORDINATOR_ENROLLMENT=1; "
