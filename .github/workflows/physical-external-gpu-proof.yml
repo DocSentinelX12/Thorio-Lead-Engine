@@ -74,7 +74,12 @@ jobs:
           import os
 
           payload = json.loads(os.environ["KAGGLE_QUOTA_JSON"])
-          rows = payload.get("rows") if isinstance(payload, dict) else payload
+          if isinstance(payload, dict):
+              rows = payload.get("rows")
+              if not isinstance(rows, list):
+                  rows = payload.get("data")
+          else:
+              rows = payload
           if not isinstance(rows, list):
               raise SystemExit("Kaggle quota response contains no structured rows.")
           gpu = next(
@@ -92,6 +97,29 @@ jobs:
               raise SystemExit("Kaggle GPU quota is exhausted.")
           print(f"Kaggle GPU quota available: {hours:.2f}h")
           PY
+
+      - name: Verify proof kernel is not already active
+        run: |
+          set -euo pipefail
+          kernel_ref="${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}"
+          status="$(kaggle kernels status "$kernel_ref" 2>&1 || true)"
+          lowered="$(printf "%s" "$status" | tr "[:upper:]" "[:lower:]")"
+          printf "%s\n" "$status"
+          if printf "%s" "$lowered" | grep -Eq "not found|404"; then
+            echo "No existing proof kernel is present."
+            exit 0
+          fi
+          if printf "%s" "$lowered" | grep -Eq "running|queued|pending"; then
+            echo "The proof kernel is already active. Refusing to overwrite an active external execution." >&2
+            exit 1
+          fi
+          if printf "%s" "$lowered" | grep -Eq "complete|completed|error|failed|cancelled"; then
+            echo "Removing stale proof kernel before submitting a fresh physical proof."
+            kaggle kernels delete "$kernel_ref" --yes
+            exit 0
+          fi
+          echo "Unable to classify existing proof kernel status safely." >&2
+          exit 1
 
       - name: Resolve exact proof revision
         id: proof_revision
