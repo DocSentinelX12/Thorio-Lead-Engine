@@ -11,9 +11,6 @@ GITHUB_API_URL="${GITHUB_API_URL:-https://api.github.com}"
 GITHUB_API_VERSION="${GITHUB_API_VERSION:-2026-03-10}"
 RUNNER_GROUP_ID="${GITHUB_RUNNER_GROUP_ID:-1}"
 
-# JIT is the preferred registration mechanism. The API token must have
-# repository Administration: write permission. A legacy registration token is
-# retained only as an explicit compatibility fallback.
 JIT_TOKEN_FILE="${GITHUB_RUNNER_JIT_TOKEN_FILE:-}"
 REGISTRATION_TOKEN="${GITHUB_RUNNER_REGISTRATION_TOKEN:-}"
 
@@ -25,8 +22,6 @@ fi
 mkdir -p "${RUNNER_ROOT}"
 cd "${RUNNER_ROOT}"
 
-# Never register a machine as a GPU runner until the physical NVIDIA device
-# and CUDA runtime are observable locally.
 command -v nvidia-smi >/dev/null 2>&1 || {
   echo "GPU RUNNER REFUSED: nvidia-smi is unavailable."
   exit 20
@@ -67,12 +62,18 @@ case "${ARCH}" in
   *) echo "GPU RUNNER REFUSED: unsupported architecture ${ARCH}." >&2; exit 21 ;;
 esac
 
-if [ -z "${RUNNER_VERSION}" ] || [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
-  # The repository-scoped runner-downloads endpoint requires repository
-  # Administration: read. The JIT token is intentionally used for runner
-  # creation and may not expose that read permission in every token setup.
-  # Runner releases are public, so discover the latest published release from
-  # actions/runner instead and select the exact Linux architecture asset.
+# Prefer an explicitly supplied download URL. Otherwise, when a runner
+# version is known, construct the public release asset URL directly. Only fall
+# back to release discovery when neither value is available. This avoids
+# passing a large releases JSON document through argv on constrained workers.
+if [ -n "${RUNNER_DOWNLOAD_URL:-}" ]; then
+  if [ -z "${RUNNER_TARBALL_NAME:-}" ]; then
+    RUNNER_TARBALL_NAME="$(basename "${RUNNER_DOWNLOAD_URL}")"
+  fi
+elif [ -n "${RUNNER_VERSION:-}" ]; then
+  RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
+  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
+else
   RUNNER_RELEASE_JSON="$(
     curl --fail --silent --show-error --location \
       -H 'Accept: application/vnd.github+json' \
@@ -80,12 +81,12 @@ if [ -z "${RUNNER_VERSION}" ] || [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
       "${GITHUB_API_URL}/repos/actions/runner/releases?per_page=10"
   )"
   RUNNER_DOWNLOAD_METADATA="$(
-    python3 - "${RUNNER_RELEASE_JSON}" "${ASSET_ARCH}" <<'PY'
+    printf '%s' "${RUNNER_RELEASE_JSON}" | python3 - "${ASSET_ARCH}" <<'PY'
 import json
 import sys
 
-payload = json.loads(sys.argv[1])
-wanted_arch = sys.argv[2]
+payload = json.load(sys.stdin)
+wanted_arch = sys.argv[1]
 
 for release in payload:
     if (
@@ -127,9 +128,6 @@ PY
   RUNNER_TARBALL_NAME="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '2p')"
   RUNNER_DOWNLOAD_URL="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '3p')"
   RUNNER_SHA256="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '4p')"
-else
-  RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
-  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
 fi
 
 TARBALL="${RUNNER_TARBALL_NAME}"
@@ -240,9 +238,6 @@ print(encoded)
 PY
   )"
   printf '%s\n' "GPU RUNNER PHASE: GitHub JIT configuration received; starting ephemeral runner." >&2
-
-  # JIT runners are already ephemeral and are automatically removed after one
-  # job. Do not call config.sh or attempt a second registration.
   printf '%s\n' "GPU RUNNER PHASE: launching Actions runner with JIT configuration." >&2
   exec ./run.sh --jitconfig "${JIT_CONFIG}"
 fi
