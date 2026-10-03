@@ -33,7 +33,6 @@ jobs:
       THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
       THORIO_KAGGLE_GITHUB_RUNNER_LABELS: thorio-free-gpu,cuda
     outputs:
-      kernel_ref: ${{ steps.acquire.outputs.kernel_ref }}
       acquisition_id: ${{ steps.acquire.outputs.acquisition_id }}
     steps:
       - name: Check out GPU branch
@@ -103,6 +102,36 @@ jobs:
           print(f"EXTERNAL_GPU_KERNEL_RUNNING {kernel_ref}")
           print(f"EXTERNAL_GPU_ACQUISITION_ID {acquisition_id}")
           PY
+
+  external_kernel_diagnostics:
+    name: Inspect external GPU kernel startup
+    needs: provision
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
+    steps:
+      - name: Install Kaggle CLI
+        run: python -m pip install --upgrade kaggle
+
+      - name: Poll external kernel and preserve startup diagnostics
+        shell: bash
+        run: |
+          set -u
+          for attempt in $(seq 1 12); do
+            status="$(kaggle kernels status "${KERNEL_REF}" 2>&1 || true)"
+            printf 'Kaggle status attempt %s:\n%s\n' "${attempt}" "${status}"
+            logs="$(kaggle kernels logs "${KERNEL_REF}" 2>&1 || true)"
+            printf '%s\n' "${logs}" | tail -n 120
+            lowered="$(printf '%s' "${status}" | tr '[:upper:]' '[:lower:]')"
+            if printf '%s' "${lowered}" | grep -Eq 'complete|completed|error|failed|cancelled'; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "External kernel remained active without a terminal state during diagnostics."
 
   gpu_worker:
     name: Execute on the real external GPU runner
@@ -182,13 +211,13 @@ jobs:
   cleanup:
     name: Release external GPU capacity
     if: ${{ always() }}
-    needs: [provision, gpu_worker]
+    needs: [provision, external_kernel_diagnostics, gpu_worker]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
-      KERNEL_REF: ${{ needs.provision.outputs.kernel_ref }}
+      KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
     steps:
       - name: Delete the external Kaggle worker kernel
         shell: bash
