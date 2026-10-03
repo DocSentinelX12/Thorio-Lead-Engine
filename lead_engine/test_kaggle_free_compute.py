@@ -74,6 +74,38 @@ def test_discover_free_requires_observed_gpu_quota_and_returns_evidence():
     assert any(command[1:3] == ["quota", "--format"] for command in calls)
 
 
+def test_discover_free_treats_kaggle_private_kernel_permission_error_as_absent():
+    calls: list[list[str]] = []
+
+    def runner(command, *, timeout, cwd=None):
+        calls.append(list(command))
+        if command[1:3] == ["quota", "--format"]:
+            payload = [{
+                "resource": "GPU",
+                "used": "1.00h",
+                "remaining": "20.00h",
+                "total": "30.00h",
+                "refreshAt": "2099-01-01T00:00:00+00:00",
+            }]
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[1:3] == ["kernels", "status"]:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "Cannot access kernel 'example-user/thorio-free-gpu-worker' "
+                "(Permission 'kernels.get' was denied).",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    provider = _provider(runner)
+    offers = provider.discover_free()
+
+    assert len(offers) == 1
+    assert offers[0].capacity_evidence["kernel_status"] == "not_found"
+    assert any(command[1:3] == ["kernels", "status"] for command in calls)
+
+
 def test_discover_free_fails_closed_when_quota_is_exhausted():
     runner, _ = _runner_factory("0.00h")
     provider = _provider(runner)
