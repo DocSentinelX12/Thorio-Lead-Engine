@@ -24,8 +24,8 @@ jobs:
     timeout-minutes: 15
     env:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
-      KAGGLE_KEY: ${{ secrets.THORIO_KAGGLE_KEY }}
-      THORIO_KAGGLE_KERNEL_SLUG: thorio-physical-gpu-proof
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      THORIO_KAGGLE_KERNEL_SLUG: thorio-physical-gpu-proof-${{ github.run_id }}
     steps:
       - name: Check out branch
         uses: actions/checkout@v5
@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${KAGGLE_USERNAME}"
-          test -n "${KAGGLE_KEY}"
+          test -n "${KAGGLE_API_TOKEN}"
           kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
           echo "Kaggle authentication verified."
 
