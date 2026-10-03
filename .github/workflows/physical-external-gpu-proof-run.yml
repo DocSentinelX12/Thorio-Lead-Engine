@@ -1,6 +1,11 @@
 name: Physical External GPU Proof
 
 on:
+  push:
+    branches:
+      - feature/gpu-fabric-foundation
+    paths:
+      - ".github/workflows/physical-external-gpu-proof-run.yml"
   workflow_dispatch:
     inputs:
       run_physical_proof:
@@ -27,13 +32,16 @@ jobs:
         with:
           ref: feature/gpu-fabric-foundation
 
-      - name: Verify manual physical proof confirmation
+      - name: Verify physical proof trigger
         run: |
           set -euo pipefail
-          if [ "${{ inputs.run_physical_proof }}" != "true" ]; then
-            echo "Manual physical GPU proof was not confirmed."
-            exit 1
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.run_physical_proof }}" != "true" ]; then
+              echo "Manual physical GPU proof was not confirmed."
+              exit 1
+            fi
           fi
+          echo "Physical GPU proof trigger accepted: ${GITHUB_EVENT_NAME}"
 
       - name: Install Kaggle CLI
         run: python -m pip install --upgrade kaggle
