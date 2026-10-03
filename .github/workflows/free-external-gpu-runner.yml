@@ -6,6 +6,8 @@ on:
       - feature/gpu-fabric-foundation
     paths:
       - ".github/workflows/free-external-gpu-runner.yml"
+      - "lead_engine/kaggle_free_compute.py"
+      - "infra/free-compute/register-ephemeral-gpu-runner.sh"
   workflow_dispatch:
 
 permissions:
