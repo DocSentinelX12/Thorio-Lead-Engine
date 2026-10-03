@@ -571,24 +571,36 @@ class ComputeCoordinator:
             ))
         return tuple(result)
 
-    def _observe_worker_resources(self, identity: WorkerIdentity) -> None:
+    def _observe_worker_resources(
+        self,
+        identity: WorkerIdentity,
+        *,
+        provider_id: str = "worker_pool",
+        expires_at: float | None = None,
+        source_evidence: Mapping[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         now = time.time()
+        resolved_expiry = now + max(60, self.lease_seconds * 2) if expires_at is None else float(expires_at)
+        if resolved_expiry <= now:
+            raise ValueError("worker resource observation is already expired")
         node_state = ResourceState.DEGRADED if identity.gpu_discovery_state == "degraded" else ResourceState.AVAILABLE
         evidence = dict(identity.physical_fabric_evidence)
+        evidence.update(dict(source_evidence or {}))
         evidence.update({
-            "source": "authenticated_worker_registration",
+            "source": evidence.get("source", "authenticated_worker_registration"),
             "worker_id": identity.worker_id,
             "gpu_discovery_state": identity.gpu_discovery_state,
             "gpu_discovery_error": identity.gpu_discovery_error,
             "gpu_count": len(identity.gpu_resources),
             "hardware_attestation": "worker-local-nvidia-discovery",
             "domain_id": identity.domain_id,
+            "provider_id": provider_id,
         })
         snapshot = ProviderResourceSnapshot(
-            provider_id="worker_pool",
+            provider_id=str(provider_id).strip() or "worker_pool",
             domain_id=identity.domain_id,
             observed_at=now,
-            expires_at=now + max(60, self.lease_seconds * 2),
+            expires_at=resolved_expiry,
             ephemeral=True,
             authentication_state="authenticated",
             evidence=evidence,
@@ -604,30 +616,77 @@ class ComputeCoordinator:
                 state=node_state,
             ),),
         )
-        self.inventory.observe(snapshot)
+        return self.inventory.observe(snapshot)
 
-    def register_worker(self, identity: WorkerIdentity) -> Dict[str, Any]:
-        acquisition_id = str(identity.physical_fabric_evidence.get("acquisition_id") or "").strip()
-        if acquisition_id:
+    def enroll_free_compute_worker(self, identity: WorkerIdentity) -> Dict[str, Any]:
+        """Promote one acquired zero-cost worker into the provider-backed fabric inventory."""
+        evidence = dict(identity.physical_fabric_evidence or {})
+        acquisition_id = str(evidence.get("acquisition_id") or "").strip()
+        if not acquisition_id:
+            raise ValueError("free compute enrollment requires acquisition_id evidence")
+        record = next(
+            (item for item in self.free_compute_acquisition.store.records()
+             if str(item.get("acquisition_id") or "") == acquisition_id),
+            None,
+        )
+        if record is None:
+            raise ValueError("free compute acquisition does not exist")
+        if str(record.get("worker_id") or "").strip() and str(record.get("worker_id")).strip() != identity.worker_id:
+            raise ValueError("free compute acquisition is already bound to another worker")
+        if str(record.get("status") or "") not in {"acquired", "verified"}:
+            raise ValueError(f"free compute acquisition is not enrollable: {record.get('status')}")
+        if str(record.get("domain_id") or "").strip() != identity.domain_id.strip():
+            raise ValueError("worker domain does not match free compute acquisition")
+        verification = {
+            "gpu_capable": bool(record.get("gpu_capable")),
+            "gpu_discovery_state": identity.gpu_discovery_state,
+            "gpu_discovery_error": identity.gpu_discovery_error,
+            "gpu_resources": [asdict(gpu) for gpu in identity.gpu_resources],
+            "driver_version": identity.driver_version,
+            "cuda_version": identity.cuda_version,
+            "nccl_version": identity.nccl_version,
+            "domain_id": identity.domain_id,
+            "physical_fabric_evidence": evidence,
+            "physical_gpu_execution": list(evidence.get("physical_gpu_execution") or ()),
+        }
+        if str(record.get("status") or "") == "acquired":
             self.free_compute_acquisition.confirm_worker_enrollment(
                 acquisition_id=acquisition_id,
                 worker_id=identity.worker_id,
-                verification={
-                    "gpu_capable": bool(identity.gpu_resources),
-                    "gpu_discovery_state": identity.gpu_discovery_state,
-                    "gpu_discovery_error": identity.gpu_discovery_error,
-                    "gpu_resources": [asdict(gpu) for gpu in identity.gpu_resources],
-                    "driver_version": identity.driver_version,
-                    "cuda_version": identity.cuda_version,
-                    "nccl_version": identity.nccl_version,
-                    "domain_id": identity.domain_id,
-                    "physical_fabric_evidence": identity.physical_fabric_evidence,
-                    "physical_gpu_execution": identity.physical_fabric_evidence.get("physical_gpu_execution", []),
-                },
+                verification=verification,
             )
+        inventory = self._observe_worker_resources(
+            identity,
+            provider_id=str(record["provider_id"]),
+            expires_at=float(record["expires_at"]) if record.get("expires_at") is not None else None,
+            source_evidence={
+                "source": "free_compute_acquisition",
+                "acquisition_id": acquisition_id,
+                "free_only": True,
+                "paid_capacity_allowed": False,
+            },
+        )
+        return {
+            "verified": True,
+            "acquisition_id": acquisition_id,
+            "provider_id": str(record["provider_id"]),
+            "domain_id": str(record["domain_id"]),
+            "worker_id": identity.worker_id,
+            "inventory": inventory,
+        }
+
+    def register_worker(self, identity: WorkerIdentity) -> Dict[str, Any]:
         result = self.pool.register(identity)
-        self._observe_worker_resources(identity)
-        return result
+        acquisition_id = str(identity.physical_fabric_evidence.get("acquisition_id") or "").strip()
+        if not acquisition_id:
+            self._observe_worker_resources(identity)
+            return result
+        try:
+            enrollment = self.enroll_free_compute_worker(identity)
+        except Exception:
+            self.pool.quarantine_worker(identity.worker_id, "free compute enrollment failed")
+            raise
+        return {**result, "free_compute_enrollment": enrollment}
 
     def heartbeat(self, worker_id: str, current_load: int = 0) -> bool:
         ok = self.pool.heartbeat(worker_id, current_load)
