@@ -231,7 +231,12 @@ PY
   )"
   printf '%s\n' "GPU RUNNER PHASE: GitHub JIT configuration received; starting ephemeral runner." >&2
   printf '%s\n' "GPU RUNNER PHASE: launching Actions runner with JIT configuration." >&2
-  exec ./run.sh --jitconfig "${JIT_CONFIG}"
+  if ! id -u thorio-runner >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash thorio-runner
+  fi
+  chown -R thorio-runner:thorio-runner "${RUNNER_ROOT}"
+  echo "GPU RUNNER PHASE: starting Actions runner as non-root user." >&2
+  exec runuser -u thorio-runner -- ./run.sh --jitconfig "${JIT_CONFIG}"
 fi
 
 ./config.sh \
