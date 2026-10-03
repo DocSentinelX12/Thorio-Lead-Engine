@@ -20,6 +20,8 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
+from .compute_fabric import ProviderCapabilities
+
 
 class FreeComputeAcquisitionError(RuntimeError):
     """Raised when a provider cannot satisfy the zero-cost acquisition contract."""
@@ -75,6 +77,10 @@ class FreeComputeProvider(ABC):
     """Provider adapter capable of discovering and acquiring free capacity."""
 
     provider_id: str
+
+    def capabilities(self) -> ProviderCapabilities:
+        """Return adapter capabilities; physical execution remains separately attested."""
+        return ProviderCapabilities()
 
     @abstractmethod
     def discover_free(self) -> tuple[FreeComputeOffer, ...]:
@@ -373,6 +379,13 @@ class FreeComputeAcquisitionManager:
 
     def providers(self) -> tuple[FreeComputeProvider, ...]:
         return tuple(self._providers[key] for key in sorted(self._providers))
+
+    def provider_capabilities(self) -> dict[str, dict[str, Any]]:
+        """Return registered adapter capabilities without inventing capacity."""
+        return {
+            key: provider.capabilities().to_dict()
+            for key, provider in sorted(self._providers.items())
+        }
 
     def discover(self) -> dict[str, Any]:
         offers: list[dict[str, Any]] = []
