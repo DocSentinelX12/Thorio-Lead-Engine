@@ -479,3 +479,21 @@ def test_provider_capabilities_are_not_physical_gpu_proof(tmp_path):
     assert capabilities["gpu_acquisition"] is True
     assert capabilities["cuda_execution"] is True
     assert store.records() == []
+
+
+def test_kaggle_provider_declares_runner_and_gpu_capabilities_without_nccL_claim():
+    from lead_engine.kaggle_free_compute import KaggleFreeComputeConfig, KaggleFreeComputeProvider
+
+    provider = KaggleFreeComputeProvider(
+        KaggleFreeComputeConfig(username="test-user"),
+        runner=lambda *args, **kwargs: None,
+    )
+
+    capabilities = provider.capabilities().to_dict()
+    assert capabilities["zero_cost_acquisition"] is True
+    assert capabilities["gpu_acquisition"] is True
+    assert capabilities["cuda_execution"] is True
+    assert capabilities["ephemeral_runner"] is True
+    assert capabilities["github_jit_runner"] is True
+    assert capabilities["nccl_execution"] is False
+    assert capabilities["multi_node"] is False
