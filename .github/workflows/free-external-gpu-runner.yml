@@ -8,6 +8,7 @@ on:
       - ".github/workflows/free-external-gpu-runner.yml"
       - "lead_engine/kaggle_free_compute.py"
       - "infra/free-compute/register-ephemeral-gpu-runner.sh"
+      - "lead_engine/test_kaggle_free_compute.py"
   workflow_dispatch:
 
 permissions:
