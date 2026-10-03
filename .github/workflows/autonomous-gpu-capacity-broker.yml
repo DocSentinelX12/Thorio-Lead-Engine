@@ -1,0 +1,22 @@
+name: Autonomous GPU Capacity Broker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-feature-workflow:
+    name: Run Autonomous GPU Capacity Broker on GPU branch
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch GPU branch workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run "autonomous-gpu-capacity-broker.yml" --repo "${GITHUB_REPOSITORY}" --ref feature/gpu-fabric-foundation
+          echo "Dispatched Autonomous GPU Capacity Broker from feature/gpu-fabric-foundation."
