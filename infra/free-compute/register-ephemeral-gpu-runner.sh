@@ -14,10 +14,10 @@ RUNNER_GROUP_ID="${GITHUB_RUNNER_GROUP_ID:-1}"
 # JIT is the preferred registration mechanism. The API token must have
 # repository Administration: write permission. A legacy registration token is
 # retained only as an explicit compatibility fallback.
-JIT_TOKEN="${GITHUB_RUNNER_JIT_TOKEN:-}"
+JIT_TOKEN_FILE="${GITHUB_RUNNER_JIT_TOKEN_FILE:-}"
 REGISTRATION_TOKEN="${GITHUB_RUNNER_REGISTRATION_TOKEN:-}"
 
-if [ -z "${JIT_TOKEN}" ] && [ -z "${REGISTRATION_TOKEN}" ]; then
+if [ -z "${JIT_TOKEN_FILE}" ] && [ -z "${GITHUB_RUNNER_JIT_TOKEN:-}" ] && [ -z "${REGISTRATION_TOKEN}" ]; then
   echo "GPU RUNNER REFUSED: neither GITHUB_RUNNER_JIT_TOKEN nor GITHUB_RUNNER_REGISTRATION_TOKEN is configured." >&2
   exit 22
 fi
@@ -156,9 +156,9 @@ fi
 
 echo "GPU RUNNER PHASE: requesting GitHub JIT runner configuration." >&2
 JIT_CONFIG=""
-if [ -n "${JIT_TOKEN}" ]; then
+if [ -n "${JIT_TOKEN_FILE}" ] || [ -n "${GITHUB_RUNNER_JIT_TOKEN:-}" ]; then
   JIT_CONFIG="$(
-    GITHUB_RUNNER_JIT_TOKEN="${JIT_TOKEN}" python3 - "${GITHUB_API_URL}" "${GITHUB_API_VERSION}" "${GITHUB_REPOSITORY}" "${RUNNER_GROUP_ID}" "${RUNNER_NAME}" "${RUNNER_LABELS}" <<'PY'
+    GITHUB_RUNNER_JIT_TOKEN_FILE="${JIT_TOKEN_FILE}" python3 - "${GITHUB_API_URL}" "${GITHUB_API_VERSION}" "${GITHUB_REPOSITORY}" "${RUNNER_GROUP_ID}" "${RUNNER_NAME}" "${RUNNER_LABELS}" <<'PY'
 import json
 import os
 import sys
@@ -166,7 +166,17 @@ import urllib.error
 import urllib.request
 
 api_url, api_version, repository, group_id, name, labels_csv = sys.argv[1:]
-token = os.environ.get("GITHUB_RUNNER_JIT_TOKEN", "")
+token_path = os.environ.get("GITHUB_RUNNER_JIT_TOKEN_FILE", "").strip()
+if token_path:
+    try:
+        with open(token_path, encoding="utf-8") as handle:
+            token = handle.read().strip()
+    except OSError as exc:
+        raise SystemExit(f"GPU RUNNER REFUSED: unable to read JIT token file: {exc}") from exc
+else:
+    token = os.environ.get("GITHUB_RUNNER_JIT_TOKEN", "").strip()
+if not token:
+    raise SystemExit("GPU RUNNER REFUSED: GitHub JIT token is empty.")
 owner, repo = repository.split("/", 1)
 payload = {
     "name": name,
