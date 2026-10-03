@@ -6,6 +6,7 @@ on:
       - feature/gpu-fabric-foundation
     paths:
       - "lead_engine/gpu_capacity_broker.py"
+      - "tests/test_gpu_capacity_broker.py"
       - ".github/workflows/autonomous-gpu-capacity-broker.yml"
   workflow_dispatch:
 
@@ -53,6 +54,9 @@ jobs:
           fi
           python -m pip install --upgrade pytest lightning-sdk
 
+      - name: Verify broker readiness gating
+        run: python -m pytest -q tests/test_gpu_capacity_broker.py
+
       - name: Run one acquisition cycle
         id: cycle
         shell: bash
@@ -86,4 +90,3 @@ jobs:
           set -euo pipefail
           sleep 60
           gh workflow run autonomous-gpu-capacity-broker.yml             --repo "${GITHUB_REPOSITORY}"             --ref feature/gpu-fabric-foundation
-
