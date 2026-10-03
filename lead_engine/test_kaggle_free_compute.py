@@ -190,7 +190,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     provider.acquire_free(offer)
 
     script = captured_script["content"]
-    assert "get_secret(CONFIG[\"github_runner_jit_token_secret\"])" in script
+    assert 'return get_secret(CONFIG[label_key])' in script
     assert "for attempt in range(1, 9)" in script
     assert "time.sleep(5)" in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
@@ -199,7 +199,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "self-hosted,thorio-free-gpu,cuda" in script
     assert 'git", "clone"' not in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
-    assert "KAGGLE WORKER PHASE: starting secret retrieval." in script
+    assert "KAGGLE WORKER PHASE: starting credential handoff." in script
     assert "KAGGLE WORKER PHASE: invoking ephemeral runner bootstrap." in script
     assert "GPU RUNNER PHASE: requesting GitHub JIT runner configuration." in script
     assert "GPU RUNNER JIT CREATED:" in script
