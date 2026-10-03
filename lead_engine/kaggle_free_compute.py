@@ -46,7 +46,7 @@ class KaggleFreeComputeConfig:
     coordinator_url_secret_label: str = "THORIO_COMPUTE_COORDINATOR_URL"
     github_runner_jit_token_secret_label: str = "THORIO_GITHUB_RUNNER_JIT_TOKEN"
     github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
-    github_runner_labels: str = "thorio-free-gpu,cuda"
+    github_runner_labels: str = "self-hosted,thorio-free-gpu,cuda"
     minimum_remaining_hours: float = 1.0
     maximum_runtime_hours: float = 6.0
     command_timeout_seconds: int = 120
@@ -148,7 +148,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                 ).strip(),
                 github_runner_labels=os.environ.get(
                     "THORIO_KAGGLE_GITHUB_RUNNER_LABELS",
-                    "thorio-free-gpu,cuda",
+                    "self-hosted,thorio-free-gpu,cuda",
                 ).strip(),
                 minimum_remaining_hours=float(
                     os.environ.get("THORIO_KAGGLE_MINIMUM_REMAINING_HOURS", "1")
