@@ -37,6 +37,7 @@ jobs:
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
       GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
+      RUNNER_VERSION: "2.337.0"
     outputs:
       acquisition_id: ${{ steps.acquire.outputs.acquisition_id }}
     steps:
@@ -113,8 +114,6 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${GITHUB_RUNNER_JIT_TOKEN}"
-          # register-ephemeral-gpu-runner.sh intentionally uses the first
-          # 12 characters of acquisition_id for the runner name.
           acquisition_id="${{ steps.acquire.outputs.acquisition_id }}"
           expected_name="thorio-free-gpu-${acquisition_id:0:12}"
           expected_labels="self-hosted thorio-free-gpu cuda"
