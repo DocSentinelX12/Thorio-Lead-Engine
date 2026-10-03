@@ -573,3 +573,55 @@ def test_enqueue_gpu_work_units_materializes_durable_independent_tasks(tmp_path)
     assert first["payload"]["execution_mode"] == "batch_parallel"
     assert first["payload"]["work_unit_id"] == "gpu-batch:0"
     assert first["payload"]["compute_requirements"]["gpu"]["gpu_count"] == 1
+
+def test_free_acquired_gpu_worker_is_promoted_into_authoritative_inventory(tmp_path):
+    from lead_engine.compute_pool import WorkerIdentity
+    from lead_engine.compute_resources import GpuResource, ResourceState
+    from lead_engine.free_compute_acquisition import AcquiredCompute, FreeComputeOffer
+
+    now = 1000.0
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token", clock=lambda: now)
+    provider = coordinator.free_compute_acquisition
+    offer = FreeComputeOffer(
+        provider_id="kaggle", domain_id="kaggle:test-user:test-kernel", offer_id="kernel-1",
+        observed_at=900.0, expires_at=2000.0, gpu_capable=True, no_cost=True,
+        capacity_evidence={"accelerator": "NvidiaTeslaT4"},
+    )
+    provider.store.record_offer(offer)
+    acquisition = AcquiredCompute(
+        provider_id="kaggle", domain_id=offer.domain_id, offer_id=offer.offer_id,
+        acquisition_id=provider.store.acquisition_id(offer), acquired_at=950.0, expires_at=1900.0,
+        gpu_capable=True, enrollment={"worker_id": "worker-gpu-1"},
+    )
+    provider.store.mark_acquired(acquisition, offer)
+
+    gpu = GpuResource(
+        node_id="worker-gpu-1", gpu_id="0", gpu_uuid="GPU-verified-1", model="Tesla T4",
+        vram_bytes=16 * 1024**3, driver_version="test-driver", cuda_version="12.4",
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    identity = WorkerIdentity(
+        "worker-gpu-1", "kaggle-host", "x86_64", 4, 16384, ("lead-processing", "cuda"), (gpu,),
+        "test-driver", "12.4", None, (), "healthy", "", offer.domain_id,
+        {
+            "acquisition_id": acquisition.acquisition_id,
+            "physical_fabric": {"components": []},
+            "physical_gpu_execution": [{"verified": True, "execution_backend": "cuda",
+                "gpu_uuid": "GPU-verified-1", "operation": "checksum", "checksum": 1.0, "elapsed_ms": 2.0}],
+        },
+    )
+
+    result = coordinator.enroll_free_compute_worker(identity)
+
+    assert result["verified"] is True
+    assert result["acquisition_id"] == acquisition.acquisition_id
+    assert result["provider_id"] == "kaggle"
+    assert result["domain_id"] == offer.domain_id
+    assert result["inventory"]["observed_gpus"] == 1
+    assert coordinator.free_compute_status()["verified"] == 1
+    eligible = coordinator.inventory.eligible(now=now)
+    assert len(eligible) == 2
+    gpu_rows = [row for row in eligible if row["resource_type"] == "gpu"]
+    assert len(gpu_rows) == 1
+    assert gpu_rows[0]["provider_id"] == "kaggle"
+    assert gpu_rows[0]["identity_key"] == "GPU-verified-1"
