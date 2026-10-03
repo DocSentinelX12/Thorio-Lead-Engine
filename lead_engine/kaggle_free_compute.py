@@ -44,6 +44,9 @@ class KaggleFreeComputeConfig:
     repository_ref: str = "feature/gpu-fabric-foundation"
     coordinator_secret_label: str = "THORIO_COMPUTE_AUTH_TOKEN"
     coordinator_url_secret_label: str = "THORIO_COMPUTE_COORDINATOR_URL"
+    github_runner_jit_token_secret_label: str = "THORIO_GITHUB_RUNNER_JIT_TOKEN"
+    github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
+    github_runner_labels: str = "thorio-free-gpu,cuda"
     minimum_remaining_hours: float = 1.0
     maximum_runtime_hours: float = 6.0
     command_timeout_seconds: int = 120
@@ -69,7 +72,13 @@ class KaggleFreeComputeConfig:
         if not self.repository_ref.strip():
             raise ValueError("repository_ref is required")
         if not self.coordinator_secret_label.strip() or not self.coordinator_url_secret_label.strip():
-            raise ValueError("Kaggle secret labels are required")
+            raise ValueError("Kaggle coordinator secret labels are required")
+        if not self.github_runner_jit_token_secret_label.strip():
+            raise ValueError("GitHub runner JIT token secret label is required")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.github_repository):
+            raise ValueError("github_repository must use owner/repository form")
+        if not any(item.strip() for item in self.github_runner_labels.split(",")):
+            raise ValueError("github_runner_labels must contain at least one label")
         if self.minimum_remaining_hours <= 0:
             raise ValueError("minimum_remaining_hours must be positive")
         if self.maximum_runtime_hours <= 0:
@@ -128,6 +137,18 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                 coordinator_url_secret_label=os.environ.get(
                     "THORIO_KAGGLE_COORDINATOR_URL_SECRET",
                     "THORIO_COMPUTE_COORDINATOR_URL",
+                ).strip(),
+                github_runner_jit_token_secret_label=os.environ.get(
+                    "THORIO_KAGGLE_GITHUB_RUNNER_JIT_TOKEN_SECRET",
+                    "THORIO_GITHUB_RUNNER_JIT_TOKEN",
+                ).strip(),
+                github_repository=os.environ.get(
+                    "THORIO_KAGGLE_GITHUB_REPOSITORY",
+                    "DocSentinelX12/Thorio-Lead-Engine",
+                ).strip(),
+                github_runner_labels=os.environ.get(
+                    "THORIO_KAGGLE_GITHUB_RUNNER_LABELS",
+                    "thorio-free-gpu,cuda",
                 ).strip(),
                 minimum_remaining_hours=float(
                     os.environ.get("THORIO_KAGGLE_MINIMUM_REMAINING_HOURS", "1")
@@ -315,6 +336,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         worker_id: str,
         coordinator_token_secret: str,
         coordinator_url_secret: str,
+        github_runner_jit_token_secret: str,
+        github_repository: str,
+        github_runner_labels: str,
     ) -> str:
         values = {
             "repository_url": repository_url,
@@ -324,6 +348,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             "worker_id": worker_id,
             "coordinator_token_secret": coordinator_token_secret,
             "coordinator_url_secret": coordinator_url_secret,
+            "github_runner_jit_token_secret": github_runner_jit_token_secret,
+            "github_repository": github_repository,
+            "github_runner_labels": github_runner_labels,
         }
         encoded = json.dumps(values, sort_keys=True)
         return f'''import json
@@ -343,17 +370,19 @@ def run(*args):
 
 token = UserSecretsClient().get_secret(CONFIG["coordinator_token_secret"]).strip()
 coordinator_url = UserSecretsClient().get_secret(CONFIG["coordinator_url_secret"]).strip()
+jit_token = UserSecretsClient().get_secret(CONFIG["github_runner_jit_token_secret"]).strip()
 if not token:
     raise RuntimeError("Kaggle coordinator token secret is empty")
 if not coordinator_url.startswith(("http://", "https://")):
     raise RuntimeError("Kaggle coordinator URL secret must use HTTP or HTTPS")
+if not jit_token:
+    raise RuntimeError("Kaggle GitHub runner JIT token secret is empty")
 
 if ROOT.exists():
     shutil.rmtree(ROOT)
 run("git", "clone", "--depth", "1", CONFIG["repository_url"], str(ROOT))
 run("git", "-C", str(ROOT), "fetch", "--depth", "1", "origin", CONFIG["repository_ref"])
 run("git", "-C", str(ROOT), "checkout", "--detach", CONFIG["repository_ref"])
-run(sys.executable, "-m", "pip", "install", "-r", str(ROOT / "requirements.txt"))
 
 os.environ["THORIO_COMPUTE_COORDINATOR_URL"] = coordinator_url
 os.environ["THORIO_COMPUTE_AUTH_TOKEN"] = token
@@ -362,9 +391,15 @@ os.environ["THORIO_COMPUTE_DOMAIN"] = CONFIG["domain_id"]
 os.environ["THORIO_WORKER_ID"] = CONFIG["worker_id"]
 os.environ["THORIO_FREE_ONLY"] = "1"
 os.environ["PYTHONUNBUFFERED"] = "1"
+os.environ["GITHUB_REPOSITORY"] = CONFIG["github_repository"]
+os.environ["RUNNER_NAME"] = "thorio-free-gpu-" + CONFIG["acquisition_id"][:12]
+os.environ["RUNNER_LABELS"] = CONFIG["github_runner_labels"]
+os.environ["GITHUB_RUNNER_JIT_TOKEN"] = jit_token
 
-os.chdir(ROOT)
-run(sys.executable, "-m", "lead_engine.compute_worker")
+runner_script = ROOT / "infra" / "free-compute" / "register-ephemeral-gpu-runner.sh"
+if not runner_script.is_file():
+    raise RuntimeError("ephemeral GPU runner bootstrap script is missing")
+run("bash", str(runner_script))
 '''
 
     def _wait_for_running(self, kernel_ref: str) -> str:
@@ -429,6 +464,9 @@ run(sys.executable, "-m", "lead_engine.compute_worker")
             worker_id=offer.domain_id,
             coordinator_token_secret=self.config.coordinator_secret_label,
             coordinator_url_secret=self.config.coordinator_url_secret_label,
+            github_runner_jit_token_secret=self.config.github_runner_jit_token_secret_label,
+            github_repository=self.config.github_repository,
+            github_runner_labels=self.config.github_runner_labels,
         )
         metadata = {
             "id": kernel_ref,
