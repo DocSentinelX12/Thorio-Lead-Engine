@@ -196,6 +196,8 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
     assert "register-ephemeral-gpu-runner.sh" in script
     assert "self-hosted,thorio-free-gpu,cuda" in script
+    assert 'git", "clone"' not in script
+    assert "GITHUB_RUNNER_JIT_TOKEN" in script
     assert "secret-value" not in script
     assert "jit-token-value" not in script
 
