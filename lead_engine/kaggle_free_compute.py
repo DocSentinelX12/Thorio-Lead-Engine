@@ -423,6 +423,7 @@ os.environ["GITHUB_REPOSITORY"] = CONFIG["github_repository"]
 os.environ["RUNNER_NAME"] = "thorio-free-gpu-" + CONFIG["acquisition_id"][:12]
 os.environ["RUNNER_LABELS"] = CONFIG["github_runner_labels"]
 os.environ["GITHUB_RUNNER_JIT_TOKEN"] = jit_token
+os.environ["RUNNER_ROOT"] = "/kaggle/working/actions-runner"
 
 runner_script = ROOT / "register-ephemeral-gpu-runner.sh"
 if not runner_script.is_file():
