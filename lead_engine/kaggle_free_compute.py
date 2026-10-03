@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .compute_fabric import ProviderCapabilities
 from .free_compute_acquisition import (
     AcquiredCompute,
     FreeComputeAcquisitionError,
@@ -95,6 +96,18 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
     """Acquire one bounded Kaggle GPU kernel as a free external worker."""
 
     provider_id = "kaggle"
+
+    def capabilities(self) -> ProviderCapabilities:
+        """Declare Kaggle adapter capabilities; worker-local evidence remains authoritative."""
+        return ProviderCapabilities(
+            gpu_acquisition=True,
+            cuda_execution=True,
+            arbitrary_process=True,
+            ephemeral_runner=True,
+            github_jit_runner=True,
+            provider_api=True,
+            explicit_release=True,
+        )
 
     def __init__(
         self,
