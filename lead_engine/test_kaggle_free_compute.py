@@ -208,6 +208,43 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "jit-token-value" not in script
 
 
+def test_acquire_free_uses_provisioner_credentials_without_kaggle_secret_service():
+    runner, calls = _runner_factory()
+    captured_script = {}
+
+    def capturing_runner(command, *, timeout, cwd=None):
+        if command[1:3] == ["kernels", "push"]:
+            from pathlib import Path
+
+            script_path = Path(command[command.index("-p") + 1]) / "thorio_worker.py"
+            captured_script["content"] = script_path.read_text(encoding="utf-8")
+        return runner(command, timeout=timeout, cwd=cwd)
+
+    provider = KaggleFreeComputeProvider(
+        KaggleFreeComputeConfig(
+            username="example-user",
+            kernel_slug="thorio-free-gpu-worker",
+            repository_ref="feature/gpu-fabric-foundation",
+            coordinator_token="coordinator-token-value",
+            coordinator_url="https://coordinator.example.test",
+            github_runner_jit_token="jit-token-value",
+        ),
+        runner=capturing_runner,
+        clock=lambda: 1_700_000_000.0,
+    )
+    offer = provider.discover_free()[0]
+
+    provider.acquire_free(offer)
+
+    script = captured_script["content"]
+    assert '"coordinator_token": "coordinator-token-value"' in script
+    assert '"coordinator_url": "https://coordinator.example.test"' in script
+    assert '"github_runner_jit_token": "jit-token-value"' in script
+    assert 'credential("coordinator_token", "coordinator_token_secret")' in script
+    assert 'credential("coordinator_url", "coordinator_url_secret")' in script
+    assert 'credential("github_runner_jit_token", "github_runner_jit_token_secret")' in script
+
+
 def test_acquire_free_passes_the_durable_acquisition_id_to_worker(tmp_path):
     runner, calls = _runner_factory()
     captured_script = {}
