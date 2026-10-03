@@ -347,6 +347,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         github_runner_jit_token_secret: str,
         github_repository: str,
         github_runner_labels: str,
+        runner_bootstrap_script: str,
     ) -> str:
         values = {
             "repository_url": repository_url,
@@ -359,6 +360,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             "github_runner_jit_token_secret": github_runner_jit_token_secret,
             "github_repository": github_repository,
             "github_runner_labels": github_runner_labels,
+            "runner_bootstrap_script": runner_bootstrap_script,
         }
         encoded = json.dumps(values, sort_keys=True)
         return f'''import json
@@ -405,9 +407,10 @@ if not jit_token:
 
 if ROOT.exists():
     shutil.rmtree(ROOT)
-run("git", "clone", "--depth", "1", CONFIG["repository_url"], str(ROOT))
-run("git", "-C", str(ROOT), "fetch", "--depth", "1", "origin", CONFIG["repository_ref"])
-run("git", "-C", str(ROOT), "checkout", "--detach", CONFIG["repository_ref"])
+ROOT.mkdir(parents=True, exist_ok=True)
+runner_script = ROOT / "register-ephemeral-gpu-runner.sh"
+runner_script.write_text(CONFIG["runner_bootstrap_script"], encoding="utf-8")
+runner_script.chmod(0o700)
 
 os.environ["THORIO_COMPUTE_COORDINATOR_URL"] = coordinator_url
 os.environ["THORIO_COMPUTE_AUTH_TOKEN"] = token
@@ -421,11 +424,20 @@ os.environ["RUNNER_NAME"] = "thorio-free-gpu-" + CONFIG["acquisition_id"][:12]
 os.environ["RUNNER_LABELS"] = CONFIG["github_runner_labels"]
 os.environ["GITHUB_RUNNER_JIT_TOKEN"] = jit_token
 
-runner_script = ROOT / "infra" / "free-compute" / "register-ephemeral-gpu-runner.sh"
+runner_script = ROOT / "register-ephemeral-gpu-runner.sh"
 if not runner_script.is_file():
     raise RuntimeError("ephemeral GPU runner bootstrap script is missing")
 run("bash", str(runner_script))
 '''
+
+    @staticmethod
+    def _runner_bootstrap_script() -> str:
+        path = Path(__file__).resolve().parents[1] / "infra" / "free-compute" / "register-ephemeral-gpu-runner.sh"
+        if not path.is_file():
+            raise KaggleFreeComputeError(
+                f"ephemeral GPU runner bootstrap script is missing: {path}"
+            )
+        return path.read_text(encoding="utf-8")
 
     def _wait_for_running(self, kernel_ref: str) -> str:
         deadline = self._clock() + self.config.acquisition_ready_timeout_seconds
