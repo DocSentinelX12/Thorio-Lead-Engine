@@ -122,3 +122,36 @@ def test_fleet_does_not_acquire_when_verified_capacity_already_meets_target(tmp_
     assert result["complete"] is True
     assert result["acquired_count"] == 0
     assert result["shortfall"] == 0
+
+
+def test_fleet_reconciles_terminal_external_acquisition_before_targeting(tmp_path):
+    @dataclass
+    class LifecycleProvider(FakeProvider):
+        lifecycle: str = "running"
+        released: int = 0
+
+        def acquisition_status(self, acquisition):
+            return self.lifecycle
+
+        def release_free(self, acquisition):
+            self.released += 1
+
+    manager = FreeComputeAcquisitionManager(
+        FreeComputeAcquisitionStore(str(tmp_path / "fleet-reconcile.sqlite3")),
+        clock=lambda: 1_700_000_010.0,
+    )
+    provider = LifecycleProvider("kaggle", "kaggle:user-a:worker-a", "offer-a")
+    manager.register(provider)
+    controller = FreeComputeFleetController(manager)
+
+    first = manager.acquire(provider.discover_free()[0])
+    assert manager.status()["acquired_unverified_count"] == 1
+
+    provider.lifecycle = "complete"
+    result = controller.acquire_to_target(FreeComputeFleetTarget(gpu_nodes=1))
+
+    assert result["reconciled_count"] == 1
+    assert result["acquired_count"] == 1
+    assert provider.released == 1
+    assert manager.status()["records"][0]["status"] == "acquired"
+    assert first.acquisition_id == manager.status()["records"][0]["acquisition_id"]
