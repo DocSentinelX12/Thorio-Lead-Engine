@@ -366,6 +366,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from kaggle_secrets import UserSecretsClient
@@ -376,9 +377,25 @@ ROOT = Path("/kaggle/working/thorio-lead-engine")
 def run(*args):
     subprocess.run(list(args), check=True)
 
-token = UserSecretsClient().get_secret(CONFIG["coordinator_token_secret"]).strip()
-coordinator_url = UserSecretsClient().get_secret(CONFIG["coordinator_url_secret"]).strip()
-jit_token = UserSecretsClient().get_secret(CONFIG["github_runner_jit_token_secret"]).strip()
+def get_secret(label):
+    last_error = None
+    for attempt in range(1, 9):
+        try:
+            value = UserSecretsClient().get_secret(label).strip()
+            if value:
+                return value
+            last_error = RuntimeError(f"Kaggle secret {label!r} is empty")
+        except Exception as exc:
+            last_error = exc
+        if attempt < 8:
+            time.sleep(5)
+    raise RuntimeError(
+        f"Kaggle secret service did not return {label!r} after 8 attempts: {last_error}"
+    ) from last_error
+
+token = get_secret(CONFIG["coordinator_token_secret"])
+coordinator_url = get_secret(CONFIG["coordinator_url_secret"])
+jit_token = get_secret(CONFIG["github_runner_jit_token_secret"])
 if not token:
     raise RuntimeError("Kaggle coordinator token secret is empty")
 if not coordinator_url.startswith(("http://", "https://")):
