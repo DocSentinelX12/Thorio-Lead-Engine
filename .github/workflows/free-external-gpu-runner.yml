@@ -34,6 +34,8 @@ jobs:
       THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
       THORIO_KAGGLE_GITHUB_RUNNER_LABELS: self-hosted,thorio-free-gpu,cuda
       GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+      THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
+      THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
       GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
     outputs:
       acquisition_id: ${{ steps.acquire.outputs.acquisition_id }}
