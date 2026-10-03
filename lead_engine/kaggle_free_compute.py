@@ -384,13 +384,13 @@ def get_secret(label):
             value = UserSecretsClient().get_secret(label).strip()
             if value:
                 return value
-            last_error = RuntimeError(f"Kaggle secret {label!r} is empty")
+            last_error = RuntimeError(f"Kaggle secret {{label!r}} is empty")
         except Exception as exc:
             last_error = exc
         if attempt < 8:
             time.sleep(5)
     raise RuntimeError(
-        f"Kaggle secret service did not return {label!r} after 8 attempts: {last_error}"
+        f"Kaggle secret service did not return {{label!r}} after 8 attempts: {{last_error}}"
     ) from last_error
 
 token = get_secret(CONFIG["coordinator_token_secret"])
