@@ -1,4 +1,4 @@
-name: Physical External GPU Proof
+name: "Physical External GPU Proof"
 
 on:
   workflow_dispatch:
