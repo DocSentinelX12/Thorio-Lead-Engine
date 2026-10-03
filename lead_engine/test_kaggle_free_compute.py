@@ -180,7 +180,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
             repository_ref="feature/gpu-fabric-foundation",
             github_runner_jit_token_secret_label="THORIO_GITHUB_RUNNER_JIT_TOKEN",
             github_repository="DocSentinelX12/Thorio-Lead-Engine",
-            github_runner_labels="thorio-free-gpu,cuda",
+            github_runner_labels="self-hosted,thorio-free-gpu,cuda",
         ),
         runner=capturing_runner,
         clock=lambda: 1_700_000_000.0,
@@ -195,7 +195,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "time.sleep(5)" in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
     assert "register-ephemeral-gpu-runner.sh" in script
-    assert "thorio-free-gpu,cuda" in script
+    assert "self-hosted,thorio-free-gpu,cuda" in script
     assert "secret-value" not in script
     assert "jit-token-value" not in script
 
