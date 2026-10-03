@@ -240,8 +240,8 @@ def test_acquire_free_uses_provisioner_credentials_without_kaggle_secret_service
     assert '"coordinator_token": "coordinator-token-value"' in script
     assert '"coordinator_url": "https://coordinator.example.test"' in script
     assert '"github_runner_jit_token": "jit-token-value"' in script
-    assert 'credential("coordinator_token", "coordinator_token_secret")' in script
-    assert 'credential("coordinator_url", "coordinator_url_secret")' in script
+    assert 'credential("coordinator_token", "coordinator_token_secret")' not in script
+    assert 'credential("coordinator_url", "coordinator_url_secret")' not in script
     assert 'credential("github_runner_jit_token", "github_runner_jit_token_secret")' in script
 
 
