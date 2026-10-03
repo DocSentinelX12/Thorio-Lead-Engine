@@ -62,82 +62,74 @@ case "${ARCH}" in
   *) echo "GPU RUNNER REFUSED: unsupported architecture ${ARCH}." >&2; exit 21 ;;
 esac
 
-# Prefer an explicitly supplied download URL. Otherwise, when a runner
-# version is known, construct the public release asset URL directly. Only fall
-# back to release discovery when neither value is available. This avoids
-# passing a large releases JSON document through argv on constrained workers.
-if [ -n "${RUNNER_DOWNLOAD_URL:-}" ]; then
-  if [ -z "${RUNNER_TARBALL_NAME:-}" ]; then
-    RUNNER_TARBALL_NAME="$(basename "${RUNNER_DOWNLOAD_URL}")"
-  fi
+# Resolve the exact published runner asset through GitHub's release API.
+# Store the API response on disk so no large JSON payload enters argv.
+# Download through the release-asset API rather than the browser redirect URL.
+if [ -n "${RUNNER_DOWNLOAD_URL:-}" ] && [ -n "${RUNNER_TARBALL_NAME:-}" ]; then
+  : "using explicitly supplied runner asset"
 elif [ -n "${RUNNER_VERSION:-}" ]; then
-  RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
-  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
-else
-  RUNNER_RELEASE_JSON="$(
-    curl --fail --silent --show-error --location \
-      -H 'Accept: application/vnd.github+json' \
-      -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
-      "${GITHUB_API_URL}/repos/actions/runner/releases?per_page=10"
-  )"
-  RUNNER_DOWNLOAD_METADATA="$(
-    printf '%s' "${RUNNER_RELEASE_JSON}" | python3 - "${ASSET_ARCH}" <<'PY'
+  RELEASE_JSON_FILE="$(mktemp)"
+  trap 'rm -f "${RELEASE_JSON_FILE}"' EXIT
+  curl --fail --silent --show-error --location \
+    -H 'Accept: application/vnd.github+json' \
+    -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
+    "${GITHUB_API_URL}/repos/actions/runner/releases/tags/v${RUNNER_VERSION}" \
+    --output "${RELEASE_JSON_FILE}"
+  RUNNER_ASSET_METADATA="$(python3 - "${RELEASE_JSON_FILE}" "${ASSET_ARCH}" <<'PY'
 import json
 import sys
 
-payload = json.load(sys.stdin)
-wanted_arch = sys.argv[1]
+path, wanted_arch = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    release = json.load(handle)
 
-for release in payload:
-    if (
-        not isinstance(release, dict)
-        or release.get("draft")
-        or release.get("prerelease")
-    ):
+for asset in release.get("assets", []):
+    if not isinstance(asset, dict):
         continue
-    tag = release.get("tag_name")
-    if not isinstance(tag, str) or not tag.startswith("v"):
+    filename = asset.get("name")
+    if filename != f"actions-runner-linux-{wanted_arch}-{release.get('tag_name', '').lstrip('v')}.tar.gz":
         continue
-    for asset in release.get("assets", []):
-        if not isinstance(asset, dict):
-            continue
-        filename = asset.get("name")
-        download_url = asset.get("browser_download_url")
-        if (
-            isinstance(filename, str)
-            and filename == f"actions-runner-linux-{wanted_arch}-{tag[1:]}.tar.gz"
-            and isinstance(download_url, str)
-        ):
-            digest = asset.get("digest")
-            if not isinstance(digest, str) or not digest.startswith("sha256:"):
-                raise SystemExit(
-                    f"GPU RUNNER REFUSED: GitHub release asset {filename} has no SHA-256 digest."
-                )
-            print(tag[1:])
-            print(filename)
-            print(download_url)
-            print(digest.removeprefix("sha256:"))
-            raise SystemExit(0)
+    asset_id = asset.get("id")
+    digest = asset.get("digest")
+    if not isinstance(asset_id, int):
+        raise SystemExit("GPU RUNNER REFUSED: runner release asset has no numeric asset id.")
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        raise SystemExit(f"GPU RUNNER REFUSED: runner release asset {filename} has no SHA-256 digest.")
+    print(release["tag_name"].lstrip("v"))
+    print(filename)
+    print(asset_id)
+    print(digest.removeprefix("sha256:"))
+    raise SystemExit(0)
 
-raise SystemExit(
-    f"GPU RUNNER REFUSED: no published Linux {wanted_arch} actions/runner asset was found."
-)
+raise SystemExit(f"GPU RUNNER REFUSED: no Linux {wanted_arch} runner asset found in release.")
 PY
   )"
-  RUNNER_VERSION="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '1p')"
-  RUNNER_TARBALL_NAME="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '2p')"
-  RUNNER_DOWNLOAD_URL="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '3p')"
-  RUNNER_SHA256="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '4p')"
+  RUNNER_VERSION="$(printf '%s\n' "${RUNNER_ASSET_METADATA}" | sed -n '1p')"
+  RUNNER_TARBALL_NAME="$(printf '%s\n' "${RUNNER_ASSET_METADATA}" | sed -n '2p')"
+  RUNNER_ASSET_ID="$(printf '%s\n' "${RUNNER_ASSET_METADATA}" | sed -n '3p')"
+  RUNNER_SHA256="$(printf '%s\n' "${RUNNER_ASSET_METADATA}" | sed -n '4p')"
+  RUNNER_DOWNLOAD_URL="${GITHUB_API_URL}/repos/actions/runner/releases/assets/${RUNNER_ASSET_ID}"
+else
+  echo "GPU RUNNER REFUSED: runner asset or version is not configured." >&2
+  exit 22
 fi
 
 TARBALL="${RUNNER_TARBALL_NAME}"
 
 if [ ! -x "${RUNNER_ROOT}/config.sh" ]; then
-  curl --fail --silent --show-error --location "${RUNNER_DOWNLOAD_URL}" \
-    --output "${RUNNER_ROOT}/${TARBALL}"
+  if [[ "${RUNNER_DOWNLOAD_URL}" == */releases/assets/* ]]; then
+    curl --fail --silent --show-error --location \
+      -H 'Accept: application/octet-stream' \
+      -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
+      "${RUNNER_DOWNLOAD_URL}" \
+      --output "${RUNNER_ROOT}/${TARBALL}"
+  else
+    curl --fail --silent --show-error --location "${RUNNER_DOWNLOAD_URL}" \
+      --output "${RUNNER_ROOT}/${TARBALL}"
+  fi
 
   if [ -n "${RUNNER_SHA256:-}" ]; then
-    printf '%s  %s\\n' "${RUNNER_SHA256}" "${TARBALL}" > "${RUNNER_ROOT}/${TARBALL}.sha256"
+    printf '%s  %s\n' "${RUNNER_SHA256}" "${TARBALL}" > "${RUNNER_ROOT}/${TARBALL}.sha256"
   else
     BASE_URL="${RUNNER_DOWNLOAD_URL%/${TARBALL}}"
     curl --fail --silent --show-error --location "${BASE_URL}/${TARBALL}.sha256" \
