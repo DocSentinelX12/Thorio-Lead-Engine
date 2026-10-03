@@ -91,13 +91,15 @@ fi
 JIT_CONFIG=""
 if [ -n "${JIT_TOKEN}" ]; then
   JIT_CONFIG="$(
-    python3 - "${GITHUB_API_URL}" "${GITHUB_API_VERSION}" "${GITHUB_REPOSITORY}" "${RUNNER_GROUP_ID}" "${RUNNER_NAME}" "${RUNNER_LABELS}" "${JIT_TOKEN}" <<'PY'
+    GITHUB_RUNNER_JIT_TOKEN="${JIT_TOKEN}" python3 - "${GITHUB_API_URL}" "${GITHUB_API_VERSION}" "${GITHUB_REPOSITORY}" "${RUNNER_GROUP_ID}" "${RUNNER_NAME}" "${RUNNER_LABELS}" <<'PY'
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 
-api_url, api_version, repository, group_id, name, labels_csv, token = sys.argv[1:]
+api_url, api_version, repository, group_id, name, labels_csv = sys.argv[1:]
+token = os.environ.get("GITHUB_RUNNER_JIT_TOKEN", "")
 owner, repo = repository.split("/", 1)
 payload = {
     "name": name,
