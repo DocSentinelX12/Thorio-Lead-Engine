@@ -1,0 +1,3 @@
+framework: python
+start: python -m lead_engine.compute_coordinator
+port: 8787
