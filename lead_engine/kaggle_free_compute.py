@@ -395,9 +395,13 @@ def get_secret(label):
         f"Kaggle secret service did not return {{label!r}} after 8 attempts: {{last_error}}"
     ) from last_error
 
+print("KAGGLE WORKER PHASE: starting secret retrieval.", flush=True)
 token = get_secret(CONFIG["coordinator_token_secret"])
+print("KAGGLE WORKER PHASE: coordinator token retrieved.", flush=True)
 coordinator_url = get_secret(CONFIG["coordinator_url_secret"])
+print("KAGGLE WORKER PHASE: coordinator URL retrieved.", flush=True)
 jit_token = get_secret(CONFIG["github_runner_jit_token_secret"])
+print("KAGGLE WORKER PHASE: GitHub JIT token retrieved.", flush=True)
 if not token:
     raise RuntimeError("Kaggle coordinator token secret is empty")
 if not coordinator_url.startswith(("http://", "https://")):
@@ -410,6 +414,7 @@ if ROOT.exists():
 ROOT.mkdir(parents=True, exist_ok=True)
 runner_script = ROOT / "register-ephemeral-gpu-runner.sh"
 runner_script.write_text(CONFIG["runner_bootstrap_script"], encoding="utf-8")
+print("KAGGLE WORKER PHASE: embedded runner bootstrap written.", flush=True)
 runner_script.chmod(0o700)
 
 os.environ["THORIO_COMPUTE_COORDINATOR_URL"] = coordinator_url
@@ -428,6 +433,7 @@ os.environ["RUNNER_ROOT"] = "/kaggle/working/actions-runner"
 runner_script = ROOT / "register-ephemeral-gpu-runner.sh"
 if not runner_script.is_file():
     raise RuntimeError("ephemeral GPU runner bootstrap script is missing")
+print("KAGGLE WORKER PHASE: invoking ephemeral runner bootstrap.", flush=True)
 run("bash", str(runner_script))
 '''
 
