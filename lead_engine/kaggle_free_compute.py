@@ -249,7 +249,15 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             output = self._run(["kernels", "status", kernel_ref])
         except KaggleFreeComputeError as exc:
             message = str(exc).lower()
-            if "not found" in message or "404" in message:
+            if (
+                "not found" in message
+                or "404" in message
+                or "permission 'kernels.get' was denied" in message
+            ):
+                # Kaggle currently reports a not-yet-created private kernel as
+                # a permission error instead of HTTP 404. The configured
+                # username owns this worker namespace, so this exact response
+                # is treated as absence and acquisition may create the kernel.
                 return "not_found"
             raise
         lowered = output.lower()
