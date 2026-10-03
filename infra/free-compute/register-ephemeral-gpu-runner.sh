@@ -60,13 +60,6 @@ for index in range(count):
 print(f"CUDA_VALIDATED_DEVICES={count}")
 PY
 
-if [ -z "${RUNNER_VERSION}" ]; then
-  RUNNER_VERSION="$(
-    curl --fail --silent --show-error       -H 'Accept: application/vnd.github+json'       "${GITHUB_API_URL}/repos/actions/runner/releases/latest" |
-      python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"].lstrip("v"))'
-  )"
-fi
-
 ARCH="$(uname -m)"
 case "${ARCH}" in
   x86_64) ASSET_ARCH="x64" ;;
@@ -74,11 +67,52 @@ case "${ARCH}" in
   *) echo "GPU RUNNER REFUSED: unsupported architecture ${ARCH}." >&2; exit 21 ;;
 esac
 
-TARBALL="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
-BASE_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}"
+if [ -z "${RUNNER_VERSION}" ] || [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
+  : "${GITHUB_RUNNER_JIT_TOKEN:?GITHUB_RUNNER_JIT_TOKEN is required to discover the repository runner application}"
+  RUNNER_DOWNLOAD_JSON="$(
+    curl --fail --silent --show-error --location       -H 'Accept: application/vnd.github+json'       -H "Authorization: Bearer ${GITHUB_RUNNER_JIT_TOKEN}"       -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}"       "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/runners/downloads"
+  )"
+  RUNNER_DOWNLOAD_METADATA="$(
+    python3 - "${RUNNER_DOWNLOAD_JSON}" "${ASSET_ARCH}" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+wanted_arch = sys.argv[2]
+for item in payload:
+    if (
+        isinstance(item, dict)
+        and item.get("os") == "linux"
+        and item.get("architecture") == wanted_arch
+        and isinstance(item.get("download_url"), str)
+        and isinstance(item.get("filename"), str)
+    ):
+        print(item["filename"])
+        print(item["download_url"])
+        break
+else:
+    raise SystemExit(
+        f"GPU RUNNER REFUSED: GitHub returned no Linux {wanted_arch} runner application."
+    )
+PY
+  )"
+  RUNNER_TARBALL_NAME="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '1p')"
+  RUNNER_DOWNLOAD_URL="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '2p')"
+  RUNNER_VERSION="$(printf '%s' "${RUNNER_TARBALL_NAME}" | sed -E 's/^actions-runner-linux-[^-]+-([0-9.]+)\.tar\.gz$/\1/')"
+  if [ -z "${RUNNER_VERSION}" ] || [ "${RUNNER_VERSION}" = "${RUNNER_TARBALL_NAME}" ]; then
+    echo "GPU RUNNER REFUSED: could not determine runner version from ${RUNNER_TARBALL_NAME}." >&2
+    exit 22
+  fi
+else
+  RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
+  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
+fi
+
+TARBALL="${RUNNER_TARBALL_NAME}"
+BASE_URL="${RUNNER_DOWNLOAD_URL%/${TARBALL}}"
 
 if [ ! -x "${RUNNER_ROOT}/config.sh" ]; then
-  curl --fail --silent --show-error --location     "${BASE_URL}/${TARBALL}"     --output "${RUNNER_ROOT}/${TARBALL}"
+  curl --fail --silent --show-error --location     "${RUNNER_DOWNLOAD_URL}"     --output "${RUNNER_ROOT}/${TARBALL}"
   curl --fail --silent --show-error --location     "${BASE_URL}/${TARBALL}.sha256"     --output "${RUNNER_ROOT}/${TARBALL}.sha256"
   (
     cd "${RUNNER_ROOT}"
