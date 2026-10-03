@@ -504,6 +504,7 @@ run("bash", str(runner_script))
             github_runner_jit_token_secret=self.config.github_runner_jit_token_secret_label,
             github_repository=self.config.github_repository,
             github_runner_labels=self.config.github_runner_labels,
+            runner_bootstrap_script=self._runner_bootstrap_script(),
         )
         metadata = {
             "id": kernel_ref,
