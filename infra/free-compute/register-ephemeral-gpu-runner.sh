@@ -68,52 +68,84 @@ case "${ARCH}" in
 esac
 
 if [ -z "${RUNNER_VERSION}" ] || [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
-  : "${GITHUB_RUNNER_JIT_TOKEN:?GITHUB_RUNNER_JIT_TOKEN is required to discover the repository runner application}"
-  RUNNER_DOWNLOAD_JSON="$(
-    curl --fail --silent --show-error --location       -H 'Accept: application/vnd.github+json'       -H "Authorization: Bearer ${GITHUB_RUNNER_JIT_TOKEN}"       -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}"       "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/runners/downloads"
+  # The repository-scoped runner-downloads endpoint requires repository
+  # Administration: read. The JIT token is intentionally used for runner
+  # creation and may not expose that read permission in every token setup.
+  # Runner releases are public, so discover the latest published release from
+  # actions/runner instead and select the exact Linux architecture asset.
+  RUNNER_RELEASE_JSON="$(
+    curl --fail --silent --show-error --location \
+      -H 'Accept: application/vnd.github+json' \
+      -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
+      "${GITHUB_API_URL}/repos/actions/runner/releases?per_page=10"
   )"
   RUNNER_DOWNLOAD_METADATA="$(
-    python3 - "${RUNNER_DOWNLOAD_JSON}" "${ASSET_ARCH}" <<'PY'
+    python3 - "${RUNNER_RELEASE_JSON}" "${ASSET_ARCH}" <<'PY'
 import json
 import sys
 
 payload = json.loads(sys.argv[1])
 wanted_arch = sys.argv[2]
-for item in payload:
+
+for release in payload:
     if (
-        isinstance(item, dict)
-        and item.get("os") == "linux"
-        and item.get("architecture") == wanted_arch
-        and isinstance(item.get("download_url"), str)
-        and isinstance(item.get("filename"), str)
+        not isinstance(release, dict)
+        or release.get("draft")
+        or release.get("prerelease")
     ):
-        print(item["filename"])
-        print(item["download_url"])
-        break
-else:
-    raise SystemExit(
-        f"GPU RUNNER REFUSED: GitHub returned no Linux {wanted_arch} runner application."
-    )
+        continue
+    tag = release.get("tag_name")
+    if not isinstance(tag, str) or not tag.startswith("v"):
+        continue
+    for asset in release.get("assets", []):
+        if not isinstance(asset, dict):
+            continue
+        filename = asset.get("name")
+        download_url = asset.get("browser_download_url")
+        if (
+            isinstance(filename, str)
+            and filename == f"actions-runner-linux-{wanted_arch}-{tag[1:]}.tar.gz"
+            and isinstance(download_url, str)
+        ):
+            digest = asset.get("digest")
+            if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                raise SystemExit(
+                    f"GPU RUNNER REFUSED: GitHub release asset {filename} has no SHA-256 digest."
+                )
+            print(tag[1:])
+            print(filename)
+            print(download_url)
+            print(digest.removeprefix("sha256:"))
+            raise SystemExit(0)
+
+raise SystemExit(
+    f"GPU RUNNER REFUSED: no published Linux {wanted_arch} actions/runner asset was found."
+)
 PY
   )"
-  RUNNER_TARBALL_NAME="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '1p')"
-  RUNNER_DOWNLOAD_URL="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '2p')"
-  RUNNER_VERSION="$(printf '%s' "${RUNNER_TARBALL_NAME}" | sed -E 's/^actions-runner-linux-[^-]+-([0-9.]+)\.tar\.gz$/\1/')"
-  if [ -z "${RUNNER_VERSION}" ] || [ "${RUNNER_VERSION}" = "${RUNNER_TARBALL_NAME}" ]; then
-    echo "GPU RUNNER REFUSED: could not determine runner version from ${RUNNER_TARBALL_NAME}." >&2
-    exit 22
-  fi
+  RUNNER_VERSION="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '1p')"
+  RUNNER_TARBALL_NAME="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '2p')"
+  RUNNER_DOWNLOAD_URL="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '3p')"
+  RUNNER_SHA256="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '4p')"
 else
   RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
   RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
 fi
 
 TARBALL="${RUNNER_TARBALL_NAME}"
-BASE_URL="${RUNNER_DOWNLOAD_URL%/${TARBALL}}"
 
 if [ ! -x "${RUNNER_ROOT}/config.sh" ]; then
-  curl --fail --silent --show-error --location     "${RUNNER_DOWNLOAD_URL}"     --output "${RUNNER_ROOT}/${TARBALL}"
-  curl --fail --silent --show-error --location     "${BASE_URL}/${TARBALL}.sha256"     --output "${RUNNER_ROOT}/${TARBALL}.sha256"
+  curl --fail --silent --show-error --location "${RUNNER_DOWNLOAD_URL}" \
+    --output "${RUNNER_ROOT}/${TARBALL}"
+
+  if [ -n "${RUNNER_SHA256:-}" ]; then
+    printf '%s  %s\\n' "${RUNNER_SHA256}" "${TARBALL}" > "${RUNNER_ROOT}/${TARBALL}.sha256"
+  else
+    BASE_URL="${RUNNER_DOWNLOAD_URL%/${TARBALL}}"
+    curl --fail --silent --show-error --location "${BASE_URL}/${TARBALL}.sha256" \
+      --output "${RUNNER_ROOT}/${TARBALL}.sha256"
+  fi
+
   (
     cd "${RUNNER_ROOT}"
     sha256sum --check "${TARBALL}.sha256"
