@@ -1,6 +1,11 @@
 name: Physical Lightning GPU Acquisition Proof
 
 on:
+  push:
+    branches:
+      - feature/gpu-fabric-foundation
+    paths:
+      - ".github/workflows/physical-lightning-gpu-proof.yml"
   workflow_dispatch:
     inputs:
       studio_name:
@@ -32,8 +37,8 @@ jobs:
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
       THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING: ${{ secrets.THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING }}
-      THORIO_LIGHTNING_STUDIO: ${{ inputs.studio_name }}
-      THORIO_LIGHTNING_MACHINE: ${{ inputs.machine }}
+      THORIO_LIGHTNING_STUDIO: ${{ inputs.studio_name || 'thorio-gpu-proof' }}
+      THORIO_LIGHTNING_MACHINE: ${{ inputs.machine || 'T4' }}
       THORIO_LIGHTNING_REF: feature/gpu-fabric-foundation
       THORIO_LIGHTNING_OFFER_TTL_SECONDS: "1200"
       THORIO_LIGHTNING_SSH_TIMEOUT_SECONDS: "900"
