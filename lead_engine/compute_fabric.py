@@ -18,6 +18,37 @@ from .compute_scheduler import ComputeAllocation, ComputeScheduler, ComputeSched
 
 
 @dataclass(frozen=True)
+class ProviderCapabilities:
+    """Conservative capability contract for a free-compute provider adapter."""
+
+    zero_cost_acquisition: bool = True
+    gpu_acquisition: bool = False
+    cuda_execution: bool = False
+    nccl_execution: bool = False
+    multi_gpu: bool = False
+    multi_node: bool = False
+    networked_multi_node: bool = False
+    arbitrary_process: bool = False
+    ssh: bool = False
+    ephemeral_runner: bool = False
+    github_jit_runner: bool = False
+    concurrent_acquisitions: bool = False
+    provider_api: bool = False
+    explicit_release: bool = False
+    physical_identity_attestation: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in self.__dataclass_fields__:
+            if not isinstance(getattr(self, field_name), bool):
+                raise TypeError(f"{field_name} must be bool")
+        if not self.zero_cost_acquisition:
+            raise ValueError("free-compute providers must declare zero_cost_acquisition=True")
+
+    def to_dict(self) -> dict[str, bool]:
+        return {field_name: bool(getattr(self, field_name)) for field_name in self.__dataclass_fields__}
+
+
+@dataclass(frozen=True)
 class ProviderObservation:
     provider_id: str
     domain_id: str
