@@ -46,6 +46,9 @@ class KaggleFreeComputeConfig:
     coordinator_secret_label: str = "THORIO_COMPUTE_AUTH_TOKEN"
     coordinator_url_secret_label: str = "THORIO_COMPUTE_COORDINATOR_URL"
     github_runner_jit_token_secret_label: str = "THORIO_GITHUB_RUNNER_JIT_TOKEN"
+    coordinator_token: str = ""
+    coordinator_url: str = ""
+    github_runner_jit_token: str = ""
     github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
     github_runner_labels: str = "self-hosted,thorio-free-gpu,cuda"
     minimum_remaining_hours: float = 1.0
@@ -155,6 +158,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                     "THORIO_KAGGLE_GITHUB_RUNNER_JIT_TOKEN_SECRET",
                     "THORIO_GITHUB_RUNNER_JIT_TOKEN",
                 ).strip(),
+                coordinator_token=os.environ.get("THORIO_COMPUTE_AUTH_TOKEN", ""),
+                coordinator_url=os.environ.get("THORIO_COMPUTE_COORDINATOR_URL", ""),
+                github_runner_jit_token=os.environ.get("GITHUB_RUNNER_JIT_TOKEN", ""),
                 github_repository=os.environ.get(
                     "THORIO_KAGGLE_GITHUB_REPOSITORY",
                     "DocSentinelX12/Thorio-Lead-Engine",
@@ -358,6 +364,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         coordinator_token_secret: str,
         coordinator_url_secret: str,
         github_runner_jit_token_secret: str,
+        coordinator_token: str,
+        coordinator_url: str,
+        github_runner_jit_token: str,
         github_repository: str,
         github_runner_labels: str,
         runner_bootstrap_script: str,
@@ -371,6 +380,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             "coordinator_token_secret": coordinator_token_secret,
             "coordinator_url_secret": coordinator_url_secret,
             "github_runner_jit_token_secret": github_runner_jit_token_secret,
+            "coordinator_token": coordinator_token,
+            "coordinator_url": coordinator_url,
+            "github_runner_jit_token": github_runner_jit_token,
             "github_repository": github_repository,
             "github_runner_labels": github_runner_labels,
             "runner_bootstrap_script": runner_bootstrap_script,
@@ -408,12 +420,18 @@ def get_secret(label):
         f"Kaggle secret service did not return {{label!r}} after 8 attempts: {{last_error}}"
     ) from last_error
 
-print("KAGGLE WORKER PHASE: starting secret retrieval.", flush=True)
-token = get_secret(CONFIG["coordinator_token_secret"])
+def credential(value_key, label_key):
+    value = CONFIG.get(value_key, "").strip()
+    if value:
+        return value
+    return get_secret(CONFIG[label_key])
+
+print("KAGGLE WORKER PHASE: starting credential handoff.", flush=True)
+token = credential("coordinator_token", "coordinator_token_secret")
 print("KAGGLE WORKER PHASE: coordinator token retrieved.", flush=True)
-coordinator_url = get_secret(CONFIG["coordinator_url_secret"])
+coordinator_url = credential("coordinator_url", "coordinator_url_secret")
 print("KAGGLE WORKER PHASE: coordinator URL retrieved.", flush=True)
-jit_token = get_secret(CONFIG["github_runner_jit_token_secret"])
+jit_token = credential("github_runner_jit_token", "github_runner_jit_token_secret")
 print("KAGGLE WORKER PHASE: GitHub JIT token retrieved.", flush=True)
 if not token:
     raise RuntimeError("Kaggle coordinator token secret is empty")
@@ -522,6 +540,9 @@ run("bash", str(runner_script))
             coordinator_token_secret=self.config.coordinator_secret_label,
             coordinator_url_secret=self.config.coordinator_url_secret_label,
             github_runner_jit_token_secret=self.config.github_runner_jit_token_secret_label,
+            coordinator_token=self.config.coordinator_token,
+            coordinator_url=self.config.coordinator_url,
+            github_runner_jit_token=self.config.github_runner_jit_token,
             github_repository=self.config.github_repository,
             github_runner_labels=self.config.github_runner_labels,
             runner_bootstrap_script=self._runner_bootstrap_script(),
