@@ -81,6 +81,7 @@ jobs:
           set -euo pipefail
           rm -rf /tmp/thorio-kaggle-proof
           mkdir -p /tmp/thorio-kaggle-proof
+          probe_source_b64="$(base64 -w0 lead_engine/gpu_execution_probe.py)"
           cat > /tmp/thorio-kaggle-proof/kernel-metadata.json <<EOF
           {
             "id": "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}",
@@ -98,22 +99,18 @@ jobs:
           }
           EOF
           cat > /tmp/thorio-kaggle-proof/kernel.py <<PY
+          import base64
           import hashlib
           import json
           import os
           import pathlib
           import subprocess
           import sys
-          import urllib.request
 
           proof_sha = "${THORIO_PROOF_SHA}"
           expected_probe_source_sha256 = "${THORIO_PROBE_SOURCE_SHA256}"
-          raw_url = (
-              "https://raw.githubusercontent.com/DocSentinelX12/Thorio-Lead-Engine/"
-              + proof_sha
-              + "/lead_engine/gpu_execution_probe.py"
-          )
-          source = urllib.request.urlopen(raw_url, timeout=60).read()
+          encoded_probe_source = "${probe_source_b64}"
+          source = base64.b64decode(encoded_probe_source.encode("ascii"))
           observed_probe_source_sha256 = hashlib.sha256(source).hexdigest()
           if observed_probe_source_sha256 != expected_probe_source_sha256:
               raise RuntimeError(
