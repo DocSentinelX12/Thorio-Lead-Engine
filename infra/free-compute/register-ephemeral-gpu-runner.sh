@@ -6,7 +6,7 @@ set -euo pipefail
 
 RUNNER_ROOT="${RUNNER_ROOT:-/opt/actions-runner}"
 RUNNER_LABELS="${RUNNER_LABELS:-gpu,cuda}"
-RUNNER_VERSION="${RUNNER_VERSION:-}"
+RUNNER_VERSION="${RUNNER_VERSION:-2.337.0}"
 GITHUB_API_URL="${GITHUB_API_URL:-https://api.github.com}"
 GITHUB_API_VERSION="${GITHUB_API_VERSION:-2026-03-10}"
 RUNNER_GROUP_ID="${GITHUB_RUNNER_GROUP_ID:-1}"
@@ -67,7 +67,12 @@ case "${ARCH}" in
   *) echo "GPU RUNNER REFUSED: unsupported architecture ${ARCH}." >&2; exit 21 ;;
 esac
 
-if [ -z "${RUNNER_VERSION}" ] || [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
+if [ -z "${RUNNER_DOWNLOAD_URL:-}" ]; then
+  RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
+  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
+fi
+
+if [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
   # The repository-scoped runner-downloads endpoint requires repository
   # Administration: read. The JIT token is intentionally used for runner
   # creation and may not expose that read permission in every token setup.
@@ -129,7 +134,6 @@ PY
   RUNNER_SHA256="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '4p')"
 else
   RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
-  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
 fi
 
 TARBALL="${RUNNER_TARBALL_NAME}"
