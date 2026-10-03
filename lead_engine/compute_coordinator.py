@@ -44,6 +44,7 @@ class ComputeCoordinator:
             raise ValueError("lease_seconds must be at least 1")
         self.db_path = db_path
         self.auth_token = auth_token
+        self._clock = clock
         self.pool = ComputePool(db_path, lease_seconds=lease_seconds)
         self.lease_seconds = lease_seconds
         inventory_path = os.environ.get("THORIO_COMPUTE_INVENTORY_DB", f"{db_path}.inventory.sqlite3")
@@ -579,7 +580,7 @@ class ComputeCoordinator:
         expires_at: float | None = None,
         source_evidence: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        now = time.time()
+        now = self._clock()
         resolved_expiry = now + max(60, self.lease_seconds * 2) if expires_at is None else float(expires_at)
         if resolved_expiry <= now:
             raise ValueError("worker resource observation is already expired")
