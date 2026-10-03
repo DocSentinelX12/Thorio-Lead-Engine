@@ -694,7 +694,7 @@ class ComputeCoordinator:
         if ok:
             worker = self.pool.worker(worker_id)
             if worker:
-                self._observe_worker_resources(WorkerIdentity(
+                identity = WorkerIdentity(
                     worker_id=worker["worker_id"], hostname=worker["hostname"], architecture=worker["architecture"],
                     cpu_count=int(worker["cpu_count"]), memory_mb=int(worker["memory_mb"]),
                     capabilities=tuple(worker.get("capabilities", ())),
@@ -705,7 +705,30 @@ class ComputeCoordinator:
                     gpu_discovery_error=str(worker.get("gpu_discovery_error", "")),
                     domain_id=str(worker.get("domain_id") or worker["worker_id"]),
                     physical_fabric_evidence=worker.get("physical_fabric_evidence") or {},
-                ))
+                )
+                acquisition_id = str(identity.physical_fabric_evidence.get("acquisition_id") or "").strip()
+                if acquisition_id:
+                    record = next(
+                        (item for item in self.free_compute_acquisition.store.records()
+                         if str(item.get("acquisition_id") or "") == acquisition_id),
+                        None,
+                    )
+                    if record and str(record.get("status") or "") in {"acquired", "verified"}:
+                        self._observe_worker_resources(
+                            identity,
+                            provider_id=str(record["provider_id"]),
+                            expires_at=float(record["expires_at"]) if record.get("expires_at") is not None else None,
+                            source_evidence={
+                                "source": "free_compute_acquisition_heartbeat",
+                                "acquisition_id": acquisition_id,
+                                "free_only": True,
+                                "paid_capacity_allowed": False,
+                            },
+                        )
+                    else:
+                        self.pool.drain_worker(identity.worker_id, "free compute acquisition is no longer active")
+                else:
+                    self._observe_worker_resources(identity)
         return ok
 
     @staticmethod
