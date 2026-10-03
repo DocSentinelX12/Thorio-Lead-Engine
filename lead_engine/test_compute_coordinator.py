@@ -618,7 +618,7 @@ def test_free_acquired_gpu_worker_is_promoted_into_authoritative_inventory(tmp_p
     assert result["provider_id"] == "kaggle"
     assert result["domain_id"] == offer.domain_id
     assert result["inventory"]["observed_gpus"] == 1
-    assert coordinator.free_compute_status()["verified"] == 1
+    assert coordinator.free_compute_status()["eligible_verified_count"] == 1
     eligible = coordinator.inventory.eligible(now=now)
     assert len(eligible) == 2
     gpu_rows = [row for row in eligible if row["resource_type"] == "gpu"]
