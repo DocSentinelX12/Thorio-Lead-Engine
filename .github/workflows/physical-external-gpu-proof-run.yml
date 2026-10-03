@@ -1,0 +1,22 @@
+name: Physical External GPU Proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-feature-workflow:
+    name: Run Physical External GPU Proof on GPU branch
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch GPU branch workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run "physical-external-gpu-proof-run.yml" --repo "${GITHUB_REPOSITORY}" --ref feature/gpu-fabric-foundation
+          echo "Dispatched Physical External GPU Proof from feature/gpu-fabric-foundation."
