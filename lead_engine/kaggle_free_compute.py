@@ -427,16 +427,8 @@ def credential(value_key, label_key):
     return get_secret(CONFIG[label_key])
 
 print("KAGGLE WORKER PHASE: starting credential handoff.", flush=True)
-token = credential("coordinator_token", "coordinator_token_secret")
-print("KAGGLE WORKER PHASE: coordinator token retrieved.", flush=True)
-coordinator_url = credential("coordinator_url", "coordinator_url_secret")
-print("KAGGLE WORKER PHASE: coordinator URL retrieved.", flush=True)
 jit_token = credential("github_runner_jit_token", "github_runner_jit_token_secret")
 print("KAGGLE WORKER PHASE: GitHub JIT token retrieved.", flush=True)
-if not token:
-    raise RuntimeError("Kaggle coordinator token secret is empty")
-if not coordinator_url.startswith(("http://", "https://")):
-    raise RuntimeError("Kaggle coordinator URL secret must use HTTP or HTTPS")
 if not jit_token:
     raise RuntimeError("Kaggle GitHub runner JIT token secret is empty")
 
@@ -448,8 +440,6 @@ runner_script.write_text(CONFIG["runner_bootstrap_script"], encoding="utf-8")
 print("KAGGLE WORKER PHASE: embedded runner bootstrap written.", flush=True)
 runner_script.chmod(0o700)
 
-os.environ["THORIO_COMPUTE_COORDINATOR_URL"] = coordinator_url
-os.environ["THORIO_COMPUTE_AUTH_TOKEN"] = token
 os.environ["THORIO_COMPUTE_ACQUISITION_ID"] = CONFIG["acquisition_id"]
 os.environ["THORIO_COMPUTE_DOMAIN"] = CONFIG["domain_id"]
 os.environ["THORIO_WORKER_ID"] = CONFIG["worker_id"]
