@@ -475,7 +475,7 @@ def test_provider_capabilities_are_not_physical_gpu_proof(tmp_path):
     manager = FreeComputeAcquisitionManager(store)
     manager.register(DeclaringProvider())
 
-    capabilities = manager.provider_capabilities()["free-provider:domain-1"]
+    capabilities = manager.provider_capabilities()["free-provider"]
     assert capabilities["gpu_acquisition"] is True
     assert capabilities["cuda_execution"] is True
     assert store.records() == []
