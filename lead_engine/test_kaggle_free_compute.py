@@ -194,6 +194,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "for attempt in range(1, 9)" in script
     assert "time.sleep(5)" in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
+    assert 'RUNNER_ROOT"] = "/kaggle/working/actions-runner"' in script
     assert "register-ephemeral-gpu-runner.sh" in script
     assert "self-hosted,thorio-free-gpu,cuda" in script
     assert 'git", "clone"' not in script
