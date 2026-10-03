@@ -67,12 +67,7 @@ case "${ARCH}" in
   *) echo "GPU RUNNER REFUSED: unsupported architecture ${ARCH}." >&2; exit 21 ;;
 esac
 
-if [ -z "${RUNNER_DOWNLOAD_URL:-}" ]; then
-  RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
-  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
-fi
-
-if [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
+if [ -z "${RUNNER_VERSION}" ] || [ -z "${RUNNER_DOWNLOAD_URL}" ]; then
   # The repository-scoped runner-downloads endpoint requires repository
   # Administration: read. The JIT token is intentionally used for runner
   # creation and may not expose that read permission in every token setup.
@@ -134,6 +129,7 @@ PY
   RUNNER_SHA256="$(printf '%s\n' "${RUNNER_DOWNLOAD_METADATA}" | sed -n '4p')"
 else
   RUNNER_TARBALL_NAME="actions-runner-linux-${ASSET_ARCH}-${RUNNER_VERSION}.tar.gz"
+  RUNNER_DOWNLOAD_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL_NAME}"
 fi
 
 TARBALL="${RUNNER_TARBALL_NAME}"
@@ -251,7 +247,15 @@ PY
   exec ./run.sh --jitconfig "${JIT_CONFIG}"
 fi
 
-./config.sh   --unattended   --replace   --ephemeral   --url "https://github.com/${GITHUB_REPOSITORY}"   --token "${REGISTRATION_TOKEN}"   --name "${RUNNER_NAME}"   --labels "${RUNNER_LABELS}"   --work "_work"
+./config.sh \
+  --unattended \
+  --replace \
+  --ephemeral \
+  --url "https://github.com/${GITHUB_REPOSITORY}" \
+  --token "${REGISTRATION_TOKEN}" \
+  --name "${RUNNER_NAME}" \
+  --labels "${RUNNER_LABELS}" \
+  --work "_work"
 
 trap './config.sh remove --unattended --token "${REGISTRATION_TOKEN}" >/dev/null 2>&1 || true' EXIT
 
