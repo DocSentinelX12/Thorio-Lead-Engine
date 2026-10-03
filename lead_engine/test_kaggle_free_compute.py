@@ -129,6 +129,43 @@ def test_acquire_free_creates_bounded_private_gpu_kernel_without_persisting_secr
     assert "THORIO_COMPUTE_AUTH_TOKEN" not in json.dumps(acquired.enrollment)
 
 
+def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
+    runner, calls = _runner_factory()
+    captured_script = {}
+
+    def capturing_runner(command, *, timeout, cwd=None):
+        if command[1:3] == ["kernels", "push"]:
+            from pathlib import Path
+
+            script_path = Path(command[command.index("-p") + 1]) / "thorio_worker.py"
+            captured_script["content"] = script_path.read_text(encoding="utf-8")
+        return runner(command, timeout=timeout, cwd=cwd)
+
+    provider = KaggleFreeComputeProvider(
+        KaggleFreeComputeConfig(
+            username="example-user",
+            kernel_slug="thorio-free-gpu-worker",
+            repository_ref="feature/gpu-fabric-foundation",
+            github_runner_jit_token_secret_label="THORIO_GITHUB_RUNNER_JIT_TOKEN",
+            github_repository="DocSentinelX12/Thorio-Lead-Engine",
+            github_runner_labels="thorio-free-gpu,cuda",
+        ),
+        runner=capturing_runner,
+        clock=lambda: 1_700_000_000.0,
+    )
+    offer = provider.discover_free()[0]
+
+    provider.acquire_free(offer)
+
+    script = captured_script["content"]
+    assert "get_secret(CONFIG[\"github_runner_jit_token_secret\"])" in script
+    assert "GITHUB_RUNNER_JIT_TOKEN" in script
+    assert "register-ephemeral-gpu-runner.sh" in script
+    assert "thorio-free-gpu,cuda" in script
+    assert "secret-value" not in script
+    assert "jit-token-value" not in script
+
+
 def test_acquire_free_passes_the_durable_acquisition_id_to_worker(tmp_path):
     runner, calls = _runner_factory()
     captured_script = {}
