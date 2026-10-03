@@ -89,13 +89,13 @@ jobs:
             "model_sources": []
           }
           EOF
-          cat > /tmp/thorio-kaggle-proof/kernel.py <<'PY'
+          cat > /tmp/thorio-kaggle-proof/kernel.py <<PY
           import json
           import os
           import subprocess
           import sys
 
-          proof_sha = os.environ["THORIO_PROOF_SHA"]
+          proof_sha = "${THORIO_PROOF_SHA}"
           repo = "/kaggle/working/thorio-lead-engine"
 
           subprocess.run(
