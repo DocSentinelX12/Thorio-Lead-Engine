@@ -60,6 +60,7 @@ class FreeComputeFleetController:
         Provider limits are authoritative. A shortfall is reported as an
         evidence-backed deficit, never represented as acquired capacity.
         """
+        reconciliation = self.acquisition.reconcile()
         before = self.status()
         if target.gpu_nodes <= before["verified_gpu_capacity"]:
             return {
@@ -71,12 +72,13 @@ class FreeComputeFleetController:
                 "complete": True,
                 "discovery": None,
                 "acquired": (),
-                "errors": (),
+                "errors": tuple(reconciliation["errors"]),
+                "reconciled_count": len(reconciliation["reconciled"]),
             }
 
         discovery = self.acquisition.discover()
         acquired: list[dict[str, Any]] = []
-        errors = list(discovery["errors"])
+        errors = list(reconciliation["errors"]) + list(discovery["errors"])
 
         # Each provider domain owns its own externally enforced capacity.
         # Acquire each distinct observed offer once. The provider and durable
@@ -108,4 +110,5 @@ class FreeComputeFleetController:
             "discovery": discovery,
             "acquired": tuple(acquired),
             "errors": tuple(errors),
+            "reconciled_count": len(reconciliation["reconciled"]),
         }
