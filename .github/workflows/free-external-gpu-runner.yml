@@ -113,7 +113,8 @@ jobs:
           test -n "${GITHUB_RUNNER_JIT_TOKEN}"
           # register-ephemeral-gpu-runner.sh intentionally uses the first
           # 12 characters of acquisition_id for the runner name.
-          expected_name="thorio-free-gpu-${{ steps.acquire.outputs.acquisition_id }}"
+          acquisition_id="${{ steps.acquire.outputs.acquisition_id }}"
+          expected_name="thorio-free-gpu-${acquisition_id:0:12}"
           expected_labels="self-hosted thorio-free-gpu cuda"
           deadline=$((SECONDS + 480))
 
