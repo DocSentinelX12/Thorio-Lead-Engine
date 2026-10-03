@@ -446,3 +446,36 @@ def test_hunt_reconciles_terminal_external_acquisition_and_allows_reacquisition(
     assert second["acquired_count"] == 1
     assert provider.released == [provider.acquired[0].acquisition_id]
     assert store.records()[0]["status"] == "acquired"
+
+
+def test_provider_capabilities_are_conservative_by_default(tmp_path):
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    manager.register(Provider())
+
+    capabilities = manager.provider_capabilities()
+    assert capabilities["free-provider:domain-1"]["zero_cost_acquisition"] is True
+    assert capabilities["free-provider:domain-1"]["gpu_acquisition"] is False
+    assert capabilities["free-provider:domain-1"]["github_jit_runner"] is False
+    assert capabilities["free-provider:domain-1"]["networked_multi_node"] is False
+
+
+def test_provider_capabilities_are_not_physical_gpu_proof(tmp_path):
+    class DeclaringProvider(Provider):
+        def capabilities(self):
+            from lead_engine.compute_fabric import ProviderCapabilities
+            return ProviderCapabilities(
+                gpu_acquisition=True,
+                cuda_execution=True,
+                ephemeral_runner=True,
+                github_jit_runner=True,
+            )
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    manager = FreeComputeAcquisitionManager(store)
+    manager.register(DeclaringProvider())
+
+    capabilities = manager.provider_capabilities()["free-provider:domain-1"]
+    assert capabilities["gpu_acquisition"] is True
+    assert capabilities["cuda_execution"] is True
+    assert store.records() == []
