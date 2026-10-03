@@ -191,6 +191,8 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
 
     script = captured_script["content"]
     assert "get_secret(CONFIG[\"github_runner_jit_token_secret\"])" in script
+    assert "for attempt in range(1, 9)" in script
+    assert "time.sleep(5)" in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
     assert "register-ephemeral-gpu-runner.sh" in script
     assert "thorio-free-gpu,cuda" in script
