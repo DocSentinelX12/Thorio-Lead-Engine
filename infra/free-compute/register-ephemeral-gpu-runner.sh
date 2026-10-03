@@ -88,6 +88,7 @@ if [ ! -x "${RUNNER_ROOT}/config.sh" ]; then
   )
 fi
 
+echo "GPU RUNNER PHASE: requesting GitHub JIT runner configuration." >&2
 JIT_CONFIG=""
 if [ -n "${JIT_TOKEN}" ]; then
   JIT_CONFIG="$(
@@ -134,12 +135,39 @@ runner = body.get("runner")
 if not isinstance(runner, dict):
     raise SystemExit("GPU RUNNER REFUSED: GitHub returned no runner metadata.")
 
+runner_id = runner.get("id")
+runner_name = runner.get("name")
+runner_status = runner.get("status")
+runner_labels = runner.get("labels")
+if not isinstance(runner_id, int) or not runner_name or not runner_status:
+    raise SystemExit("GPU RUNNER REFUSED: GitHub returned incomplete runner metadata.")
+if not isinstance(runner_labels, list):
+    raise SystemExit("GPU RUNNER REFUSED: GitHub returned invalid runner labels.")
+
+metadata = {
+    "id": runner_id,
+    "name": runner_name,
+    "status": runner_status,
+    "labels": [
+        label.get("name")
+        for label in runner_labels
+        if isinstance(label, dict) and isinstance(label.get("name"), str)
+    ],
+}
+print(
+    "GPU RUNNER JIT CREATED: "
+    + json.dumps(metadata, sort_keys=True, separators=(",", ":")),
+    file=sys.stderr,
+    flush=True,
+)
 print(encoded)
 PY
   )"
+  printf '%s\n' "GPU RUNNER PHASE: GitHub JIT configuration received; starting ephemeral runner." >&2
 
   # JIT runners are already ephemeral and are automatically removed after one
   # job. Do not call config.sh or attempt a second registration.
+  printf '%s\n' "GPU RUNNER PHASE: launching Actions runner with JIT configuration." >&2
   exec ./run.sh --jitconfig "${JIT_CONFIG}"
 fi
 
