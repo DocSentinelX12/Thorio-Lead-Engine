@@ -448,7 +448,11 @@ os.environ["PYTHONUNBUFFERED"] = "1"
 os.environ["GITHUB_REPOSITORY"] = CONFIG["github_repository"]
 os.environ["RUNNER_NAME"] = "thorio-free-gpu-" + CONFIG["acquisition_id"][:12]
 os.environ["RUNNER_LABELS"] = CONFIG["github_runner_labels"]
-os.environ["GITHUB_RUNNER_JIT_TOKEN"] = jit_token
+jit_token_file = ROOT / "github-runner-jit-token"
+jit_token_file.write_text(jit_token, encoding="utf-8")
+jit_token_file.chmod(0o600)
+os.environ.pop("GITHUB_RUNNER_JIT_TOKEN", None)
+os.environ["GITHUB_RUNNER_JIT_TOKEN_FILE"] = str(jit_token_file)
 os.environ["RUNNER_ROOT"] = "/kaggle/working/actions-runner"
 
 runner_script = ROOT / "register-ephemeral-gpu-runner.sh"
