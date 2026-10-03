@@ -418,3 +418,31 @@ def test_gpu_worker_verification_rejects_missing_physical_execution_evidence(tmp
         )
 
     assert store.records()[0]["status"] == "acquired"
+
+
+def test_hunt_reconciles_terminal_external_acquisition_and_allows_reacquisition(tmp_path):
+    class LifecycleProvider(Provider):
+        def __init__(self):
+            super().__init__()
+            self.lifecycle = "running"
+
+        def acquisition_status(self, acquisition):
+            return self.lifecycle
+
+    store = FreeComputeAcquisitionStore(str(tmp_path / "acquisition.sqlite3"))
+    provider = LifecycleProvider()
+    manager = FreeComputeAcquisitionManager(store, clock=lambda: 150.0)
+    manager.register(provider)
+
+    first = manager.hunt_once()
+    assert first["acquired_count"] == 1
+    assert first["reconciled_count"] == 0
+    assert store.records()[0]["status"] == "acquired"
+
+    provider.lifecycle = "complete"
+    second = manager.hunt_once()
+
+    assert second["reconciled_count"] == 1
+    assert second["acquired_count"] == 1
+    assert provider.released == [provider.acquired[0].acquisition_id]
+    assert store.records()[0]["status"] == "acquired"
