@@ -385,6 +385,13 @@ run(sys.executable, "-m", "lead_engine.compute_worker")
                 )
             self._sleeper(min(self.config.acquisition_ready_poll_interval_seconds, remaining))
 
+    def acquisition_status(self, acquisition: AcquiredCompute) -> str | None:
+        if acquisition.provider_id != self.provider_id:
+            raise KaggleFreeComputeError("acquisition belongs to a different provider")
+        if acquisition.domain_id != self._domain_id():
+            raise KaggleFreeComputeError("acquisition domain does not match the configured Kaggle worker")
+        return self._kernel_status(self._kernel_ref())
+
     def acquire_free(self, offer: FreeComputeOffer) -> AcquiredCompute:
         if offer.provider_id != self.provider_id:
             raise KaggleFreeComputeError("offer belongs to a different provider")
@@ -499,4 +506,11 @@ run(sys.executable, "-m", "lead_engine.compute_worker")
     def release_free(self, acquisition: AcquiredCompute) -> None:
         if acquisition.provider_id != self.provider_id:
             raise KaggleFreeComputeError("acquisition belongs to a different provider")
-        self._run(["kernels", "delete", self._kernel_ref(), "--yes"])
+        if acquisition.domain_id != self._domain_id():
+            raise KaggleFreeComputeError("acquisition domain does not match the configured Kaggle worker")
+        try:
+            self._run(["kernels", "delete", self._kernel_ref(), "--yes"])
+        except KaggleFreeComputeError as exc:
+            if "not found" in str(exc).lower() or "404" in str(exc):
+                return
+            raise
