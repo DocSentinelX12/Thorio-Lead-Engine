@@ -90,6 +90,10 @@ class FreeComputeProvider(ABC):
         """Release capacity when the provider supports an explicit release operation."""
         return None
 
+    def acquisition_status(self, acquisition: AcquiredCompute) -> str | None:
+        """Return provider-observed lifecycle state for a durable acquisition."""
+        return None
+
 
 class FreeComputeAcquisitionStore:
     """Durable acquisition ledger; it is not a scheduler or resource inventory."""
@@ -446,7 +450,7 @@ class FreeComputeAcquisitionManager:
             verification=verification,
         )
 
-    def release(self, acquisition: AcquiredCompute) -> None:
+    def _provider_for_acquisition(self, acquisition: AcquiredCompute) -> FreeComputeProvider:
         provider_id = str(acquisition.provider_id).strip()
         domain_id = str(acquisition.domain_id).strip()
         exact_key = f"{provider_id}:{domain_id}"
@@ -463,6 +467,62 @@ class FreeComputeAcquisitionManager:
             raise FreeComputeAcquisitionError(
                 f"free compute provider domain is not registered: {provider_id}:{domain_id}"
             )
+        return provider
+
+    @staticmethod
+    def _record_as_acquisition(record: Mapping[str, Any]) -> AcquiredCompute:
+        acquired_at = record.get("acquired_at")
+        if acquired_at is None:
+            raise FreeComputeAcquisitionError("active acquisition record is missing acquired_at")
+        return AcquiredCompute(
+            provider_id=str(record["provider_id"]),
+            domain_id=str(record["domain_id"]),
+            offer_id=str(record["offer_id"]),
+            acquisition_id=str(record["acquisition_id"]),
+            acquired_at=float(acquired_at),
+            expires_at=float(record["expires_at"]) if record.get("expires_at") is not None else None,
+            gpu_capable=bool(record["gpu_capable"]),
+            enrollment=record.get("enrollment") or {"worker_id": str(record.get("worker_id") or "")},
+        )
+
+    def reconcile(self) -> dict[str, Any]:
+        """Reconcile durable active acquisitions with provider-observed state."""
+        reconciled: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        terminal = {"complete", "failed", "cancelled", "not_found", "expired"}
+        for record in self.store.records():
+            if str(record["status"]) not in {"acquired", "verified"}:
+                continue
+            try:
+                acquisition = self._record_as_acquisition(record)
+                provider = self._provider_for_acquisition(acquisition)
+                observed = provider.acquisition_status(acquisition)
+                if observed is None or observed in {"running", "queued"}:
+                    continue
+                if observed not in terminal:
+                    continue
+                cleanup_error = ""
+                try:
+                    provider.release_free(acquisition)
+                except Exception as exc:
+                    cleanup_error = f"; cleanup failed: {type(exc).__name__}: {exc}"
+                self.store.mark_released(acquisition.acquisition_id, f"provider lifecycle state: {observed}{cleanup_error}")
+                reconciled.append({
+                    "acquisition_id": acquisition.acquisition_id,
+                    "provider_id": acquisition.provider_id,
+                    "provider_state": observed,
+                    "cleanup_error": cleanup_error,
+                })
+            except Exception as exc:
+                errors.append({
+                    "acquisition_id": str(record.get("acquisition_id") or ""),
+                    "provider_id": str(record.get("provider_id") or ""),
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+        return {"reconciled": tuple(reconciled), "errors": tuple(errors)}
+
+    def release(self, acquisition: AcquiredCompute) -> None:
+        provider = self._provider_for_acquisition(acquisition)
         provider.release_free(acquisition)
         self.store.mark_released(acquisition.acquisition_id)
 
@@ -507,9 +567,10 @@ class FreeComputeAcquisitionManager:
         A provider failure is isolated to that provider. The sweep continues so
         one unavailable source can never suppress capacity from other sources.
         """
+        reconciliation = self.reconcile()
         discovery = self.discover()
         acquired: list[dict[str, Any]] = []
-        errors = list(discovery["errors"])
+        errors = list(reconciliation["errors"]) + list(discovery["errors"])
         durable = {
             str(item["acquisition_id"]): str(item["status"])
             for item in self.store.records()
@@ -534,6 +595,7 @@ class FreeComputeAcquisitionManager:
         return {
             "provider_count": discovery["provider_count"],
             "offers_observed": len(discovery["offers"]),
+            "reconciled_count": len(reconciliation["reconciled"]),
             "acquired_count": len(acquired),
             "acquired": tuple(acquired),
             "errors": tuple(errors),
