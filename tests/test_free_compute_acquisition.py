@@ -454,10 +454,10 @@ def test_provider_capabilities_are_conservative_by_default(tmp_path):
     manager.register(Provider())
 
     capabilities = manager.provider_capabilities()
-    assert capabilities["free-provider:domain-1"]["zero_cost_acquisition"] is True
-    assert capabilities["free-provider:domain-1"]["gpu_acquisition"] is False
-    assert capabilities["free-provider:domain-1"]["github_jit_runner"] is False
-    assert capabilities["free-provider:domain-1"]["networked_multi_node"] is False
+    assert capabilities["free-provider"]["zero_cost_acquisition"] is True
+    assert capabilities["free-provider"]["gpu_acquisition"] is False
+    assert capabilities["free-provider"]["github_jit_runner"] is False
+    assert capabilities["free-provider"]["networked_multi_node"] is False
 
 
 def test_provider_capabilities_are_not_physical_gpu_proof(tmp_path):
