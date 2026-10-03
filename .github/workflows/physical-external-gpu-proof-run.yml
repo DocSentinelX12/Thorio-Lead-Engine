@@ -64,8 +64,14 @@ jobs:
             exit 1
           fi
           probe_source_sha256="$(sha256sum lead_engine/gpu_execution_probe.py | awk '{print $1}')"
-          if ! printf '%s' "$probe_source_sha256" | grep -Eq '^[0-9a-f]{64}
+          if ! printf '%s' "$probe_source_sha256" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "Unable to resolve the physical probe source digest." >&2
+            exit 1
+          fi
+          printf 'proof_sha=%s\n' "$proof_sha" >> "$GITHUB_OUTPUT"
+          printf 'probe_source_sha256=%s\n' "$probe_source_sha256" >> "$GITHUB_OUTPUT"
           echo "Physical proof will be bound to $proof_sha."
+          echo "Physical probe source SHA-256: $probe_source_sha256."
 
       - name: Build real physical GPU proof kernel
         env:
