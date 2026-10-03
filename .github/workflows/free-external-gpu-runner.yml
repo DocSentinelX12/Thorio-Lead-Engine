@@ -180,6 +180,7 @@ jobs:
 
   external_kernel_diagnostics:
     name: Inspect external GPU kernel startup
+    if: ${{ always() }}
     needs: provision
     runs-on: ubuntu-latest
     timeout-minutes: 6
