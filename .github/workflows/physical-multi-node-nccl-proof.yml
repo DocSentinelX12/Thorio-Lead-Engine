@@ -1,0 +1,22 @@
+name: Physical Multi-Node NCCL Proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-feature-workflow:
+    name: Run Physical Multi-Node NCCL Proof on GPU branch
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch GPU branch workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run "physical-multi-node-nccl-proof.yml" --repo "${GITHUB_REPOSITORY}" --ref feature/gpu-fabric-foundation
+          echo "Dispatched Physical Multi-Node NCCL Proof from feature/gpu-fabric-foundation."
