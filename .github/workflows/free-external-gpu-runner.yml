@@ -32,7 +32,7 @@ jobs:
       THORIO_KAGGLE_REPOSITORY_URL: https://github.com/DocSentinelX12/Thorio-Lead-Engine.git
       THORIO_KAGGLE_REPOSITORY_REF: feature/gpu-fabric-foundation
       THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
-      THORIO_KAGGLE_GITHUB_RUNNER_LABELS: thorio-free-gpu,cuda
+      THORIO_KAGGLE_GITHUB_RUNNER_LABELS: self-hosted,thorio-free-gpu,cuda
     outputs:
       acquisition_id: ${{ steps.acquire.outputs.acquisition_id }}
     steps:
