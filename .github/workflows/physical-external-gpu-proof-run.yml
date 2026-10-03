@@ -25,7 +25,7 @@ jobs:
     env:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
-      THORIO_KAGGLE_KERNEL_SLUG: thorio-physical-gpu-proof-${{ github.run_id }}
+      THORIO_KAGGLE_KERNEL_SLUG: thorio-physical-gpu-execution-proof-${{ github.run_id }}
     steps:
       - name: Check out branch
         uses: actions/checkout@v5
@@ -76,7 +76,7 @@ jobs:
           cat > /tmp/thorio-kaggle-proof/kernel-metadata.json <<EOF
           {
             "id": "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}",
-            "title": "Thorio Physical GPU Execution Proof",
+            "title": "Thorio Physical GPU Execution Proof ${{ github.run_id }}",
             "code_file": "kernel.py",
             "language": "python",
             "kernel_type": "script",
