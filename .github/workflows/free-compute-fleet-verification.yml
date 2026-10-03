@@ -1,0 +1,22 @@
+name: Free Compute Fleet Verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-feature-workflow:
+    name: Run Free Compute Fleet Verification on GPU branch
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch GPU branch workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run "free-compute-fleet-verification.yml" --repo "${GITHUB_REPOSITORY}" --ref feature/gpu-fabric-foundation
+          echo "Dispatched Free Compute Fleet Verification from feature/gpu-fabric-foundation."
