@@ -171,42 +171,52 @@ jobs:
           kaggle kernels push -p /tmp/thorio-kaggle-proof --accelerator NvidiaTeslaT4
 
       - name: Wait for external GPU execution to finish
+        id: kaggle_wait
         run: |
           set -euo pipefail
+          status="unknown"
           deadline=$((SECONDS + 600))
           while [ "$SECONDS" -lt "$deadline" ]; do
             output="$(kaggle kernels status "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" 2>&1 || true)"
             printf '%s\n' "$output"
             lowered="$(printf '%s' "$output" | tr '[:upper:]' '[:lower:]')"
             if printf '%s' "$lowered" | grep -Eq 'error|failed|cancelled'; then
-              echo "Kaggle external GPU execution failed."
-              exit 1
+              status="error"
+              break
             fi
             if printf '%s' "$lowered" | grep -Eq 'complete|completed'; then
-              echo "Kaggle external GPU execution completed."
-              exit 0
+              status="complete"
+              break
             fi
             sleep 10
           done
-          echo "Kaggle external GPU execution did not complete before the bounded verification timeout."
-          exit 1
+          if [ "$status" = "unknown" ]; then
+            status="timeout"
+          fi
+          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
+          echo "Kaggle external GPU execution status: $status"
 
       - name: Retrieve and verify physical execution evidence
+        if: always()
         run: |
           set -euo pipefail
           rm -rf /tmp/thorio-kaggle-output
-          kaggle kernels output "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" -p /tmp/thorio-kaggle-output --force
-          python - <<'PY'
+          mkdir -p /tmp/thorio-kaggle-output
+          kaggle kernels output "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" -p /tmp/thorio-kaggle-output --force || true
+          kaggle kernels logs "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" > /tmp/thorio-kaggle-output/kaggle-kernel.log 2>&1 || true
+          KAGGLE_STATUS="${{ steps.kaggle_wait.outputs.status }}" EXPECTED_PROOF_SHA="${{ steps.proof_revision.outputs.proof_sha }}" python - <<'PY'
           import json
-          import pathlib
           import os
+          import pathlib
 
-          marker = "THORIO_PHYSICAL_GPU_EXECUTION_PROOF "
+          status = os.environ.get("KAGGLE_STATUS", "unknown")
           expected_sha = os.environ["EXPECTED_PROOF_SHA"]
+          root = pathlib.Path("/tmp/thorio-kaggle-output")
+          marker = "THORIO_PHYSICAL_GPU_EXECUTION_PROOF "
           matches = []
 
-          for path in pathlib.Path("/tmp/thorio-kaggle-output").rglob("*"):
-              if not path.is_file():
+          for path in root.rglob("*"):
+              if not path.is_file() or path.name == "kaggle-kernel.log":
                   continue
               try:
                   text = path.read_text(encoding="utf-8", errors="replace")
@@ -215,6 +225,14 @@ jobs:
               for line in text.splitlines():
                   if line.startswith(marker):
                       matches.append(json.loads(line[len(marker):]))
+
+          if status != "complete":
+              log_path = root / "kaggle-kernel.log"
+              log = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+              raise SystemExit(
+                  "External Kaggle GPU execution did not complete successfully. "
+                  f"status={status}\nKaggle kernel log:\n{log[-12000:]}"
+              )
 
           if len(matches) != 1:
               raise SystemExit(
