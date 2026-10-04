@@ -51,7 +51,17 @@ class ComputeWorkerClient:
 
     def request(self, path: str, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         body = None if payload is None else json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(self.coordinator_url + path, data=body, method="GET" if body is None else "POST", headers={"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"})
+        request = urllib.request.Request(
+            self.coordinator_url + path,
+            data=body,
+            method="GET" if body is None else "POST",
+            headers={
+                "Authorization": f"Bearer {self.auth_token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Thorio-Compute-Worker/1.0",
+            },
+        )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
