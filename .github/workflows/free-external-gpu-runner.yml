@@ -104,6 +104,54 @@ jobs:
           kernel_ref = str(acquired["enrollment"]["kernel_ref"])
           acquisition_id = str(acquired["acquisition_id"])
 
+          durable_record = next(
+              (
+                  record
+                  for record in manager.status()["records"]
+                  if str(record.get("acquisition_id") or "") == acquisition_id
+              ),
+              None,
+          )
+          if durable_record is None:
+              raise SystemExit(f"Local acquisition ledger has no record for {acquisition_id}")
+
+          handoff_payload = {
+              "offer": {
+                  "provider_id": durable_record["provider_id"],
+                  "domain_id": durable_record["domain_id"],
+                  "offer_id": durable_record["offer_id"],
+                  "observed_at": durable_record["observed_at"],
+                  "expires_at": durable_record["expires_at"],
+                  "gpu_capable": durable_record["gpu_capable"],
+                  "no_cost": durable_record["no_cost"],
+                  "capacity_evidence": durable_record["evidence"],
+              },
+              "acquired": acquired,
+          }
+          import json
+          import urllib.request
+
+          coordinator_url = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
+          coordinator_request = urllib.request.Request(
+              coordinator_url + "/fabric/acquisition/handoff",
+              data=json.dumps(handoff_payload).encode("utf-8"),
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "Accept": "application/json",
+                  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              },
+          )
+          try:
+              with urllib.request.urlopen(coordinator_request, timeout=20) as response:
+                  handoff_result = json.loads(response.read().decode("utf-8"))
+          except Exception as exc:
+              raise SystemExit(f"Coordinator acquisition handoff failed: {exc}") from exc
+          if handoff_result.get("ok") is not True or str(handoff_result.get("acquisition_id") or "") != acquisition_id:
+              raise SystemExit(f"Coordinator rejected acquisition handoff: {handoff_result!r}")
+          print(f"THORIO_EXTERNAL_GPU_ACQUISITION_DURABLY_REGISTERED {acquisition_id}")
+
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"kernel_ref={kernel_ref}\n")
               output.write(f"acquisition_id={acquisition_id}\n")
