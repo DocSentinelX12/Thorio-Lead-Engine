@@ -11,7 +11,10 @@ on:
       - "lead_engine/test_kaggle_free_compute.py"
       - "lead_engine/gpu_execution_probe.py"
       - "lead_engine/compute_worker.py"
+      - "lead_engine/free_compute_acquisition.py"
+      - "lead_engine/compute_coordinator.py"
       - "tests/test_gpu_execution_probe.py"
+      - "tests/test_free_compute_acquisition_handoff.py"
   workflow_dispatch:
 
 permissions:
