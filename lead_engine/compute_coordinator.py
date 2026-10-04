@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
-from .free_compute_acquisition import FreeComputeAcquisitionManager, FreeComputeAcquisitionStore, FreeComputeProvider
+from .free_compute_acquisition import AcquiredCompute, FreeComputeAcquisitionManager, FreeComputeAcquisitionStore, FreeComputeOffer, FreeComputeProvider
 from .compute_fabric_telemetry import aggregate_execution_metrics, derive_autonomous_closed_loop_evidence, extract_execution_metrics, extract_execution_path_observations
 from .compute_inventory import ComputeInventory
 from .compute_pool import ComputePool, WorkerIdentity
@@ -144,6 +144,28 @@ class ComputeCoordinator:
         """Discover and acquire one bounded no-cost offer per provider."""
         with self._lock:
             return self.free_compute_acquisition.hunt_once()
+
+    def handoff_free_compute_acquisition(
+        self,
+        *,
+        offer: Dict[str, Any],
+        acquired: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Persist an externally acquired free offer before worker enrollment."""
+        parsed_offer = FreeComputeOffer(**offer)
+        parsed_acquired = AcquiredCompute(**acquired)
+        with self._lock:
+            result = self.free_compute_acquisition.handoff_acquired(
+                offer=parsed_offer,
+                acquired=parsed_acquired,
+            )
+        return {
+            "ok": True,
+            "acquisition_id": parsed_acquired.acquisition_id,
+            "provider_id": parsed_acquired.provider_id,
+            "domain_id": parsed_acquired.domain_id,
+            "status": "acquired",
+        }
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
@@ -3411,6 +3433,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, self.server.coordinator.inventory.fleet_resource_intelligence(now=time.time()))
             elif self.path == "/fabric/acquisition/status":
                 self._send(200, self.server.coordinator.free_compute_status())
+            elif self.path == "/fabric/acquisition/handoff":
+                result = self.server.coordinator.handoff_free_compute_acquisition(
+                    offer=body["offer"],
+                    acquired=body["acquired"],
+                )
+                self._send(200, result)
             elif self.path == "/fabric/acquisition/hunt":
                 self._send(200, self.server.coordinator.hunt_free_compute_once())
             elif self.path == "/fabric/heartbeat":
