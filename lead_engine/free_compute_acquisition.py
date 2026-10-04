@@ -449,6 +449,42 @@ class FreeComputeAcquisitionManager:
             self.store.mark_retry(acquisition_id, f"{type(exc).__name__}: {exc}")
             raise
 
+    def handoff_acquired(
+        self,
+        *,
+        offer: FreeComputeOffer,
+        acquired: AcquiredCompute,
+    ) -> AcquiredCompute:
+        """Durably import an already-acquired free offer into the coordinator ledger.
+
+        The external acquisition may be performed by a CI control-plane host, but
+        the coordinator must own the authoritative durable record before worker
+        enrollment can succeed. This handoff never promotes hardware to trusted
+        inventory; physical worker verification remains a separate gate.
+        """
+        if not offer.no_cost:
+            raise FreeComputeAcquisitionError("paid capacity is permanently forbidden")
+        expected = self.store.acquisition_id(offer)
+        if acquired.acquisition_id != expected:
+            raise FreeComputeAcquisitionError("acquisition identity does not match observed offer")
+        if acquired.provider_id != offer.provider_id or acquired.domain_id != offer.domain_id or acquired.offer_id != offer.offer_id:
+            raise FreeComputeAcquisitionError("acquisition identity does not match observed offer")
+        if offer.expires_at is not None and acquired.acquired_at >= offer.expires_at:
+            raise FreeComputeAcquisitionError("acquisition must begin before the observed offer expires")
+        existing = next(
+            (item for item in self.store.records() if str(item.get("acquisition_id")) == expected),
+            None,
+        )
+        if existing is not None:
+            status = str(existing.get("status") or "")
+            if status in {"acquired", "verified"}:
+                return acquired
+            if status == "released":
+                raise FreeComputeAcquisitionError("released acquisition cannot be reactivated")
+        self.store.record_offer(offer)
+        self.store.mark_acquired(acquired, offer)
+        return acquired
+
     def confirm_worker_enrollment(
         self,
         *,
