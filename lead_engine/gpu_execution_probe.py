@@ -11,6 +11,14 @@ import os
 import time
 
 
+def normalize_gpu_uuid(value: object) -> str:
+    """Canonicalize NVIDIA GPU UUID formatting without changing device identity."""
+    normalized = str(value or "").strip()
+    if normalized.upper().startswith("GPU-"):
+        normalized = normalized[4:]
+    return f"GPU-{normalized}" if normalized else ""
+
+
 def run_probe(expected_gpu_uuid: str) -> dict[str, object]:
     try:
         import torch
@@ -23,7 +31,8 @@ def run_probe(expected_gpu_uuid: str) -> dict[str, object]:
     torch.cuda.set_device(0)
     device = torch.device("cuda", 0)
     properties = torch.cuda.get_device_properties(device)
-    observed_gpu_uuid = str(getattr(properties, "uuid", "") or "").strip()
+    observed_gpu_uuid = normalize_gpu_uuid(getattr(properties, "uuid", ""))
+    expected_gpu_uuid = normalize_gpu_uuid(expected_gpu_uuid)
     if not observed_gpu_uuid:
         raise RuntimeError("CUDA runtime did not expose the physical GPU UUID")
     if expected_gpu_uuid and observed_gpu_uuid != expected_gpu_uuid:
