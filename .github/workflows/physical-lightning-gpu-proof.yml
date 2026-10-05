@@ -39,7 +39,7 @@ jobs:
       THORIO_LIGHTNING_SSH_TIMEOUT_SECONDS: "900"
 
     steps:
-      - name: Check out exact GPU branch
+      - name: Check out exact ref
         uses: actions/checkout@v5
         with:
           ref: ${{ github.ref_name }}
