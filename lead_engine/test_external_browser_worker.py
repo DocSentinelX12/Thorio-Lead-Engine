@@ -42,3 +42,4 @@ def test_lightning_runtime_is_no_card_and_persistent():
     assert "Restart" not in start
     assert "Termux" not in start
     assert "Termux" not in supervisor
+    assert 'line.startswith("export ")' in supervisor
