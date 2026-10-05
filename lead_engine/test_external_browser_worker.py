@@ -31,3 +31,14 @@ def test_external_browser_bootstrap_uses_persistent_systemd_services():
 def test_android_browser_runtime_path_is_removed():
     assert not (ROOT / "infra" / "android-termux").exists()
     assert not (ROOT / "lead_engine" / "test_android_runtime_scripts.py").exists()
+
+
+def test_lightning_runtime_is_no_card_and_persistent():
+    start = (ROOT / "infra" / "external-browser" / "lightning-start.sh").read_text(encoding="utf-8")
+    supervisor = (ROOT / "infra" / "external-browser" / "lightning-supervisor.py").read_text(encoding="utf-8")
+    assert "browser-profile" in start
+    assert "lightning-supervisor.py" in start
+    assert "launch_persistent_context" in (ROOT / "infra" / "external-browser" / "browser-worker.py").read_text(encoding="utf-8")
+    assert "Restart" not in start
+    assert "Termux" not in start
+    assert "Termux" not in supervisor
