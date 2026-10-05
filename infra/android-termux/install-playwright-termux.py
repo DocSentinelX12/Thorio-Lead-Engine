@@ -131,7 +131,14 @@ def _patch_driver() -> Path:
         shutil.copy2(cli, backup)
 
     temporary = cli.with_suffix(cli.suffix + ".thorio-tmp")
-    temporary.write_text(PATCH_PAYLOAD + original, encoding="utf-8")
+    # cli.js starts with a Node shebang. The shebang must remain the first line,
+    # otherwise Node parses it as JavaScript and fails with a SyntaxError.
+    if original.startswith("#!"):
+        first_line, separator, remainder = original.partition("\n")
+        patched_source = first_line + separator + PATCH_PAYLOAD + remainder
+    else:
+        patched_source = PATCH_PAYLOAD + original
+    temporary.write_text(patched_source, encoding="utf-8")
     os.replace(temporary, cli)
 
     patched = cli.read_text(encoding="utf-8", errors="ignore")
