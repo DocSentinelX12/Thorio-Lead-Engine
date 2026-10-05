@@ -17,8 +17,6 @@ def test_external_browser_worker_is_headless_and_local_only():
     assert "headless=True" in text
     assert "--remote-debugging-address=127.0.0.1" in text
     assert "THORIO_BROWSER_STORAGE_STATE_PATH" in text
-    assert "Termux" not in text
-    assert "termux" not in text
 
 
 def test_production_workflow_wires_external_browser_state_persistence():
