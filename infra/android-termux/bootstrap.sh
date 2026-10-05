@@ -57,6 +57,12 @@ if ! grep -q "^export PLAYWRIGHT_BROWSERS_PATH=" "$ENV_FILE"; then
   printf "\nexport PLAYWRIGHT_BROWSERS_PATH=0\n" >> "$ENV_FILE"
 fi
 
+# The Android Playwright driver uses the native Termux Node.js runtime. Keep this
+# setting in the persistent private environment so scheduled services use it too.
+if ! grep -q "^export PLAYWRIGHT_NODEJS_PATH=" "$ENV_FILE"; then
+  printf "export PLAYWRIGHT_NODEJS_PATH=$PREFIX/bin/node\n" >> "$ENV_FILE"
+fi
+
 mkdir -p "$SERVICE_DIR" "$LOG_DIR/sv"
 
 cat > "$HOME/.thorio/start-services" <<'EOF'
