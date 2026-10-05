@@ -150,6 +150,11 @@ class LeadDB:
             raise ValueError("Lead payload must contain a fingerprint.")
         validate_opportunity_identity(payload)
         cursor = self.conn.execute("INSERT OR IGNORE INTO leads (fingerprint, payload) VALUES (?, ?)", (str(fingerprint), json.dumps(payload, ensure_ascii=False)))
+        if cursor.rowcount == 1:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO compute_lead_work (fingerprint,status,attempts,last_error,result,created_at,updated_at) VALUES (?, 'queued', 0, '', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (str(fingerprint),),
+            )
         if self._batch_write_depth == 0:
             self.conn.commit()
         return cursor.rowcount == 1
