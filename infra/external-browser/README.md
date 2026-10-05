@@ -1,39 +1,58 @@
-# Thorio external browser worker
+# Thorio external browser collection
 
-The phone path has been removed. Browser collection now runs on an external
-Linux environment and keeps its authenticated profile on persistent storage.
+The phone and Lightning runtime paths are removed. Browser collection runs on
+GitHub-hosted Linux runners, which are external to the phone and are recreated
+for each job.
 
-## First no-card target: Lightning AI free Studio
+GitHub-hosted standard runners are free for this public repository. Because
+the runner filesystem is ephemeral, Thorio persists only the Playwright
+authenticated storage state between production runs. That state contains
+browser cookies and web storage, so it is encrypted before it is uploaded as
+an Actions artifact.
 
-Lightning currently advertises one free active Studio with no credit card,
-persistent storage, SSH access, and background execution. Free Studios require
-a restart every four hours. Lightning also documents that Studio files,
-packages, and environment state persist across restarts.
+## Runtime
 
-That makes the free Studio a practical no-card target for this browser worker:
-the Chromium process restarts, but the Thorio browser profile remains on the
-persistent Studio filesystem. The existing authentication code reuses a valid
-session and only attempts normal login when the session is invalid.
+- browser-worker.py starts headless Chromium and exposes CDP only on
+  127.0.0.1:9222.
+- browser-worker.py restores the encrypted Playwright storage state when one
+  exists and saves the current state when the run ends.
+- browser-state.py encrypts and decrypts that state with a dedicated
+  GitHub Actions secret.
+- .github/workflows/python-app.yml starts the browser before the production
+  Lead Engine cycle and saves the encrypted state afterward.
+- The existing authenticated account credentials remain GitHub Actions
+  secrets. They are used only through the normal authorized login flow when an
+  existing session is no longer valid.
+- The phone is not part of runtime execution.
+- No CAPTCHA, MFA, rate-limit, or platform security control is bypassed.
 
-Lightning requires phone verification for account security. This is account
-verification only. The phone is not the browser runtime.
+## Required GitHub configuration
 
-## Files
+Create the repository secret:
 
-- `browser-worker.py` launches one persistent headless Chromium profile and
-  binds CDP only to localhost.
-- `lightning-supervisor.py` keeps the browser and Lead Engine processes alive
-  and restarts either process if it exits.
-- `lightning-start.sh` is the on-start launcher for a Lightning Studio.
-- `bootstrap.sh` is for a conventional persistent Linux VM with systemd.
+THORIO_BROWSER_STATE_ENCRYPTION_KEY
 
-## Authentication
+It must be a valid Fernet key. This is the only new secret required for
+persistent browser-state storage.
 
-No daily manual authorization is built into this runtime. The existing
-`account_auth` and browser discovery flow remain responsible for normal
-authenticated sessions. Credentials and target definitions must be supplied
-through the existing private runtime environment or the provider's secret
-facility. CAPTCHA, MFA, rate limits, and other platform security controls are
-never bypassed.
+If browser discovery targets are configured, provide them through:
 
-CDP is never exposed publicly. Keep port 9222 local to the browser host.
+THORIO_BROWSER_DISCOVERY_TARGETS
+
+The production workflow already passes that secret through to the browser
+collector without printing its value.
+
+## Persistence and recovery
+
+The encrypted browser-state artifact is retained for 90 days. Each successful
+production run looks for the newest successful run containing that artifact,
+decrypts it only on the ephemeral runner, and starts Chromium with the
+recovered authentication state.
+
+If no state artifact exists, the browser starts without persisted state and
+the existing normal account authentication flow is allowed to establish a
+new session. A platform security challenge can still require normal
+verification. The system does not attempt to defeat such a challenge.
+
+The plaintext browser state is never uploaded as an artifact and is removed
+after encryption.
