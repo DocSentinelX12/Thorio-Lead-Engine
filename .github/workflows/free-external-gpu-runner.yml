@@ -1,6 +1,7 @@
 name: Free External GPU Runner
 
-on:  workflow_dispatch:
+on:
+  workflow_dispatch:
 
 permissions:
   contents: read
