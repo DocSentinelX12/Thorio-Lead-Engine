@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Free-only production node bootstrap. This script never asks for or stores
-# social-account credentials. Browser authentication is performed interactively
-# by the owner on the persistent machine.
+# Free-only production compute node bootstrap. This node does not host the
+# persistent browser session. Browser collection runs on the dedicated external
+# browser worker under infra/external-browser.
 
 REPO_URL="${THORIO_REPO_URL:-https://github.com/DocSentinelX12/Thorio-Lead-Engine.git}"
 APP_DIR="${THORIO_APP_DIR:-/opt/thorio-lead-engine}"
@@ -157,5 +157,5 @@ systemctl --no-pager --full status thorio-lead-engine.service || true
 echo "Free compute node bootstrap complete."
 echo "Coordinator and local worker are persistent and restart automatically."
 echo "For remote workers, configure a public HTTPS coordinator URL and TLS certificate/key in /etc/thorio/engine.env."
-echo "Credentials were not requested or stored."
-echo "Persistent browser authentication must be completed interactively on this node."
+echo "This compute node does not host the persistent browser session."
+echo "Use infra/external-browser/bootstrap.sh for the autonomous browser worker."
