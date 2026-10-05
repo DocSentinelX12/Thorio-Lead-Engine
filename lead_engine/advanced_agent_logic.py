@@ -207,6 +207,36 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     research_focus = build_next_evidence_plan(lead, feedback=feedback)
     research_input = dict(lead)
     research_input["research_focus"] = research_focus
+    existing_section_sources = {
+        "business_need_research": ("public_business_need_facts",),
+        "current_intent_research": ("public_hiring_facts",),
+        "technical_product_hiring_research": ("public_product_facts", "public_hiring_facts"),
+        "commercial_research": ("public_commercial_facts",),
+    }
+    initial_sections = {}
+    for section_name, source_names in existing_section_sources.items():
+        evidence = []
+        for source_name in source_names:
+            values = prior.get(source_name)
+            if isinstance(values, list):
+                evidence.extend(dict(item) for item in values if isinstance(item, Mapping))
+        if evidence:
+            initial_sections[section_name] = {
+                "verified": False,
+                "verification_status": "observed_evidence",
+                "researched_at": datetime.now(timezone.utc).isoformat(),
+                "summary": "Persisted observed research evidence.",
+                "evidence": evidence,
+                "provenance": {"source_sections": list(source_names), "evidence_count": len(evidence)},
+            }
+    if initial_sections:
+        stored_initial = ctx.db.update_payload(fingerprint, initial_sections)
+        if stored_initial is None:
+            raise ValueError(f"Lead not found while materializing research sections: {fingerprint}")
+        lead = dict(stored_initial)
+        prior = dict(lead.get("company_research") or prior)
+        research_input = dict(lead)
+        research_input["research_focus"] = research_focus
     def checkpoint_public_research(progress: Mapping[str, Any]) -> None:
         existing_research = dict(prior)
         existing_research["public_web_research_checkpoint"] = {
