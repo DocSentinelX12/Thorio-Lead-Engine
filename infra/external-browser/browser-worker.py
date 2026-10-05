@@ -17,12 +17,12 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 
-def _profile_dir() -> Path:
-    value = os.environ.get("THORIO_BROWSER_PROFILE_DIR", "").strip()
+def _storage_state_path() -> Path | None:
+    value = os.environ.get("THORIO_BROWSER_STORAGE_STATE_PATH", "").strip()
     if not value:
-        raise RuntimeError("THORIO_BROWSER_PROFILE_DIR must be configured")
+        return None
     path = Path(value).expanduser()
-    path.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
@@ -38,7 +38,7 @@ def _port() -> int:
 
 
 def run() -> None:
-    profile = _profile_dir()
+    storage_state = _storage_state_path()
     port = _port()
     stop_event = threading.Event()
 
@@ -49,8 +49,7 @@ def run() -> None:
     signal.signal(signal.SIGINT, stop)
 
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile),
+        browser = playwright.chromium.launch(
             headless=True,
             args=[
                 "--remote-debugging-address=127.0.0.1",
@@ -60,16 +59,26 @@ def run() -> None:
                 "--no-first-run",
             ],
         )
+        context = browser.new_context(
+            storage_state=str(storage_state) if storage_state and storage_state.exists() else None,
+        )
         try:
             print(
-                f"THORIO BROWSER WORKER READY: persistent profile={profile}; "
-                f"CDP=http://127.0.0.1:{port}",
+                "THORIO BROWSER WORKER READY: ephemeral Chromium with persisted "
+                f"authenticated state={storage_state}; CDP=http://127.0.0.1:{port}",
                 flush=True,
             )
             while not stop_event.wait(30):
                 pass
         finally:
+            if storage_state:
+                context.storage_state(path=str(storage_state), indexed_db=True)
+                print(
+                    f"THORIO BROWSER STATE SAVED: {storage_state}",
+                    flush=True,
+                )
             context.close()
+            browser.close()
 
 
 if __name__ == "__main__":
