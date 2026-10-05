@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Persistent external browser node bootstrap.
-# This node is headless and autonomous. It does not require a phone, Android,
-# Termux, Termux:X11, or an interactive browser authorization session.
+# This node is headless and autonomous and does not require a phone or an
+# interactive browser authorization session.
 
 REPO_URL="${THORIO_REPO_URL:-https://github.com/DocSentinelX12/Thorio-Lead-Engine.git}"
 APP_DIR="${THORIO_APP_DIR:-/opt/thorio-lead-engine}"
