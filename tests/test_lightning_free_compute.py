@@ -18,7 +18,7 @@ def _config(**overrides):
         "machine": "T4",
         "teamspace": "default",
         "repo": "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git",
-        "ref": "feature/gpu-fabric-foundation",
+        "ref": "main",
         "free_hours_remaining": 2.0,
         "offer_ttl_seconds": 1200,
     }
@@ -123,7 +123,7 @@ def test_lightning_failed_bootstrap_stops_started_studio(monkeypatch):
 def test_lightning_bootstrap_command_contains_exact_branch_and_acquisition_identity():
     provider = LightningFreeComputeProvider(_config())
     command = provider._bootstrap_command("acq-123")
-    assert "--branch feature/gpu-fabric-foundation" in command
+    assert "--branch main" in command
     assert "--acquisition-id acq-123" in command
     assert "lead_engine.lightning_worker_bootstrap" in command
 
