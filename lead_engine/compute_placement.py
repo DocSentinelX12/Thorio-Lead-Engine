@@ -1,0 +1,805 @@
+"""Complete, evidence-first GPU placement construction.
+
+This module contains placement vocabulary and deterministic candidate evaluation.
+It deliberately does not reserve inventory or start execution.
+"""
+from __future__ import annotations
+
+import hashlib
+import itertools
+import json
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable
+
+from .compute_fabric_telemetry import physical_path_key
+from .physical_fabric import AdaptiveFabricRouteSelector
+
+
+@dataclass(frozen=True)
+class PlacementDecision:
+    placement_id: str
+    provider_id: str
+    domain_id: str
+    workload_signature: tuple[tuple[str, Any], ...]
+    selected_gpu_ids: tuple[str, ...]
+    selected_node_ids: tuple[str, ...]
+    selected_resource_keys: tuple[str, ...]
+    evidence: dict[str, Any]
+    decision_trace: tuple[dict[str, Any], ...]
+
+
+class PlacementEvaluator:
+    """Construct complete placements from already observed inventory facts."""
+
+    def __init__(self, scheduler: Any, requirements: Any, rows: list[dict[str, Any]], performance_history: dict[str, dict[str, Any]], route_health: dict[str, dict[str, Any]], physical_paths: Iterable[dict[str, Any]] = ()):
+        self.scheduler = scheduler
+        self.requirements = requirements
+        self.rows = rows
+        self.performance_history = performance_history
+        self.route_health = route_health
+        self.physical_paths = tuple(physical_paths)
+        self.trace: list[dict[str, Any]] = []
+
+    def _trace(self, stage: str, status: str, **details: Any) -> None:
+        self.trace.append({"stage": stage, "status": status, **details})
+
+    @staticmethod
+    def _payload(row: dict[str, Any]) -> dict[str, Any]:
+        return json.loads(row["payload_json"])
+
+    def _compatible_gpu_rows(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        compatible = [row for row in rows if row["resource_type"] == "gpu" and self.scheduler._gpu_matches(row, self.requirements.gpu)]
+        if self.requirements.topology_domain is not None:
+            compatible = [row for row in compatible if self._payload(row).get("topology_domain") == self.requirements.topology_domain]
+        return compatible
+
+    def _node_rows(self) -> dict[str, list[dict[str, Any]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in self.rows:
+            grouped.setdefault(str(row["node_id"]), []).append(row)
+        return grouped
+
+    def _node_candidate(self, node_id: str, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        cpu = next((row for row in rows if row["resource_type"] == "cpu"), None)
+        if cpu is None:
+            return None
+        payload = self._payload(cpu)
+        cpu_resource = payload.get("cpu") or {}
+        if int(cpu_resource.get("cpu_count", 0)) < self.requirements.min_cpu_count or int(cpu_resource.get("memory_bytes", 0)) < self.requirements.min_memory_bytes:
+            return None
+        gpus = self._compatible_gpu_rows(rows)
+        if self.requirements.allowed_node_ids and node_id not in set(self.requirements.allowed_node_ids):
+            return None
+        return {"node_id": node_id, "cpu": cpu, "gpus": gpus, "payload": payload}
+
+    def _verified_paths(self, gpu: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+        payload = self._payload(gpu)
+        return self.scheduler._verified_gpu_nic_rdma_path(gpu, payload.get("gpu_uuid"))
+
+    def _network_domains(self, candidate: dict[str, Any]) -> tuple[str, ...]:
+        return self.scheduler._verified_network_domains(candidate)
+
+    def _valid_gpu(self, gpu: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+        payload = self._payload(gpu)
+        paths = self._verified_paths(gpu)
+        evidence = {"gpu_uuid": payload.get("gpu_uuid"), "gpu_id": payload.get("gpu_id"), "node_id": gpu["node_id"], "paths": list(paths)}
+        canonical_paths_present = bool(self.physical_paths)
+        legacy_fabric_requested = (
+            self.requirements.gpu.require_redundant_fabric_path
+            or (not canonical_paths_present and (
+                self.requirements.gpu.min_fabric_bandwidth_gbps is not None
+                or self.requirements.gpu.max_fabric_latency_us is not None
+            ))
+        )
+        if legacy_fabric_requested and self.scheduler._fabric_path_contract(
+            gpu,
+            payload.get("gpu_uuid"),
+            min_bandwidth_gbps=None if canonical_paths_present else self.requirements.gpu.min_fabric_bandwidth_gbps,
+            max_latency_us=None if canonical_paths_present else self.requirements.gpu.max_fabric_latency_us,
+            require_redundant=self.requirements.gpu.require_redundant_fabric_path,
+        ) is None:
+            return False, "missing_required_verified_fabric_path", evidence
+        return True, "verified", evidence
+
+    def _valid_candidate(self, candidate: tuple[dict[str, Any], ...]) -> tuple[bool, dict[str, Any]]:
+        gpu_evidence = []
+        for gpu in candidate:
+            valid, reason, evidence = self._valid_gpu(gpu)
+            gpu_evidence.append(evidence | {"valid": valid, "reason": reason})
+            if not valid:
+                return False, {"stage": "complete_communication_path_validity", "reason": reason, "gpu": evidence, "gpu_evidence": gpu_evidence}
+        concrete_ok, concrete_paths, concrete_reason = self._concrete_path_evidence(candidate)
+        if not concrete_ok:
+            return False, {"stage": "complete_communication_path_validity", "reason": concrete_reason, "physical_paths": concrete_paths}
+        if len({str(gpu["node_id"]) for gpu in candidate}) > 1:
+            required_bandwidth = self.requirements.gpu.min_fabric_bandwidth_gbps
+            required_latency = self.requirements.gpu.max_fabric_latency_us
+            if required_bandwidth is not None or required_latency is not None:
+                selected_uuids = {str(self._payload(gpu).get("gpu_uuid") or "").strip() for gpu in candidate}
+                capability_paths = [path for path in concrete_paths if str(path.get("source_gpu") or "").removeprefix("gpu:") in selected_uuids or str(path.get("destination_gpu") or "").removeprefix("gpu:") in selected_uuids]
+                eligible_capability_paths = []
+                for path in capability_paths:
+                    measurement = path.get("measurement")
+                    if not isinstance(measurement, dict):
+                        continue
+                    bandwidth = measurement.get("bandwidth_gbps")
+                    latency = measurement.get("latency_us")
+                    if required_bandwidth is not None:
+                        try:
+                            if bandwidth is None or float(bandwidth) < float(required_bandwidth):
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                    if required_latency is not None:
+                        try:
+                            if latency is None or float(latency) > float(required_latency):
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                    eligible_capability_paths.append(path)
+                if not eligible_capability_paths:
+                    return False, {"stage": "measured_fabric_capability", "reason": "no_verified_concrete_path_meets_measured_fabric_requirements", "required_bandwidth_gbps": required_bandwidth, "required_latency_us": required_latency, "physical_paths": capability_paths}
+        node_ids = tuple(dict.fromkeys(str(gpu["node_id"]) for gpu in candidate))
+        node_candidates = [self._node_candidate(node_id, self._node_rows()[node_id]) for node_id in node_ids]
+        node_candidates = [item for item in node_candidates if item is not None]
+        if len(node_candidates) != len(node_ids):
+            return False, {"stage": "resource_eligibility", "reason": "selected_node_is_not_eligible", "node_ids": node_ids}
+        shared_network = None
+        if len(node_ids) > 1:
+            shared_network = self.scheduler._shared_verified_network_domain(node_candidates)
+            network_known = any(self._network_domains(candidate) for candidate in node_candidates)
+            if network_known and shared_network is None:
+                return False, {"stage": "complete_communication_path_validity", "reason": "missing_verified_shared_network_domain", "node_ids": node_ids}
+        topology = [{"gpu_id": self._payload(gpu).get("gpu_id"), "gpu_uuid": self._payload(gpu).get("gpu_uuid"), "node_id": gpu["node_id"], "topology_domain": self._payload(gpu).get("topology_domain"), "numa_node": self._payload(gpu).get("numa_node"), "topology_source": self._payload(gpu).get("topology_source")} for gpu in candidate]
+        return True, {"gpu_evidence": gpu_evidence, "node_ids": node_ids, "shared_network": shared_network, "topology": topology, "concrete_physical_paths": concrete_paths}
+
+    def _concrete_path_evidence(self, candidate: tuple[dict[str, Any], ...]) -> tuple[bool, list[dict[str, Any]], str]:
+        selected = {str(self._payload(gpu).get("gpu_uuid") or "") for gpu in candidate}; selected.discard("")
+        if len({str(gpu["node_id"]) for gpu in candidate}) < 2:
+            return True, [], "same_node"
+        if not self.physical_paths:
+            return True, [], "no_canonical_concrete_path_records"
+        paths = [path for path in self.physical_paths if str(path.get("state") or "") in {"VERIFIED", "MEASURED", "REVERIFIED"}]
+        evidence = [path for path in paths if str(path.get("source_gpu") or "").removeprefix("gpu:") in selected or str(path.get("destination_gpu") or "").removeprefix("gpu:") in selected]
+        node_pairs = {tuple(sorted((str(gpu["node_id"]), str(other["node_id"])))) for index, gpu in enumerate(candidate) for other in candidate[index + 1:] if str(gpu["node_id"]) != str(other["node_id"])}
+        covered_pairs = set()
+        for path in evidence:
+            source = str(path.get("source_gpu") or "").removeprefix("gpu:"); destination = str(path.get("destination_gpu") or "").removeprefix("gpu:")
+            source_node = next((str(gpu["node_id"]) for gpu in candidate if str(self._payload(gpu).get("gpu_uuid")) == source), None)
+            destination_node = next((str(gpu["node_id"]) for gpu in candidate if str(self._payload(gpu).get("gpu_uuid")) == destination), None)
+            if source_node and destination_node and source_node != destination_node:
+                covered_pairs.add(tuple(sorted((source_node, destination_node))))
+        missing = node_pairs - covered_pairs
+        return not missing, evidence, "missing_verified_concrete_inter_node_path" if missing else "verified"
+
+    @classmethod
+    def _cross_node_gpu_pairs(cls, candidate: tuple[dict[str, Any], ...]) -> tuple[tuple[str, str], ...]:
+        """Enumerate every directional cross-node GPU pair required by runtime peers."""
+        pairs: list[tuple[str, str]] = []
+        for source in candidate:
+            source_uuid = str(cls._payload(source).get("gpu_uuid") or "").strip()
+            if not source_uuid:
+                continue
+            for destination in candidate:
+                if source is destination or str(source["node_id"]) == str(destination["node_id"]):
+                    continue
+                destination_uuid = str(cls._payload(destination).get("gpu_uuid") or "").strip()
+                if destination_uuid:
+                    pairs.append((f"gpu:{source_uuid}", f"gpu:{destination_uuid}"))
+        return tuple(pairs)
+
+    def _adaptive_route_selection(self, candidate: tuple[dict[str, Any], ...]) -> tuple[dict[str, str], ...]:
+        """Select the observed best measured canonical route for each directional GPU pair."""
+        gpu_pairs = self._cross_node_gpu_pairs(candidate)
+        if not gpu_pairs:
+            return ()
+        active_path_intelligence = {
+            str(path.get("path_id")): path.get("active_path_intelligence")
+            for path in self.physical_paths
+            if isinstance(path.get("active_path_intelligence"), dict)
+        }
+        return AdaptiveFabricRouteSelector.select_for_gpu_pairs(
+            self.physical_paths,
+            self.route_health,
+            gpu_pairs,
+            active_path_intelligence=active_path_intelligence,
+        )
+
+    def _adaptive_route_sets(self, candidate: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+        """Build an independently evidenced active/standby route set for every direction."""
+        gpu_pairs = self._cross_node_gpu_pairs(candidate)
+        if not gpu_pairs:
+            return ()
+        return tuple(
+            AdaptiveFabricRouteSelector.select_resilient_route_set(
+                self.physical_paths,
+                self.route_health,
+                pair,
+                active_path_intelligence={
+                    str(path.get("path_id")): path.get("active_path_intelligence")
+                    for path in self.physical_paths
+                    if isinstance(path.get("active_path_intelligence"), dict)
+                },
+            )
+            for pair in gpu_pairs
+        )
+
+    def _candidate_predictive_route(self, candidate: tuple[dict[str, Any], ...]) -> tuple[int]:
+        """Prefer explicitly evidenced improving routes and defer degrading ones."""
+        from .compute_fabric_telemetry import workload_performance_key
+
+        workload = {
+            "workload_class": getattr(
+                getattr(self.requirements, "workload_class", None),
+                "value",
+                getattr(self.requirements, "workload_class", None),
+            ),
+            **dict(getattr(self.requirements, "performance_signature", ()) or ()),
+        }
+        route_ids = {
+            str(route.get("path_id") or "").strip()
+            for route in self._adaptive_route_selection(candidate)
+            if str(route.get("path_id") or "").strip()
+        }
+        if not route_ids:
+            route_ids = {
+                str(path.get("path_id") or "").strip()
+                for gpu in candidate
+                for path in self._verified_paths(gpu)
+                if str(path.get("path_id") or "").strip()
+            }
+
+        states = []
+        for path in self.physical_paths:
+            path_id = str(path.get("path_id") or "").strip()
+            if path_id not in route_ids:
+                continue
+            identity = {
+                key: path[key]
+                for key in (
+                    "node_id", "gpu_uuid", "nic", "nic_pci_bus_id",
+                    "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer",
+                )
+                if path.get(key) is not None and str(path.get(key)).strip()
+            }
+            workload_key = workload_performance_key(identity, workload) if identity else ""
+            health = self.route_health.get(path_id)
+            if not isinstance(health, dict):
+                health = self.route_health.get(workload_key)
+            predictive = (
+                health.get("predictive_by_workload_key", {}).get(workload_key)
+                if isinstance(health, dict)
+                else None
+            )
+            state = str((predictive or {}).get("state") or "").strip()
+            states.append({"improving": 0, "degrading": 2}.get(state, 1))
+        return (min(states) if states else 1,)
+
+
+    def _predictive_failure_details(self, candidate: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+        """Return exact observed early-warning evidence for eligible candidate paths."""
+        from .compute_fabric_telemetry import workload_performance_key
+
+        workload = {
+            "workload_class": getattr(
+                getattr(self.requirements, "workload_class", None),
+                "value",
+                getattr(self.requirements, "workload_class", None),
+            ),
+            **dict(getattr(self.requirements, "performance_signature", ()) or ()),
+        }
+        route_ids = {
+            str(route.get("path_id") or "").strip()
+            for route in self._adaptive_route_selection(candidate)
+            if str(route.get("path_id") or "").strip()
+        }
+        if not route_ids:
+            route_ids = {
+                str(path.get("path_id") or "").strip()
+                for gpu in candidate
+                for path in self._verified_paths(gpu)
+                if str(path.get("path_id") or "").strip()
+            }
+
+        details = []
+        for path in self.physical_paths:
+            path_id = str(path.get("path_id") or "").strip()
+            if path_id not in route_ids:
+                continue
+            identity = {
+                key: path[key]
+                for key in (
+                    "node_id", "gpu_uuid", "nic", "nic_pci_bus_id",
+                    "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer",
+                )
+                if path.get(key) is not None and str(path.get(key)).strip()
+            }
+            health = self.route_health.get(path_id)
+            if not isinstance(health, dict):
+                continue
+            workload_key = workload_performance_key(identity, workload) if identity and workload else ""
+            predictive = None
+            if workload_key:
+                predictive = health.get("predictive_failure_by_workload_key", {}).get(workload_key)
+            if not isinstance(predictive, dict):
+                predictive = health.get("predictive_failure_degradation")
+            if not isinstance(predictive, dict):
+                continue
+            details.append({
+                "path_id": path_id,
+                "workload_key": workload_key or None,
+                "state": str(predictive.get("state") or "insufficient_evidence"),
+                "sample_count": int(predictive.get("sample_count", 0) or 0),
+                "failure_count": int(predictive.get("failure_count", 0) or 0),
+                "consecutive_failures": int(predictive.get("consecutive_failures", 0) or 0),
+                "failure_domains": tuple(predictive.get("failure_domains") or ()),
+                "evidence": dict(predictive.get("evidence") or {}),
+            })
+        return tuple(sorted(details, key=lambda item: str(item["path_id"])))
+
+    def _candidate_predictive_failure(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Prefer observed stable routes and defer routes showing worsening patterns."""
+        details = self._predictive_failure_details(candidate)
+        if not details:
+            return (1, 0, ())
+        rank = {"stable": 0, "insufficient_evidence": 1, "degrading": 2, "failure_pattern": 3}
+        best_rank = min(rank.get(str(item["state"]), 1) for item in details)
+        best_samples = max(int(item["sample_count"]) for item in details if rank.get(str(item["state"]), 1) == best_rank)
+        evidence_ids = tuple(item["path_id"] for item in details if rank.get(str(item["state"]), 1) == best_rank)
+        return (best_rank, -best_samples, evidence_ids)
+
+    def _candidate_multidimensional_workload(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Prefer candidates with exact observed multidimensional workload evidence."""
+        from .compute_fabric_telemetry import workload_performance_key
+
+        workload = {
+            "workload_class": getattr(
+                getattr(self.requirements, "workload_class", None),
+                "value",
+                getattr(self.requirements, "workload_class", None),
+            ),
+            **dict(getattr(self.requirements, "performance_signature", ()) or ()),
+        }
+        if not workload:
+            return (1, 0, ())
+
+        route_ids = {
+            str(route.get("path_id") or "").strip()
+            for route in self._adaptive_route_selection(candidate)
+            if str(route.get("path_id") or "").strip()
+        }
+        if not route_ids:
+            route_ids = {
+                str(path.get("path_id") or "").strip()
+                for gpu in candidate
+                for path in self._verified_paths(gpu)
+                if str(path.get("path_id") or "").strip()
+            }
+
+        matches = []
+        for path in self.physical_paths:
+            path_id = str(path.get("path_id") or "").strip()
+            if path_id not in route_ids:
+                continue
+            identity = {
+                key: path[key]
+                for key in (
+                    "node_id", "gpu_uuid", "nic", "nic_pci_bus_id",
+                    "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer",
+                )
+                if path.get(key) is not None and str(path.get(key)).strip()
+            }
+            if not identity:
+                continue
+            workload_key = workload_performance_key(identity, workload)
+            health = getattr(self, "route_health", {}).get(path_id)
+            if not isinstance(health, dict):
+                continue
+            evidence = health.get("multidimensional_by_workload_key", {}).get(workload_key)
+            if not isinstance(evidence, dict):
+                continue
+            sample_count = int(evidence.get("sample_count", 0) or 0)
+            dimensions = evidence.get("dimensions")
+            if not isinstance(dimensions, dict) or not dimensions:
+                continue
+            matches.append({
+                "path_id": path_id,
+                "workload_key": workload_key,
+                "sample_count": sample_count,
+                "dimensions": dict(sorted(dimensions.items())),
+                "observations": tuple(evidence.get("observations") or ()),
+            })
+
+        if not matches:
+            return (1, 0, ())
+        best_samples = max(int(item["sample_count"]) for item in matches)
+        evidence_ids = tuple(sorted(str(item["path_id"]) for item in matches))
+        return (0, -best_samples, evidence_ids)
+
+    def _candidate_concrete_performance(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Rank candidates using only directly observed concrete-path measurements.
+
+        No synthetic score is created. Missing observations sort behind observed
+        measurements, and the individual measured dimensions remain visible in the
+        returned evidence and decision trace.
+        """
+        concrete_ok, paths, _ = self._concrete_path_evidence(candidate)
+        if not concrete_ok or not paths:
+            return (1, float("inf"), float("inf"), 0, "")
+        # A REVERIFIED path may retain historical measurement evidence, but that
+        # observation is not current performance authority until a fresh MEASURED
+        # observation is recorded.
+        measurements = [
+            path.get("measurement")
+            for path in paths
+            if str(path.get("state") or "") == "MEASURED"
+            and isinstance(path.get("measurement"), dict)
+        ]
+        if not measurements:
+            return (1, float("inf"), float("inf"), 0, "")
+        bandwidths = []
+        latencies = []
+        samples = 0
+        freshest = float("-inf")
+        for measurement in measurements:
+            try:
+                if measurement.get("bandwidth_gbps") is not None:
+                    bandwidths.append(float(measurement["bandwidth_gbps"]))
+                if measurement.get("latency_us") is not None:
+                    latencies.append(float(measurement["latency_us"]))
+                samples += int(measurement.get("sample_count", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            try:
+                freshest = max(freshest, float(measurement.get("observed_at", float("-inf"))))
+            except (TypeError, ValueError):
+                pass
+        if not bandwidths and not latencies:
+            return (1, float("inf"), float("inf"), -samples, "")
+        # Direct observations only: lower latency first, then higher bandwidth,
+        # then more samples, then newer observations, then deterministic path ID.
+        return (0, min(latencies, default=float("inf")), -max(bandwidths, default=0.0), -samples, str(max((str(path.get("path_id") or "") for path in paths), default="")))
+
+    def _candidate_performance(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        observations = []
+        for gpu in candidate:
+            for path in self._verified_paths(gpu):
+                identity = {key: path[key] for key in ("node_id", "gpu_uuid", "nic", "nic_pci_bus_id", "rdma_device", "rdma_port", "rdma_pci_bus_id", "link_layer") if path.get(key) is not None and str(path.get(key)).strip()}
+                if not identity:
+                    continue
+                legacy_key = physical_path_key(identity)
+                workload = {"workload_class": getattr(getattr(self.requirements, "workload_class", None), "value", getattr(self.requirements, "workload_class", None)), **dict(getattr(self.requirements, "performance_signature", ()) or ())}
+                from .compute_fabric_telemetry import workload_performance_key
+                key = workload_performance_key(identity, workload)
+                observation = self.performance_history.get(key) or self.performance_history.get(legacy_key)
+                if observation is not None:
+                    observations.append(observation)
+        if not observations:
+            return (1, float("inf"), 0)
+        elapsed = [float(item.get("avg_all_reduce_elapsed_ms", float("inf"))) for item in observations]
+        return (0, sum(elapsed) / len(elapsed), -sum(int(item.get("sample_count", 0)) for item in observations))
+
+    def _candidate_route_health(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        adaptive_routes = self._adaptive_route_selection(candidate)
+        if adaptive_routes:
+            observations = [
+                self.route_health.get(str(route["path_id"]))
+                for route in adaptive_routes
+            ]
+            observations = [item for item in observations if isinstance(item, dict)]
+            if observations:
+                return min(
+                    (
+                        0,
+                        float(item.get("latency_delta_from_mean_ms", float("inf"))),
+                        float(item.get("failure_rate", float("inf"))),
+                        float(item.get("latest_latency_ms", float("inf"))),
+                        -int(item.get("sample_count", 0)),
+                    )
+                    for item in observations
+                )
+        observations = []
+        for gpu in candidate:
+            for path in self._verified_paths(gpu):
+                try:
+                    key = physical_path_key(path)
+                except ValueError:
+                    continue
+                if key in self.route_health:
+                    observations.append(self.route_health[key])
+        if not observations:
+            return (1, float("inf"), float("inf"), float("inf"), 0)
+        return min((0, float(item.get("latency_delta_from_mean_ms", float("inf"))), float(item.get("failure_rate", float("inf"))), float(item.get("latest_latency_ms", float("inf"))), -int(item.get("sample_count", 0))) for item in observations)
+
+    def _continuous_optimization_records(self, candidates: list[tuple[dict[str, Any], ...]]) -> tuple[dict[str, Any], ...]:
+        """Build exact future-capacity evidence for every already-valid candidate."""
+        from .compute_fabric_telemetry import derive_continuous_optimization_evidence
+
+        selected_sets = [
+            {str(row.get("resource_key") or "") for row in candidate}
+            for candidate in candidates
+        ]
+        compatible = self._compatible_gpu_rows(self.rows)
+        by_scope: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for gpu in compatible:
+            scope = (str(gpu.get("provider_id") or ""), str(gpu.get("domain_id") or ""))
+            by_scope.setdefault(scope, []).append(gpu)
+
+        records = []
+        for candidate, selected_keys in zip(candidates, selected_sets):
+            required = int(self.requirements.gpu.gpu_count)
+            future_single_node_count = 0
+            future_feasible_domain_count = 0
+
+            for scope_rows in by_scope.values():
+                remaining = [
+                    gpu for gpu in scope_rows
+                    if str(gpu.get("resource_key") or "") not in selected_keys
+                ]
+                by_node: dict[str, list[dict[str, Any]]] = {}
+                for gpu in remaining:
+                    by_node.setdefault(str(gpu.get("node_id") or ""), []).append(gpu)
+
+                future_single_node_count += sum(
+                    1 for gpu_rows in by_node.values() if len(gpu_rows) >= required
+                )
+
+                if self.requirements.workload_class.value == "multi_node_gpu":
+                    node_domain_members: dict[str, set[str]] = {}
+                    for node_id in by_node:
+                        node_row_group = self._node_rows().get(node_id, [])
+                        node = self._node_candidate(node_id, node_row_group)
+                        if node is None:
+                            continue
+                        for domain in self._network_domains(node):
+                            node_domain_members.setdefault(str(domain), set()).add(node_id)
+                    future_feasible_domain_count += sum(
+                        1
+                        for node_ids in node_domain_members.values()
+                        if len(node_ids) >= 2
+                        and sum(len(by_node.get(node_id, ())) for node_id in node_ids) >= required
+                    )
+
+            performance = self._candidate_performance(candidate)
+            observed_latency = None
+            sample_count = 0
+            if performance and int(performance[0]) == 0:
+                try:
+                    observed_latency = float(performance[1])
+                    if observed_latency == float("inf"):
+                        observed_latency = None
+                except (TypeError, ValueError):
+                    observed_latency = None
+                try:
+                    sample_count = int(-performance[2])
+                except (TypeError, ValueError):
+                    sample_count = 0
+
+            records.append({
+                "candidate_key": "|".join(self._stable_key(candidate)),
+                "observed_latency_ms": observed_latency,
+                "sample_count": sample_count,
+                "future_feasible_domain_count": future_feasible_domain_count,
+                "future_single_node_count": future_single_node_count,
+            })
+
+        evidence = derive_continuous_optimization_evidence(records)
+        by_key = {str(item["candidate_key"]): item for item in records}
+        preferred = set(evidence.get("balanced_preference") or ())
+        if not preferred:
+            preferred = set(evidence.get("capacity_preference") or ())
+        return tuple({
+            **by_key[str(item["candidate_key"])],
+            "state": evidence.get("state", "insufficient_evidence"),
+            "preferred": str(item["candidate_key"]) in preferred,
+        } for item in sorted(records, key=lambda item: str(item["candidate_key"])))
+
+    def _candidate_structural_placement(self, candidate: tuple[dict[str, Any], ...]) -> tuple:
+        """Preserve the scheduler's existing structural placement authority."""
+        node_ids = tuple(dict.fromkeys(str(gpu["node_id"]) for gpu in candidate))
+        node_rows = self._node_rows()
+        node_candidates = [
+            self._node_candidate(node_id, node_rows[node_id])
+            for node_id in node_ids
+        ]
+        node_candidates = [item for item in node_candidates if item is not None]
+        shared_network = self.scheduler._shared_verified_network_domain(node_candidates)
+        network_known = any(self._network_domains(node) for node in node_candidates)
+        network_rank = 0 if shared_network is not None else 1 if network_known else 2
+
+        node_signatures = []
+        gpu_structures = []
+        for node in node_candidates:
+            node_id = str(node["node_id"])
+            selected = [
+                gpu for gpu in candidate
+                if str(gpu["node_id"]) == node_id
+            ]
+            available = list(node["gpus"])
+            top_gpu = self.scheduler._rank_gpus_for_placement(available)[0] if available else None
+            node_topology = self.scheduler._node_topology_score(node)
+            node_performance = (
+                self.scheduler._gpu_performance_key(
+                    top_gpu,
+                    self.performance_history,
+                    self.requirements,
+                )
+                if top_gpu is not None
+                else (1, float("inf"), 0)
+            )
+            node_health = (
+                self.scheduler._gpu_route_health_key(top_gpu, self.route_health)
+                if top_gpu is not None
+                else (1, float("inf"), float("inf"), 0)
+            )
+            node_signatures.append((
+                tuple(-value for value in node_topology),
+                node_performance,
+                node_health,
+                node_id,
+            ))
+            gpu_structures.extend(
+                self.scheduler._gpu_placement_structure_key(gpu, available)
+                for gpu in selected
+            )
+
+        return (
+            network_rank,
+            len(node_ids),
+            tuple(sorted(node_signatures)),
+            tuple(sorted(gpu_structures)),
+        )
+
+    def _candidate_continuous_optimization(
+        self,
+        candidate: tuple[dict[str, Any], ...],
+        records: tuple[dict[str, Any], ...],
+    ) -> tuple:
+        """Apply capacity preservation only after stronger observed authorities."""
+        key = "|".join(self._stable_key(candidate))
+        record = next((item for item in records if item["candidate_key"] == key), None)
+        if record is None:
+            return (1, 0, 0, key)
+        return (
+            0 if bool(record["preferred"]) else 1,
+            -int(record["future_feasible_domain_count"]),
+            -int(record["future_single_node_count"]),
+            key,
+        )
+
+    def _stable_key(self, candidate: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
+        return tuple(sorted(str(row["resource_key"]) for row in candidate))
+
+    def _rank_gpu_rows(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        candidates = list(rows)
+        return sorted(candidates, key=lambda gpu: (self.scheduler._gpu_placement_structure_key(gpu, candidates), self.scheduler._gpu_performance_key(gpu, self.performance_history, self.requirements), self.scheduler._gpu_route_health_key(gpu, self.route_health), str(gpu.get("resource_key") or "")))
+
+    def _candidate_sets(self, nodes: list[dict[str, Any]]) -> Iterable[tuple[dict[str, Any], ...]]:
+        """Enumerate the complete finite GPU candidate space.
+
+        Candidate generation is intentionally exhaustive. Ranking and optimization
+        happen only after every eligible combination has been evaluated, so a
+        locally attractive node/GPU ordering cannot silently remove a globally
+        better feasible placement from consideration.
+        """
+        needed = int(self.requirements.gpu.gpu_count)
+        if needed < 1:
+            return ()
+
+        valid_nodes: list[dict[str, Any]] = []
+        for node in nodes:
+            valid_gpus = []
+            for gpu in node["gpus"]:
+                valid, reason, evidence = self._valid_gpu(gpu)
+                if valid:
+                    valid_gpus.append(gpu)
+                else:
+                    self._trace(
+                        "complete_communication_path_validity",
+                        "rejected",
+                        reason=reason,
+                        resource_keys=(str(gpu["resource_key"]),),
+                        evidence=evidence,
+                    )
+            ranked = self._rank_gpu_rows(valid_gpus)
+            if ranked:
+                valid_nodes.append({**node, "gpus": ranked})
+
+        if not valid_nodes:
+            return ()
+
+        # Candidate enumeration is scoped by the durable provider/domain
+        # boundary. The evaluator must never manufacture a candidate that spans
+        # independent provider or domain authorities.
+        provider_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for node in valid_nodes:
+            key = (str(node["cpu"]["provider_id"]), str(node["cpu"]["domain_id"]))
+            provider_groups.setdefault(key, []).extend(node["gpus"])
+
+        if self.requirements.workload_class.value != "multi_node_gpu":
+            for rows in provider_groups.values():
+                by_node: dict[str, list[dict[str, Any]]] = {}
+                for gpu in rows:
+                    by_node.setdefault(str(gpu["node_id"]), []).append(gpu)
+                for node_gpus in by_node.values():
+                    if len(node_gpus) < needed:
+                        continue
+                    for candidate in itertools.combinations(node_gpus, needed):
+                        yield tuple(candidate)
+            return
+
+        emitted = False
+        for rows in provider_groups.values():
+            node_ids = {str(gpu["node_id"]) for gpu in rows}
+            if len(node_ids) < 2 or len(rows) < needed:
+                continue
+            # Every exact GPU subset is a candidate. _valid_candidate() owns the
+            # higher-order communication/topology/path checks, so candidate
+            # generation must not pre-prune on a single greedy network choice.
+            for candidate in itertools.combinations(rows, needed):
+                if len({str(gpu["node_id"]) for gpu in candidate}) < 2:
+                    continue
+                emitted = True
+                yield tuple(candidate)
+
+        if not emitted:
+            self._trace(
+                "resource_eligibility",
+                "rejected",
+                reason="no_provider_and_domain_can_satisfy_complete_placement",
+            )
+            raise RuntimeError("no provider and domain can satisfy complete placement")
+
+    def evaluate(self) -> PlacementDecision:
+        nodes = []
+        grouped = self._node_rows()
+        for node_id in sorted(grouped):
+            node = self._node_candidate(node_id, grouped[node_id])
+            if node is None:
+                self._trace("resource_eligibility", "rejected", node_id=node_id, reason="node_not_eligible"); continue
+            if not node["gpus"]:
+                self._trace("capability_compatibility", "rejected", node_id=node_id, reason="no_compatible_gpu"); continue
+            nodes.append(node)
+        if not nodes:
+            raise RuntimeError("no eligible GPU placement candidates")
+        valid: list[tuple[tuple[dict[str, Any], ...], dict[str, Any]]] = []; candidate_evidence: list[dict[str, Any]] = []; rejection_count = 0
+        for candidate in self._candidate_sets(nodes):
+            valid_candidate, evidence = self._valid_candidate(candidate)
+            if not valid_candidate:
+                rejection_count += 1; rejection = {"status": "rejected", "resource_keys": self._stable_key(candidate), "stage": evidence["stage"], "reason": evidence["reason"], "evidence": evidence}; candidate_evidence.append(rejection); self._trace(evidence["stage"], "rejected", reason=evidence["reason"], resource_keys=self._stable_key(candidate)); continue
+            accepted = {"status": "accepted", "resource_keys": self._stable_key(candidate), "evidence": evidence}; candidate_evidence.append(accepted); valid.append((candidate, evidence)); self._trace("complete_physical_validation", "accepted", resource_keys=self._stable_key(candidate))
+        if not valid:
+            self._trace("complete_physical_validation", "rejected", reason="no_complete_physical_placement", rejected_candidates=rejection_count)
+            raise RuntimeError("no complete physical placement")
+        optimization_records = self._continuous_optimization_records([candidate for candidate, _ in valid])
+        optimization_by_key = {
+            str(item["candidate_key"]): item
+            for item in optimization_records
+        }
+        ranked = sorted(
+            valid,
+            key=lambda item: (
+                self._candidate_performance(item[0]),
+                self._candidate_route_health(item[0]),
+                self._candidate_predictive_route(item[0]),
+                self._candidate_predictive_failure(item[0]),
+                self._candidate_multidimensional_workload(item[0]),
+                self._candidate_concrete_performance(item[0]),
+                self._candidate_structural_placement(item[0]),
+                self._candidate_continuous_optimization(item[0], optimization_records),
+                self._stable_key(item[0]),
+            ),
+        )
+        selected, evidence = ranked[0]
+        self._trace("workload_performance", "applied", key=self._candidate_performance(selected)); self._trace("route_health", "applied", key=self._candidate_route_health(selected)); self._trace("predictive_route_evidence", "applied", key=self._candidate_predictive_route(selected)); self._trace("predictive_failure_degradation", "applied", key=self._candidate_predictive_failure(selected), evidence=self._predictive_failure_details(selected)); self._trace("multidimensional_workload_evidence", "applied", key=self._candidate_multidimensional_workload(selected)); adaptive_routes = self._adaptive_route_selection(selected); adaptive_route_sets = self._adaptive_route_sets(selected); self._trace("adaptive_route_selection", "applied", selected_routes=adaptive_routes, route_sets=adaptive_route_sets); self._trace("concrete_path_performance", "applied", key=self._candidate_concrete_performance(selected)); self._trace("continuous_self_optimization", "applied", evidence=optimization_by_key.get("|".join(self._stable_key(selected)), {"state": "insufficient_evidence"})); self._trace("stable_resource_ordering", "applied", resource_keys=self._stable_key(selected))
+        provider_ids = {str(row["provider_id"]) for row in selected}; domain_ids = {str(row["domain_id"]) for row in selected}
+        if len(provider_ids) != 1 or len(domain_ids) != 1:
+            raise RuntimeError("complete placement must remain within one provider and domain")
+        gpu_ids = tuple(sorted(f'{row["node_id"]}/{self._payload(row).get("gpu_id")}' for row in selected)); node_ids = tuple(sorted({str(row["node_id"]) for row in selected})); resource_keys = tuple(sorted(str(row["resource_key"]) for row in selected))
+        path_evidence = []; locality = []
+        for row in selected:
+            payload = self._payload(row); path_evidence.extend(self._verified_paths(row)); locality.extend(self.scheduler._gpu_nic_locality_evidence(row, payload.get("gpu_uuid")))
+        workload_signature = tuple(getattr(self.requirements, "performance_signature", ()) or ())
+        stable_identity = {"provider_id": next(iter(provider_ids)), "domain_id": next(iter(domain_ids)), "workload_class": getattr(getattr(self.requirements, "workload_class", None), "value", getattr(self.requirements, "workload_class", None)), "workload_signature": workload_signature, "gpu_requirements": {"gpu_count": self.requirements.gpu.gpu_count, "min_vram_bytes": self.requirements.gpu.min_vram_bytes, "min_compute_capability": self.requirements.gpu.min_compute_capability, "required_cuda_version": self.requirements.gpu.required_cuda_version, "required_driver_version": self.requirements.gpu.required_driver_version, "required_nvlink_domain": self.requirements.gpu.required_nvlink_domain, "require_nccl": self.requirements.gpu.require_nccl, "min_fabric_bandwidth_gbps": self.requirements.gpu.min_fabric_bandwidth_gbps, "max_fabric_latency_us": self.requirements.gpu.max_fabric_latency_us, "require_redundant_fabric_path": self.requirements.gpu.require_redundant_fabric_path}, "min_cpu_count": self.requirements.min_cpu_count, "min_memory_bytes": self.requirements.min_memory_bytes, "same_node": self.requirements.same_node, "topology_domain": self.requirements.topology_domain, "allowed_node_ids": tuple(self.requirements.allowed_node_ids), "gpu_ids": gpu_ids, "node_ids": node_ids, "resource_keys": resource_keys, "paths": [{key: path.get(key) for key in sorted(path) if key not in {"verified_rdma_link", "bandwidth_gbps", "latency_us"}} for path in path_evidence], "adaptive_routes": adaptive_routes, "adaptive_route_sets": adaptive_route_sets}
+        placement_id = hashlib.sha256(json.dumps(stable_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        return PlacementDecision(placement_id=placement_id, provider_id=next(iter(provider_ids)), domain_id=next(iter(domain_ids)), workload_signature=workload_signature, selected_gpu_ids=gpu_ids, selected_node_ids=node_ids, selected_resource_keys=resource_keys, evidence={"physical_paths": path_evidence, "gpu_nic_rdma": locality, "topology": evidence["topology"], "shared_network": evidence["shared_network"], "concrete_physical_paths": evidence.get("concrete_physical_paths", []), "workload_performance": self._candidate_performance(selected), "route_health": self._candidate_route_health(selected), "predictive_route_evidence": self._candidate_predictive_route(selected), "predictive_failure_degradation": {"key": self._candidate_predictive_failure(selected), "evidence": self._predictive_failure_details(selected)}, "multidimensional_workload_evidence": self._candidate_multidimensional_workload(selected), "concrete_path_performance": self._candidate_concrete_performance(selected), "continuous_self_optimization": optimization_by_key.get("|".join(self._stable_key(selected)), {"state": "insufficient_evidence"}), "adaptive_routes": adaptive_routes, "adaptive_route_sets": adaptive_route_sets, "candidate_evaluations": candidate_evidence, "rejection_count": rejection_count}, decision_trace=tuple(self.trace))
