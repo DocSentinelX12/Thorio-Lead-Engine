@@ -44,7 +44,7 @@ class KaggleFreeComputeConfig:
     kernel_slug: str = "thorio-free-gpu-worker"
     accelerator: str = "NvidiaTeslaT4"
     repository_url: str = "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git"
-    repository_ref: str = "feature/gpu-fabric-foundation"
+    repository_ref: str = "main"
     coordinator_secret_label: str = "THORIO_COMPUTE_AUTH_TOKEN"
     coordinator_url_secret_label: str = "THORIO_COMPUTE_COORDINATOR_URL"
     github_runner_jit_token_secret_label: str = "THORIO_GITHUB_RUNNER_JIT_TOKEN"
@@ -146,7 +146,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                 ).strip(),
                 repository_ref=os.environ.get(
                     "THORIO_KAGGLE_REPOSITORY_REF",
-                    "feature/gpu-fabric-foundation",
+                    "main",
                 ).strip(),
                 coordinator_secret_label=os.environ.get(
                     "THORIO_KAGGLE_COORDINATOR_TOKEN_SECRET",
