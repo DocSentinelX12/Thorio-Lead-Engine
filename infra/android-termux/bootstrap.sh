@@ -21,7 +21,16 @@ else
 fi
 
 python -m pip install -r "$APP_DIR/requirements.txt"
-python -m pip install -r "$APP_DIR/requirements-browser.txt"
+
+# Native Termux cannot install the upstream Playwright wheel through normal pip
+# platform resolution. Install the pinned official Playwright wheel through the
+# repository compatibility installer instead. Other platforms keep the normal
+# requirements-browser.txt path unchanged.
+if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-}" ]; then
+  python "$APP_DIR/infra/android-termux/install-playwright-termux.py"
+else
+  python -m pip install -r "$APP_DIR/requirements-browser.txt"
+fi
 
 # Never overwrite an operator's private runtime configuration during an update.
 # Credentials, browser targets, and other local state must survive bootstrap runs.
@@ -40,6 +49,12 @@ export THORIO_BROWSER_HEADLESS=1
 # export THORIO_BROWSER_DISCOVERY_TARGETS='[...]'
 EOF
   chmod 600 "$ENV_FILE"
+fi
+
+# Playwright on this Android node attaches to the native Termux Chromium over
+# CDP, so it must never try to download or resolve a bundled browser.
+if ! grep -q "^export PLAYWRIGHT_BROWSERS_PATH=" "$ENV_FILE"; then
+  printf "\nexport PLAYWRIGHT_BROWSERS_PATH=0\n" >> "$ENV_FILE"
 fi
 
 mkdir -p "$SERVICE_DIR" "$LOG_DIR/sv"
