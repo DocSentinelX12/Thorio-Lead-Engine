@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - integration/gpu-main-additive
   workflow_dispatch:
     inputs:
       test_path:
@@ -18,22 +19,21 @@ permissions:
 # Full-suite runs share the test queue with CI. Every queued test is preserved.
 # queue: max prevents GitHub from replacing older pending verification runs.
 concurrency:
-  group: thorio-test-queue
-  queue: max
-  cancel-in-progress: false
+  group: thorio-test-queue-${{ github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   test:
     name: Full pytest suite
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/integration/gpu-main-additive'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
-      - name: Check out absolute latest main
+      - name: Check out current branch
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 1
 
       - name: Set up Python
