@@ -521,7 +521,7 @@ class LeadDB:
             raise
 
     def queue_update(self, task_id, *, expected_status=None, expected_worker_id=None, **updates):
-        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result"}
+        allowed = {"status", "updated_at", "lease_until", "worker_id", "lease_token", "attempts", "last_error", "result"}
         unknown = set(updates) - allowed
         if unknown:
             raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
