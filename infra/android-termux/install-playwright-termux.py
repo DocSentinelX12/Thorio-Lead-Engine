@@ -6,7 +6,7 @@ wheel publishes Linux ARM64/x86_64 driver bundles. Pip therefore refuses the
 wheel before installation. This installer verifies an official PyPI wheel,
 installs it under an any-platform filename, and patches the bundled Node driver
 to treat Android as Linux. The application continues to import the normal
-\`playwright\` package and keeps its existing Playwright API unchanged.
+`playwright` package and keeps its existing Playwright API unchanged.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
-import zipfile
 
 
 PLAYWRIGHT_VERSION = "1.58.0"
@@ -79,24 +79,51 @@ def _playwright_dir() -> Path:
     return Path(next(iter(spec.submodule_search_locations)))
 
 
-def _core_bundle_path(package_dir: Path) -> Path:
-    preferred = (
-        package_dir / "driver" / "package" / "lib" / "coreBundle.js",
-        package_dir / "driver" / "package" / "lib" / "server" / "coreBundle.js",
-    )
-    for candidate in preferred:
-        if candidate.is_file():
-            return candidate
+def _install_driver_package(package_dir: Path) -> Path:
+    driver_dir = package_dir / "driver"
+    package_root = driver_dir / "package"
+    package_root.mkdir(parents=True, exist_ok=True)
 
-    matches = sorted(package_dir.rglob("coreBundle.js"))
-    if not matches:
-        raise RuntimeError(f"Playwright coreBundle.js was not found under {package_dir}")
-    return matches[0]
+    # Playwright 1.58.0's Python wheel is platform-tagged, but Termux cannot
+    # consume its bundled Linux driver layout reliably. Use the official
+    # platform-independent playwright-core package and the native Termux Node.js
+    # runtime instead. This produces the exact driver layout expected by the
+    # Python binding: driver/package/cli.js and driver/package/lib/coreBundle.js.
+    with tempfile.TemporaryDirectory(prefix="thorio-playwright-core-") as temp:
+        temp_dir = Path(temp)
+        _run(
+            [
+                "npm",
+                "pack",
+                f"playwright-core@{PLAYWRIGHT_VERSION}",
+                "--pack-destination",
+                str(temp_dir),
+            ]
+        )
+        archives = sorted(temp_dir.glob("playwright-core-*.tgz"))
+        if len(archives) != 1:
+            raise RuntimeError(
+                f"Expected exactly one playwright-core archive, found {len(archives)}"
+            )
+
+        if package_root.exists():
+            shutil.rmtree(package_root)
+        package_root.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archives[0], "r:gz") as archive:
+            archive.extractall(driver_dir, filter="data")
+
+    cli = package_root / "cli.js"
+    if not cli.is_file():
+        raise RuntimeError(f"Playwright driver cli.js was not found at {cli}")
+    bundle = package_root / "lib" / "coreBundle.js"
+    if not bundle.is_file():
+        raise RuntimeError(f"Playwright coreBundle.js was not found at {bundle}")
+    return bundle
 
 
 def _patch_driver() -> Path:
     package_dir = _playwright_dir()
-    bundle = _core_bundle_path(package_dir)
+    bundle = _install_driver_package(package_dir)
     original = bundle.read_text(encoding="utf-8", errors="ignore")
     if 'Object.defineProperty(process, "platform"' in original:
         return bundle
@@ -173,7 +200,7 @@ def install() -> None:
             raise RuntimeError("Installed Playwright does not expose Chromium CDP support")
 
     print(f"Installed Playwright {PLAYWRIGHT_VERSION} for Termux {architecture}.")
-    print(f"Verified driver patch: {bundle}")
+    print(f"Verified driver package and Android compatibility patch: {bundle}")
 
 
 if __name__ == "__main__":
