@@ -25,3 +25,21 @@ def test_android_bootstrap_installs_browser_runtime_dependency():
     assert "requirements-browser.txt" in text
     assert "THORIO_BROWSER_CDP_URL=http://127.0.0.1:9222" in text
     assert "THORIO_BROWSER_PROFILE_DIR=$PROFILE_DIR" in text
+
+
+def test_android_bootstrap_uses_native_termux_playwright_installer():
+    text = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
+    assert "install-playwright-termux.py" in text
+    assert "requirements-browser.txt" in text
+    assert "PLAYWRIGHT_BROWSERS_PATH=0" in text
+
+
+def test_android_playwright_installer_is_pinned_and_verifies_official_wheel():
+    installer = (ROOT / "infra" / "android-termux" / "install-playwright-termux.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'PLAYWRIGHT_VERSION = "1.58.0"' in installer
+    assert "files.pythonhosted.org" in installer
+    assert "sha256" in installer
+    assert 'Object.defineProperty(process, "platform"' in installer
+    assert "connect_over_cdp" in installer
