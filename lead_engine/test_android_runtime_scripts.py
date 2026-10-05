@@ -30,6 +30,7 @@ def test_android_bootstrap_installs_browser_runtime_dependency():
 def test_android_bootstrap_uses_native_termux_playwright_installer():
     text = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
     assert "install-playwright-termux.py" in text
+    assert "command -v pkg >/dev/null 2>&1" in text
     assert "requirements-browser.txt" in text
     assert "PLAYWRIGHT_BROWSERS_PATH=0" in text
 
