@@ -22,6 +22,8 @@ def _env() -> dict[str, str]:
     if ENV_FILE.is_file():
         for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
             line = line.strip()
+            if line.startswith("export "):
+                line = line[7:].strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
