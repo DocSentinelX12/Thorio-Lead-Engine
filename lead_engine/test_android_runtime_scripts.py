@@ -46,3 +46,5 @@ def test_android_playwright_installer_is_pinned_and_verifies_official_wheel():
     assert "driver/package/cli.js" in installer
     assert "coreBundle.js" not in installer
     assert "connect_over_cdp" in installer
+    assert "package_version(" in installer
+    assert 'getattr(playwright, "__version__"' not in installer
