@@ -1,22 +1,342 @@
 name: Free External GPU Runner
 
 on:
+  push:
+    branches:
+      - main
+      - integration/gpu-main-additive
+    paths:
+      - ".github/workflows/free-external-gpu-runner.yml"
+      - "lead_engine/kaggle_free_compute.py"
+      - "infra/free-compute/register-ephemeral-gpu-runner.sh"
+      - "lead_engine/test_kaggle_free_compute.py"
+      - "lead_engine/gpu_execution_probe.py"
+      - "lead_engine/compute_worker.py"
+      - "lead_engine/free_compute_acquisition.py"
+      - "lead_engine/compute_coordinator.py"
+      - "tests/test_gpu_execution_probe.py"
+      - "tests/test_free_compute_acquisition_handoff.py"
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
 
+concurrency:
+  group: free-external-gpu-runner
+  cancel-in-progress: true
+
 jobs:
-  dispatch-feature-workflow:
-    name: Run Free External GPU Runner on GPU branch
-    if: github.ref == 'refs/heads/main'
+  provision:
+    name: Provision one real free external GPU runner
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      THORIO_KAGGLE_ENABLED: "1"
+      THORIO_KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      THORIO_KAGGLE_KERNEL_SLUG: thorio-free-gpu-worker-${{ github.run_id }}
+      THORIO_KAGGLE_REPOSITORY_URL: https://github.com/DocSentinelX12/Thorio-Lead-Engine.git
+      THORIO_KAGGLE_REPOSITORY_REF: ${{ github.ref_name }}
+      THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
+      THORIO_KAGGLE_GITHUB_RUNNER_LABELS: self-hosted,thorio-free-gpu,cuda
+      GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+      THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
+      THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
+      GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
+      RUNNER_VERSION: "2.337.0"
+    outputs:
+      acquisition_id: ${{ steps.acquire.outputs.acquisition_id }}
     steps:
-      - name: Dispatch GPU branch workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Check out GPU branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Install Kaggle CLI and provider dependencies
         run: |
           set -euo pipefail
-          gh workflow run "free-external-gpu-runner.yml" --repo "${GITHUB_REPOSITORY}" --ref feature/gpu-fabric-foundation
-          echo "Dispatched Free External GPU Runner from feature/gpu-fabric-foundation."
+          python -m pip install --upgrade pip
+          python -m pip install kaggle
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+
+      - name: Verify Kaggle authentication
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_USERNAME}"
+          test -n "${KAGGLE_API_TOKEN}"
+          kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
+          echo "Kaggle authentication verified."
+
+      - name: Clear stale Thorio Kaggle worker kernels
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv, io, os, subprocess
+          username = os.environ["KAGGLE_USERNAME"]
+          result = subprocess.run(["kaggle","kernels","list","--user",username,"--page-size","100","-v","--sort-by","dateRun"], capture_output=True, text=True, check=False)
+          lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+          header = next((i for i,line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
+          if header is None:
+              print("No structured Kaggle kernel list was returned; continuing.")
+              raise SystemExit(0)
+          prefix = f"{username}/thorio-free-gpu-worker-"
+          for row in csv.DictReader(io.StringIO("\n".join(lines[header:]))):
+              ref = str(row.get("ref") or "").strip()
+              if ref.startswith(prefix):
+                  print(f"Deleting stale Thorio Kaggle worker kernel: {ref}")
+                  subprocess.run(["kaggle","kernels","delete",ref,"--yes"], check=False)
+          PY
+
+      - name: Acquire free external GPU and start JIT runner
+        id: acquire
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from lead_engine.free_compute_acquisition import FreeComputeAcquisitionManager, FreeComputeAcquisitionStore
+          from lead_engine.kaggle_free_compute import KaggleFreeComputeProvider
+
+          manager = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore("/tmp/thorio-free-compute.sqlite3"))
+          provider = KaggleFreeComputeProvider.from_environment()
+          manager.register(provider)
+          result = manager.hunt_once()
+          print("FREE_GPU_ACQUISITION_RESULT", result)
+          if result["errors"] or result["acquired_count"] != 1:
+              raise SystemExit(f"Free external GPU acquisition failed: {result!r}")
+
+          acquired = result["acquired"][0]
+          acquisition_id = str(acquired["acquisition_id"])
+          kernel_ref = str(acquired["enrollment"]["kernel_ref"])
+          durable = next((r for r in manager.status()["records"] if str(r.get("acquisition_id") or "") == acquisition_id), None)
+          if durable is None:
+              raise SystemExit(f"Local acquisition ledger has no record for {acquisition_id}")
+
+          handoff_payload = {
+              "offer": {
+                  "provider_id": durable["provider_id"],
+                  "domain_id": durable["domain_id"],
+                  "offer_id": durable["offer_id"],
+                  "observed_at": durable["observed_at"],
+                  "expires_at": durable["expires_at"],
+                  "gpu_capable": durable["gpu_capable"],
+                  "no_cost": durable["no_cost"],
+                  "capacity_evidence": durable["evidence"],
+              },
+              "acquired": acquired,
+          }
+          request = urllib.request.Request(
+              os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/") + "/fabric/acquisition/handoff",
+              data=json.dumps(handoff_payload).encode(),
+              method="POST",
+              headers={
+                  "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "Accept": "application/json",
+                  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  handoff = json.loads(response.read().decode())
+          except urllib.error.HTTPError as exc:
+              response_body = ""
+              try:
+                  response_body = exc.read(4096).decode("utf-8", errors="replace")
+              except Exception:
+                  response_body = "<unable to read HTTP error body>"
+              safe_headers = {}
+              for header_name in (
+                  "Server",
+                  "Content-Type",
+                  "Via",
+                  "Location",
+                  "X-Request-ID",
+                  "X-Correlation-ID",
+                  "X-Request-Id",
+                  "CF-Ray",
+                  "X-Served-By",
+              ):
+                  value = exc.headers.get(header_name)
+                  if value:
+                      safe_headers[header_name] = value
+              parsed_url = urllib.parse.urlsplit(request.full_url)
+              safe_target = urllib.parse.urlunsplit(
+                  (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "")
+              )
+              print(
+                  "COORDINATOR_HANDOFF_HTTP_DIAGNOSTIC "
+                  + json.dumps(
+                      {
+                          "status": exc.code,
+                          "reason": str(exc.reason),
+                          "target": safe_target,
+                          "headers": safe_headers,
+                          "body": response_body,
+                      },
+                      sort_keys=True,
+                  ),
+                  flush=True,
+              )
+              raise SystemExit(
+                  f"Coordinator acquisition handoff failed: HTTP {exc.code} {exc.reason}"
+              ) from exc
+          except Exception as exc:
+              raise SystemExit(f"Coordinator acquisition handoff failed: {exc}") from exc
+          if handoff.get("ok") is not True or str(handoff.get("acquisition_id") or "") != acquisition_id:
+              raise SystemExit(f"Coordinator rejected acquisition handoff: {handoff!r}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"kernel_ref={kernel_ref}\n")
+              output.write(f"acquisition_id={acquisition_id}\n")
+          print(f"THORIO_EXTERNAL_GPU_ACQUISITION_DURABLY_REGISTERED {acquisition_id}")
+          print(f"EXTERNAL_GPU_KERNEL_RUNNING {kernel_ref}")
+          PY
+
+      - name: Wait for the JIT GPU runner to become online
+        run: |
+          set -euo pipefail
+          acquisition_id="${{ steps.acquire.outputs.acquisition_id }}"
+          expected_name="thorio-free-gpu-${acquisition_id:0:12}"
+          deadline=$((SECONDS + 480))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            response_file="$(mktemp)"
+            status_code="$(curl -sS -o "$response_file" -w '%{http_code}' -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer ${GITHUB_RUNNER_JIT_TOKEN}" -H 'X-GitHub-Api-Version: 2026-03-10' "https://api.github.com/repos/${GITHUB_RUNNER_REPOSITORY}/actions/runners")"
+            if [ "$status_code" = "200" ]; then
+              if python - "$response_file" "$expected_name" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle: payload=json.load(handle)
+          expected=sys.argv[2]
+          for runner in payload.get("runners", []):
+              labels={x.get("name") for x in runner.get("labels", []) if isinstance(x,dict)}
+              if runner.get("name")==expected and runner.get("status")=="online" and not runner.get("busy") and {"self-hosted","thorio-free-gpu","cuda"}.issubset(labels):
+                  print(json.dumps(runner, sort_keys=True)); raise SystemExit(0)
+          raise SystemExit(1)
+          PY
+              then echo "EXTERNAL_GPU_RUNNER_ONLINE"; rm -f "$response_file"; exit 0; fi
+            fi
+            rm -f "$response_file"
+            sleep 10
+          done
+          echo "Timed out waiting for JIT runner ${expected_name}." >&2
+          exit 1
+        env:
+          GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+          GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
+
+  external_kernel_diagnostics:
+    name: Inspect external GPU kernel startup
+    if: ${{ always() }}
+    needs: provision
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
+    steps:
+      - name: Install Kaggle CLI
+        run: python -m pip install --upgrade kaggle
+      - name: Poll external kernel and preserve startup diagnostics
+        run: |
+          set -u
+          for attempt in $(seq 1 12); do
+            status="$(kaggle kernels status "${KERNEL_REF}" 2>&1 || true)"
+            printf 'Kaggle status attempt %s:\n%s\n' "$attempt" "$status"
+            logs="$(kaggle kernels logs "${KERNEL_REF}" 2>&1 || true)"
+            printf '%s\n' "$logs" | tail -n 120
+            lowered="$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')"
+            if printf '%s' "$lowered" | grep -Eq 'complete|completed|error|failed|cancelled'; then exit 0; fi
+            sleep 15
+          done
+
+  gpu_worker:
+    name: Execute on the real external GPU runner
+    needs: provision
+    runs-on: [self-hosted, thorio-free-gpu, cuda]
+    timeout-minutes: 5
+    env:
+      THORIO_FREE_ONLY: "1"
+      THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
+      THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
+      THORIO_WORKER_ID: kaggle-jit-${{ github.run_id }}
+      THORIO_COMPUTE_HTTP_TIMEOUT: "20"
+    steps:
+      - name: Check out exact GPU branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Prove this job is on a physical NVIDIA GPU
+        run: |
+          set -euo pipefail
+          command -v nvidia-smi
+          nvidia-smi --query-gpu=uuid,name,driver_version --format=csv,noheader
+          python - <<'PY'
+          import torch
+          if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
+              raise SystemExit("External runner has no usable CUDA runtime.")
+          for index in range(torch.cuda.device_count()):
+              x=torch.tensor([2.0,3.0],device=f"cuda:{index}")
+              checksum=float((x*x).sum().item())
+              print("EXTERNAL_RUNNER_CUDA_PROOF",index,torch.cuda.get_device_name(index),checksum)
+              if checksum != 13.0: raise SystemExit(f"CUDA checksum failed on device {index}: {checksum}")
+          PY
+
+      - name: Authenticated Thorio worker enrollment
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, threading
+          from lead_engine.compute_worker import ComputeWorkerClient, run_worker
+
+          client=ComputeWorkerClient(
+              os.environ["THORIO_COMPUTE_COORDINATOR_URL"],
+              os.environ["THORIO_COMPUTE_AUTH_TOKEN"],
+              os.environ["THORIO_WORKER_ID"],
+              int(os.environ.get("THORIO_COMPUTE_HTTP_TIMEOUT","20")),
+          )
+          registration=client.register()
+          print("THORIO_EXTERNAL_GPU_WORKER_REGISTERED")
+          print(json.dumps(registration, sort_keys=True))
+          enrollment=registration.get("free_compute_enrollment") or {}
+          if enrollment.get("verified") is not True:
+              raise SystemExit("Coordinator did not verify the external free-compute enrollment")
+
+          # The proof workflow must terminate cleanly. run_worker is intentionally
+          # persistent for production fleet workers, so give this one a bounded
+          # worker window after successful enrollment and heartbeat it before exit.
+          stop_event=threading.Event()
+          timer=threading.Timer(45.0, stop_event.set)
+          timer.daemon=True
+          timer.start()
+          try:
+              client._registered=True
+              run_worker(client, idle_seconds=5.0, heartbeat_seconds=15.0, stop_event=stop_event)
+          finally:
+              timer.cancel()
+          print("THORIO_EXTERNAL_GPU_WORKER_PROOF_COMPLETE")
+          PY
+
+  cleanup:
+    name: Release external GPU capacity
+    if: ${{ always() }}
+    needs: [provision, external_kernel_diagnostics, gpu_worker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
+    steps:
+      - name: Install Kaggle CLI
+        run: python -m pip install --upgrade kaggle
+      - name: Delete the external Kaggle worker kernel
+        run: |
+          set -euo pipefail
+          kaggle kernels delete "${KERNEL_REF}" --yes || true
+          echo "External GPU capacity cleanup requested for ${KERNEL_REF}."
