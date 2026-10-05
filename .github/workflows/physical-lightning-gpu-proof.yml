@@ -1,6 +1,7 @@
 name: Physical Lightning GPU Acquisition Proof
 
-on:  workflow_dispatch:
+on:
+  workflow_dispatch:
     inputs:
       studio_name:
         description: "Lightning Studio name used for this proof"
