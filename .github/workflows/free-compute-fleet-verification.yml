@@ -13,6 +13,10 @@ on:
       - "tests/test_free_compute_acquisition.py"
   workflow_dispatch:
 
+concurrency:
+  group: free-compute-fleet-verification-{{github.ref_name}}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
