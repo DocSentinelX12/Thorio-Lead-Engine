@@ -6,7 +6,7 @@ on:
       proof_ref:
         description: "Exact branch or ref to prove"
         required: true
-        default: "${{ github.ref_name }}"
+        default: ""
         type: string
       master_addr:
         description: "Routable address of the rank-0 fabric node, reachable from rank 1"
