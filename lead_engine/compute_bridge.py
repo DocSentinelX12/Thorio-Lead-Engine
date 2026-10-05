@@ -105,7 +105,10 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
         task for task in pending(db)
         if task.get("status") == RUNNING
         and str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)
-        and (db.compute_bridge_get(task["task_id"]) or {}).get("status") == "published"
+        and (
+            db.compute_bridge_get(task["task_id"]) is None
+            or (db.compute_bridge_get(task["task_id"]) or {}).get("status") == "published"
+        )
     ]
     completed = []
     retried = []
