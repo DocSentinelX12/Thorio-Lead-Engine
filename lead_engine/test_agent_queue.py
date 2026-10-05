@@ -137,3 +137,48 @@ def test_single_task_claim_reclaims_expired_sqlite_lease(tmp_path, monkeypatch):
     assert reclaimed["status"] == RUNNING
     assert reclaimed["worker_id"] == "worker-new"
     assert reclaimed["attempts"] == 2
+
+
+def test_stale_worker_cannot_complete_after_lease_reclaimed(tmp_path):
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"fingerprint": "fence-me"})
+    first = claim(db, "paxus_research", worker_id="worker-old", limit=1)
+    assert first[0]["task_id"] == task["task_id"]
+    old_token = first[0]["lease_token"]
+    db.conn.execute(
+        "UPDATE agent_queue SET lease_until = ? WHERE task_id = ?",
+        ("2000-01-01T00:00:00+00:00", task["task_id"]),
+    )
+    db.conn.commit()
+    recovered = claim(db, "paxus_research", worker_id="worker-new", limit=1)
+    assert recovered[0]["worker_id"] == "worker-new"
+    try:
+        complete(db, task["task_id"], worker_id="worker-old", lease_token=old_token, result={"stale": True})
+    except ValueError as exc:
+        assert "leased to this worker" in str(exc)
+    else:
+        raise AssertionError("stale worker was allowed to complete a reclaimed task")
+
+
+def test_expired_agent_lease_cannot_be_renewed_or_completed(tmp_path):
+    db = _db(tmp_path)
+    task = enqueue(db, "paxus_research", {"fingerprint": "expired-fence"})
+    claimed = claim(db, "paxus_research", worker_id="worker-expiring", limit=1)
+    token = claimed[0]["lease_token"]
+    db.conn.execute(
+        "UPDATE agent_queue SET lease_until = ? WHERE task_id = ?",
+        ("2000-01-01T00:00:00+00:00", task["task_id"]),
+    )
+    db.conn.commit()
+    try:
+        heartbeat(db, task["task_id"], worker_id="worker-expiring", lease_token=token)
+    except ValueError as exc:
+        assert "lease" in str(exc).lower()
+    else:
+        raise AssertionError("expired worker lease was renewed")
+    try:
+        complete(db, task["task_id"], worker_id="worker-expiring", lease_token=token, result={"stale": True})
+    except ValueError as exc:
+        assert "lease" in str(exc).lower()
+    else:
+        raise AssertionError("expired worker lease was completed")
