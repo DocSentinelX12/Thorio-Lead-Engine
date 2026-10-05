@@ -16,8 +16,8 @@ permissions:
   actions: write
 
 concurrency:
-  group: autonomous-gpu-capacity-broker
-  cancel-in-progress: false
+  group: autonomous-gpu-capacity-broker-${{ github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   acquire:
