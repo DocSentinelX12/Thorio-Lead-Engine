@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKER = ROOT / "infra" / "external-browser" / "browser-worker.py"
 BOOTSTRAP = ROOT / "infra" / "external-browser" / "bootstrap.sh"
+WORKFLOW = ROOT / ".github" / "workflows" / "python-app.yml"
 
 
 def test_external_browser_worker_is_headless_and_local_only():
@@ -18,6 +19,18 @@ def test_external_browser_worker_is_headless_and_local_only():
     assert "THORIO_BROWSER_STORAGE_STATE_PATH" in text
     assert "Termux" not in text
     assert "termux" not in text
+
+
+def test_production_workflow_wires_external_browser_state_persistence():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "THORIO_BROWSER_CDP_URL: \"http://127.0.0.1:9222\"" in text
+    assert "THORIO_BROWSER_STORAGE_STATE_PATH: \"data/browser-state.json\"" in text
+    assert "THORIO_BROWSER_STATE_ENCRYPTION_KEY" in text
+    assert "thorio-browser-auth-state" in text
+    assert "browser-worker.py" in text
+    assert "browser-state.py decrypt" in text
+    assert "browser-state.py encrypt" in text
+    assert "actions/upload-artifact@v6" in text
 
 
 def test_external_browser_state_adapter_is_encrypted():
