@@ -35,6 +35,15 @@ def test_android_bootstrap_uses_native_termux_playwright_installer():
     assert "PLAYWRIGHT_BROWSERS_PATH=0" in text
 
 
+def test_android_playwright_patching_preserves_node_shebang():
+    installer = (ROOT / "infra" / "android-termux" / "install-playwright-termux.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'original.startswith("#!")' in installer
+    assert 'first_line, separator, remainder = original.partition("\\n")' in installer
+    assert "patched_source = first_line + separator + PATCH_PAYLOAD + remainder" in installer
+
+
 def test_android_playwright_installer_is_pinned_and_verifies_official_wheel():
     installer = (ROOT / "infra" / "android-termux" / "install-playwright-termux.py").read_text(
         encoding="utf-8"
