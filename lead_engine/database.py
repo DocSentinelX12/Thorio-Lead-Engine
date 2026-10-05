@@ -51,10 +51,37 @@ class LeadDB:
             lease_until TEXT,
             worker_id TEXT,
             last_error TEXT,
-            result TEXT
+            result TEXT,
+            lease_token TEXT
         )""")
+        try:
+            self.conn.execute("ALTER TABLE agent_queue ADD COLUMN lease_token TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_lead_work (
+            fingerprint TEXT PRIMARY KEY,
+            task_id TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
+            result TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_compute_lead_work_status ON compute_lead_work(status, updated_at)")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_bridge_publications (
+            task_id TEXT PRIMARY KEY,
+            worker_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'prepared',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_compute_bridge_publications_status ON compute_bridge_publications(status, updated_at)")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS airtable_handoffs (
             fingerprint TEXT PRIMARY KEY,
             package_digest TEXT NOT NULL,
