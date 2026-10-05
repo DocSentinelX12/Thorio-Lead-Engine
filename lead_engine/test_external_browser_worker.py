@@ -8,12 +8,23 @@ BOOTSTRAP = ROOT / "infra" / "external-browser" / "bootstrap.sh"
 
 def test_external_browser_worker_is_headless_and_local_only():
     text = WORKER.read_text(encoding="utf-8")
-    assert "launch_persistent_context" in text
+    assert "chromium.launch" in text
+    assert "new_context" in text
+    assert "storage_state" in text
+    assert "indexed_db=True" in text
+    assert "launch_persistent_context" not in text
     assert "headless=True" in text
     assert "--remote-debugging-address=127.0.0.1" in text
-    assert "THORIO_BROWSER_PROFILE_DIR" in text
+    assert "THORIO_BROWSER_STORAGE_STATE_PATH" in text
     assert "Termux" not in text
     assert "termux" not in text
+
+
+def test_external_browser_state_adapter_is_encrypted():
+    helper = (ROOT / "infra" / "external-browser" / "browser-state.py").read_text(encoding="utf-8")
+    assert "Fernet" in helper
+    assert "THORIO_BROWSER_STATE_ENCRYPTION_KEY" in helper
+    assert "InvalidToken" in helper
 
 
 def test_external_browser_bootstrap_uses_persistent_systemd_services():
