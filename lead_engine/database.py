@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 from .agent_registry import agent_registry
 from .lead_identity import validate_opportunity_identity
