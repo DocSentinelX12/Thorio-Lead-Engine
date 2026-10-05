@@ -5,15 +5,36 @@ on:
   push:
     branches:
       - main
-      - feature/gpu-fabric-foundation
+      - integration/gpu-main-additive
   pull_request:
     branches:
       - main
+      - integration/gpu-main-additive
 
 permissions:
   contents: read
 
 jobs:
+  massive-scale-proof:
+    name: Massive-scale fabric control-plane proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          python -m pip install pytest pytest-timeout
+      - name: Run twelve-supercomputer scale proof
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 tests/test_massive_scale_fabric.py
+
   gpu-discovery:
     name: GPU discovery and worker identity
     runs-on: ubuntu-latest
@@ -30,9 +51,80 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           python -m pip install pytest pytest-timeout
-      - name: Run GPU discovery contract tests
+      - name: Run GPU discovery and physical host contract tests
         run: |
-          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_nvidia_provider.py
-      - name: Run compute remote contract regression
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_nvidia_provider.py lead_engine/test_physical_host_discovery.py
+
+      - name: Run concrete free GPU provider contract tests
         run: |
-          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_compute_remote_contract.py
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_kaggle_free_compute.py
+      - name: Run recovery orchestrator tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_recovery_orchestrator.py
+      - name: Run unified self-optimizing control plane tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_unified_control_plane.py
+      - name: Run self-coordinating fabric tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_self_coordinating_fabric.py
+
+      - name: Run autonomous healing intelligence tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_evidence.py lead_engine/test_healing_dependencies.py lead_engine/test_healing_intelligence.py lead_engine/test_healing_intelligence_integration.py
+
+      - name: Run autonomous healing plane tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_state.py lead_engine/test_autonomous_healing.py lead_engine/test_healing_policy.py lead_engine/test_healing_actions.py lead_engine/test_healing_workloads.py lead_engine/test_healing_control_plane.py lead_engine/test_healing_learning.py
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_authorities.py
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_healing_integration.py
+
+      - name: Run replicated healing state tests
+        run: |
+          mkdir -p artifacts
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_replication.py --junitxml=artifacts/healing-replication.xml
+
+      - name: Upload replicated healing diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: healing-replication-diagnostics
+          path: artifacts/healing-replication.xml
+          if-no-files-found: ignore
+
+      - name: Run predictive healing intelligence tests
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_prediction.py
+      - name: Run autonomous strategy experimentation tests
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 lead_engine/test_healing_experiments.py
+
+      - name: Run final 12-supercomputer chaos proof
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 tests/test_final_12_supercomputer_chaos.py
+
+      - name: Run continuous autonomous recovery tests
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 lead_engine/test_continuous_recovery.py lead_engine/test_healing_fault_injection.py
+
+      - name: Run integrated execution-fabric architecture tests
+        run: |
+          python -m pytest -vv -ra --tb=long --timeout=120 \
+            lead_engine/test_execution_fabric_contract.py \
+            lead_engine/test_execution_work_units.py \
+            lead_engine/test_execution_work_units_payload.py \
+            lead_engine/test_execution_work_units_single_gpu.py \
+            lead_engine/test_model_partitioning.py \
+            lead_engine/test_model_partition_execution.py \
+            lead_engine/test_advanced_parallel_execution.py \
+            lead_engine/test_nccl_execution.py \
+            lead_engine/test_execution_recovery.py \
+            lead_engine/test_hybrid_execution_planner.py \
+            lead_engine/test_fabric_verification.py \
+            lead_engine/test_execution_fabric_runtime.py \
+            lead_engine/test_distributed_execution_contract.py \
+            lead_engine/test_distributed_gpu_execution.py \
+            lead_engine/test_execution_fabric_coordinator_integration.py
+
+      - name: Run compute remote and execution fabric regressions
+        run: |
+          python -m pytest -vv -ra --tb=short --timeout=120 tests/test_compute_fabric_telemetry.py tests/test_fabric_physical_inventory.py tests/test_physical_fabric.py tests/test_physical_fabric_architecture_gaps.py tests/test_adaptive_fabric_routing.py tests/test_exact_path_failover.py tests/test_concrete_path_performance_ranking.py tests/test_fabric_physical_integration.py tests/test_fabric_physical_locality.py tests/test_physical_worker_registration.py tests/test_gpu_execution_runtime.py tests/test_fabric_intelligence.py tests/test_fabric_placement.py lead_engine/test_agent_queue.py lead_engine/test_compute_remote_contract.py lead_engine/test_compute_execution_fabric.py lead_engine/test_compute_fabric.py lead_engine/test_compute_worker_fabric_lifecycle.py lead_engine/test_compute_scheduler.py lead_engine/test_compute_checkpoints.py lead_engine/test_compute_lead_persistence.py lead_engine/test_compute_bridge.py lead_engine/test_research_section_checkpoints.py lead_engine/test_public_research_checkpoints.py lead_engine/test_handoff_recovery.py lead_engine/test_revenue_execution.py lead_engine/test_revenue_conversation.py
