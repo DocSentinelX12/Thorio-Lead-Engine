@@ -12,6 +12,7 @@ to treat Android as Linux. The application continues to import the normal
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import version as package_version
 import importlib.util
 import os
 from pathlib import Path
@@ -192,9 +193,10 @@ def install() -> None:
         raise RuntimeError(f"Termux Node.js executable was not found at {node_path}")
     os.environ["PLAYWRIGHT_NODEJS_PATH"] = str(node_path)
 
-    if getattr(playwright, "__version__", "") != PLAYWRIGHT_VERSION:
+    installed_version = package_version("playwright")
+    if installed_version != PLAYWRIGHT_VERSION:
         raise RuntimeError(
-            f"Unexpected Playwright version after installation: {getattr(playwright, '__version__', 'unknown')}"
+            f"Unexpected Playwright version after installation: {installed_version}"
         )
 
     with sync_playwright() as playwright_runtime:
