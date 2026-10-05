@@ -15,6 +15,10 @@ on:
         default: "true"
         type: boolean
 
+concurrency:
+  group: physical-external-gpu-proof-run-{{github.ref_name}}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
