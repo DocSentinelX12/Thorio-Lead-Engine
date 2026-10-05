@@ -6,6 +6,7 @@ are delegated to the high-ticket sales closer boundary.
 """
 from __future__ import annotations
 
+import inspect
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
@@ -15,6 +16,7 @@ from .agent_queue import enqueue, enqueue_many
 from .active_processing import airtable_integrity, priority, routing, verification
 from .public_research import research_public_web
 from .next_evidence_intelligence import build_next_evidence_plan
+from .research_package import build_canonical_research_package
 from .signal_outcome_feedback import load_signal_outcome_feedback
 
 DISCOVERY_TARGETS = {
@@ -205,7 +207,100 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     research_focus = build_next_evidence_plan(lead, feedback=feedback)
     research_input = dict(lead)
     research_input["research_focus"] = research_focus
-    public_research = research_public_web(research_input)
+    existing_section_sources = {
+        "business_need_research": ("public_business_need_facts",),
+        "current_intent_research": ("public_hiring_facts",),
+        "technical_product_hiring_research": ("public_product_facts", "public_hiring_facts"),
+        "commercial_research": ("public_commercial_facts",),
+    }
+    initial_sections = {}
+    for section_name, source_names in existing_section_sources.items():
+        evidence = []
+        for source_name in source_names:
+            values = prior.get(source_name)
+            if isinstance(values, list):
+                evidence.extend(dict(item) for item in values if isinstance(item, Mapping))
+        if evidence:
+            initial_sections[section_name] = {
+                "verified": False,
+                "verification_status": "observed_evidence",
+                "researched_at": datetime.now(timezone.utc).isoformat(),
+                "summary": "Persisted observed research evidence.",
+                "evidence": evidence,
+                "provenance": {"source_sections": list(source_names), "evidence_count": len(evidence)},
+            }
+    if initial_sections:
+        stored_initial = ctx.db.update_payload(fingerprint, initial_sections)
+        if stored_initial is None:
+            raise ValueError(f"Lead not found while materializing research sections: {fingerprint}")
+        lead = dict(stored_initial)
+        prior = dict(lead.get("company_research") or prior)
+        research_input = dict(lead)
+        research_input["research_focus"] = research_focus
+    def checkpoint_public_research(progress: Mapping[str, Any]) -> None:
+        existing_research = dict(prior)
+        existing_research["public_web_research_checkpoint"] = {
+            "pages": [dict(page) for page in progress.get("pages", []) if isinstance(page, Mapping)],
+            "sources": [dict(source) for source in progress.get("sources", []) if isinstance(source, Mapping)],
+            "pages_attempted": int(progress.get("pages_attempted", 0) or 0),
+            "pages_collected": int(progress.get("pages_collected", 0) or 0),
+            "checkpointed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        prior["public_web_research_checkpoint"] = dict(existing_research["public_web_research_checkpoint"])
+        checkpoint_research = dict(existing_research)
+        checkpoint_research["public_web_research"] = {
+            "status": "evidence_found" if int(progress.get("pages_collected", 0) or 0) else "no_public_evidence",
+            "pages_attempted": int(progress.get("pages_attempted", 0) or 0),
+            "pages_collected": int(progress.get("pages_collected", 0) or 0),
+            "sources": list(existing_research["public_web_research_checkpoint"]["sources"]),
+            "raw_pages": list(existing_research["public_web_research_checkpoint"]["pages"]),
+            "facts": {},
+            "fabricated_fields": [],
+        }
+        specialist_findings = lead.get("specialist_findings") if isinstance(lead.get("specialist_findings"), Mapping) else {}
+        try:
+            canonical = build_canonical_research_package(lead, checkpoint_research, specialist_findings)
+        except (TypeError, ValueError):
+            canonical = {}
+            section_sources = {
+                "business_need_research": ("public_business_need_facts",),
+                "current_intent_research": ("public_hiring_facts",),
+                "technical_product_hiring_research": ("public_product_facts", "public_hiring_facts"),
+                "commercial_research": ("public_commercial_facts",),
+            }
+            for section_name, source_names in section_sources.items():
+                evidence = []
+                for source_name in source_names:
+                    values = existing_research.get(source_name)
+                    if isinstance(values, list):
+                        evidence.extend(dict(item) for item in values if isinstance(item, Mapping))
+                canonical[section_name] = {
+                    "verified": False,
+                    "verification_status": "observed_evidence" if evidence else "research_required",
+                    "researched_at": datetime.now(timezone.utc).isoformat(),
+                    "summary": "Checkpointed observed evidence only.",
+                    "evidence": evidence,
+                    "provenance": {"source_sections": list(source_names), "evidence_count": len(evidence)},
+                }
+        updates = {"company_research": existing_research, "research_status": "researching"}
+        updates.update(canonical)
+        stored = ctx.db.update_payload(fingerprint, updates)
+        if stored is None:
+            raise ValueError(f"Lead disappeared while checkpointing public research: {fingerprint}")
+
+    try:
+        parameters = inspect.signature(research_public_web).parameters
+        supports_checkpoint = "checkpoint" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+    except (TypeError, ValueError):
+        supports_checkpoint = True
+    public_research = (
+        research_public_web(research_input, checkpoint=checkpoint_public_research)
+        if supports_checkpoint
+        else research_public_web(research_input)
+    )
     public_facts = public_research.get("facts", {}) if isinstance(public_research, Mapping) else {}
     observed_input = {"company": company, "source_url": source_url, "signal": str(lead.get("signal") or "").strip(), "evidence": str(lead.get("evidence") or "").strip(), "evidence_event_count": len(events), "provenance": [dict(event.get("provenance") or {}) for event in events if isinstance(event.get("provenance"), Mapping)]}
     company_verified, company_verification_evidence = _company_identity_verified(company, public_research)

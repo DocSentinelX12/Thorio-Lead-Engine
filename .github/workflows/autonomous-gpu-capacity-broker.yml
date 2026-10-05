@@ -1,22 +1,91 @@
 name: Autonomous GPU Capacity Broker
 
 on:
+  push:
+    branches:
+      - main
+      - integration/gpu-main-additive
+    paths:
+      - "lead_engine/gpu_capacity_broker.py"
+      - "tests/test_gpu_capacity_broker.py"
+      - ".github/workflows/autonomous-gpu-capacity-broker.yml"
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
+  actions: write
+
+concurrency:
+  group: autonomous-gpu-capacity-broker-${{ github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
-  dispatch-feature-workflow:
-    name: Run Autonomous GPU Capacity Broker on GPU branch
-    if: github.ref == 'refs/heads/main'
+  acquire:
+    name: Discover and acquire real free GPU capacity
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      THORIO_GPU_TARGET_NODES: "1"
+      THORIO_GPU_BROKER_DB: ".thorio/gpu-capacity.sqlite3"
+      THORIO_KAGGLE_ENABLED: "1"
+      THORIO_KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
+      THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
+      THORIO_LIGHTNING_ENABLED: "1"
+      LIGHTNING_USER_ID: ${{ secrets.THORIO_LIGHTNING_USER_ID }}
+      LIGHTNING_API_KEY: ${{ secrets.THORIO_LIGHTNING_API_KEY }}
+      THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING: ${{ secrets.THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING }}
+      THORIO_LIGHTNING_STUDIO: "thorio-gpu-broker"
+      THORIO_LIGHTNING_MACHINE: "T4"
+      THORIO_LIGHTNING_REF: "${{ github.ref_name }}"
     steps:
-      - name: Dispatch GPU branch workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Check out exact GPU branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+
+      - name: Install broker dependencies
         run: |
-          set -euo pipefail
-          gh workflow run "autonomous-gpu-capacity-broker.yml" --repo "${GITHUB_REPOSITORY}" --ref feature/gpu-fabric-foundation
-          echo "Dispatched Autonomous GPU Capacity Broker from feature/gpu-fabric-foundation."
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          fi
+          python -m pip install --upgrade pytest lightning-sdk
+
+      - name: Verify broker readiness gating
+        run: python -m pytest -q tests/test_gpu_capacity_broker.py
+
+      - name: Run one acquisition cycle
+        id: cycle
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p .thorio
+          python -m lead_engine.gpu_capacity_broker | tee .thorio/gpu-capacity-cycle.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          raw = Path(".thorio/gpu-capacity-cycle.json").read_text().splitlines()
+          marker = next(line for line in raw if line.startswith("THORIO_GPU_CAPACITY_BROKER "))
+          payload = json.loads(marker.split(" ", 1)[1])
+          print(f"complete={'true' if payload.get('complete') else 'false'}")
+          print(f"providers={len(payload.get('providers_registered', ())) }")
+          PY
+
+      - name: Upload broker state
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-capacity-broker-${{ github.run_id }}
+          path: .thorio/gpu-capacity-cycle.json
+          retention-days: 7
+
+      - name: Fail closed when acquisition remains incomplete
+        if: steps.cycle.outputs.complete != 'true' && steps.cycle.outputs.providers != '0'
+        shell: bash
+        run: |
+          echo "GPU CAPACITY BROKER INCOMPLETE: acquisition did not reach a complete state in this run."
+          echo "Automatic self-dispatch is intentionally disabled so incomplete runs fail instead of creating a recurring queued-run loop."
+          exit 1

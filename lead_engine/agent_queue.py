@@ -26,8 +26,8 @@ def _iso(value: datetime) -> str:
 def _row_to_task(row) -> Dict[str, Any]:
     if row is None:
         return None
-    (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) = row
-    return {"task_id": task_id, "agent": agent, "queue": queue, "status": status, "priority": int(priority), "payload": json.loads(payload) if isinstance(payload, str) else dict(payload or {}), "dedupe_key": dedupe_key, "created_at": created_at, "updated_at": updated_at, "attempts": int(attempts), "lease_until": lease_until, "worker_id": worker_id, "last_error": last_error, "result": json.loads(result) if isinstance(result, str) and result else None}
+    (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) = row
+    return {"task_id": task_id, "agent": agent, "queue": queue, "status": status, "priority": int(priority), "payload": json.loads(payload) if isinstance(payload, str) else dict(payload or {}), "dedupe_key": dedupe_key, "created_at": created_at, "updated_at": updated_at, "attempts": int(attempts), "lease_until": lease_until, "worker_id": worker_id, "last_error": last_error, "result": json.loads(result) if isinstance(result, str) and result else None, "lease_token": lease_token}
 
 
 def _load(db) -> Dict[str, Any]:
@@ -144,7 +144,7 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
                     task["priority"], json.dumps(task["payload"], ensure_ascii=False),
                     task["dedupe_key"], task["created_at"], task["updated_at"],
                     task["attempts"], task["lease_until"], task["worker_id"],
-                    task["last_error"], None,
+                    task["last_error"], None, None,
                 ))
                 created.append(task)
             if rows:
@@ -197,14 +197,14 @@ def claim_task(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) ->
         if task is None: raise ValueError(f"Task not found: {task_id}")
         if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
         _validate_task_authorization(task["agent"], task.get("payload") or {})
-        now = _now(); changed = db.queue_update(task_id, expected_status=QUEUED, status=RUNNING, worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), attempts=task["attempts"] + 1, updated_at=_iso(now))
+        now = _now(); changed = db.queue_update(task_id, expected_status=QUEUED, status=RUNNING, worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), lease_token=uuid4().hex, attempts=task["attempts"] + 1, updated_at=_iso(now))
         if changed != 1: raise ValueError(f"Task could not be claimed: {task_id}")
         return _row_to_task(db.queue_get(task_id))
     state = _load(db); _recover_stale(state); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
     if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
     _validate_task_authorization(task["agent"], task.get("payload") or {})
-    now = _now(); task["status"] = RUNNING; task["worker_id"] = worker_id; task["lease_until"] = _iso(now + timedelta(seconds=lease_seconds)); task["attempts"] = int(task.get("attempts", 0)) + 1; task["updated_at"] = _iso(now); _save(db, state); return dict(task)
+    now = _now(); task["status"] = RUNNING; task["worker_id"] = worker_id; task["lease_until"] = _iso(now + timedelta(seconds=lease_seconds)); task["lease_token"] = uuid4().hex; task["attempts"] = int(task.get("attempts", 0)) + 1; task["updated_at"] = _iso(now); _save(db, state); return dict(task)
 
 
 def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int = 300) -> List[Dict[str, Any]]:
@@ -230,13 +230,19 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
     return claimed
 
 
-def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) -> Dict[str, Any]:
+def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300, lease_token: str | None = None) -> Dict[str, Any]:
     if lease_seconds <= 0: raise ValueError("lease_seconds must be positive")
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
-        if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
-        now = _now(); changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now));
+        if task.get("status") != RUNNING or task.get("worker_id") != worker_id or (lease_token is not None and task.get("lease_token") != lease_token): raise ValueError("Task is not leased to this worker")
+        now = _now()
+        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now)):
+                raise ValueError("Task lease was lost")
+        else:
+            changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now));
+            if changed != 1: raise ValueError("Task lease ownership changed before heartbeat")
         if changed != 1: raise ValueError("Task lease ownership changed before heartbeat")
         return _row_to_task(db.queue_get(task_id))
     state = _load(db); task = state["items"].get(task_id)
@@ -245,17 +251,22 @@ def heartbeat(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) -> 
     now = _now(); task["lease_until"] = _iso(now + timedelta(seconds=lease_seconds)); task["updated_at"] = _iso(now); _save(db, state); return dict(task)
 
 
-def complete(db, task_id: str, *, worker_id: str, result: Dict[str, Any] | None = None) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, status=COMPLETE, result=result, error=None)
+def complete(db, task_id: str, *, worker_id: str, lease_token: str | None = None, result: Dict[str, Any] | None = None) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, lease_token=lease_token, status=COMPLETE, result=result, error=None)
 
-def fail(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, status=FAILED, result=None, error=error)
+def fail(db, task_id: str, *, worker_id: str, lease_token: str | None = None, error: str) -> Dict[str, Any]: return _finish(db, task_id, worker_id=worker_id, lease_token=lease_token, status=FAILED, result=None, error=error)
 
-def retry(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]:
+def retry(db, task_id: str, *, worker_id: str, lease_token: str | None = None, error: str) -> Dict[str, Any]:
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
-        if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
-        now = _iso(_now()); changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, status=QUEUED, last_error=error, worker_id=None, lease_until=None, updated_at=now)
-        if changed != 1: raise ValueError("Task lease ownership changed before retry")
+        if task.get("status") != RUNNING or task.get("worker_id") != worker_id or (lease_token is not None and task.get("lease_token") != lease_token): raise ValueError("Task is not leased to this worker")
+        now = _iso(_now())
+        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, status=QUEUED, last_error=error, worker_id=None, lease_until=None, lease_token=None, updated_at=now):
+                raise ValueError("Task lease was lost")
+        else:
+            changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, status=QUEUED, last_error=error, worker_id=None, lease_until=None, updated_at=now)
+            if changed != 1: raise ValueError("Task lease ownership changed before retry")
         return _row_to_task(db.queue_get(task_id))
     state = _load(db); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
@@ -263,13 +274,18 @@ def retry(db, task_id: str, *, worker_id: str, error: str) -> Dict[str, Any]:
     task["status"] = QUEUED; task["last_error"] = error; task["worker_id"] = None; task["lease_until"] = None; task["updated_at"] = _iso(_now()); _save(db, state); return dict(task)
 
 
-def _finish(db, task_id: str, *, worker_id: str, status: str, result: Dict[str, Any] | None, error: str | None) -> Dict[str, Any]:
+def _finish(db, task_id: str, *, worker_id: str, lease_token: str | None, status: str, result: Dict[str, Any] | None, error: str | None) -> Dict[str, Any]:
     if _queue_db(db):
         task = _row_to_task(db.queue_get(task_id))
         if task is None: raise ValueError(f"Task not found: {task_id}")
-        if task.get("status") != RUNNING or task.get("worker_id") != worker_id: raise ValueError("Task is not leased to this worker")
-        changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, status=status, result=json.dumps(result, ensure_ascii=False) if result is not None else None, last_error=error, worker_id=None, lease_until=None, updated_at=_iso(_now()))
-        if changed != 1: raise ValueError("Task lease ownership changed before completion")
+        if task.get("status") != RUNNING or task.get("worker_id") != worker_id or (lease_token is not None and task.get("lease_token") != lease_token): raise ValueError("Task is not leased to this worker")
+        now = _iso(_now())
+        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, status=status, result=json.dumps(result, ensure_ascii=False) if result is not None else None, last_error=error, worker_id=None, lease_until=None, lease_token=None, updated_at=now):
+                raise ValueError("Task lease was lost")
+        else:
+            changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, status=status, result=json.dumps(result, ensure_ascii=False) if result is not None else None, last_error=error, worker_id=None, lease_until=None, updated_at=now)
+            if changed != 1: raise ValueError("Task lease ownership changed before completion")
         return _row_to_task(db.queue_get(task_id))
     state = _load(db); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")

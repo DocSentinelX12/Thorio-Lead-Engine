@@ -276,16 +276,24 @@ def _classify(pages: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
     return result
 
 
-def research_public_web(lead: Mapping[str, Any]) -> Dict[str, Any]:
-    """Collect bounded public evidence from verified company URLs or the exact observed public source URL."""
+def research_public_web(lead: Mapping[str, Any], checkpoint: Any = None) -> Dict[str, Any]:
+    """Collect bounded public evidence and optionally checkpoint progress after each page."""
     urls = _candidate_urls(lead)
     pages = []
     for url in urls:
         page = _fetch(url)
         pages.append(page)
+        if callable(checkpoint):
+            checkpoint({
+                "pages": list(pages),
+                "sources": [{"url": item.get("url"), "status": item.get("status"), "observed_at": item.get("observed_at")} for item in pages],
+                "pages_attempted": len(pages),
+                "pages_collected": sum(1 for item in pages if item.get("status") == "collected"),
+            })
         if len(pages) >= MAX_PAGES:
             break
     collected = [page for page in pages if page.get("status") == "collected"]
     classified = _classify(pages)
     sources = [{"url": page.get("url"), "observed_at": page.get("observed_at"), "status": page.get("status"), "robots_status": page.get("robots_status"), "http_status": page.get("http_status")} for page in pages]
     return {"status": "evidence_found" if collected else "no_public_evidence", "research_method": "public_web_http", "researched_at": _now(), "pages_attempted": len(pages), "pages_collected": len(collected), "sources": sources, "facts": classified, "raw_pages": pages, "verified_fields": [], "fabricated_fields": []}
+

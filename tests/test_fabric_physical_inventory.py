@@ -1,0 +1,166 @@
+from __future__ import annotations
+
+import time
+
+from lead_engine.compute_inventory import ComputeInventory
+from lead_engine.compute_provider import ProviderResourceSnapshot
+from lead_engine.compute_resources import CpuResource, GpuResource, NodeResource, ResourceState
+
+
+def _snapshot(*, evidence: dict, observed_at: float) -> ProviderResourceSnapshot:
+    gpu = GpuResource(
+        node_id="node-a", gpu_id="gpu-0", gpu_uuid="GPU-UUID-0",
+        vram_bytes=24 * 1024**3, compute_capability="8.0",
+        health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+    )
+    node = NodeResource(
+        node_id="node-a", architecture="x86_64",
+        cpu=CpuResource(node_id="node-a", cpu_count=32, memory_bytes=128 * 1024**3),
+        gpus=(gpu,), state=ResourceState.HEALTHY,
+    )
+    return ProviderResourceSnapshot(
+        provider_id="provider-a", domain_id="domain-a", observed_at=observed_at,
+        nodes=(node,), authentication_state="authenticated", evidence=evidence,
+    )
+
+
+def test_physical_component_observation_persists_explicit_hardware_identities(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    evidence = {"physical_fabric": {"components": [{"component_type": "pci", "identity": "pci:0000:3b:00.0", "node_id": "node-a", "attributes": {"class": "display"}}, {"component_type": "numa", "identity": "numa:0", "node_id": "node-a", "attributes": {"node": 0}}, {"component_type": "nic", "identity": "nic:mlx5_0", "node_id": "node-a", "attributes": {"pci_bus_id": "0000:5e:00.0"}}, {"component_type": "rdma_device", "identity": "rdma:mlx5_0", "node_id": "node-a", "attributes": {"device": "mlx5_0"}}, {"component_type": "rdma_port", "identity": "rdma:mlx5_0:1", "node_id": "node-a", "parent_identity": "rdma:mlx5_0", "attributes": {"port": 1, "link_layer": "InfiniBand"}}], "relationships": [{"relationship_type": "gpu_to_nic", "source": "GPU-UUID-0", "target": "nic:mlx5_0"}]}}
+    result = inventory.observe(_snapshot(evidence=evidence, observed_at=time.time()))
+    assert result["observed_physical_components"] == 5
+    records = inventory.physical_component_observations()
+    assert {record["component_type"] for record in records} == {"pci", "numa", "nic", "rdma_device", "rdma_port"}
+    nic = next(record for record in records if record["component_type"] == "nic")
+    assert nic["identity"] == "nic:mlx5_0"
+    assert nic["attributes"]["pci_bus_id"] == "0000:5e:00.0"
+
+
+def test_repeated_observation_is_idempotent_and_preserves_multiple_paths(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    evidence = {"physical_fabric": {"components": [{"component_type": "nic", "identity": "nic:mlx5_0", "node_id": "node-a"}, {"component_type": "rdma_device", "identity": "rdma:mlx5_0", "node_id": "node-a"}]}}
+    snapshot = _snapshot(evidence=evidence, observed_at=100.0)
+    inventory.observe(snapshot); inventory.observe(snapshot)
+    second_evidence = {"physical_fabric": {"components": [{"component_type": "nic", "identity": "nic:mlx5_1", "node_id": "node-a"}, {"component_type": "rdma_device", "identity": "rdma:mlx5_1", "node_id": "node-a"}]}}
+    inventory.observe(_snapshot(evidence=second_evidence, observed_at=101.0))
+    records = inventory.physical_component_observations()
+    assert len(records) == 4
+    assert {record["identity"] for record in records} == {"nic:mlx5_0", "rdma:mlx5_0", "nic:mlx5_1", "rdma:mlx5_1"}
+    history = inventory.physical_component_history()
+    assert len(history) == 4
+    assert {item["identity"] for item in history} == {"nic:mlx5_0", "rdma:mlx5_0", "nic:mlx5_1", "rdma:mlx5_1"}
+
+
+def test_newer_observation_updates_current_state_and_retains_prior_evidence(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    first = {"physical_fabric": {"components": [{"component_type": "nic", "identity": "nic:mlx5_0", "node_id": "node-a", "attributes": {"pci_bus_id": "0000:5e:00.0", "link_speed": "100G"}}]}}
+    second = {"physical_fabric": {"components": [{"component_type": "nic", "identity": "nic:mlx5_0", "node_id": "node-a", "attributes": {"pci_bus_id": "0000:5e:00.0", "link_speed": "200G"}}]}}
+    inventory.observe(_snapshot(evidence=first, observed_at=100.0)); inventory.observe(_snapshot(evidence=second, observed_at=101.0))
+    current = inventory.physical_component_observations()
+    assert len(current) == 1 and current[0]["attributes"]["link_speed"] == "200G"
+    history = inventory.physical_component_history()
+    assert len(history) == 2 and [item["attributes"]["link_speed"] for item in history] == ["100G", "200G"]
+
+
+def test_missing_optional_hardware_fields_remain_unknown(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    evidence = {"physical_fabric": {"components": [{"component_type": "nic", "identity": "nic:unknown-pci", "node_id": "node-a", "attributes": {}}]}}
+    inventory.observe(_snapshot(evidence=evidence, observed_at=100.0))
+    record = inventory.physical_component_observations()[0]
+    assert record["attributes"] == {} and record["pci_parent_identity"] is None and record["numa_identity"] is None
+
+
+def test_physical_path_measurement_timestamp_is_durable_and_survives_reload(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    class Path:
+        path_id = "path-a"; source_gpu = "gpu:src"; destination_gpu = "gpu:dst"; segments = ("gpu:src", "fabric:ib0", "gpu:dst"); fabric_domains = ("ib",); state = type("State", (), {"value": "MEASURED"})(); measurement = {"bandwidth_gbps": 180.0}
+    class Verification:
+        path_id = "path-a"; state = type("State", (), {"value": "MEASURED"})(); reason = None; failure_domain = None; measurement = {"bandwidth_gbps": 180.0}; measurement_observed_at = 200.0
+    inventory.persist_physical_path(Path()); inventory.persist_physical_verification(Verification(), evidence={"measurement": {"bandwidth_gbps": 180.0}}, observed_at=200.0)
+    rows = inventory.physical_paths(); assert rows[0]["measurement"] == {"bandwidth_gbps": 180.0} and rows[0]["measurement_observed_at"] == 200.0
+    reloaded = ComputeInventory(str(tmp_path / "inventory.sqlite3")); rows = reloaded.physical_paths()
+    assert rows[0]["measurement"] == {"bandwidth_gbps": 180.0} and rows[0]["measurement_observed_at"] == 200.0
+
+
+def test_physical_fabric_measurement_history_retains_each_observed_capability(tmp_path):
+    from lead_engine.physical_fabric import FabricPathState, FabricVerificationResult, PhysicalFabricPath
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = PhysicalFabricPath(path_id="path-history-1", source_gpu="gpu:src", destination_gpu="gpu:dst", segments=("gpu:src", "fabric:ib0", "gpu:dst"), fabric_domains=("fabric:ib0",), state=FabricPathState.CONSTRUCTED)
+    inventory.persist_physical_path(path)
+    first = FabricVerificationResult(path_id=path.path_id, state=FabricPathState.MEASURED, measurement={"bandwidth_gbps": 500, "latency_us": 2.0, "sample_count": 16}, measurement_observed_at=100.0, required_segments=path.segments)
+    inventory.persist_physical_verification(first, observed_at=100.0)
+    second = FabricVerificationResult(path_id=path.path_id, state=FabricPathState.MEASURED, measurement={"bandwidth_gbps": 220, "latency_us": 4.0, "sample_count": 8}, measurement_observed_at=200.0, required_segments=path.segments)
+    inventory.persist_physical_verification(second, observed_at=200.0)
+    history = inventory.physical_fabric_measurement_history()
+    assert [item["observed_at"] for item in history] == [100.0, 200.0]
+    assert [item["measurement"]["bandwidth_gbps"] for item in history] == [500, 220]
+    assert all(item["path_id"] == path.path_id for item in history)
+    current = inventory.physical_paths()[0]
+    assert current["measurement"]["bandwidth_gbps"] == 220
+    assert current["measurement_observed_at"] == 200.0
+
+
+def test_route_health_index_uses_durable_observations_and_exposes_congestion_evidence(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    path = {"node_id": "node-a", "gpu_uuid": "GPU-0", "nic": "mlx5_0", "rdma_device": "mlx5_0", "rdma_port": 1, "link_layer": "InfiniBand"}
+    for observed_at, latency, success in ((100.0, 2.0, True), (200.0, 3.0, True), (300.0, 5.0, False)):
+        inventory.record_fabric_route_observation(path, latency_ms=latency, success=success, observed_at=observed_at, evidence={"source": "fabric_probe"})
+    health = inventory.fabric_route_health_index()[inventory.fabric_path_key(path)]
+    assert health["sample_count"] == 3
+    assert health["success_count"] == 2
+    assert health["failure_count"] == 1
+    assert health["latest_latency_ms"] == 5.0
+    assert health["historical_mean_latency_ms"] == (2.0 + 3.0 + 5.0) / 3
+    assert health["latency_delta_from_mean_ms"] == 5.0 - ((2.0 + 3.0 + 5.0) / 3)
+    assert health["failure_rate"] == 1 / 3
+
+
+def test_route_health_index_isolated_by_physical_path_and_survives_reload(tmp_path):
+    db = str(tmp_path / "inventory.sqlite3")
+    inventory = ComputeInventory(db)
+    path_a = {"node_id": "node-a", "gpu_uuid": "GPU-A", "nic": "mlx5_0", "rdma_device": "mlx5_0", "rdma_port": 1, "link_layer": "InfiniBand"}
+    path_b = {"node_id": "node-a", "gpu_uuid": "GPU-B", "nic": "mlx5_1", "rdma_device": "mlx5_1", "rdma_port": 1, "link_layer": "InfiniBand"}
+    inventory.record_fabric_route_observation(path_a, latency_ms=2.0, success=True, observed_at=100.0)
+    inventory.record_fabric_route_observation(path_a, latency_ms=4.0, success=True, observed_at=200.0)
+    inventory.record_fabric_route_observation(path_b, latency_ms=9.0, success=True, observed_at=100.0)
+    reloaded = ComputeInventory(db)
+    index = reloaded.fabric_route_health_index()
+    assert index[reloaded.fabric_path_key(path_a)]["sample_count"] == 2
+    assert index[reloaded.fabric_path_key(path_a)]["latest_latency_ms"] == 4.0
+    assert index[reloaded.fabric_path_key(path_b)]["sample_count"] == 1
+    assert index[reloaded.fabric_path_key(path_b)]["latest_latency_ms"] == 9.0
+
+
+def test_execution_path_feedback_persists_by_exact_concrete_path_and_feeds_route_health(tmp_path):
+    inventory = ComputeInventory(str(tmp_path / "inventory.sqlite3"))
+    now = time.time()
+    with inventory._connect() as connection:
+        connection.execute(
+            """INSERT INTO compute_physical_fabric_paths
+               (path_id,source_gpu,destination_gpu,segments_json,fabric_domains_json,state,
+                measurement_json,measurement_observed_at,reason,failure_domain,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("fabric-path-exec", "gpu:src", "gpu:dst", "[]", "[]", "MEASURED",
+             "{}", None, None, None, now, now),
+        )
+        connection.commit()
+
+    observations = (
+        {
+            "fabric_path_id": "fabric-path-exec",
+            "latency_us": 4200.0,
+            "success": True,
+            "observed_at": 100.0,
+            "evidence": {
+                "source": "observed_all_reduce",
+                "placement_id": "placement-exec",
+            },
+        },
+    )
+    ids = inventory.record_execution_path_observations(observations)
+
+    assert len(ids) == 1
+    health = inventory.fabric_route_health_index()
+    assert health["fabric-path-exec"]["sample_count"] == 1
+    assert health["fabric-path-exec"]["latest_latency_ms"] == 4.2
+    assert health["fabric-path-exec"]["latest_success"] is True

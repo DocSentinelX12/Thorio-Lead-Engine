@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 from .agent_registry import agent_registry
 from .lead_identity import validate_opportunity_identity
@@ -51,10 +52,37 @@ class LeadDB:
             lease_until TEXT,
             worker_id TEXT,
             last_error TEXT,
-            result TEXT
+            result TEXT,
+            lease_token TEXT
         )""")
+        try:
+            self.conn.execute("ALTER TABLE agent_queue ADD COLUMN lease_token TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                raise
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_lead_work (
+            fingerprint TEXT PRIMARY KEY,
+            task_id TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
+            result TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_compute_lead_work_status ON compute_lead_work(status, updated_at)")
+        self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_bridge_publications (
+            task_id TEXT PRIMARY KEY,
+            worker_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'prepared',
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_compute_bridge_publications_status ON compute_bridge_publications(status, updated_at)")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS airtable_handoffs (
             fingerprint TEXT PRIMARY KEY,
             package_digest TEXT NOT NULL,
@@ -122,6 +150,11 @@ class LeadDB:
             raise ValueError("Lead payload must contain a fingerprint.")
         validate_opportunity_identity(payload)
         cursor = self.conn.execute("INSERT OR IGNORE INTO leads (fingerprint, payload) VALUES (?, ?)", (str(fingerprint), json.dumps(payload, ensure_ascii=False)))
+        if cursor.rowcount == 1:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO compute_lead_work (fingerprint,status,attempts,last_error,result,created_at,updated_at) VALUES (?, 'queued', 0, '', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (str(fingerprint),),
+            )
         if self._batch_write_depth == 0:
             self.conn.commit()
         return cursor.rowcount == 1
@@ -445,23 +478,23 @@ class LeadDB:
         return value if isinstance(value, dict) else None
 
     def _queue_row_to_dict(self, row):
-        return {"task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3], "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6], "created_at": row[7], "updated_at": row[8], "attempts": row[9], "lease_until": row[10], "worker_id": row[11], "last_error": row[12], "result": json.loads(row[13]) if row[13] is not None else None}
+        return {"task_id": row[0], "agent": row[1], "queue": row[2], "status": row[3], "priority": row[4], "payload": json.loads(row[5]), "dedupe_key": row[6], "created_at": row[7], "updated_at": row[8], "attempts": row[9], "lease_until": row[10], "worker_id": row[11], "last_error": row[12], "result": json.loads(row[13]) if row[13] is not None else None, "lease_token": row[14]}
 
     def queue_insert_many(self, rows):
-        self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        self.conn.executemany("INSERT OR IGNORE INTO agent_queue (task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
         if self._batch_write_depth == 0:
             self.conn.commit()
 
     def queue_find_duplicate(self, agent, dedupe_key):
         if not dedupe_key:
             return None
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND dedupe_key = ? AND status IN ('queued', 'running') ORDER BY created_at LIMIT 1", (agent, dedupe_key)).fetchone()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE agent = ? AND dedupe_key = ? AND status IN ('queued', 'running') ORDER BY created_at LIMIT 1", (agent, dedupe_key)).fetchone()
 
     def queue_get(self, task_id):
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone()
 
     def queue_recover_stale(self, now_iso):
-        cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
+        cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, lease_token = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
         if self._batch_write_depth == 0:
             self.conn.commit()
         return cursor.rowcount > 0
@@ -473,7 +506,7 @@ class LeadDB:
         role_capacity = int(role.max_concurrency) if role is not None else int(capacity)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
-            self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
+            self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, lease_token = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
             running = int(self.conn.execute("SELECT COUNT(*) FROM agent_queue WHERE agent = ? AND status = 'running'", (agent,)).fetchone()[0])
             available = min(int(limit), int(capacity), max(0, role_capacity - running))
             if available <= 0:
@@ -484,7 +517,7 @@ class LeadDB:
             if not claimed_ids:
                 self.conn.commit()
                 return []
-            self.conn.executemany("UPDATE agent_queue SET status = 'running', worker_id = ?, lease_until = ?, attempts = attempts + 1, updated_at = ? WHERE task_id = ? AND status = 'queued'", [(worker_id, lease_until, now_iso, task_id) for task_id in claimed_ids])
+            self.conn.executemany("UPDATE agent_queue SET status = 'running', worker_id = ?, lease_until = ?, lease_token = ?, attempts = attempts + 1, updated_at = ? WHERE task_id = ? AND status = 'queued'", [(worker_id, lease_until, uuid4().hex, now_iso, task_id) for task_id in claimed_ids])
             claimed = [task_id for task_id in claimed_ids if self.conn.execute("SELECT worker_id, status FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone() == (worker_id, "running")]
             self.conn.commit()
             return [self.queue_get(task_id) for task_id in claimed]
@@ -493,7 +526,7 @@ class LeadDB:
             raise
 
     def queue_update(self, task_id, *, expected_status=None, expected_worker_id=None, **updates):
-        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result"}
+        allowed = {"status", "updated_at", "lease_until", "worker_id", "lease_token", "attempts", "last_error", "result"}
         unknown = set(updates) - allowed
         if unknown:
             raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
@@ -515,15 +548,15 @@ class LeadDB:
         return cursor.rowcount
 
     def queue_all_rows(self):
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
 
     def queue_pending_all_rows(self):
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
 
     def queue_pending(self, agent=None):
         if agent is None:
             return self.queue_pending_all_rows()
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
 
     def stats(self):
         return self.conn.execute("SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads").fetchone()
@@ -539,6 +572,107 @@ class LeadDB:
         self.close()
         return False
 
+
+    def compute_lead_pending(self, limit=50):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Compute lead limit must be a positive integer.")
+        rows = self.conn.execute(
+            """SELECT w.fingerprint,w.task_id,w.status,w.attempts,w.last_error,w.result,l.payload
+               FROM compute_lead_work w JOIN leads l ON l.fingerprint=w.fingerprint
+               WHERE w.status IN ('queued','retry') ORDER BY w.created_at,w.fingerprint LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [{"fingerprint": r[0], "task_id": r[1], "status": r[2], "attempts": int(r[3]), "last_error": r[4], "result": json.loads(r[5]) if r[5] else None, "lead": json.loads(r[6])} for r in rows]
+
+    def compute_lead_dispatched(self, limit=50):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Compute lead limit must be a positive integer.")
+        rows = self.conn.execute(
+            """SELECT w.fingerprint,w.task_id,w.status,w.attempts,w.last_error,w.result,l.payload
+               FROM compute_lead_work w JOIN leads l ON l.fingerprint=w.fingerprint
+               WHERE w.status='dispatched' AND w.task_id IS NOT NULL ORDER BY w.updated_at,w.fingerprint LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [{"fingerprint": r[0], "task_id": r[1], "status": r[2], "attempts": int(r[3]), "last_error": r[4], "result": json.loads(r[5]) if r[5] else None, "lead": json.loads(r[6])} for r in rows]
+
+    def compute_lead_mark_dispatched(self, fingerprint, task_id):
+        self.conn.execute("UPDATE compute_lead_work SET task_id=?,status='dispatched',attempts=attempts+1,last_error='',updated_at=CURRENT_TIMESTAMP WHERE fingerprint=? AND status IN ('queued','retry')", (str(task_id), str(fingerprint)))
+        self.conn.commit()
+
+    def compute_lead_mark_retry(self, fingerprint, error):
+        self.conn.execute("UPDATE compute_lead_work SET status='retry',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE fingerprint=?", (str(error)[:4000], str(fingerprint)))
+        self.conn.commit()
+
+    def compute_lead_mark_completed(self, fingerprint, result):
+        self.conn.execute("UPDATE compute_lead_work SET status='completed',result=?,last_error='',updated_at=CURRENT_TIMESTAMP WHERE fingerprint=?", (json.dumps(result, ensure_ascii=False), str(fingerprint)))
+        self.conn.commit()
+
+    def queue_update_owned(self, task_id, expected_worker_id, expected_lease_token, **updates):
+        allowed = {"status", "updated_at", "lease_until", "worker_id", "attempts", "last_error", "result", "lease_token"}
+        unknown = set(updates) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported queue fields: {sorted(unknown)}")
+        if not updates:
+            return False
+        assignments = ", ".join(f"{field} = ?" for field in updates)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        values = list(updates.values()) + [task_id, expected_worker_id, expected_lease_token, now_iso]
+        cursor = self.conn.execute(
+            f"UPDATE agent_queue SET {assignments} WHERE task_id = ? AND status = 'running' AND worker_id = ? AND lease_token = ? AND lease_until IS NOT NULL AND lease_until > ?",
+            values,
+        )
+        self.conn.commit()
+        return cursor.rowcount == 1
+
+    def compute_bridge_prepare(self, task_id, worker_id, payload, now_iso):
+        self.conn.execute(
+            """INSERT INTO compute_bridge_publications
+               (task_id, worker_id, payload, status, last_error, created_at, updated_at)
+               VALUES (?, ?, ?, 'prepared', '', ?, ?)
+               ON CONFLICT(task_id) DO UPDATE SET
+               worker_id=excluded.worker_id, payload=excluded.payload,
+               updated_at=excluded.updated_at""",
+            (str(task_id), str(worker_id), json.dumps(payload, ensure_ascii=False), now_iso, now_iso),
+        )
+        self.conn.commit()
+
+    def compute_bridge_publications(self):
+        rows = self.conn.execute(
+            "SELECT task_id,worker_id,payload,status,last_error,created_at,updated_at "
+            "FROM compute_bridge_publications WHERE status IN ('prepared','publish_retry') "
+            "ORDER BY created_at,task_id"
+        ).fetchall()
+        return [{
+            "task_id": row[0], "worker_id": row[1], "payload": json.loads(row[2]),
+            "status": row[3], "last_error": row[4], "created_at": row[5], "updated_at": row[6]
+        } for row in rows]
+
+    def compute_bridge_mark_published(self, task_id, now_iso):
+        self.conn.execute(
+            "UPDATE compute_bridge_publications SET status='published',last_error='',updated_at=? WHERE task_id=?",
+            (now_iso, str(task_id)),
+        )
+        self.conn.commit()
+
+    def compute_bridge_mark_retry(self, task_id, error, now_iso):
+        self.conn.execute(
+            "UPDATE compute_bridge_publications SET status='publish_retry',last_error=?,updated_at=? WHERE task_id=?",
+            (str(error)[:4000], now_iso, str(task_id)),
+        )
+        self.conn.commit()
+
+    def compute_bridge_get(self, task_id):
+        row = self.conn.execute(
+            "SELECT task_id,worker_id,payload,status,last_error,created_at,updated_at "
+            "FROM compute_bridge_publications WHERE task_id=?",
+            (str(task_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "task_id": row[0], "worker_id": row[1], "payload": json.loads(row[2]),
+            "status": row[3], "last_error": row[4], "created_at": row[5], "updated_at": row[6]
+        }
 
 if __name__ == "__main__":
     print("Lead database loaded. SQLite persistence is ready.")
