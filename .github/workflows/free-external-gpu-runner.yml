@@ -33,7 +33,7 @@ jobs:
     outputs:
       acquisition_id: ${{ steps.acquire.outputs.acquisition_id }}
     steps:
-      - name: Check out GPU branch
+      - name: Check out repository
         uses: actions/checkout@v5
         with:
           ref: ${{ github.ref_name }}
