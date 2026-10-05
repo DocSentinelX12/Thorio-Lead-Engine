@@ -26,3 +26,8 @@ def test_external_browser_bootstrap_uses_persistent_systemd_services():
     assert "playwright install chromium --no-shell" in text
     assert "Termux" not in text
     assert "termux" not in text
+
+
+def test_android_browser_runtime_path_is_removed():
+    assert not (ROOT / "infra" / "android-termux").exists()
+    assert not (ROOT / "lead_engine" / "test_android_runtime_scripts.py").exists()
