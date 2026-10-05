@@ -76,6 +76,7 @@ ExecStart=${APP_DIR}/.venv/bin/python ${APP_DIR}/infra/external-browser/browser-
 Restart=always
 RestartSec=10
 TimeoutStopSec=30
+ExecStartPost=/bin/bash -c 'for i in $(seq 1 30); do curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Thorio browser CDP did not become ready" >&2; exit 1'
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
