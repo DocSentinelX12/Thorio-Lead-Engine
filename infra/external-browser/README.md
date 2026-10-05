@@ -1,35 +1,39 @@
 # Thorio external browser worker
 
-This is the canonical persistent browser runtime for Thorio collection. It is
-designed for an always-on external Linux VM, not a phone.
+The phone path has been removed. Browser collection now runs on an external
+Linux environment and keeps its authenticated profile on persistent storage.
 
-## Runtime
+## First no-card target: Lightning AI free Studio
 
-- Chromium runs headless as a systemd service.
-- The authenticated browser profile persists on the VM at
-  `/opt/thorio-lead-engine/browser-profile`.
-- Playwright launches the supported Linux Chromium build.
-- CDP is bound only to `127.0.0.1:9222`.
-- The Lead Engine service starts only after the browser service is available.
-- Both services restart automatically after failure or reboot.
-- Authentication uses the existing Thorio browser account flow. A valid
-  existing session is reused. Normal credential-based login is attempted only
-  when the session is not valid. CAPTCHA, MFA, rate limits, and other platform
-  security controls are never bypassed.
+Lightning currently advertises one free active Studio with no credit card,
+persistent storage, SSH access, and background execution. Free Studios require
+a restart every four hours. Lightning also documents that Studio files,
+packages, and environment state persist across restarts.
 
-## Deployment target
+That makes the free Studio a practical no-card target for this browser worker:
+the Chromium process restarts, but the Thorio browser profile remains on the
+persistent Studio filesystem. The existing authentication code reuses a valid
+session and only attempts normal login when the session is invalid.
 
-Oracle Cloud's Always Free Ampere A1 VM is the preferred first target because
-Oracle currently provides up to 2 OCPUs and 12 GB RAM for Always Free A1
-compute, plus persistent block storage. Ubuntu ARM64 images are available.
-The VM must remain within the Always Free allocation.
+Lightning requires phone verification for account security. This is account
+verification only. The phone is not the browser runtime.
 
-## Setup
+## Files
 
-Run `bootstrap.sh` as root on the persistent Linux VM. Keep the VM's private
-`/etc/thorio/engine.env` file outside source control. Put the existing
-authenticated browser target definitions and runtime credentials there using
-the repository's existing environment-variable contract.
+- `browser-worker.py` launches one persistent headless Chromium profile and
+  binds CDP only to localhost.
+- `lightning-supervisor.py` keeps the browser and Lead Engine processes alive
+  and restarts either process if it exits.
+- `lightning-start.sh` is the on-start launcher for a Lightning Studio.
+- `bootstrap.sh` is for a conventional persistent Linux VM with systemd.
 
-Do not expose port 9222 publicly. The browser worker and Lead Engine attach
-locally on the same VM.
+## Authentication
+
+No daily manual authorization is built into this runtime. The existing
+`account_auth` and browser discovery flow remain responsible for normal
+authenticated sessions. Credentials and target definitions must be supplied
+through the existing private runtime environment or the provider's secret
+facility. CAPTCHA, MFA, rate limits, and other platform security controls are
+never bypassed.
+
+CDP is never exposed publicly. Keep port 9222 local to the browser host.
