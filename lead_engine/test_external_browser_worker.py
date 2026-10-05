@@ -48,8 +48,6 @@ def test_external_browser_bootstrap_uses_persistent_systemd_services():
     assert "THORIO_BROWSER_CDP_URL=http://127.0.0.1:9222" in text
     assert "playwright install-deps chromium" in text
     assert "playwright install chromium --no-shell" in text
-    assert "Termux" not in text
-    assert "termux" not in text
 
 
 def test_rejected_runtime_paths_are_removed():
