@@ -228,7 +228,30 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
             "fabricated_fields": [],
         }
         specialist_findings = lead.get("specialist_findings") if isinstance(lead.get("specialist_findings"), Mapping) else {}
-        canonical = build_canonical_research_package(lead, checkpoint_research, specialist_findings)
+        try:
+            canonical = build_canonical_research_package(lead, checkpoint_research, specialist_findings)
+        except (TypeError, ValueError):
+            canonical = {}
+            section_sources = {
+                "business_need_research": ("public_business_need_facts",),
+                "current_intent_research": ("public_hiring_facts",),
+                "technical_product_hiring_research": ("public_product_facts", "public_hiring_facts"),
+                "commercial_research": ("public_commercial_facts",),
+            }
+            for section_name, source_names in section_sources.items():
+                evidence = []
+                for source_name in source_names:
+                    values = existing_research.get(source_name)
+                    if isinstance(values, list):
+                        evidence.extend(dict(item) for item in values if isinstance(item, Mapping))
+                canonical[section_name] = {
+                    "verified": False,
+                    "verification_status": "observed_evidence" if evidence else "research_required",
+                    "researched_at": datetime.now(timezone.utc).isoformat(),
+                    "summary": "Checkpointed observed evidence only.",
+                    "evidence": evidence,
+                    "provenance": {"source_sections": list(source_names), "evidence_count": len(evidence)},
+                }
         updates = {"company_research": existing_research, "research_status": "researching"}
         updates.update(canonical)
         stored = ctx.db.update_payload(fingerprint, updates)
