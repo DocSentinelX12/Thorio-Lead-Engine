@@ -15,6 +15,12 @@ on:
           - airtable-auth-diagnostic.yml
           - free-compute-workers.yml
           - python-app.yml
+          - free-external-gpu-runner.yml
+          - free-compute-fleet-verification.yml
+          - gpu-fabric-validation.yml
+          - physical-external-gpu-proof-run.yml
+          - physical-lightning-gpu-proof.yml
+          - physical-multi-node-nccl-proof.yml
       ref:
         description: "Branch or tag to run the selected workflow against"
         required: true
