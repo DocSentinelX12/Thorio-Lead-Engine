@@ -190,6 +190,11 @@ def install() -> None:
     import playwright  # noqa: PLC0415
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
+    node_path = Path(os.environ["PREFIX"]) / "bin" / "node"
+    if not node_path.is_file():
+        raise RuntimeError(f"Termux Node.js executable was not found at {node_path}")
+    os.environ["PLAYWRIGHT_NODEJS_PATH"] = str(node_path)
+
     if getattr(playwright, "__version__", "") != PLAYWRIGHT_VERSION:
         raise RuntimeError(
             f"Unexpected Playwright version after installation: {getattr(playwright, '__version__', 'unknown')}"
