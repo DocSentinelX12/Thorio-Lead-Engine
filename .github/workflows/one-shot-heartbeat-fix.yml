@@ -1,0 +1,52 @@
+name: One Shot Heartbeat Fix
+
+on:
+  push:
+    branches:
+      - integration/gpu-main-additive
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message != 'Fix lease-token heartbeat ownership'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: integration/gpu-main-additive
+          fetch-depth: 1
+      - name: Fix heartbeat ownership path
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('lead_engine/agent_queue.py')
+          text = path.read_text()
+          old = '''        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now)):
+                raise ValueError("Task lease was lost")
+        else:
+            changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now));
+            if changed != 1: raise ValueError("Task lease ownership changed before heartbeat")
+        if changed != 1: raise ValueError("Task lease ownership changed before heartbeat")
+'''
+          new = '''        if lease_token is not None and hasattr(db, "queue_update_owned"):
+            if not db.queue_update_owned(task_id, worker_id, lease_token, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now)):
+                raise ValueError("Task lease was lost")
+            changed = 1
+        else:
+            changed = db.queue_update(task_id, expected_status=RUNNING, expected_worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), updated_at=_iso(now));
+            if changed != 1: raise ValueError("Task lease ownership changed before heartbeat")
+'''
+          if old not in text:
+              raise SystemExit('heartbeat target not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          python -m pytest -q lead_engine/test_agent_queue.py lead_engine/test_durable_queue_integrity.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lead_engine/agent_queue.py
+          git diff --cached --check
+          git commit -m 'Fix lease-token heartbeat ownership' || true
+          git push origin HEAD:integration/gpu-main-additive
