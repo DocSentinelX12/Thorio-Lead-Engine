@@ -7,7 +7,11 @@ ENV_FILE="${THORIO_ANDROID_ENV_FILE:-$HOME/.thorio/engine.env}"
 SERVICE_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/service"
 LOG_DIR="${PREFIX:-/data/data/com.termux/files/usr}/var/log"
 
+# Termux uses rolling packages and does not support partial upgrades. Bring the
+# entire native runtime forward before installing Chromium so its libc++/NDK
+# dependencies cannot be left behind at an incompatible version.
 pkg update -y
+pkg upgrade -y
 pkg install -y git python termux-services curl x11-repo chromium termux-x11-nightly
 
 mkdir -p "$HOME/.thorio" "$PROFILE_DIR" "$APP_DIR"
