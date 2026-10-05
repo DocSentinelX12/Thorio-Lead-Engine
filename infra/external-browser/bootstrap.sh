@@ -40,7 +40,8 @@ runuser -u "${RUN_USER}" -- "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/re
 
 # Use Playwright's supported Linux Chromium build instead of a distribution
 # package whose browser lifecycle varies by Linux distribution and CPU.
-runuser -u "${RUN_USER}" -- "${APP_DIR}/.venv/bin/python" -m playwright install --with-deps chromium --no-shell
+${APP_DIR}/.venv/bin/python -m playwright install-deps chromium
+runuser -u "${RUN_USER}" -- "${APP_DIR}/.venv/bin/python" -m playwright install chromium --no-shell
 
 install -d -o "${RUN_USER}" -g "${RUN_USER}" "${APP_DIR}/data" "${APP_DIR}/browser-profile" /etc/thorio
 
