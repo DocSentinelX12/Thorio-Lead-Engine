@@ -33,7 +33,7 @@ class LightningFreeComputeConfig:
     machine: str = "T4"
     teamspace: str | None = None
     repo: str = "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git"
-    ref: str = "feature/gpu-fabric-foundation"
+    ref: str = "main"
     free_hours_remaining: float | None = None
     offer_ttl_seconds: int = 1_200
 
@@ -43,7 +43,7 @@ class LightningFreeComputeConfig:
         machine = os.environ.get("THORIO_LIGHTNING_MACHINE", "T4").strip()
         teamspace = os.environ.get("THORIO_LIGHTNING_TEAMSPACE", "").strip() or None
         repo = os.environ.get("THORIO_LIGHTNING_REPO", cls.repo).strip()
-        ref = os.environ.get("THORIO_LIGHTNING_REF", "feature/gpu-fabric-foundation").strip()
+        ref = os.environ.get("THORIO_LIGHTNING_REF", "main").strip()
         raw_hours = os.environ.get("THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING", "").strip()
         hours = None if not raw_hours else float(raw_hours)
         ttl = int(os.environ.get("THORIO_LIGHTNING_OFFER_TTL_SECONDS", "1200"))
