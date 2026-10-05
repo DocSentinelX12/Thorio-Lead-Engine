@@ -1,22 +1,6 @@
 name: Free External GPU Runner
 
-on:
-  push:
-    branches:
-      - main
-      - integration/gpu-main-additive
-    paths:
-      - ".github/workflows/free-external-gpu-runner.yml"
-      - "lead_engine/kaggle_free_compute.py"
-      - "infra/free-compute/register-ephemeral-gpu-runner.sh"
-      - "lead_engine/test_kaggle_free_compute.py"
-      - "lead_engine/gpu_execution_probe.py"
-      - "lead_engine/compute_worker.py"
-      - "lead_engine/free_compute_acquisition.py"
-      - "lead_engine/compute_coordinator.py"
-      - "tests/test_gpu_execution_probe.py"
-      - "tests/test_free_compute_acquisition_handoff.py"
-  workflow_dispatch:
+on:  workflow_dispatch:
 
 permissions:
   contents: read
