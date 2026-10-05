@@ -16,6 +16,7 @@ from .agent_queue import enqueue, enqueue_many
 from .active_processing import airtable_integrity, priority, routing, verification
 from .public_research import research_public_web
 from .next_evidence_intelligence import build_next_evidence_plan
+from .research_package import build_canonical_research_package
 from .signal_outcome_feedback import load_signal_outcome_feedback
 
 DISCOVERY_TARGETS = {
@@ -215,7 +216,22 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
             "pages_collected": int(progress.get("pages_collected", 0) or 0),
             "checkpointed_at": datetime.now(timezone.utc).isoformat(),
         }
-        stored = ctx.db.update_payload(fingerprint, {"company_research": existing_research, "research_status": "researching"})
+        prior["public_web_research_checkpoint"] = dict(existing_research["public_web_research_checkpoint"])
+        checkpoint_research = dict(existing_research)
+        checkpoint_research["public_web_research"] = {
+            "status": "evidence_found" if int(progress.get("pages_collected", 0) or 0) else "no_public_evidence",
+            "pages_attempted": int(progress.get("pages_attempted", 0) or 0),
+            "pages_collected": int(progress.get("pages_collected", 0) or 0),
+            "sources": list(existing_research["public_web_research_checkpoint"]["sources"]),
+            "raw_pages": list(existing_research["public_web_research_checkpoint"]["pages"]),
+            "facts": {},
+            "fabricated_fields": [],
+        }
+        specialist_findings = lead.get("specialist_findings") if isinstance(lead.get("specialist_findings"), Mapping) else {}
+        canonical = build_canonical_research_package(lead, checkpoint_research, specialist_findings)
+        updates = {"company_research": existing_research, "research_status": "researching"}
+        updates.update(canonical)
+        stored = ctx.db.update_payload(fingerprint, updates)
         if stored is None:
             raise ValueError(f"Lead disappeared while checkpointing public research: {fingerprint}")
 
