@@ -88,7 +88,7 @@ def _install_driver_package(package_dir: Path) -> Path:
     # consume its bundled Linux driver layout reliably. Use the official
     # platform-independent playwright-core package and the native Termux Node.js
     # runtime instead. This produces the exact driver layout expected by the
-    # Python binding: driver/package/cli.js and driver/package/lib/coreBundle.js.
+    # Python binding: driver/package/cli.js.
     with tempfile.TemporaryDirectory(prefix="thorio-playwright-core-") as temp:
         temp_dir = Path(temp)
         _run(
@@ -115,31 +115,28 @@ def _install_driver_package(package_dir: Path) -> Path:
     cli = package_root / "cli.js"
     if not cli.is_file():
         raise RuntimeError(f"Playwright driver cli.js was not found at {cli}")
-    bundle = package_root / "lib" / "coreBundle.js"
-    if not bundle.is_file():
-        raise RuntimeError(f"Playwright coreBundle.js was not found at {bundle}")
-    return bundle
+    return cli
 
 
 def _patch_driver() -> Path:
     package_dir = _playwright_dir()
-    bundle = _install_driver_package(package_dir)
-    original = bundle.read_text(encoding="utf-8", errors="ignore")
+    cli = _install_driver_package(package_dir)
+    original = cli.read_text(encoding="utf-8", errors="ignore")
     if 'Object.defineProperty(process, "platform"' in original:
-        return bundle
+        return cli
 
-    backup = bundle.with_suffix(bundle.suffix + ".thorio-backup")
+    backup = cli.with_suffix(cli.suffix + ".thorio-backup")
     if not backup.exists():
-        shutil.copy2(bundle, backup)
+        shutil.copy2(cli, backup)
 
-    temporary = bundle.with_suffix(bundle.suffix + ".thorio-tmp")
+    temporary = cli.with_suffix(cli.suffix + ".thorio-tmp")
     temporary.write_text(PATCH_PAYLOAD + original, encoding="utf-8")
-    os.replace(temporary, bundle)
+    os.replace(temporary, cli)
 
-    patched = bundle.read_text(encoding="utf-8", errors="ignore")
+    patched = cli.read_text(encoding="utf-8", errors="ignore")
     if 'Object.defineProperty(process, "platform"' not in patched:
         raise RuntimeError("Playwright Android compatibility patch could not be verified")
-    return bundle
+    return cli
 
 
 def install() -> None:
@@ -185,7 +182,7 @@ def install() -> None:
             ]
         )
 
-    bundle = _patch_driver()
+    driver_cli = _patch_driver()
 
     import playwright  # noqa: PLC0415
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
@@ -205,7 +202,7 @@ def install() -> None:
             raise RuntimeError("Installed Playwright does not expose Chromium CDP support")
 
     print(f"Installed Playwright {PLAYWRIGHT_VERSION} for Termux {architecture}.")
-    print(f"Verified driver package and Android compatibility patch: {bundle}")
+    print(f"Verified driver package and Android compatibility patch: {driver_cli}")
 
 
 if __name__ == "__main__":
