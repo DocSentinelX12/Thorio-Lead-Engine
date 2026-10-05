@@ -1,6 +1,7 @@
 name: Physical External GPU Proof
 
-on:  workflow_dispatch:
+on:
+  workflow_dispatch:
     inputs:
       run_physical_proof:
         description: "Confirm manual execution of the physical external GPU proof"
