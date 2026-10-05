@@ -6,6 +6,7 @@ are delegated to the high-ticket sales closer boundary.
 """
 from __future__ import annotations
 
+import inspect
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping
@@ -218,7 +219,19 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         if stored is None:
             raise ValueError(f"Lead disappeared while checkpointing public research: {fingerprint}")
 
-    public_research = research_public_web(research_input, checkpoint=checkpoint_public_research)
+    try:
+        parameters = inspect.signature(research_public_web).parameters
+        supports_checkpoint = "checkpoint" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+    except (TypeError, ValueError):
+        supports_checkpoint = True
+    public_research = (
+        research_public_web(research_input, checkpoint=checkpoint_public_research)
+        if supports_checkpoint
+        else research_public_web(research_input)
+    )
     public_facts = public_research.get("facts", {}) if isinstance(public_research, Mapping) else {}
     observed_input = {"company": company, "source_url": source_url, "signal": str(lead.get("signal") or "").strip(), "evidence": str(lead.get("evidence") or "").strip(), "evidence_event_count": len(events), "provenance": [dict(event.get("provenance") or {}) for event in events if isinstance(event.get("provenance"), Mapping)]}
     company_verified, company_verification_evidence = _company_identity_verified(company, public_research)
