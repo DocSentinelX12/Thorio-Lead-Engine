@@ -41,6 +41,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install playwright cryptography
+          python -m playwright install --with-deps chromium
           python -m pip install pytest pytest-timeout
       - name: Run pytest
         run: |
@@ -64,6 +66,11 @@ jobs:
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
       THORIO_FREE_ONLY: "1"
+      THORIO_BROWSER_CDP_URL: "http://127.0.0.1:9222"
+      THORIO_BROWSER_CDP_PORT: "9222"
+      THORIO_BROWSER_STORAGE_STATE_PATH: "data/browser-state.json"
+      THORIO_BROWSER_DISCOVERY_TARGETS: ${{ secrets.THORIO_BROWSER_DISCOVERY_TARGETS }}
+      THORIO_BROWSER_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_BROWSER_STATE_ENCRYPTION_KEY }}
       THORIO_SOURCE_COLLECTION_WORKERS: "64"
       THORIO_AGENT_EXECUTION_WORKERS: "128"
       THORIO_AGENT_DRAIN_ROUNDS: "4"
@@ -236,10 +243,83 @@ jobs:
           run-id: ${{ steps.previous_state.outputs.run_id }}
       - name: Ensure Lead Engine data directory exists
         run: mkdir -p data
-      - name: Run Lead Engine for one bounded production cycle
+      - name: Restore encrypted external browser authentication state
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          if [ -z "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ]; then
+            echo "EXTERNAL BROWSER STATE: encryption secret is not configured; external browser integration is disabled for this run."
+            exit 0
+          fi
+          rm -f data/browser-state.json data/browser-state.enc
+          previous_run_id=""
+          while IFS= read -r run_id; do
+            [ -z "$run_id" ] && continue
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
+            if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
+          done < <(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId')
+          if [ -n "$previous_run_id" ]; then
+            mkdir -p data/browser-state-restore
+            gh run download "$previous_run_id" --repo "$GITHUB_REPOSITORY" --name thorio-browser-auth-state --dir data/browser-state-restore
+            if [ -f data/browser-state-restore/browser-state.enc ]; then
+              cp data/browser-state-restore/browser-state.enc data/browser-state.enc
+              python infra/external-browser/browser-state.py decrypt data/browser-state.enc data/browser-state.json
+              rm -rf data/browser-state-restore
+              chmod 600 data/browser-state.json
+              echo "EXTERNAL BROWSER STATE RESTORED: authenticated state recovered from the newest successful production run."
+            else
+              echo "EXTERNAL BROWSER STATE: previous artifact was found but did not contain browser-state.enc; starting without persisted state."
+            fi
+          else
+            echo "EXTERNAL BROWSER STATE: no previous encrypted state artifact exists; first-run browser state will be created."
+          fi
+
+      - name: Start external headless browser
+        run: |
+          set -euo pipefail
+          if [ -z "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ]; then
+            echo "EXTERNAL BROWSER: encryption secret is not configured; leaving existing production runtime unchanged."
+            exit 0
+          fi
+          python infra/external-browser/browser-worker.py > data/browser-worker.log 2>&1 &
+          echo $! > data/browser-worker.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+              echo "EXTERNAL BROWSER READY: local CDP endpoint is accepting connections."
+              exit 0
+            fi
+            if ! kill -0 "$(cat data/browser-worker.pid)" 2>/dev/null; then
+              echo "EXTERNAL BROWSER FAILURE: browser worker exited before CDP became ready."
+              cat data/browser-worker.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "EXTERNAL BROWSER FAILURE: CDP endpoint did not become ready within 60 seconds."
+          cat data/browser-worker.log
+          exit 1
+
+      - name: Run Lead Engine for one bounded production cycle        run: |
           set -o pipefail
+          set +e
           timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
+          engine_status=${PIPESTATUS[0]}
+          set -e
+          if [ -f data/browser-worker.pid ]; then
+            browser_pid="$(cat data/browser-worker.pid)"
+            if kill -0 "$browser_pid" 2>/dev/null; then
+              kill -TERM "$browser_pid"
+              wait "$browser_pid" || true
+            fi
+          fi
+          if [ -n "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ] && [ -f data/browser-state.json ]; then
+            python infra/external-browser/browser-state.py encrypt data/browser-state.json data/browser-state.enc
+            chmod 600 data/browser-state.enc
+            echo "EXTERNAL BROWSER STATE SAVED: encrypted authentication state is ready for artifact persistence."
+          fi
+          rm -f data/browser-worker.pid
+          exit "$engine_status"
       - name: Verify active collection and Airtable delivery
         run: |
           python - <<'PY'
@@ -370,6 +450,16 @@ jobs:
           print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
           print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
           PY
+      - name: Persist encrypted external browser authentication state
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-browser-auth-state
+          path: data/browser-state.enc
+          if-no-files-found: ignore
+          retention-days: 90
+          compression-level: 6
+          overwrite: true
       - name: Persist Lead Engine state
         if: always()
         uses: actions/upload-artifact@v6
