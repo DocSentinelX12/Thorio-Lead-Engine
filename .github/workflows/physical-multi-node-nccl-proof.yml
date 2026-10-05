@@ -22,10 +22,6 @@ on:
         required: false
         type: string
         default: ""
-  push:
-    paths:
-      - .github/workflows/physical-multi-node-nccl-proof.yml
-
 permissions:
   contents: read
   actions: read
