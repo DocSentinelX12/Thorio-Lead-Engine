@@ -127,6 +127,20 @@ class BrowserRevenueTransport:
                 "no real revenue browser targets are configured"
             )
 
+    def _target_for_channel(self, channel: str) -> BrowserRevenueTarget:
+        normalized = str(channel or "").strip().lower()
+        target = self.targets.get(normalized)
+        if target is None and normalized == "email":
+            # The closer's generic email channel remains compatible with an explicitly
+            # configured Gmail browser target. Other configured transports keep using
+            # their explicit channel names.
+            target = self.targets.get("gmail")
+        if target is None:
+            raise BrowserRevenueConfigurationError(
+                f"no real browser revenue target is configured for channel {channel!r}"
+            )
+        return target
+
     @staticmethod
     def _browser_endpoint() -> str:
         return _env("THORIO_BROWSER_CDP_URL")
@@ -289,11 +303,7 @@ class BrowserRevenueTransport:
         body: str,
         idempotency_key: str,
     ) -> Mapping[str, Any]:
-        target = self.targets.get(str(channel or "").strip().lower())
-        if target is None:
-            raise BrowserRevenueConfigurationError(
-                f"no real browser revenue target is configured for channel {channel!r}"
-            )
+        target = self._target_for_channel(channel)
         recipient_value = str(
             recipient.get("url")
             or recipient.get("profile_url")
