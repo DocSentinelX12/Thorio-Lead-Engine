@@ -542,15 +542,15 @@ class LeadDB:
         return cursor.rowcount
 
     def queue_all_rows(self):
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
 
     def queue_pending_all_rows(self):
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE status IN ('queued', 'running') ORDER BY priority DESC, created_at").fetchall()
 
     def queue_pending(self, agent=None):
         if agent is None:
             return self.queue_pending_all_rows()
-        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
+        return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
 
     def stats(self):
         return self.conn.execute("SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads").fetchone()
