@@ -26,7 +26,7 @@ python -m pip install -r "$APP_DIR/requirements.txt"
 # platform resolution. Install the pinned official Playwright wheel through the
 # repository compatibility installer instead. Other platforms keep the normal
 # requirements-browser.txt path unchanged.
-if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-}" ]; then
+if command -v pkg >/dev/null 2>&1 && [ -n "${PREFIX:-}" ] && [ -d "${PREFIX:-}" ]; then
   python "$APP_DIR/infra/android-termux/install-playwright-termux.py"
 else
   python -m pip install -r "$APP_DIR/requirements-browser.txt"
