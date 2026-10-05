@@ -43,4 +43,6 @@ def test_android_playwright_installer_is_pinned_and_verifies_official_wheel():
     assert "files.pythonhosted.org" in installer
     assert "sha256" in installer
     assert 'Object.defineProperty(process, "platform"' in installer
+    assert "driver/package/cli.js" in installer
+    assert "coreBundle.js" not in installer
     assert "connect_over_cdp" in installer
