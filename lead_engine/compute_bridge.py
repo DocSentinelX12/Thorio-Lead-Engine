@@ -36,9 +36,6 @@ def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> No
         existing_events = [item for item in existing_events if not (isinstance(item, Mapping) and item.get("agent") == agent)]
         existing_events.extend({"agent": agent, **dict(item)} for item in evidence if isinstance(item, Mapping))
         updates["specialist_evidence_events"] = existing_events
-    stored = db.update_payload(fingerprint, updates)
-    if stored is None:
-        raise ComputeWorkerError(f"failed to persist remote {agent} result: {fingerprint}")
     research_agents = {
         "company_research",
         "social_intelligence",
@@ -54,8 +51,12 @@ def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> No
         "contract_team_demand_discovery",
         "recent_inquiry_discovery",
     }
-    if agent in research_agents or agent in discovery_agents:
-        enqueue(db, "company_research", {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent}, priority=7, dedupe_key=f"company_research:{fingerprint}")
+    with db.batch_writes():
+        stored = db.update_payload(fingerprint, updates)
+        if stored is None:
+            raise ComputeWorkerError(f"failed to persist remote {agent} result: {fingerprint}")
+        if agent in research_agents or agent in discovery_agents:
+            enqueue(db, "company_research", {"lead": stored, "evidence_events": stored.get("specialist_evidence_events", []), "specialist_agent": agent}, priority=7, dedupe_key=f"company_research:{fingerprint}")
 
 
 def _now_iso() -> str:
