@@ -16,8 +16,7 @@ on:
 permissions:
   contents: read
 
-# Full-suite runs share the test queue with CI. Every queued test is preserved.
-# queue: max prevents GitHub from replacing older pending verification runs.
+# Full-suite runs are isolated per branch and cancel superseded runs instead of accumulating a pending queue.
 concurrency:
   group: thorio-test-queue-${{ github.ref_name }}
   cancel-in-progress: true
