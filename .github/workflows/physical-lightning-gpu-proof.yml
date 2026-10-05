@@ -1,13 +1,6 @@
 name: Physical Lightning GPU Acquisition Proof
 
-on:
-  push:
-    branches:
-      - main
-      - integration/gpu-main-additive
-    paths:
-      - ".github/workflows/physical-lightning-gpu-proof.yml"
-  workflow_dispatch:
+on:  workflow_dispatch:
     inputs:
       studio_name:
         description: "Lightning Studio name used for this proof"
