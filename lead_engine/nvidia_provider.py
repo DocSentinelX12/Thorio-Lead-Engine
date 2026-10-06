@@ -584,16 +584,24 @@ class NvidiaProvider(ComputeProvider):
             links[row_gpu] = dict(zip(gpu_ids, link_values, strict=True))
 
             trailing = values[len(gpu_ids):]
-            numa_match = next((re.fullmatch(r"-?\d+", value) for value in reversed(trailing)), None)
+            # The affinity columns are ordered by nvidia-smi as CPU Affinity,
+            # NUMA Affinity, GPU NUMA ID. Do not search backwards for a numeric
+            # token because GPU NUMA ID is also numeric on some hosts. The
+            # NUMA affinity field may legitimately be a range such as 0-1.
+            if len(trailing) < 2:
+                raise NvidiaDiscoveryError(f"NVIDIA topology affinity columns are missing for GPU {row_gpu}")
+            cpu_affinity = trailing[0]
+            numa_affinity = trailing[1]
+            gpu_numa_id = trailing[2] if len(trailing) >= 3 else None
+            numa_match = re.fullmatch(r"-?\d+(?:--?\d+)?", numa_affinity)
             if numa_match is None:
-                raise NvidiaDiscoveryError(f"NVIDIA topology NUMA affinity is missing for GPU {row_gpu}")
-            numa_index = len(trailing) - 1 - next(
-                i for i, value in enumerate(reversed(trailing)) if re.fullmatch(r"-?\d+", value)
-            )
-            cpu_affinity_tokens = trailing[:numa_index]
+                raise NvidiaDiscoveryError(
+                    f"NVIDIA topology NUMA affinity is missing for GPU {row_gpu}: {numa_affinity!r}"
+                )
             affinity[row_gpu] = {
-                "cpu_affinity": " ".join(cpu_affinity_tokens),
-                "numa": int(numa_match.group(0)),
+                "cpu_affinity": cpu_affinity,
+                "numa": int(numa_affinity) if "-" not in numa_affinity[1:] else numa_affinity,
+                "gpu_numa_id": gpu_numa_id,
             }
 
         for left in gpu_ids:
