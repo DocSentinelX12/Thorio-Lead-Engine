@@ -95,6 +95,12 @@ jobs:
               acquired = result["acquired"][0]
               acquisition_id = str(acquired["acquisition_id"])
               kernel_ref = str(acquired["enrollment"]["kernel_ref"])
+              live_acquisitions.append((rank, manager, AcquiredCompute(**acquired)))
+              records.append({"rank": rank, "acquisition_id": acquisition_id, "kernel_ref": kernel_ref})
+              Path("/tmp/nccl-acquisitions.json").write_text(
+                  json.dumps(records, sort_keys=True),
+                  encoding="utf-8",
+              )
               durable = next(
                   (r for r in manager.status()["records"] if str(r.get("acquisition_id") or "") == acquisition_id),
                   None,
@@ -172,13 +178,6 @@ jobs:
                   raise SystemExit(f"Coordinator acquisition handoff failed: {exc}") from exc
               if response_payload.get("ok") is not True or str(response_payload.get("acquisition_id") or "") != acquisition_id:
                   raise SystemExit(f"Coordinator rejected acquisition handoff for rank {rank}: {response_payload!r}")
-
-              live_acquisitions.append((rank, manager, AcquiredCompute(**acquired)))
-              records.append({"rank": rank, "acquisition_id": acquisition_id, "kernel_ref": kernel_ref})
-              Path("/tmp/nccl-acquisitions.json").write_text(
-                  json.dumps(records, sort_keys=True),
-                  encoding="utf-8",
-              )
 
           except Exception as exc:
               cleanup_errors = []
