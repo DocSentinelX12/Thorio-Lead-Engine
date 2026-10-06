@@ -593,7 +593,7 @@ class NvidiaProvider(ComputeProvider):
             cpu_affinity = trailing[0]
             numa_affinity = trailing[1]
             gpu_numa_id = trailing[2] if len(trailing) >= 3 else None
-            numa_match = re.fullmatch(r"-?\d+(?:--?\d+)?", numa_affinity)
+            numa_match = re.fullmatch(r"-?\d+(?:-\d+)?", numa_affinity)
             if numa_match is None:
                 raise NvidiaDiscoveryError(
                     f"NVIDIA topology NUMA affinity is missing for GPU {row_gpu}: {numa_affinity!r}"
