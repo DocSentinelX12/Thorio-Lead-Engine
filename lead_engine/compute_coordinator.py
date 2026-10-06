@@ -369,6 +369,16 @@ class ComputeCoordinator:
             if "fabric_path_id" not in metric_columns:
                 connection.execute("ALTER TABLE compute_fabric_execution_metrics ADD COLUMN fabric_path_id TEXT NOT NULL DEFAULT ''")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_attempt ON compute_fabric_execution_metrics(attempt_id, generation, observed_at)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS compute_fabric_rendezvous (
+                session_id TEXT PRIMARY KEY,
+                address TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                interface_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'published',
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_rendezvous_expiry ON compute_fabric_rendezvous(expires_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_path ON compute_fabric_execution_metrics(path_key, observed_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_workload ON compute_fabric_execution_metrics(workload_key, observed_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_compute_fabric_metrics_concrete_path ON compute_fabric_execution_metrics(fabric_path_id, observed_at)")
@@ -3366,6 +3376,85 @@ class ComputeCoordinator:
                     self.pool.release_task_slot(str(attempt["worker_id"]))
             return len(recovered_tasks)
 
+    def publish_fabric_rendezvous(
+        self, *, session_id: str, address: str, port: int, interface_name: str, ttl_seconds: int = 900
+    ) -> Dict[str, Any]:
+        session_id = str(session_id).strip()
+        address = str(address).strip()
+        interface_name = str(interface_name).strip()
+        port = int(port)
+        ttl_seconds = int(ttl_seconds)
+        if not session_id or not address or not interface_name:
+            raise ValueError("rendezvous session_id, address, and interface_name are required")
+        if not 1 <= port <= 65535:
+            raise ValueError("rendezvous port must be between 1 and 65535")
+        if ttl_seconds < 1:
+            raise ValueError("rendezvous ttl_seconds must be positive")
+        now = time.time()
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("DELETE FROM compute_fabric_rendezvous WHERE expires_at <= ?", (now,))
+                connection.execute(
+                    """INSERT INTO compute_fabric_rendezvous
+                       (session_id,address,port,interface_name,status,created_at,expires_at)
+                       VALUES (?,?,?,?,?,?,?)
+                       ON CONFLICT(session_id) DO UPDATE SET
+                           address=excluded.address,
+                           port=excluded.port,
+                           interface_name=excluded.interface_name,
+                           status='published',
+                           created_at=excluded.created_at,
+                           expires_at=excluded.expires_at""",
+                    (session_id, address, port, interface_name, "published", now, now + ttl_seconds),
+                )
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "address": address,
+            "port": port,
+            "interface_name": interface_name,
+            "status": "published",
+            "expires_at": now + ttl_seconds,
+        }
+
+    def get_fabric_rendezvous(self, session_id: str) -> Dict[str, Any]:
+        session_id = str(session_id).strip()
+        if not session_id:
+            raise ValueError("rendezvous session_id is required")
+        now = time.time()
+        with self._lock:
+            with self._connect() as connection:
+                connection.execute("DELETE FROM compute_fabric_rendezvous WHERE expires_at <= ?", (now,))
+                row = connection.execute(
+                    "SELECT session_id,address,port,interface_name,status,created_at,expires_at "
+                    "FROM compute_fabric_rendezvous WHERE session_id=?",
+                    (session_id,),
+                ).fetchone()
+        if row is None:
+            return {"ok": False, "session_id": session_id, "status": "not_published"}
+        return {
+            "ok": True,
+            "session_id": row["session_id"],
+            "address": row["address"],
+            "port": int(row["port"]),
+            "interface_name": row["interface_name"],
+            "status": row["status"],
+            "created_at": float(row["created_at"]),
+            "expires_at": float(row["expires_at"]),
+        }
+
+    def clear_fabric_rendezvous(self, session_id: str) -> bool:
+        session_id = str(session_id).strip()
+        if not session_id:
+            return False
+        with self._lock:
+            with self._connect() as connection:
+                result = connection.execute(
+                    "DELETE FROM compute_fabric_rendezvous WHERE session_id=?",
+                    (session_id,),
+                )
+                return result.rowcount == 1
+
     def health(self) -> Dict[str, Any]:
         with self._lock:
             self.pool.reap_stale_workers(); self.recover_expired_tasks(); self.reconcile_fabric()
@@ -3400,6 +3489,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
         if self.path == "/health": self._send(200, self.server.coordinator.health()); return
+        if self.path.startswith("/fabric/rendezvous?"):
+            session_id = self.path.split("session_id=", 1)[-1].split("&", 1)[0]
+            from urllib.parse import unquote
+            self._send(200, self.server.coordinator.get_fabric_rendezvous(unquote(session_id)))
+            return
         if self.path.startswith("/work/status/"):
             task_id = self.path.rsplit("/", 1)[-1]; task = self.server.coordinator.task(task_id); self._send(200 if task else 404, task or {"error": "task not found"}); return
         if self.path.startswith("/work/checkpoints/"):
@@ -3450,6 +3544,22 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, result)
             elif self.path == "/fabric/acquisition/hunt":
                 self._send(200, self.server.coordinator.hunt_free_compute_once())
+            elif self.path == "/fabric/rendezvous":
+                action = str(body.get("action") or "").strip().lower()
+                session_id = str(body["session_id"])
+                if action == "publish":
+                    result = self.server.coordinator.publish_fabric_rendezvous(
+                        session_id=session_id,
+                        address=str(body["address"]),
+                        port=int(body["port"]),
+                        interface_name=str(body["interface_name"]),
+                        ttl_seconds=int(body.get("ttl_seconds", 900)),
+                    )
+                    self._send(200, result)
+                elif action == "clear":
+                    self._send(200, {"ok": self.server.coordinator.clear_fabric_rendezvous(session_id)})
+                else:
+                    raise ValueError("unsupported rendezvous action")
             elif self.path == "/fabric/heartbeat":
                 ok = self.server.coordinator.heartbeat_execution_participant(
                     attempt_id=str(body["attempt_id"]), generation=int(body["generation"]),
