@@ -34,7 +34,7 @@ jobs:
         include:
           - rank: 0
           - rank: 1
-    runs-on: [self-hosted, linux, x64, gpu, thorio-free-gpu, cuda]
+    runs-on: [self-hosted, thorio-free-gpu, cuda]
     timeout-minutes: 15
     env:
       RANK: ${{ matrix.rank }}
