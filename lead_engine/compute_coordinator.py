@@ -3537,11 +3537,38 @@ class _Handler(BaseHTTPRequestHandler):
             elif self.path == "/fabric/acquisition/status":
                 self._send(200, self.server.coordinator.free_compute_status())
             elif self.path == "/fabric/acquisition/handoff":
-                result = self.server.coordinator.handoff_free_compute_acquisition(
-                    offer=body["offer"],
-                    acquired=body["acquired"],
-                )
-                self._send(200, result)
+                action = str(body.get("action") or "").strip().lower()
+                if action == "rendezvous_publish":
+                    result = self.server.coordinator.publish_fabric_rendezvous(
+                        session_id=str(body["session_id"]),
+                        address=str(body["address"]),
+                        port=int(body["port"]),
+                        interface_name=str(body["interface_name"]),
+                        ttl_seconds=int(body.get("ttl_seconds", 900)),
+                    )
+                    self._send(200, result)
+                elif action == "rendezvous_get":
+                    self._send(
+                        200,
+                        self.server.coordinator.get_fabric_rendezvous(
+                            str(body["session_id"])
+                        ),
+                    )
+                elif action == "rendezvous_clear":
+                    self._send(
+                        200,
+                        {
+                            "ok": self.server.coordinator.clear_fabric_rendezvous(
+                                str(body["session_id"])
+                            )
+                        },
+                    )
+                else:
+                    result = self.server.coordinator.handoff_free_compute_acquisition(
+                        offer=body["offer"],
+                        acquired=body["acquired"],
+                    )
+                    self._send(200, result)
             elif self.path == "/fabric/acquisition/hunt":
                 self._send(200, self.server.coordinator.hunt_free_compute_once())
             elif self.path in {"/fabric/rendezvous", "/fabric/acquisition/rendezvous"}:
