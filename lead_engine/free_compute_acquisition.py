@@ -410,6 +410,82 @@ class FreeComputeAcquisitionManager:
             "provider_ids": tuple(sorted({str(provider.provider_id).strip() for provider in self._providers.values()})),
         }
 
+    def compatible_provider_ids(self, required_capabilities: Mapping[str, bool] | None = None) -> tuple[str, ...]:
+        """Return registered providers whose declared capabilities satisfy a job."""
+        required = dict(required_capabilities or {})
+        compatible: list[str] = []
+        for key, provider in sorted(self._providers.items()):
+            missing = provider.capabilities().missing(required)
+            if not missing:
+                compatible.append(key)
+        return tuple(compatible)
+
+    def acquire_for_requirements(
+        self,
+        *,
+        required_capabilities: Mapping[str, bool] | None = None,
+        gpu_required: bool = False,
+    ) -> dict[str, Any]:
+        """Discover and acquire the first deterministic offer satisfying requirements."""
+        required = dict(required_capabilities or {})
+        provider_keys = set(self.compatible_provider_ids(required))
+        if not provider_keys:
+            return {
+                "acquired": None,
+                "provider_candidates": (),
+                "offers_observed": 0,
+                "errors": (),
+                "status": "no_compatible_provider",
+            }
+
+        discovery = self.discover()
+        errors = list(discovery["errors"])
+        candidates = []
+        for offer_data in discovery["offers"]:
+            offer = FreeComputeOffer(**offer_data)
+            key = self._provider_key_for_offer(offer)
+            if key not in provider_keys:
+                continue
+            if gpu_required and not offer.gpu_capable:
+                continue
+            candidates.append(offer)
+
+        for offer in sorted(candidates, key=lambda item: (item.provider_id, item.domain_id, item.offer_id)):
+            try:
+                acquired = self.acquire(offer)
+                return {
+                    "acquired": asdict(acquired),
+                    "provider_candidates": tuple(sorted(provider_keys)),
+                    "offers_observed": len(candidates),
+                    "errors": tuple(errors),
+                    "status": "acquired",
+                }
+            except Exception as exc:
+                errors.append({
+                    "provider_id": offer.provider_id,
+                    "offer_id": offer.offer_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+        return {
+            "acquired": None,
+            "provider_candidates": tuple(sorted(provider_keys)),
+            "offers_observed": len(candidates),
+            "errors": tuple(errors),
+            "status": "acquisition_failed",
+        }
+
+    def _provider_key_for_offer(self, offer: FreeComputeOffer) -> str:
+        exact = f"{offer.provider_id}:{offer.domain_id}"
+        if exact in self._providers:
+            return exact
+        matching = [
+            key for key, provider in self._providers.items()
+            if str(provider.provider_id).strip() == str(offer.provider_id).strip()
+        ]
+        if len(matching) == 1:
+            return matching[0]
+        return exact
+
     def acquire(self, offer: FreeComputeOffer) -> AcquiredCompute:
         if not offer.no_cost:
             raise FreeComputeAcquisitionError("paid capacity is permanently forbidden")
