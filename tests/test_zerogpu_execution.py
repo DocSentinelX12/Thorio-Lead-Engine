@@ -78,3 +78,45 @@ def test_zerogpu_execution_uses_gradio_queue_and_returns_completion(monkeypatch)
     result = provider.execute(["probe"])
     assert result == {"checksum": 13.0, "cuda": True}
     assert provider._session.posts[0][0].endswith("/gradio_api/call/predict")
+
+
+def test_zerogpu_participates_in_shared_capability_execution_registry():
+    from lead_engine.compute_fabric import ComputeExecutionRegistry
+
+    provider = ZeroGPUExecutionProvider(
+        ZeroGPUExecutionConfig(
+            space_url="https://example.hf.space",
+            api_name="/predict",
+            token="hf-test",
+        ),
+        session=FakeSession(),
+    )
+    registry = ComputeExecutionRegistry()
+    registry.register(provider)
+    result = registry.execute(
+        ["probe"],
+        required_capabilities={"api_gpu_execution": True, "cuda_execution": True},
+    )
+    assert result["provider_id"] == "huggingface-zerogpu"
+    assert result["result"] == {"checksum": 13.0, "cuda": True}
+
+
+def test_shared_execution_registry_does_not_use_zerogpu_for_physical_requirements():
+    from lead_engine.compute_fabric import ComputeExecutionRegistry
+
+    provider = ZeroGPUExecutionProvider(
+        ZeroGPUExecutionConfig(
+            space_url="https://example.hf.space",
+            api_name="/predict",
+            token="hf-test",
+        ),
+        session=FakeSession(),
+    )
+    registry = ComputeExecutionRegistry()
+    registry.register(provider)
+
+    with pytest.raises(RuntimeError, match="no registered execution provider"):
+        registry.execute(
+            ["probe"],
+            required_capabilities={"networked_multi_node": True},
+        )
