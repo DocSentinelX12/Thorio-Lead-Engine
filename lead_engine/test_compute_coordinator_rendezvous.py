@@ -53,7 +53,7 @@ def test_fabric_rendezvous_http_publish_and_read(tmp_path: Path):
     try:
         base = f"http://127.0.0.1:{server.server_address[1]}"
         publish_request = urllib.request.Request(
-            base + "/fabric/rendezvous",
+            base + "/fabric/acquisition/rendezvous",
             data=json.dumps(
                 {
                     "action": "publish",
@@ -77,7 +77,7 @@ def test_fabric_rendezvous_http_publish_and_read(tmp_path: Path):
         assert published["session_id"] == "nccl-http-test"
 
         read_request = urllib.request.Request(
-            base + "/fabric/rendezvous?session_id=nccl-http-test",
+            base + "/fabric/acquisition/rendezvous?session_id=nccl-http-test",
             headers={"Authorization": "Bearer test-token"},
         )
         with urllib.request.urlopen(read_request, timeout=5) as response:
