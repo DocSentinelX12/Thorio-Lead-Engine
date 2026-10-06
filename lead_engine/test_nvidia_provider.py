@@ -21,6 +21,11 @@ GPU0     X       NV18    0-31            0
 GPU1     NV18    X       0-31            0
 """
 
+ANSI_TOPO = """        \x1b[4mGPU0\x1b[0m    GPU1    CPU Affinity    NUMA
+GPU0     X       NV18    0-31            0
+GPU1     NV18    X       0-31            0
+"""
+
 
 def fake_runner(args, _timeout):
     args = tuple(args)
@@ -436,6 +441,27 @@ def test_nvidia_discovery_derives_verified_local_topology_graph():
     assert topology["gpu_affinity"]["1"]["numa"] == 0
     assert topology["connectivity_components"] == [["0", "1"]]
 
+
+
+def test_nvidia_topology_parser_normalizes_terminal_ansi_formatting():
+    gpus = (
+        GpuResource(
+            node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+            vram_bytes=81920 * 1024 * 1024, pci_bus_id="00000000:17:00.0",
+            health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+        ),
+        GpuResource(
+            node_id="node-01", gpu_id="1", gpu_uuid="GPU-bbb",
+            vram_bytes=81920 * 1024 * 1024, pci_bus_id="00000000:18:00.0",
+            health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+        ),
+    )
+
+    parsed = NvidiaProvider._parse_topology_matrix(ANSI_TOPO, gpus)
+
+    assert parsed["gpu_ids"] == ["0", "1"]
+    assert parsed["links"]["0"]["1"] == "NV18"
+    assert parsed["links"]["1"]["0"] == "NV18"
 
 def test_nvidia_discovery_carries_physical_host_inventory_into_snapshot_evidence(monkeypatch):
     host_evidence = {
