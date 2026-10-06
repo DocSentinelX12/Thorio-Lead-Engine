@@ -148,6 +148,19 @@ class ComputeCoordinator:
         with self._lock:
             return self.free_compute_acquisition.hunt_once()
 
+    def acquire_compatible_free_compute(
+        self,
+        *,
+        required_capabilities: Dict[str, bool] | None = None,
+        gpu_required: bool = False,
+    ) -> Dict[str, Any]:
+        """Acquire only from providers whose declared capabilities satisfy the job."""
+        with self._lock:
+            return self.free_compute_acquisition.acquire_for_requirements(
+                required_capabilities=required_capabilities,
+                gpu_required=gpu_required,
+            )
+
     def handoff_free_compute_acquisition(
         self,
         *,
@@ -3589,6 +3602,15 @@ class _Handler(BaseHTTPRequestHandler):
                         acquired=body["acquired"],
                     )
                     self._send(200, result)
+            elif self.path == "/fabric/acquisition/acquire-compatible":
+                required = body.get("required_capabilities") or {}
+                if not isinstance(required, dict) or any(not isinstance(k, str) or not isinstance(v, bool) for k, v in required.items()):
+                    raise ValueError("required_capabilities must be an object of boolean values")
+                result = self.server.coordinator.acquire_compatible_free_compute(
+                    required_capabilities=required,
+                    gpu_required=bool(body.get("gpu_required", False)),
+                )
+                self._send(200, result)
             elif self.path == "/fabric/zerogpu/status":
                 self._send(200, self.server.coordinator.zerogpu_status())
             elif self.path == "/fabric/zerogpu/execute":
