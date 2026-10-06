@@ -182,3 +182,67 @@ def test_expired_agent_lease_cannot_be_renewed_or_completed(tmp_path):
         assert "lease" in str(exc).lower()
     else:
         raise AssertionError("expired worker lease was completed")
+
+
+def test_queue_claim_retries_transient_sqlite_writer_contention(tmp_path):
+    db = _db(tmp_path)
+    task = enqueue(db, "x_signal", {"source_id": "busy-once"})
+
+    import sqlite3
+
+    class BusyOnceConnection:
+        def __init__(self, connection):
+            self._connection = connection
+            self._busy_once = True
+
+        def execute(self, sql, *args):
+            if sql == "BEGIN IMMEDIATE" and self._busy_once:
+                self._busy_once = False
+                raise sqlite3.OperationalError("database is locked")
+            return self._connection.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+    db.conn = BusyOnceConnection(db.conn)
+    claimed = claim(db, "x_signal", worker_id="busy-retry", limit=1)
+
+    assert [item["task_id"] for item in claimed] == [task["task_id"]]
+    assert claimed[0]["status"] == RUNNING
+
+
+def test_concurrent_queue_claim_handles_high_worker_contention(tmp_path):
+    db = _db(tmp_path)
+    task_count = 64
+    tasks = enqueue_many(
+        db,
+        [
+            {"agent": "x_signal", "payload": {"source_id": str(index)}}
+            for index in range(task_count)
+        ],
+    )
+    barrier = Barrier(task_count)
+
+    def claim_once(index):
+        worker_db = _db(tmp_path)
+        worker_id = f"high-contention-{index}"
+        try:
+            barrier.wait(timeout=20)
+            claimed = claim(worker_db, "x_signal", worker_id=worker_id, limit=1)
+            if claimed:
+                complete(
+                    worker_db,
+                    claimed[0]["task_id"],
+                    worker_id=worker_id,
+                    result={"status": "contention-complete"},
+                )
+            return claimed
+        finally:
+            worker_db.close()
+
+    with ThreadPoolExecutor(max_workers=task_count) as executor:
+        results = list(executor.map(claim_once, range(task_count)))
+
+    claimed_ids = [item[0]["task_id"] for item in results if item]
+    assert len(claimed_ids) == len(set(claimed_ids))
+    assert set(claimed_ids).issubset({task["task_id"] for task in tasks})
