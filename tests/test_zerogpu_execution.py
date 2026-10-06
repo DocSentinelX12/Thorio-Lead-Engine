@@ -80,7 +80,7 @@ def test_zerogpu_execution_uses_gradio_queue_and_returns_completion(monkeypatch)
     assert provider._session.posts[0][0].endswith("/gradio_api/call/predict")
 
 
-def test_zerogpu_participates_in_shared_capability_execution_registry():
+def test_zerogpu_participates_in_shared_capability_execution_registry(monkeypatch):
     from lead_engine.compute_fabric import ComputeExecutionRegistry
 
     provider = ZeroGPUExecutionProvider(
@@ -93,7 +93,6 @@ def test_zerogpu_participates_in_shared_capability_execution_registry():
     )
     registry = ComputeExecutionRegistry()
     registry.register(provider)
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(provider, "_quota", lambda: {"remaining_seconds": 60.0})
     result = registry.execute(
         ["probe"],
