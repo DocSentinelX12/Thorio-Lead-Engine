@@ -52,22 +52,22 @@ jobs:
 
           payload = json.loads(os.environ["RESPONSE"])
           runners = payload.get("runners") or []
-          required = {"thorio-fabric-rank-0", "thorio-fabric-rank-1"}
-          available = set()
+          required = {"self-hosted", "linux", "x64", "gpu", "thorio-free-gpu", "cuda"}
+          idle = []
           for runner in runners:
               if runner.get("status") != "online" or runner.get("busy") is True:
                   continue
               labels = {str(label.get("name") or "") for label in runner.get("labels") or []}
-              available.update(required & labels)
-          missing = sorted(required - available)
-          if missing:
-              print("Required physical GPU runner capacity is unavailable or busy.", file=sys.stderr)
-              print("Missing idle runner labels: " + ", ".join(missing), file=sys.stderr)
+              if required.issubset(labels):
+                  idle.append(str(runner.get("name") or ""))
+          if len(idle) < 2:
+              print("Two idle physical GPU runners are required for the two NCCL ranks.", file=sys.stderr)
+              print("Matching idle runners found: " + str(len(idle)), file=sys.stderr)
               print("The workflow will fail now instead of queueing physical rank jobs.", file=sys.stderr)
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                   output.write("ready=false\n")
               raise SystemExit(1)
-          print("Both required physical GPU runner labels have idle online capacity.")
+          print("Two idle physical GPU runners are available: " + ", ".join(sorted(idle)[:2]))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write("ready=true\n")
           PY
@@ -81,10 +81,8 @@ jobs:
       matrix:
         include:
           - rank: 0
-            runner_label: thorio-fabric-rank-0
           - rank: 1
-            runner_label: thorio-fabric-rank-1
-    runs-on: [self-hosted, linux, x64, gpu, "${{ matrix.runner_label }}"]
+    runs-on: [self-hosted, linux, x64, gpu, thorio-free-gpu, cuda]
     timeout-minutes: 15
     env:
       RANK: ${{ matrix.rank }}
