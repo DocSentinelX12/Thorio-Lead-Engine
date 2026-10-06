@@ -398,3 +398,61 @@ class ComputeFabricController:
                 self._sleep(interval_seconds)
             else:
                 stop_event.wait(interval_seconds)
+
+
+@dataclass(frozen=True)
+class ExecutionProviderRecord:
+    """Registered API execution provider kept outside physical inventory."""
+
+    provider_id: str
+    provider: Any
+    capabilities: ProviderCapabilities
+
+
+class ComputeExecutionRegistry:
+    """Select API-backed GPU execution providers by declared capabilities."""
+
+    def __init__(self) -> None:
+        self._providers: dict[str, ExecutionProviderRecord] = {}
+
+    def register(self, provider: Any) -> None:
+        provider_id = str(getattr(provider, "provider_id", "")).strip()
+        if not provider_id:
+            raise ValueError("execution provider_id is required")
+        capabilities_method = getattr(provider, "capabilities", None)
+        if not callable(capabilities_method):
+            raise TypeError("execution provider must expose capabilities()")
+        capabilities = capabilities_method()
+        if not isinstance(capabilities, ProviderCapabilities):
+            raise TypeError("execution provider capabilities() must return ProviderCapabilities")
+        if provider_id in self._providers:
+            raise ValueError(f"execution provider already registered: {provider_id}")
+        if not callable(getattr(provider, "execute", None)):
+            raise TypeError("execution provider must expose execute(data)")
+        self._providers[provider_id] = ExecutionProviderRecord(provider_id, provider, capabilities)
+
+    def records(self) -> tuple[ExecutionProviderRecord, ...]:
+        return tuple(self._providers[key] for key in sorted(self._providers))
+
+    def compatible(self, required_capabilities: Mapping[str, bool] | None = None) -> tuple[ExecutionProviderRecord, ...]:
+        required = dict(required_capabilities or {})
+        return tuple(record for record in self.records() if not record.capabilities.missing(required))
+
+    def execute(self, data: list[Any], *, required_capabilities: Mapping[str, bool] | None = None) -> dict[str, Any]:
+        candidates = self.compatible(required_capabilities)
+        if not candidates:
+            raise RuntimeError("no registered execution provider satisfies the requested capabilities")
+        errors: list[dict[str, str]] = []
+        for record in candidates:
+            try:
+                return {
+                    "provider_id": record.provider_id,
+                    "result": record.provider.execute(data),
+                    "capabilities": record.capabilities.to_dict(),
+                }
+            except Exception as exc:
+                errors.append({
+                    "provider_id": record.provider_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+        raise RuntimeError("all compatible execution providers failed: " + str(errors))
