@@ -93,6 +93,65 @@ def test_fabric_rendezvous_http_publish_and_read(tmp_path: Path):
         thread.join(timeout=5)
 
 
+def test_fabric_rendezvous_via_existing_handoff_route(tmp_path: Path):
+    coordinator = ComputeCoordinator(
+        str(tmp_path / "coordinator.sqlite3"),
+        "test-token",
+    )
+    server = ComputeCoordinatorServer(coordinator, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+
+        def post(payload):
+            request = urllib.request.Request(
+                base + "/fabric/acquisition/handoff",
+                data=json.dumps(payload).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Authorization": "Bearer test-token",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return json.loads(response.read().decode("utf-8"))
+
+        published = post({
+            "action": "rendezvous_publish",
+            "session_id": "nccl-handoff-route-test",
+            "address": "10.0.0.30",
+            "port": 29502,
+            "interface_name": "eth2",
+            "ttl_seconds": 60,
+        })
+        assert published["ok"] is True
+        assert published["address"] == "10.0.0.30"
+        assert published["port"] == 29502
+        assert published["interface_name"] == "eth2"
+
+        observed = post({
+            "action": "rendezvous_get",
+            "session_id": "nccl-handoff-route-test",
+        })
+        assert observed["ok"] is True
+        assert observed["status"] == "published"
+        assert observed["address"] == "10.0.0.30"
+        assert observed["port"] == 29502
+        assert observed["interface_name"] == "eth2"
+
+        cleared = post({
+            "action": "rendezvous_clear",
+            "session_id": "nccl-handoff-route-test",
+        })
+        assert cleared["ok"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_fabric_rendezvous_rejects_invalid_endpoint(tmp_path: Path):
     coordinator = ComputeCoordinator(
         str(tmp_path / "coordinator.sqlite3"),
