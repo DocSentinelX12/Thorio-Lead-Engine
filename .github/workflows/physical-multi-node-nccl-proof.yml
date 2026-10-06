@@ -66,6 +66,75 @@ jobs:
           kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
           echo "Free GPU acquisition credentials verified."
 
+      - name: Clean up stale NCCL GPU workers before acquisition
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import io
+          import subprocess
+
+          output = subprocess.run(
+              [
+                  "kaggle",
+                  "kernels",
+                  "list",
+                  "--mine",
+                  "--page-size",
+                  "100",
+                  "--sort-by",
+                  "dateRun",
+                  "--csv",
+              ],
+              capture_output=True,
+              text=True,
+              check=False,
+          )
+          if output.returncode != 0:
+              detail = (output.stderr or output.stdout or "").strip()
+              raise SystemExit(f"Could not inspect existing Kaggle kernels before NCCL acquisition: {detail}")
+
+          lines = [line for line in output.stdout.splitlines() if line.strip()]
+          header_index = next(
+              (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
+              None,
+          )
+          if header_index is None:
+              raise SystemExit("Kaggle kernel list returned no CSV header.")
+
+          rows = csv.DictReader(io.StringIO("\n".join(lines[header_index:])))
+          stale_refs = sorted(
+              str(row.get("ref") or "").strip()
+              for row in rows
+              if str(row.get("ref") or "").strip().split("/", 1)[-1].startswith("thorio-free-gpu-nccl-")
+          )
+
+          if not stale_refs:
+              print("NCCL_STALE_GPU_WORKER_CLEANUP none")
+              raise SystemExit(0)
+
+          print("NCCL_STALE_GPU_WORKER_CLEANUP", stale_refs)
+          failures = []
+          for kernel_ref in stale_refs:
+              result = subprocess.run(
+                  ["kaggle", "kernels", "delete", kernel_ref, "--yes"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if result.returncode == 0:
+                  print("NCCL_STALE_GPU_WORKER_RELEASED", kernel_ref, flush=True)
+              else:
+                  detail = (result.stderr or result.stdout or "").strip()
+                  failures.append(f"{kernel_ref}: {detail}")
+
+          if failures:
+              raise SystemExit(
+                  "Failed to release one or more stale NCCL GPU workers: "
+                  + "; ".join(failures)
+              )
+          PY
+
       - name: Acquire two independent Kaggle GPU workers
         id: acquire
         run: |
