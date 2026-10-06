@@ -3622,6 +3622,14 @@ class _Handler(BaseHTTPRequestHandler):
                     gpu_required=bool(body.get("gpu_required", False)),
                 )
                 self._send(200, result)
+            elif self.path == "/fabric/gpu/execute":
+                data = body.get("data")
+                if not isinstance(data, list):
+                    raise ValueError("data must be a list")
+                required = body.get("required_capabilities") or {"api_gpu_execution": True, "cuda_execution": True}
+                if not isinstance(required, dict) or any(not isinstance(k, str) or not isinstance(v, bool) for k, v in required.items()):
+                    raise ValueError("required_capabilities must be an object of boolean values")
+                self._send(200, {"ok": True, **self.server.coordinator.execute_gpu_api(data, required_capabilities=required)})
             elif self.path == "/fabric/zerogpu/status":
                 self._send(200, self.server.coordinator.zerogpu_status())
             elif self.path == "/fabric/zerogpu/execute":
