@@ -463,6 +463,34 @@ def test_nvidia_topology_parser_normalizes_terminal_ansi_formatting():
     assert parsed["links"]["0"]["1"] == "NV18"
     assert parsed["links"]["1"]["0"] == "NV18"
 
+def test_nvidia_topology_parser_handles_gpu_numa_id_column_and_numa_ranges():
+    gpus = (
+        GpuResource(
+            node_id="node-01", gpu_id="0", gpu_uuid="GPU-aaa",
+            vram_bytes=81920 * 1024 * 1024, pci_bus_id="00000000:17:00.0",
+            health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+        ),
+        GpuResource(
+            node_id="node-01", gpu_id="1", gpu_uuid="GPU-bbb",
+            vram_bytes=81920 * 1024 * 1024, pci_bus_id="00000000:18:00.0",
+            health_state=ResourceState.HEALTHY, availability_state=ResourceState.AVAILABLE,
+        ),
+    )
+    topology = """GPU0    GPU1    CPU Affinity    NUMA Affinity   GPU NUMA ID
+GPU0     X      PHB     0-3              0               N/A
+GPU1    PHB      X      0-3              0               N/A
+"""
+    parsed = NvidiaProvider._parse_topology_matrix(topology, gpus)
+    assert parsed["gpu_affinity"]["0"]["cpu_affinity"] == "0-3"
+    assert parsed["gpu_affinity"]["0"]["numa"] == 0
+    assert parsed["gpu_affinity"]["0"]["gpu_numa_id"] == "N/A"
+
+    ranged = topology.replace("0               N/A", "0-1             N/A")
+    ranged_parsed = NvidiaProvider._parse_topology_matrix(ranged, gpus)
+    assert ranged_parsed["gpu_affinity"]["0"]["numa"] == "0-1"
+    assert ranged_parsed["gpu_affinity"]["1"]["numa"] == "0-1"
+
+
 def test_nvidia_discovery_carries_physical_host_inventory_into_snapshot_evidence(monkeypatch):
     host_evidence = {
         "source": "worker-local-linux-sysfs",
