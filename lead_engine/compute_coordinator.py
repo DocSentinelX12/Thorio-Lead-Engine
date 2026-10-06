@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
-from .compute_fabric import ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
+from .compute_fabric import ComputeExecutionRegistry, ComputeFabricController, ComputeFabricOrchestrator, ComputeFabricRecoverySupervisor
 from .free_compute_acquisition import AcquiredCompute, FreeComputeAcquisitionManager, FreeComputeAcquisitionStore, FreeComputeOffer, FreeComputeProvider
 from .compute_fabric_telemetry import aggregate_execution_metrics, derive_autonomous_closed_loop_evidence, extract_execution_metrics, extract_execution_path_observations
 from .compute_inventory import ComputeInventory
@@ -58,6 +58,7 @@ class ComputeCoordinator:
         self.execution_fabric = ProductionExecutionFabric()
         self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path), clock=clock)
         self.zerogpu_execution: ZeroGPUExecutionProvider | None = None
+        self.compute_execution = ComputeExecutionRegistry()
         self._lock = threading.RLock()
         self._initialize_tasks()
 
@@ -187,6 +188,7 @@ class ComputeCoordinator:
         with self._lock:
             if self.zerogpu_execution is not None:
                 raise ValueError("ZeroGPU execution provider already registered")
+            self.compute_execution.register(provider)
             self.zerogpu_execution = provider
 
     def zerogpu_status(self) -> Dict[str, Any]:
@@ -200,6 +202,15 @@ class ComputeCoordinator:
             if self.zerogpu_execution is None:
                 raise ValueError("ZeroGPU execution provider is not enabled")
             return self.zerogpu_execution.execute(data)
+
+    def execute_gpu_api(self, data: list[Any], *, required_capabilities: Dict[str, bool] | None = None) -> Dict[str, Any]:
+        """Route API-backed GPU execution through the shared capability registry."""
+        with self._lock:
+            return self.compute_execution.execute(
+                data,
+                required_capabilities=required_capabilities or {"api_gpu_execution": True, "cuda_execution": True},
+            )
+
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
