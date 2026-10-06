@@ -537,7 +537,13 @@ class NvidiaProvider(ComputeProvider):
         discovered GPU must have one complete row and every pairwise link must
         be present and symmetric.
         """
-        # `nvidia-smi` may emit terminal styling escapes even when captured by a runner.\n        # Normalize those presentation bytes before parsing physical topology; do not\n        # alter any topology tokens or infer missing hardware relationships.\n        ansi_escape = re.compile(r"\\x1B(?:[@-_][0-?]*[ -/]*[@-~])")\n        normalized_text = ansi_escape.sub("", text)\n        lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]\n        if not lines:
+        # `nvidia-smi` may emit terminal styling escapes even when captured by a runner.
+        # Normalize those presentation bytes before parsing physical topology; do not
+        # alter any topology tokens or infer missing hardware relationships.
+        ansi_escape = re.compile(r"\x1B(?:[@-_][0-?]*[ -/]*[@-~])")
+        normalized_text = ansi_escape.sub("", text)
+        lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
+        if not lines:
             raise NvidiaDiscoveryError("NVIDIA topology output is empty")
         header_index = next((i for i, line in enumerate(lines) if re.search(r"\bGPU\d+\b", line)), None)
         if header_index is None:
