@@ -490,6 +490,11 @@ GPU1    PHB      X      0-3              0               N/A
     assert ranged_parsed["gpu_affinity"]["0"]["numa"] == "0-1"
     assert ranged_parsed["gpu_affinity"]["1"]["numa"] == "0-1"
 
+    numeric_gpu_numa = topology.replace("0               N/A", "0               7")
+    numeric_gpu_numa_parsed = NvidiaProvider._parse_topology_matrix(numeric_gpu_numa, gpus)
+    assert numeric_gpu_numa_parsed["gpu_affinity"]["0"]["numa"] == 0
+    assert numeric_gpu_numa_parsed["gpu_affinity"]["0"]["gpu_numa_id"] == "7"
+
 
 def test_nvidia_discovery_carries_physical_host_inventory_into_snapshot_evidence(monkeypatch):
     host_evidence = {
