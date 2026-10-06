@@ -73,11 +73,15 @@ jobs:
           python - <<'PY'
           import json, os, subprocess
           from pathlib import Path
-          from lead_engine.free_compute_acquisition import FreeComputeAcquisitionManager, FreeComputeAcquisitionStore
+          from lead_engine.free_compute_acquisition import AcquiredCompute, FreeComputeAcquisitionManager, FreeComputeAcquisitionStore
           from lead_engine.kaggle_free_compute import KaggleFreeComputeProvider
 
           records = []
-          for rank in (0, 1):
+          live_acquisitions = []
+          Path("/tmp/nccl-acquisitions.json").write_text("[]", encoding="utf-8")
+
+          try:
+              for rank in (0, 1):
               os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
               manager = FreeComputeAcquisitionManager(
                   FreeComputeAcquisitionStore(f"/tmp/thorio-free-compute-{rank}.sqlite3")
@@ -169,12 +173,30 @@ jobs:
               if response_payload.get("ok") is not True or str(response_payload.get("acquisition_id") or "") != acquisition_id:
                   raise SystemExit(f"Coordinator rejected acquisition handoff for rank {rank}: {response_payload!r}")
 
+              live_acquisitions.append((rank, manager, AcquiredCompute(**acquired)))
               records.append({"rank": rank, "acquisition_id": acquisition_id, "kernel_ref": kernel_ref})
+              Path("/tmp/nccl-acquisitions.json").write_text(
+                  json.dumps(records, sort_keys=True),
+                  encoding="utf-8",
+              )
 
-          Path("/tmp/nccl-acquisitions.json").write_text(
-              json.dumps(records, sort_keys=True),
-              encoding="utf-8",
-          )
+          except Exception as exc:
+              cleanup_errors = []
+              for rank, manager, acquired in reversed(live_acquisitions):
+                  try:
+                      manager.release(acquired)
+                      print("NCCL_PARTIAL_ACQUISITION_RELEASED", rank, acquired.acquisition_id, flush=True)
+                  except Exception as cleanup_exc:
+                      cleanup_errors.append(
+                          f"rank {rank}: {type(cleanup_exc).__name__}: {cleanup_exc}"
+                      )
+              if cleanup_errors:
+                  raise RuntimeError(
+                      f"{type(exc).__name__}: {exc}; partial acquisition cleanup failed: "
+                      + "; ".join(cleanup_errors)
+                  ) from exc
+              raise
+
           print("NCCL_TWO_EXTERNAL_GPU_WORKERS_ACQUIRED", json.dumps(records, sort_keys=True))
           PY
 
@@ -213,6 +235,63 @@ jobs:
               time.sleep(10)
           raise SystemExit("Timed out waiting for both NCCL JIT GPU runners.")
           PY
+
+      - name: Release partial GPU acquisitions after provisioning failure
+        if: ${{ failure() }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from lead_engine.free_compute_acquisition import AcquiredCompute, FreeComputeAcquisitionManager, FreeComputeAcquisitionStore
+          from lead_engine.kaggle_free_compute import KaggleFreeComputeProvider
+
+          path = "/tmp/nccl-acquisitions.json"
+          if not os.path.exists(path):
+              print("No NCCL acquisition state exists; nothing to release.")
+              raise SystemExit(0)
+
+          records = json.loads(open(path, encoding="utf-8").read())
+          cleanup_errors = []
+          for record in reversed(records):
+              rank = int(record["rank"])
+              os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
+              manager = FreeComputeAcquisitionManager(
+                  FreeComputeAcquisitionStore(f"/tmp/thorio-free-compute-{rank}.sqlite3")
+              )
+              provider = KaggleFreeComputeProvider.from_environment()
+              manager.register(provider)
+              durable = next(
+                  (item for item in manager.status()["records"]
+                   if str(item.get("acquisition_id") or "") == str(record["acquisition_id"])),
+                  None,
+              )
+              if durable is None:
+                  cleanup_errors.append(
+                      f"rank {rank}: acquisition {record['acquisition_id']} missing from local ledger"
+                  )
+                  continue
+              try:
+                  manager.release(
+                      AcquiredCompute(
+                          provider_id=str(durable["provider_id"]),
+                          domain_id=str(durable["domain_id"]),
+                          offer_id=str(durable["offer_id"]),
+                          acquisition_id=str(durable["acquisition_id"]),
+                          acquired_at=float(durable["acquired_at"]),
+                          expires_at=float(durable["expires_at"]) if durable.get("expires_at") is not None else None,
+                          gpu_capable=bool(durable["gpu_capable"]),
+                          enrollment=durable.get("enrollment") or {},
+                      )
+                  )
+                  print("NCCL_PARTIAL_ACQUISITION_RELEASED", rank, record["acquisition_id"], flush=True)
+              except Exception as exc:
+                  cleanup_errors.append(f"rank {rank}: {type(exc).__name__}: {exc}")
+
+          if cleanup_errors:
+              raise SystemExit("Partial GPU acquisition cleanup failed: " + "; ".join(cleanup_errors))
+          PY
+
 
       - name: Persist acquisition identifiers
         uses: actions/upload-artifact@v4
