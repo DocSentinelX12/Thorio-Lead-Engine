@@ -653,3 +653,23 @@ def test_kaggle_provider_declares_runner_and_gpu_capabilities_without_nccL_claim
     assert capabilities["github_jit_runner"] is True
     assert capabilities["nccl_execution"] is False
     assert capabilities["multi_node"] is False
+
+
+
+def test_provider_capabilities_require_declared_capabilities():
+    from lead_engine.compute_fabric import ProviderCapabilities
+
+    capabilities = ProviderCapabilities(
+        gpu_acquisition=True,
+        cuda_execution=True,
+        api_gpu_execution=True,
+    )
+    assert capabilities.missing({"gpu_acquisition": True, "cuda_execution": True}) == ()
+    assert capabilities.missing({"networked_multi_node": True}) == ("networked_multi_node",)
+
+
+def test_provider_capabilities_reject_unknown_requirement():
+    from lead_engine.compute_fabric import ProviderCapabilities
+
+    with pytest.raises(ValueError, match="unknown provider capability"):
+        ProviderCapabilities().missing({"not_a_capability": True})
