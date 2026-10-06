@@ -104,7 +104,7 @@ class ZeroGPUExecutionProvider:
         return {
             "base_seconds": float(getattr(quota, "base", 0.0)),
             "remaining_seconds": remaining,
-            "resets_at": getattr(quota, "resets_at", None),
+            "resets_at": None if getattr(quota, "resets_at", None) is None else getattr(quota, "resets_at").isoformat(),
             "overquota_used": float(getattr(quota, "overquota_used", 0.0) or 0.0),
         }
 
