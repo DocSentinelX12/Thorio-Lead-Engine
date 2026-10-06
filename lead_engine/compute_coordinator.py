@@ -3489,7 +3489,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
         if self.path == "/health": self._send(200, self.server.coordinator.health()); return
-        if self.path.startswith("/fabric/rendezvous?"):
+        if self.path.startswith("/fabric/rendezvous?") or self.path.startswith("/fabric/acquisition/rendezvous?"):
             session_id = self.path.split("session_id=", 1)[-1].split("&", 1)[0]
             from urllib.parse import unquote
             self._send(200, self.server.coordinator.get_fabric_rendezvous(unquote(session_id)))
@@ -3544,7 +3544,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(200, result)
             elif self.path == "/fabric/acquisition/hunt":
                 self._send(200, self.server.coordinator.hunt_free_compute_once())
-            elif self.path == "/fabric/rendezvous":
+            elif self.path in {"/fabric/rendezvous", "/fabric/acquisition/rendezvous"}:
                 action = str(body.get("action") or "").strip().lower()
                 session_id = str(body["session_id"])
                 if action == "publish":
