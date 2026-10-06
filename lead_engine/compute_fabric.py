@@ -48,6 +48,12 @@ class ProviderCapabilities:
     def to_dict(self) -> dict[str, bool]:
         return {field_name: bool(getattr(self, field_name)) for field_name in self.__dataclass_fields__}
 
+    def missing(self, required: Mapping[str, bool]) -> tuple[str, ...]:
+        unknown = [name for name in required if name not in self.__dataclass_fields__]
+        if unknown:
+            raise ValueError(f"unknown provider capability: {sorted(map(str, unknown))[0]}")
+        return tuple(sorted(str(name) for name, expected in required.items() if bool(expected) and not bool(getattr(self, name))))
+
 
 @dataclass(frozen=True)
 class ProviderObservation:
