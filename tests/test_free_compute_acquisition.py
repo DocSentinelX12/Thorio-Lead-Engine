@@ -673,3 +673,65 @@ def test_provider_capabilities_reject_unknown_requirement():
 
     with pytest.raises(ValueError, match="unknown provider capability"):
         ProviderCapabilities().missing({"not_a_capability": True})
+
+
+def test_acquire_for_requirements_filters_providers_before_acquisition(tmp_path):
+    from lead_engine.free_compute_acquisition import FreeComputeAcquisitionManager, FreeComputeAcquisitionStore
+
+    class Provider:
+        def __init__(self, provider_id, capabilities):
+            self.provider_id = provider_id
+            self._capabilities = capabilities
+            self.acquired = 0
+
+        def capabilities(self):
+            from lead_engine.compute_fabric import ProviderCapabilities
+            return ProviderCapabilities(**self._capabilities)
+
+        def discover_free(self):
+            from lead_engine.free_compute_acquisition import FreeComputeOffer
+            import time
+            return (FreeComputeOffer(
+                provider_id=self.provider_id,
+                domain_id=self.provider_id,
+                offer_id="offer",
+                observed_at=time.time(),
+                expires_at=time.time() + 300,
+                gpu_capable=True,
+                no_cost=True,
+                capacity_evidence={"provider": self.provider_id},
+            ),)
+
+        def acquire_free(self, offer):
+            self.acquired += 1
+            from lead_engine.free_compute_acquisition import AcquiredCompute
+            return AcquiredCompute(
+                provider_id=offer.provider_id,
+                domain_id=offer.domain_id,
+                offer_id=offer.offer_id,
+                acquisition_id=FreeComputeAcquisitionStore.acquisition_id(offer),
+                acquired_at=offer.observed_at + 0.001,
+                expires_at=offer.expires_at,
+                gpu_capable=True,
+                enrollment={"worker_id": self.provider_id},
+            )
+
+    rejected = Provider("isolated", {"gpu_acquisition": True, "cuda_execution": True})
+    selected = Provider("cluster", {
+        "gpu_acquisition": True,
+        "cuda_execution": True,
+        "networked_multi_node": True,
+    })
+    manager = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(str(tmp_path / "compute.sqlite3")))
+    manager.register(rejected)
+    manager.register(selected)
+
+    result = manager.acquire_for_requirements(
+        required_capabilities={"gpu_acquisition": True, "cuda_execution": True, "networked_multi_node": True},
+        gpu_required=True,
+    )
+
+    assert result["status"] == "acquired"
+    assert result["acquired"]["provider_id"] == "cluster"
+    assert rejected.acquired == 0
+    assert selected.acquired == 1
