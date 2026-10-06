@@ -199,40 +199,110 @@ jobs:
           print("NCCL_TWO_EXTERNAL_GPU_WORKERS_ACQUIRED", json.dumps(records, sort_keys=True))
           PY
 
-      - name: Wait for both JIT GPU runners to become online
+      - name: Actively acquire and verify each JIT GPU runner
         run: |
           set -euo pipefail
           python - <<'PY'
           import json, os, time, urllib.request
 
-          records=json.loads(open("/tmp/nccl-acquisitions.json", encoding="utf-8").read())
-          token=os.environ["GITHUB_RUNNER_JIT_TOKEN"]
-          repo=os.environ["GITHUB_REPOSITORY"]
-          deadline=time.monotonic()+480
+          from lead_engine.kaggle_free_compute import KaggleFreeComputeProvider
 
-          while time.monotonic() < deadline:
-              request=urllib.request.Request(
+          records = json.loads(open("/tmp/nccl-acquisitions.json", encoding="utf-8").read())
+          token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          expected_labels = {"self-hosted", "thorio-free-gpu", "cuda"}
+
+          if len(records) != 2:
+              raise SystemExit(f"Expected two acquired GPU records before runner verification, found {len(records)}")
+
+          def runner_snapshot():
+              request = urllib.request.Request(
                   f"https://api.github.com/repos/{repo}/actions/runners",
                   headers={
-                      "Accept":"application/vnd.github+json",
-                      "Authorization":f"Bearer {token}",
-                      "X-GitHub-Api-Version":"2026-03-10",
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2026-03-10",
                   },
               )
               with urllib.request.urlopen(request, timeout=20) as response:
-                  payload=json.loads(response.read().decode())
-              online=set()
-              for runner in payload.get("runners", []):
-                  labels={str(x.get("name") or "") for x in runner.get("labels", []) if isinstance(x,dict)}
-                  if runner.get("status")=="online" and not runner.get("busy") and {"self-hosted","thorio-free-gpu","cuda"}.issubset(labels):
-                      online.add(str(runner.get("name") or ""))
-              expected={f"thorio-free-gpu-{str(r['acquisition_id'])[:12]}" for r in records}
-              print("NCCL_JIT_RUNNER_STATUS", json.dumps({"expected":sorted(expected),"online":sorted(online)}))
-              if expected.issubset(online):
-                  print("NCCL_TWO_JIT_GPU_RUNNERS_ONLINE")
-                  raise SystemExit(0)
-              time.sleep(10)
-          raise SystemExit("Timed out waiting for both NCCL JIT GPU runners.")
+                  return json.loads(response.read().decode())
+
+          for record in records:
+              rank = int(record["rank"])
+              acquisition_id = str(record["acquisition_id"])
+              kernel_ref = str(record["kernel_ref"])
+              runner_name = f"thorio-free-gpu-{acquisition_id[:12]}"
+              os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = (
+                  f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
+              )
+              provider = KaggleFreeComputeProvider.from_environment()
+              deadline = time.monotonic() + 180
+
+              while time.monotonic() < deadline:
+                  kernel_status = provider._kernel_status(kernel_ref)
+                  payload = runner_snapshot()
+                  runner = next(
+                      (
+                          item for item in payload.get("runners", [])
+                          if str(item.get("name") or "") == runner_name
+                      ),
+                      None,
+                  )
+                  labels = {
+                      str(label.get("name") or "")
+                      for label in (runner or {}).get("labels", [])
+                      if isinstance(label, dict)
+                  }
+                  status = {
+                      "rank": rank,
+                      "acquisition_id": acquisition_id,
+                      "kernel_status": kernel_status,
+                      "runner_name": runner_name,
+                      "runner_status": (runner or {}).get("status"),
+                      "runner_busy": (runner or {}).get("busy"),
+                      "runner_labels_ok": expected_labels.issubset(labels),
+                  }
+                  print("NCCL_ACTIVE_RUNNER_ACQUISITION", json.dumps(status, sort_keys=True), flush=True)
+
+                  if kernel_status in {"failed", "cancelled", "complete"}:
+                      raise SystemExit(
+                          f"External GPU worker for rank {rank} reached terminal state {kernel_status} "
+                          "before its JIT runner came online."
+                      )
+                  if kernel_status == "unknown":
+                      raise SystemExit(
+                          f"External GPU worker for rank {rank} returned an unknown Kaggle state."
+                      )
+                  if (
+                      kernel_status == "running"
+                      and runner is not None
+                      and runner.get("status") == "online"
+                      and runner.get("busy") is False
+                      and expected_labels.issubset(labels)
+                  ):
+                      print(
+                          "NCCL_JIT_GPU_RUNNER_ACQUIRED",
+                          json.dumps(
+                              {
+                                  "rank": rank,
+                                  "acquisition_id": acquisition_id,
+                                  "kernel_ref": kernel_ref,
+                                  "runner_name": runner_name,
+                                  "labels": sorted(labels),
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      break
+                  time.sleep(5)
+              else:
+                  raise SystemExit(
+                      f"Timed out after 180 seconds actively acquiring JIT runner {runner_name} "
+                      f"for rank {rank}; external worker state was monitored throughout."
+                  )
+
+          print("NCCL_TWO_JIT_GPU_RUNNERS_ACTIVELY_ACQUIRED", flush=True)
           PY
 
       - name: Release partial GPU acquisitions after provisioning failure
