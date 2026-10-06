@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ class LeadDB:
         self.conn = self._connect_with_recovery()
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=FULL")
+        self.conn.execute("PRAGMA busy_timeout=120000")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS leads (
             fingerprint TEXT PRIMARY KEY,
@@ -124,11 +126,27 @@ class LeadDB:
                 destination = Path(f"{self.path}.corrupt-{stamp}{suffix}")
                 source.replace(destination)
 
+    def _begin_immediate(self) -> None:
+        """Acquire SQLite's single writer lock without failing on transient contention."""
+        delay = 0.05
+        for attempt in range(8):
+            try:
+                self.conn.execute("BEGIN IMMEDIATE")
+                return
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                if "database is locked" not in message and "database table is locked" not in message:
+                    raise
+                if attempt == 7:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 1.0)
+
     @contextmanager
     def batch_writes(self):
         outermost = self._batch_write_depth == 0
         if outermost:
-            self.conn.execute("BEGIN IMMEDIATE")
+            self._begin_immediate()
         self._batch_write_depth += 1
         try:
             yield self
@@ -504,7 +522,7 @@ class LeadDB:
             return []
         role = agent_registry().get(agent)
         role_capacity = int(role.max_concurrency) if role is not None else int(capacity)
-        self.conn.execute("BEGIN IMMEDIATE")
+        self._begin_immediate()
         try:
             self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, lease_token = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
             running = int(self.conn.execute("SELECT COUNT(*) FROM agent_queue WHERE agent = ? AND status = 'running'", (agent,)).fetchone()[0])
