@@ -35,6 +35,7 @@ from .distributed_execution_contract import validate_launch_plan
 from .execution_fabric_runtime import ProductionExecutionFabric
 from .execution_fabric_contract import ExecutionMode
 from .execution_work_units import build_gpu_workload_payload, build_independent_work_units
+from .zerogpu_execution import ZeroGPUExecutionProvider
 
 
 class ComputeCoordinator:
@@ -56,6 +57,7 @@ class ComputeCoordinator:
         self.compute_fabric_controller = ComputeFabricController(self, fabric=self.compute_fabric)
         self.execution_fabric = ProductionExecutionFabric()
         self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path), clock=clock)
+        self.zerogpu_execution: ZeroGPUExecutionProvider | None = None
         self._lock = threading.RLock()
         self._initialize_tasks()
 
@@ -167,6 +169,24 @@ class ComputeCoordinator:
             "domain_id": parsed_acquired.domain_id,
             "status": "acquired",
         }
+
+    def register_zerogpu_execution(self, provider: ZeroGPUExecutionProvider) -> None:
+        with self._lock:
+            if self.zerogpu_execution is not None:
+                raise ValueError("ZeroGPU execution provider already registered")
+            self.zerogpu_execution = provider
+
+    def zerogpu_status(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.zerogpu_execution is None:
+                return {"enabled": False, "provider_id": "huggingface-zerogpu"}
+            return {"enabled": True, **dict(self.zerogpu_execution.health())}
+
+    def execute_zerogpu(self, data: list[Any]) -> Any:
+        with self._lock:
+            if self.zerogpu_execution is None:
+                raise ValueError("ZeroGPU execution provider is not enabled")
+            return self.zerogpu_execution.execute(data)
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
@@ -3569,6 +3589,14 @@ class _Handler(BaseHTTPRequestHandler):
                         acquired=body["acquired"],
                     )
                     self._send(200, result)
+            elif self.path == "/fabric/zerogpu/status":
+                self._send(200, self.server.coordinator.zerogpu_status())
+            elif self.path == "/fabric/zerogpu/execute":
+                data = body.get("data")
+                if not isinstance(data, list):
+                    raise ValueError("data must be a list")
+                result = self.server.coordinator.execute_zerogpu(data)
+                self._send(200, {"ok": True, "provider_id": "huggingface-zerogpu", "result": result})
             elif self.path == "/fabric/acquisition/hunt":
                 self._send(200, self.server.coordinator.hunt_free_compute_once())
             elif self.path in {"/fabric/rendezvous", "/fabric/acquisition/rendezvous"}:
@@ -3686,6 +3714,8 @@ def coordinator_from_environment() -> ComputeCoordinator:
     if os.environ.get("THORIO_KAGGLE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         from .kaggle_free_compute import KaggleFreeComputeProvider
         coordinator.register_free_compute_provider(KaggleFreeComputeProvider.from_environment())
+    if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
     if os.environ.get("THORIO_LIGHTNING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         from .lightning_free_compute import LightningFreeComputeProvider
         coordinator.register_free_compute_provider(LightningFreeComputeProvider.from_environment())
