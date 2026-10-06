@@ -36,6 +36,7 @@ class ProviderCapabilities:
     provider_api: bool = False
     explicit_release: bool = False
     physical_identity_attestation: bool = False
+    api_gpu_execution: bool = False
 
     def __post_init__(self) -> None:
         for field_name in self.__dataclass_fields__:
