@@ -82,102 +82,102 @@ jobs:
 
           try:
               for rank in (0, 1):
-              os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
-              manager = FreeComputeAcquisitionManager(
-                  FreeComputeAcquisitionStore(f"/tmp/thorio-free-compute-{rank}.sqlite3")
-              )
-              provider = KaggleFreeComputeProvider.from_environment()
-              manager.register(provider)
-              result = manager.hunt_once()
-              print("NCCL_FREE_GPU_ACQUISITION", rank, json.dumps(result, sort_keys=True))
-              if result["errors"] or result["acquired_count"] != 1:
-                  raise SystemExit(f"Free external GPU acquisition failed for rank {rank}: {result!r}")
-              acquired = result["acquired"][0]
-              acquisition_id = str(acquired["acquisition_id"])
-              kernel_ref = str(acquired["enrollment"]["kernel_ref"])
-              live_acquisitions.append((rank, manager, AcquiredCompute(**acquired)))
-              records.append({"rank": rank, "acquisition_id": acquisition_id, "kernel_ref": kernel_ref})
-              Path("/tmp/nccl-acquisitions.json").write_text(
-                  json.dumps(records, sort_keys=True),
-                  encoding="utf-8",
-              )
-              durable = next(
-                  (r for r in manager.status()["records"] if str(r.get("acquisition_id") or "") == acquisition_id),
-                  None,
-              )
-              if durable is None:
-                  raise SystemExit(f"Local acquisition ledger has no record for {acquisition_id}")
+                  os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
+                  manager = FreeComputeAcquisitionManager(
+                      FreeComputeAcquisitionStore(f"/tmp/thorio-free-compute-{rank}.sqlite3")
+                  )
+                  provider = KaggleFreeComputeProvider.from_environment()
+                  manager.register(provider)
+                  result = manager.hunt_once()
+                  print("NCCL_FREE_GPU_ACQUISITION", rank, json.dumps(result, sort_keys=True))
+                  if result["errors"] or result["acquired_count"] != 1:
+                      raise SystemExit(f"Free external GPU acquisition failed for rank {rank}: {result!r}")
+                  acquired = result["acquired"][0]
+                  acquisition_id = str(acquired["acquisition_id"])
+                  kernel_ref = str(acquired["enrollment"]["kernel_ref"])
+                  live_acquisitions.append((rank, manager, AcquiredCompute(**acquired)))
+                  records.append({"rank": rank, "acquisition_id": acquisition_id, "kernel_ref": kernel_ref})
+                  Path("/tmp/nccl-acquisitions.json").write_text(
+                      json.dumps(records, sort_keys=True),
+                      encoding="utf-8",
+                  )
+                  durable = next(
+                      (r for r in manager.status()["records"] if str(r.get("acquisition_id") or "") == acquisition_id),
+                      None,
+                  )
+                  if durable is None:
+                      raise SystemExit(f"Local acquisition ledger has no record for {acquisition_id}")
 
-              handoff = {
-                  "offer": {
-                      "provider_id": durable["provider_id"],
-                      "domain_id": durable["domain_id"],
-                      "offer_id": durable["offer_id"],
-                      "observed_at": durable["observed_at"],
-                      "expires_at": durable["expires_at"],
-                      "gpu_capable": durable["gpu_capable"],
-                      "no_cost": durable["no_cost"],
-                      "capacity_evidence": durable["evidence"],
-                  },
-                  "acquired": acquired,
-              }
-              import urllib.error
-              import urllib.parse
-              import urllib.request
-              request = urllib.request.Request(
-                  os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/") + "/fabric/acquisition/handoff",
-                  data=json.dumps(handoff).encode(),
-                  method="POST",
-                  headers={
-                      "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
-                      "Content-Type": "application/json",
-                      "Accept": "application/json",
-                      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                  },
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=20) as response:
-                      response_payload = json.loads(response.read().decode())
-              except urllib.error.HTTPError as exc:
-                  response_body = ""
+                  handoff = {
+                      "offer": {
+                          "provider_id": durable["provider_id"],
+                          "domain_id": durable["domain_id"],
+                          "offer_id": durable["offer_id"],
+                          "observed_at": durable["observed_at"],
+                          "expires_at": durable["expires_at"],
+                          "gpu_capable": durable["gpu_capable"],
+                          "no_cost": durable["no_cost"],
+                          "capacity_evidence": durable["evidence"],
+                      },
+                      "acquired": acquired,
+                  }
+                  import urllib.error
+                  import urllib.parse
+                  import urllib.request
+                  request = urllib.request.Request(
+                      os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/") + "/fabric/acquisition/handoff",
+                      data=json.dumps(handoff).encode(),
+                      method="POST",
+                      headers={
+                          "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
+                          "Content-Type": "application/json",
+                          "Accept": "application/json",
+                          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                      },
+                  )
                   try:
-                      response_body = exc.read(4096).decode("utf-8", errors="replace")
-                  except Exception:
-                      response_body = "<unable to read HTTP error body>"
-                  safe_headers = {}
-                  for header_name in (
-                      "Server", "Content-Type", "Via", "Location",
-                      "X-Request-ID", "X-Correlation-ID", "X-Request-Id",
-                      "CF-Ray", "X-Served-By",
-                  ):
-                      value = exc.headers.get(header_name)
-                      if value:
-                          safe_headers[header_name] = value
-                  parsed_url = urllib.parse.urlsplit(request.full_url)
-                  safe_target = urllib.parse.urlunsplit(
-                      (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "")
-                  )
-                  print(
-                      "COORDINATOR_HANDOFF_HTTP_DIAGNOSTIC "
-                      + json.dumps(
-                          {
-                              "status": exc.code,
-                              "reason": str(exc.reason),
-                              "target": safe_target,
-                              "headers": safe_headers,
-                              "body": response_body,
-                          },
-                          sort_keys=True,
-                      ),
-                      flush=True,
-                  )
-                  raise SystemExit(
-                      f"Coordinator acquisition handoff failed: HTTP {exc.code} {exc.reason}"
-                  ) from exc
-              except Exception as exc:
-                  raise SystemExit(f"Coordinator acquisition handoff failed: {exc}") from exc
-              if response_payload.get("ok") is not True or str(response_payload.get("acquisition_id") or "") != acquisition_id:
-                  raise SystemExit(f"Coordinator rejected acquisition handoff for rank {rank}: {response_payload!r}")
+                      with urllib.request.urlopen(request, timeout=20) as response:
+                          response_payload = json.loads(response.read().decode())
+                  except urllib.error.HTTPError as exc:
+                      response_body = ""
+                      try:
+                          response_body = exc.read(4096).decode("utf-8", errors="replace")
+                      except Exception:
+                          response_body = "<unable to read HTTP error body>"
+                      safe_headers = {}
+                      for header_name in (
+                          "Server", "Content-Type", "Via", "Location",
+                          "X-Request-ID", "X-Correlation-ID", "X-Request-Id",
+                          "CF-Ray", "X-Served-By",
+                      ):
+                          value = exc.headers.get(header_name)
+                          if value:
+                              safe_headers[header_name] = value
+                      parsed_url = urllib.parse.urlsplit(request.full_url)
+                      safe_target = urllib.parse.urlunsplit(
+                          (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "")
+                      )
+                      print(
+                          "COORDINATOR_HANDOFF_HTTP_DIAGNOSTIC "
+                          + json.dumps(
+                              {
+                                  "status": exc.code,
+                                  "reason": str(exc.reason),
+                                  "target": safe_target,
+                                  "headers": safe_headers,
+                                  "body": response_body,
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      raise SystemExit(
+                          f"Coordinator acquisition handoff failed: HTTP {exc.code} {exc.reason}"
+                      ) from exc
+                  except Exception as exc:
+                      raise SystemExit(f"Coordinator acquisition handoff failed: {exc}") from exc
+                  if response_payload.get("ok") is not True or str(response_payload.get("acquisition_id") or "") != acquisition_id:
+                      raise SystemExit(f"Coordinator rejected acquisition handoff for rank {rank}: {response_payload!r}")
 
           except Exception as exc:
               cleanup_errors = []
