@@ -93,6 +93,8 @@ def test_zerogpu_participates_in_shared_capability_execution_registry():
     )
     registry = ComputeExecutionRegistry()
     registry.register(provider)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(provider, "_quota", lambda: {"remaining_seconds": 60.0})
     result = registry.execute(
         ["probe"],
         required_capabilities={"api_gpu_execution": True, "cuda_execution": True},
