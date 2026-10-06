@@ -270,6 +270,15 @@ jobs:
                       f"rank {rank}: acquisition {record['acquisition_id']} missing from local ledger"
                   )
                   continue
+              if str(durable.get("status") or "") not in {"acquired", "verified"}:
+                  print(
+                      "NCCL_PARTIAL_ACQUISITION_ALREADY_RELEASED",
+                      rank,
+                      record["acquisition_id"],
+                      durable.get("status"),
+                      flush=True,
+                  )
+                  continue
               try:
                   manager.release(
                       AcquiredCompute(
