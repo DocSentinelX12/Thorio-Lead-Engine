@@ -26,7 +26,161 @@ env:
   THORIO_PROOF_SHA: ${{ github.sha }}
 
 jobs:
+  provision:
+    name: Provision two real free external GPU runners
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      THORIO_KAGGLE_ENABLED: "1"
+      THORIO_KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      THORIO_KAGGLE_REPOSITORY_URL: https://github.com/DocSentinelX12/Thorio-Lead-Engine.git
+      THORIO_KAGGLE_REPOSITORY_REF: ${{ inputs.proof_ref }}
+      THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
+      THORIO_KAGGLE_GITHUB_RUNNER_LABELS: self-hosted,thorio-free-gpu,cuda
+      GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+      THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
+      THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
+    steps:
+      - name: Check out exact proof ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.proof_ref }}
+
+      - name: Install Kaggle CLI and provider dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install kaggle
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+
+      - name: Verify free GPU credentials and coordinator
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_USERNAME}"
+          test -n "${KAGGLE_API_TOKEN}"
+          test -n "${GITHUB_RUNNER_JIT_TOKEN}"
+          test -n "${THORIO_COMPUTE_COORDINATOR_URL}"
+          test -n "${THORIO_COMPUTE_AUTH_TOKEN}"
+          kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
+          echo "Free GPU acquisition credentials verified."
+
+      - name: Acquire two independent Kaggle GPU workers
+        id: acquire
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          from lead_engine.free_compute_acquisition import FreeComputeAcquisitionManager, FreeComputeAcquisitionStore
+          from lead_engine.kaggle_free_compute import KaggleFreeComputeProvider
+
+          records = []
+          for rank in (0, 1):
+              os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
+              manager = FreeComputeAcquisitionManager(
+                  FreeComputeAcquisitionStore(f"/tmp/thorio-free-compute-{rank}.sqlite3")
+              )
+              provider = KaggleFreeComputeProvider.from_environment()
+              manager.register(provider)
+              result = manager.hunt_once()
+              print("NCCL_FREE_GPU_ACQUISITION", rank, json.dumps(result, sort_keys=True))
+              if result["errors"] or result["acquired_count"] != 1:
+                  raise SystemExit(f"Free external GPU acquisition failed for rank {rank}: {result!r}")
+              acquired = result["acquired"][0]
+              acquisition_id = str(acquired["acquisition_id"])
+              kernel_ref = str(acquired["enrollment"]["kernel_ref"])
+              durable = next(
+                  (r for r in manager.status()["records"] if str(r.get("acquisition_id") or "") == acquisition_id),
+                  None,
+              )
+              if durable is None:
+                  raise SystemExit(f"Local acquisition ledger has no record for {acquisition_id}")
+
+              handoff = {
+                  "offer": {
+                      "provider_id": durable["provider_id"],
+                      "domain_id": durable["domain_id"],
+                      "offer_id": durable["offer_id"],
+                      "observed_at": durable["observed_at"],
+                      "expires_at": durable["expires_at"],
+                      "gpu_capable": durable["gpu_capable"],
+                      "no_cost": durable["no_cost"],
+                      "capacity_evidence": durable["evidence"],
+                  },
+                  "acquired": acquired,
+              }
+              import urllib.request
+              request = urllib.request.Request(
+                  os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/") + "/fabric/acquisition/handoff",
+                  data=json.dumps(handoff).encode(),
+                  method="POST",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
+                      "Content-Type": "application/json",
+                      "Accept": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  response_payload = json.loads(response.read().decode())
+              if response_payload.get("ok") is not True or str(response_payload.get("acquisition_id") or "") != acquisition_id:
+                  raise SystemExit(f"Coordinator rejected acquisition handoff for rank {rank}: {response_payload!r}")
+
+              records.append({"rank": rank, "acquisition_id": acquisition_id, "kernel_ref": kernel_ref})
+
+          Path("/tmp/nccl-acquisitions.json").write_text(
+              json.dumps(records, sort_keys=True),
+              encoding="utf-8",
+          )
+          print("NCCL_TWO_EXTERNAL_GPU_WORKERS_ACQUIRED", json.dumps(records, sort_keys=True))
+          PY
+
+      - name: Wait for both JIT GPU runners to become online
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, time, urllib.request
+
+          records=json.loads(open("/tmp/nccl-acquisitions.json", encoding="utf-8").read())
+          token=os.environ["GITHUB_RUNNER_JIT_TOKEN"]
+          repo=os.environ["GITHUB_REPOSITORY"]
+          deadline=time.monotonic()+480
+
+          while time.monotonic() < deadline:
+              request=urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/runners",
+                  headers={
+                      "Accept":"application/vnd.github+json",
+                      "Authorization":f"Bearer {token}",
+                      "X-GitHub-Api-Version":"2026-03-10",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  payload=json.loads(response.read().decode())
+              online=set()
+              for runner in payload.get("runners", []):
+                  labels={str(x.get("name") or "") for x in runner.get("labels", []) if isinstance(x,dict)}
+                  if runner.get("status")=="online" and not runner.get("busy") and {"self-hosted","thorio-free-gpu","cuda"}.issubset(labels):
+                      online.add(str(runner.get("name") or ""))
+              expected={f"thorio-free-gpu-{str(r['acquisition_id'])[:12]}" for r in records}
+              print("NCCL_JIT_RUNNER_STATUS", json.dumps({"expected":sorted(expected),"online":sorted(online)}))
+              if expected.issubset(online):
+                  print("NCCL_TWO_JIT_GPU_RUNNERS_ONLINE")
+                  raise SystemExit(0)
+              time.sleep(10)
+          raise SystemExit("Timed out waiting for both NCCL JIT GPU runners.")
+          PY
+
+      - name: Persist acquisition identifiers
+        uses: actions/upload-artifact@v4
+        with:
+          name: physical-nccl-acquisitions
+          path: /tmp/nccl-acquisitions.json
+          if-no-files-found: error
+
   rank:
+    needs: provision
     name: Physical NCCL rank ${{ matrix.rank }}
     strategy:
       fail-fast: false
@@ -302,8 +456,8 @@ jobs:
 
   aggregate:
     name: Aggregate physical multi-node NCCL evidence
-    needs: rank
-    if: always()
+    needs: [provision, rank]
+    if: always() && needs.provision.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
