@@ -6,7 +6,7 @@ on:
       proof_ref:
         description: "Exact branch or ref to prove"
         required: true
-        default: ""
+        default: "main"
         type: string
       master_port:
         description: "TCP port on the rank-0 fabric node used by NCCL rendezvous"
