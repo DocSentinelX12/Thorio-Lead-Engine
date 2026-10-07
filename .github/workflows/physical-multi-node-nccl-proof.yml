@@ -785,7 +785,7 @@ jobs:
         run: |
           set +e
           if [ -n "${THORIO_COMPUTE_COORDINATOR_URL:-}" ] && [ -n "${THORIO_COMPUTE_AUTH_TOKEN:-}" ]; then
-            curl --fail --silent --show-error               -X POST               -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}"               -H "Content-Type: application/json"               -d "{\"action\":\"rendezvous_clear\",\"session_id\":\"${THORIO_NCCL_RENDEZVOUS_SESSION}\"}"               "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" >/dev/null || true
+            curl --fail --silent --show-error               -X POST               -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}"               -H "Content-Type: application/json"               -d "{\"action\":\"rendezvous_clear\",\"session_id\":\"${THORIO_NCCL_RENDEZVOUS_SESSION}\"}"               "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" >/dev/null || true\n            curl --fail --silent --show-error               -X POST               -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}"               -H "Content-Type: application/json"               -d "{\"action\":\"rendezvous_clear\",\"session_id\":\"${THORIO_NCCL_RELAY_SESSION}\"}"               "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" >/dev/null || true
           fi
           if [ -n "${THORIO_PINGGY_PID:-}" ]; then
             kill "${THORIO_PINGGY_PID}" 2>/dev/null || true
