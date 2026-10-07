@@ -541,15 +541,12 @@ jobs:
           peer_token="$(printf '%s:%s:%s' "${GITHUB_RUN_ID}" "${THORIO_CHECKED_OUT_SHA}" "${peer_rank}" | sha256sum | cut -c1-32)"
           export THORIO_RELAY_TOKEN="${local_token}"
           export THORIO_PEER_RELAY_TOKEN="${peer_token}"
-          printf 'THORIO_RELAY_TOKEN=%s
-' "${local_token}" >> "${GITHUB_ENV}"
-          printf 'THORIO_PEER_RELAY_TOKEN=%s
-' "${peer_token}" >> "${GITHUB_ENV}"
+          printf 'THORIO_RELAY_TOKEN=%s\\n' "${local_token}" >> "${GITHUB_ENV}"
+          printf 'THORIO_PEER_RELAY_TOKEN=%s\\n' "${peer_token}" >> "${GITHUB_ENV}"
 
           python lead_engine/nccl_tcp_relay.py 0 >/tmp/thorio-nccl-relay.log 2>&1 &
           relay_pid=$!
-          printf 'THORIO_RELAY_PID=%s
-' "${relay_pid}" >> "${GITHUB_ENV}"
+          printf 'THORIO_RELAY_PID=%s\\n' "${relay_pid}" >> "${GITHUB_ENV}"
           for _ in $(seq 1 30); do
             relay_port="$(sed -n 's/^THORIO_RELAY_LISTEN_PORT=//p' /tmp/thorio-nccl-relay.log | head -n1)"
             if [ -n "${relay_port}" ]; then break; fi
@@ -559,8 +556,7 @@ jobs:
 
           ssh -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -R0:127.0.0.1:"${relay_port}" tcp@free.pinggy.io >/tmp/thorio-pinggy.log 2>&1 &
           pinggy_pid=$!
-          printf 'THORIO_PINGGY_PID=%s
-' "${pinggy_pid}" >> "${GITHUB_ENV}"
+          printf 'THORIO_PINGGY_PID=%s\\n' "${pinggy_pid}" >> "${GITHUB_ENV}"
 
           public_endpoint=""
           for _ in $(seq 1 45); do
@@ -572,10 +568,8 @@ jobs:
           if [ -z "${public_endpoint}" ] || [[ "${public_endpoint}" != *:* ]]; then cat /tmp/thorio-pinggy.log >&2 || true; exit 1; fi
           tunnel_host="${public_endpoint%:*}"
           tunnel_port="${public_endpoint##*:}"
-          printf 'THORIO_LOCAL_TUNNEL_HOST=%s
-' "${tunnel_host}" >> "${GITHUB_ENV}"
-          printf 'THORIO_LOCAL_TUNNEL_PORT=%s
-' "${tunnel_port}" >> "${GITHUB_ENV}"
+          printf 'THORIO_LOCAL_TUNNEL_HOST=%s\\n' "${tunnel_host}" >> "${GITHUB_ENV}"
+          printf 'THORIO_LOCAL_TUNNEL_PORT=%s\\n' "${tunnel_port}" >> "${GITHUB_ENV}"
 
           python - <<'PY'
           import json, os, urllib.request
@@ -635,10 +629,8 @@ jobs:
           case "${address}" in 127.*) exit 1 ;; esac
           export MASTER_ADDR="${address}"
           export NCCL_SOCKET_IFNAME="=${interface}"
-          printf 'MASTER_ADDR=%s
-' "${address}" >> "${GITHUB_ENV}"
-          printf 'NCCL_SOCKET_IFNAME==%s
-' "${interface}" >> "${GITHUB_ENV}"
+          printf 'MASTER_ADDR=%s\\n' "${address}" >> "${GITHUB_ENV}"
+          printf 'NCCL_SOCKET_IFNAME==%s\\n' "${interface}" >> "${GITHUB_ENV}"
           python - <<'PY'
           import json, os, urllib.request
           base=os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
