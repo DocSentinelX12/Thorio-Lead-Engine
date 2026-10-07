@@ -483,7 +483,7 @@ jobs:
       NCCL_DEBUG_SUBSYS: NET
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
-      THORIO_NCCL_RENDEZVOUS_SESSION: physical-nccl-${{ github.run_id }}
+      THORIO_NCCL_RENDEZVOUS_SESSION: physical-nccl-${{ github.run_id }}-rank-${{ matrix.rank }}
     steps:
       - name: Check out exact proof ref
         uses: actions/checkout@v5
@@ -527,110 +527,173 @@ jobs:
           print("GPU UUID:", uuid)
           PY
 
-      - name: Discover and publish rank-0 rendezvous endpoint
-        if: matrix.rank == 0
+      - name: Establish authenticated cross-runner TCP fabric
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v ssh
+          command -v gcc
+          gcc -shared -fPIC -O2 -Wall -Wextra lead_engine/nccl_connect_proxy.c -o /tmp/libthorio-connect-proxy.so -ldl -pthread
+
+          local_token="$(printf '%s:%s:%s' "${GITHUB_RUN_ID}" "${THORIO_CHECKED_OUT_SHA}" "${RANK}" | sha256sum | cut -c1-32)"
+          peer_rank="$((1 - RANK))"
+          peer_token="$(printf '%s:%s:%s' "${GITHUB_RUN_ID}" "${THORIO_CHECKED_OUT_SHA}" "${peer_rank}" | sha256sum | cut -c1-32)"
+          export THORIO_RELAY_TOKEN="${local_token}"
+          export THORIO_PEER_RELAY_TOKEN="${peer_token}"
+          printf 'THORIO_RELAY_TOKEN=%s
+' "${local_token}" >> "${GITHUB_ENV}"
+          printf 'THORIO_PEER_RELAY_TOKEN=%s
+' "${peer_token}" >> "${GITHUB_ENV}"
+
+          python lead_engine/nccl_tcp_relay.py 0 >/tmp/thorio-nccl-relay.log 2>&1 &
+          relay_pid=$!
+          printf 'THORIO_RELAY_PID=%s
+' "${relay_pid}" >> "${GITHUB_ENV}"
+          for _ in $(seq 1 30); do
+            relay_port="$(sed -n 's/^THORIO_RELAY_LISTEN_PORT=//p' /tmp/thorio-nccl-relay.log | head -n1)"
+            if [ -n "${relay_port}" ]; then break; fi
+            sleep 1
+          done
+          if [ -z "${relay_port:-}" ]; then cat /tmp/thorio-nccl-relay.log >&2 || true; exit 1; fi
+
+          ssh -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -R0:127.0.0.1:"${relay_port}" tcp@free.pinggy.io >/tmp/thorio-pinggy.log 2>&1 &
+          pinggy_pid=$!
+          printf 'THORIO_PINGGY_PID=%s
+' "${pinggy_pid}" >> "${GITHUB_ENV}"
+
+          public_endpoint=""
+          for _ in $(seq 1 45); do
+            public_endpoint="$(grep -Eo 'tcp://[^[:space:]]+' /tmp/thorio-pinggy.log | tail -n1 | sed 's#^tcp://##' || true)"
+            if [ -n "${public_endpoint}" ] && [[ "${public_endpoint}" == *:* ]]; then break; fi
+            if ! kill -0 "${pinggy_pid}" 2>/dev/null; then cat /tmp/thorio-pinggy.log >&2 || true; exit 1; fi
+            sleep 1
+          done
+          if [ -z "${public_endpoint}" ] || [[ "${public_endpoint}" != *:* ]]; then cat /tmp/thorio-pinggy.log >&2 || true; exit 1; fi
+          tunnel_host="${public_endpoint%:*}"
+          tunnel_port="${public_endpoint##*:}"
+          printf 'THORIO_LOCAL_TUNNEL_HOST=%s
+' "${tunnel_host}" >> "${GITHUB_ENV}"
+          printf 'THORIO_LOCAL_TUNNEL_PORT=%s
+' "${tunnel_port}" >> "${GITHUB_ENV}"
+
+          python - <<'PY'
+          import json, os, urllib.request
+          base=os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
+          request=urllib.request.Request(
+              base+"/fabric/acquisition/handoff",
+              data=json.dumps({
+                  "action":"rendezvous_publish",
+                  "session_id":os.environ["THORIO_NCCL_RENDEZVOUS_SESSION"],
+                  "address":os.environ["THORIO_LOCAL_TUNNEL_HOST"],
+                  "port":int(os.environ["THORIO_LOCAL_TUNNEL_PORT"]),
+                  "interface_name":"tcp-relay+pinggy",
+                  "ttl_seconds":900,
+              }).encode(), method="POST",
+              headers={"Authorization":f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}","Content-Type":"application/json","Accept":"application/json","User-Agent":"Mozilla/5.0"},
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              result=json.loads(response.read().decode())
+          if result.get("ok") is not True: raise SystemExit(f"Coordinator rejected relay endpoint: {result!r}")
+          print("NCCL_RELAY_ENDPOINT_PUBLISHED",json.dumps(result,sort_keys=True))
+          PY
+
+          peer_session="physical-nccl-${GITHUB_RUN_ID}-rank-${peer_rank}"
+          deadline=$((SECONDS + 120))
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0" -d "{"action":"rendezvous_get","session_id":"${peer_session}"}" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
+            if [ -n "${response}" ] && python - "${response}" <<'PY'
+          import json, os, sys
+          payload=json.loads(sys.argv[1])
+          if payload.get("ok") is not True: raise SystemExit(1)
+          host=str(payload["address"]).strip(); port=int(payload["port"])
+          if not host or not 1 <= port <= 65535: raise SystemExit(1)
+          with open(os.environ["GITHUB_ENV"],"a",encoding="utf-8") as env:
+              env.write(f"THORIO_PEER_TUNNEL_HOST={host}
+")
+              env.write(f"THORIO_PEER_TUNNEL_PORT={port}
+")
+          print("NCCL_PEER_RELAY_ENDPOINT",json.dumps({"host":host,"port":port},sort_keys=True))
+          PY
+            then break; fi
+            sleep 3
+          done
+          if ! grep -q '^THORIO_PEER_TUNNEL_HOST=' "${GITHUB_ENV}"; then echo "Timed out waiting for peer NCCL relay endpoint." >&2; exit 1; fi
+
+      - name: Discover and publish local NCCL rendezvous endpoint
         shell: bash
         run: |
           set -euo pipefail
           test -n "${THORIO_COMPUTE_COORDINATOR_URL}"
           test -n "${THORIO_COMPUTE_AUTH_TOKEN}"
           port="${MASTER_PORT}"
-          if ! [[ "${port}" =~ ^[0-9]+$ ]] || [ "${port}" -lt 1 ] || [ "${port}" -gt 65535 ]; then
-            echo "MASTER_PORT must be between 1 and 65535." >&2
-            exit 1
-          fi
+          if ! [[ "${port}" =~ ^[0-9]+$ ]] || [ "${port}" -lt 1 ] || [ "${port}" -gt 65535 ]; then exit 1; fi
           route="$(ip -4 route get 1.1.1.1 2>/dev/null || true)"
-          address="$(printf '%s\n' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
-          interface="$(printf '%s\n' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
-          if [ -z "${address}" ] || [ -z "${interface}" ]; then
-            echo "Could not discover a routable IPv4 address and interface on rank 0." >&2
-            ip -4 addr show >&2
-            ip -4 route show >&2
-            exit 1
-          fi
-          case "${address}" in
-            127.*) echo "Rank-0 discovery selected loopback ${address}." >&2; exit 1 ;;
-          esac
+          address="$(printf '%s
+' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+          interface="$(printf '%s
+' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+          if [ -z "${address}" ] || [ -z "${interface}" ]; then ip -4 addr show >&2; ip -4 route show >&2; exit 1; fi
+          case "${address}" in 127.*) exit 1 ;; esac
           export MASTER_ADDR="${address}"
           export NCCL_SOCKET_IFNAME="=${interface}"
-          {
-            printf 'MASTER_ADDR=%s\n' "${address}"
-            printf 'NCCL_SOCKET_IFNAME==%s\n' "${interface}"
-          } >> "${GITHUB_ENV}"
+          printf 'MASTER_ADDR=%s
+' "${address}" >> "${GITHUB_ENV}"
+          printf 'NCCL_SOCKET_IFNAME==%s
+' "${interface}" >> "${GITHUB_ENV}"
           python - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
-          request = urllib.request.Request(
-              base + "/fabric/acquisition/handoff",
-              data=json.dumps({
-                  "action": "rendezvous_publish",
-                  "session_id": os.environ["THORIO_NCCL_RENDEZVOUS_SESSION"],
-                  "address": os.environ["MASTER_ADDR"],
-                  "port": int(os.environ["MASTER_PORT"]),
-                  "interface_name": os.environ["NCCL_SOCKET_IFNAME"],
-                  "ttl_seconds": 900,
-              }).encode(),
+          import json, os, urllib.request
+          base=os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
+          request=urllib.request.Request(
+              base+"/fabric/acquisition/handoff",
+              data=json.dumps({"action":"rendezvous_publish","session_id":os.environ["THORIO_NCCL_RENDEZVOUS_SESSION"],"address":os.environ["MASTER_ADDR"],"port":int(os.environ["MASTER_PORT"]),"interface_name":os.environ["NCCL_SOCKET_IFNAME"],"ttl_seconds":900}).encode(),
               method="POST",
-              headers={
-                  "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
-                  "Content-Type": "application/json",
-                  "Accept": "application/json",
-                  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-              },
+              headers={"Authorization":f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}","Content-Type":"application/json","Accept":"application/json","User-Agent":"Mozilla/5.0"},
           )
-          with urllib.request.urlopen(request, timeout=20) as response:
-              result = json.loads(response.read().decode())
-          if result.get("ok") is not True:
-              raise SystemExit(f"Coordinator rejected NCCL rendezvous publication: {result!r}")
-          print("NCCL_RANK0_RENDEZVOUS_PUBLISHED", json.dumps(result, sort_keys=True))
+          with urllib.request.urlopen(request,timeout=20) as response: result=json.loads(response.read().decode())
+          if result.get("ok") is not True: raise SystemExit(f"Coordinator rejected local rendezvous: {result!r}")
+          print("NCCL_LOCAL_RENDEZVOUS_PUBLISHED",json.dumps(result,sort_keys=True))
           PY
 
-      - name: Discover rank-0 rendezvous endpoint
+      - name: Discover rank-0 local NCCL rendezvous endpoint
         if: matrix.rank == 1
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${THORIO_COMPUTE_COORDINATOR_URL}"
-          test -n "${THORIO_COMPUTE_AUTH_TOKEN}"
           deadline=$((SECONDS + 120))
           while [ "${SECONDS}" -lt "${deadline}" ]; do
-            response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" -d "{\"action\":\"rendezvous_get\",\"session_id\":\"${THORIO_NCCL_RENDEZVOUS_SESSION}\"}" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
+            response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0" -d "{"action":"rendezvous_get","session_id":"physical-nccl-${GITHUB_RUN_ID}-rank-0"}" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
             if [ -n "${response}" ] && python - "${response}" <<'PY'
-          import json, os, socket, sys, time
+          import json, os, sys
           payload=json.loads(sys.argv[1])
-          if payload.get("ok") is not True:
-              raise SystemExit(1)
-          host=str(payload["address"]).strip()
-          port=int(payload["port"])
-          interface=str(payload["interface_name"]).strip()
-          deadline=time.monotonic()+90
-          last=None
-          while time.monotonic()<deadline:
-              try:
-                  with socket.create_connection((host,port),timeout=3):
-                      print(json.dumps({"host":host,"port":port,"interface":interface},sort_keys=True))
-                      with open(os.environ["GITHUB_ENV"],"a",encoding="utf-8") as env:
-                          env.write(f"MASTER_ADDR={host}\n")
-                          env.write(f"MASTER_PORT={port}\n")
-                          env.write(f"NCCL_SOCKET_IFNAME={interface}\n")
-                      raise SystemExit(0)
-              except OSError as exc:
-                  last=exc
-                  time.sleep(2)
-          print(f"Rank 1 cannot reach rank 0 at {host}:{port}: {last}",file=sys.stderr)
-          raise SystemExit(2)
+          if payload.get("ok") is not True: raise SystemExit(1)
+          host=str(payload["address"]).strip(); port=int(payload["port"]); interface=str(payload["interface_name"]).strip()
+          if not host or not 1 <= port <= 65535: raise SystemExit(1)
+          with open(os.environ["GITHUB_ENV"],"a",encoding="utf-8") as env:
+              env.write(f"MASTER_ADDR={host}
+"); env.write(f"MASTER_PORT={port}
+"); env.write(f"NCCL_SOCKET_IFNAME={interface}
+")
+          print("NCCL_RANK1_RECEIVED_RANK0_RENDEZVOUS")
+          raise SystemExit(0)
           PY
-            then
-              echo "Rank 1 reached the automatically discovered rank-0 rendezvous endpoint."
-              exit 0
-            fi
+            then exit 0; fi
             sleep 3
           done
-          echo "Timed out waiting for the rank-0 rendezvous endpoint." >&2
+          echo "Timed out waiting for rank-0 rendezvous." >&2
           exit 1
+
+      - name: Run exact Thorio NCCL all-reduce probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${MASTER_ADDR}"
+          test -n "${MASTER_PORT}"
+          test -n "${THORIO_PEER_TUNNEL_HOST}"
+          test -n "${THORIO_PEER_TUNNEL_PORT}"
+          test -n "${THORIO_PEER_RELAY_TOKEN}"
+          echo "NCCL transparent peer TCP proxy enabled through authenticated external relay."
+          LD_PRELOAD=/tmp/libthorio-connect-proxy.so python -m lead_engine.nccl_all_reduce_probe 2>&1 | tee /tmp/thorio-nccl-rank.log
+          grep -F "THORIO_NCCL_PROBE_OK " /tmp/thorio-nccl-rank.log
 
       - name: Run exact Thorio NCCL all-reduce probe
         shell: bash
