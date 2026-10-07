@@ -56,7 +56,7 @@ class OpenHydraExecutionProvider:
             provider_api=True,
             explicit_release=False,
             physical_identity_attestation=False,
-            api_gpu_execution=False,
+            api_gpu_execution=True,
             community_inference=True,
             openai_compatible_api=True,
             peer_network=True,
