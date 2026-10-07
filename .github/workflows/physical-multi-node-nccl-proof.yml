@@ -621,10 +621,8 @@ jobs:
           port="${MASTER_PORT}"
           if ! [[ "${port}" =~ ^[0-9]+$ ]] || [ "${port}" -lt 1 ] || [ "${port}" -gt 65535 ]; then exit 1; fi
           route="$(ip -4 route get 1.1.1.1 2>/dev/null || true)"
-          address="$(printf '%s
-' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
-          interface="$(printf '%s
-' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
+          address="$(printf '%s\\n' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+          interface="$(printf '%s\\n' "${route}" | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
           if [ -z "${address}" ] || [ -z "${interface}" ]; then ip -4 addr show >&2; ip -4 route show >&2; exit 1; fi
           case "${address}" in 127.*) exit 1 ;; esac
           export MASTER_ADDR="${address}"
