@@ -158,3 +158,32 @@ def test_paxus_submission_marks_revenue_opportunity_referred(tmp_path):
     assert stored["follow_up_due"] is False
     assert stored["commercial_outcome"]["type"] == "referred"
     assert stored["referral_submitted"] is True
+
+
+def test_pipeline_preserves_commercial_signal_fields(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db)
+
+    with patch("lead_engine.pipeline.sync_one") as mock_sync:
+        mock_sync.return_value = {
+            "status": "synced",
+            "lead": {},
+            "airtable_record": {"id": "rec_signal_strength"},
+            "error": None,
+        }
+
+        result = pipeline.process(
+            source="test",
+            source_id="signal-strength-001",
+            url="https://example.com/posts/signal-strength-001",
+            company="Acme",
+            signal="raised Series A and is looking for a development partner",
+            evidence="Acme raised Series A and is looking for a development partner.",
+            signal_type="commercial_intent",
+            signal_strength="compound",
+        )
+
+    assert result["status"] == "accepted"
+    assert result["lead"]["signal_strength"] == "compound"
+    assert result["lead"]["signal_type"] == "commercial_intent"
+
