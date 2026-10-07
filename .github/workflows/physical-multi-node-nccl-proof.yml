@@ -551,14 +551,6 @@ jobs:
           import urllib.request
 
           base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
-          payload = json.dumps({
-              "action": "rendezvous_publish",
-              "session_id": os.environ["THORIO_NCCL_RENDEZVOUS_SESSION"],
-              "address": os.environ["MASTER_ADDR"],
-              "port": int(os.environ["MASTER_PORT"]),
-              "interface_name": os.environ["NCCL_SOCKET_IFNAME"],
-              "ttl_seconds": 900,
-          }).encode()
           request = urllib.request.Request(
               base + "/fabric/rendezvous",
               data=json.dumps({
