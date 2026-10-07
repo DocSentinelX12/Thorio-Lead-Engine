@@ -59,29 +59,11 @@ def provider_readiness_from_environment() -> dict[str, dict[str, Any]]:
         missing.extend(coordinator_missing)
         kaggle_missing = tuple(dict.fromkeys(missing))
 
-    lightning_enabled = _enabled("THORIO_LIGHTNING_ENABLED")
-    lightning_missing = ()
-    if lightning_enabled:
-        missing = list(
-            _missing_environment(
-                "LIGHTNING_USER_ID",
-                "LIGHTNING_API_KEY",
-                "THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING",
-            )
-        )
-        missing.extend(coordinator_missing)
-        lightning_missing = tuple(dict.fromkeys(missing))
-
     return {
         "kaggle": {
             "enabled": kaggle_enabled,
             "ready": kaggle_enabled and not kaggle_missing,
             "missing": kaggle_missing,
-        },
-        "lightning_ai": {
-            "enabled": lightning_enabled,
-            "ready": lightning_enabled and not lightning_missing,
-            "missing": lightning_missing,
         },
     }
 
