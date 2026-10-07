@@ -7,6 +7,7 @@ inside the same Kaggle network namespace and shuttles bytes both ways.
 """
 from __future__ import annotations
 import ipaddress
+import os
 import socket
 import struct
 import sys
@@ -47,7 +48,7 @@ def _handle(client: socket.socket) -> None:
             return
         magic, token, packed_ip, port = HEADER.unpack(header)
         expected = os.environ.get("THORIO_RELAY_TOKEN", "").encode("ascii")
-        if magic != MAGIC or token.rstrip(b"\\0") != expected or not (1 <= port <= 65535):
+        if magic != MAGIC or token.rstrip(b"\x00") != expected or not (1 <= port <= 65535):
             return
         destination = socket.inet_ntoa(packed_ip)
         if not _allowed_destination(destination):
