@@ -13,7 +13,7 @@ import sys
 import threading
 
 MAGIC = b"THORIO1"
-HEADER = struct.Struct("!7s4sH")
+HEADER = struct.Struct("!7s32s4sH")
 MAX_HEADER = HEADER.size
 
 def _copy(src: socket.socket, dst: socket.socket) -> None:
@@ -45,8 +45,9 @@ def _handle(client: socket.socket) -> None:
         header = client.recv(MAX_HEADER)
         if len(header) != MAX_HEADER:
             return
-        magic, packed_ip, port = HEADER.unpack(header)
-        if magic != MAGIC or not (1 <= port <= 65535):
+        magic, token, packed_ip, port = HEADER.unpack(header)
+        expected = os.environ.get("THORIO_RELAY_TOKEN", "").encode("ascii")
+        if magic != MAGIC or token.rstrip(b"\\0") != expected or not (1 <= port <= 65535):
             return
         destination = socket.inet_ntoa(packed_ip)
         if not _allowed_destination(destination):
