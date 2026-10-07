@@ -101,7 +101,7 @@ class GpuCapacityBroker:
                 })
 
         register("kaggle", KaggleFreeComputeProvider.from_environment)
-            return cls(manager), tuple(errors)
+        return cls(manager), tuple(errors)
 
     def cycle(self, target_gpu_nodes: int, configuration_errors: tuple[dict[str, str], ...] = ()) -> BrokerCycle:
         if isinstance(target_gpu_nodes, bool) or target_gpu_nodes < 0:
