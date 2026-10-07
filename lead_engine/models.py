@@ -23,6 +23,7 @@ class Lead:
     person: str = ""
     signal: str = ""
     signal_type: str = ""
+    signal_strength: str = ""
     business_need: str = ""
     source_url: str = ""
     job_title: str = ""
