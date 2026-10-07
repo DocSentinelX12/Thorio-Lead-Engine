@@ -39,6 +39,9 @@ from .zerogpu_execution import ZeroGPUExecutionProvider
 from .openhydra_execution import OpenHydraExecutionProvider
 from .joule_execution import JouleExecutionProvider
 from .bothy_execution import BothyExecutionProvider
+from .swarmllm_execution import SwarmLLMExecutionProvider
+from .viiwork_execution import ViiworkExecutionProvider
+from .moregpu_execution import MoreGPUExecutionProvider
 
 
 class ComputeCoordinator:
@@ -64,6 +67,9 @@ class ComputeCoordinator:
         self.openhydra_execution: OpenHydraExecutionProvider | None = None
         self.joule_execution: JouleExecutionProvider | None = None
         self.bothy_execution: BothyExecutionProvider | None = None
+        self.swarmllm_execution: SwarmLLMExecutionProvider | None = None
+        self.viiwork_execution: ViiworkExecutionProvider | None = None
+        self.moregpu_execution: MoreGPUExecutionProvider | None = None
         self.compute_execution = ComputeExecutionRegistry()
         self._lock = threading.RLock()
         self._initialize_tasks()
@@ -257,6 +263,19 @@ class ComputeCoordinator:
             if self.bothy_execution is None:
                 return {"enabled": False, "provider_id": "bothy"}
             return {"enabled": True, **dict(self.bothy_execution.health())}
+
+    def register_swarmllm_execution(self, provider: SwarmLLMExecutionProvider) -> None:
+        with self._lock:
+            if self.swarmllm_execution is not None: raise ValueError("SwarmLLM execution provider already registered")
+            self.compute_execution.register(provider); self.swarmllm_execution=provider
+    def register_viiwork_execution(self, provider: ViiworkExecutionProvider) -> None:
+        with self._lock:
+            if self.viiwork_execution is not None: raise ValueError("viiwork execution provider already registered")
+            self.compute_execution.register(provider); self.viiwork_execution=provider
+    def register_moregpu_execution(self, provider: MoreGPUExecutionProvider) -> None:
+        with self._lock:
+            if self.moregpu_execution is not None: raise ValueError("MoreGPU execution provider already registered")
+            self.compute_execution.register(provider); self.moregpu_execution=provider
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
@@ -3807,6 +3826,12 @@ def coordinator_from_environment() -> ComputeCoordinator:
         coordinator.register_joule_execution(JouleExecutionProvider.from_environment())
     if os.environ.get("THORIO_BOTHY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_bothy_execution(BothyExecutionProvider.from_environment())
+    if os.environ.get("THORIO_SWARMLLM_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_swarmllm_execution(SwarmLLMExecutionProvider.from_environment())
+    if os.environ.get("THORIO_VIIWORK_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_viiwork_execution(ViiworkExecutionProvider.from_environment())
+    if os.environ.get("THORIO_MOREGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_moregpu_execution(MoreGPUExecutionProvider.from_environment())
     if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
     if os.environ.get("THORIO_LIGHTNING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
