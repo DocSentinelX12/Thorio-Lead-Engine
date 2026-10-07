@@ -1,0 +1,33 @@
+name: NCCL Workflow Static Validation
+
+on:
+  push:
+    paths:
+      - .github/workflows/physical-multi-node-nccl-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: Lint physical multi-node NCCL workflow
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_x86_64.tar.gz -o /tmp/actionlint.tar.gz
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp
+          install -m 0755 /tmp/actionlint/actionlint /usr/local/bin/actionlint
+
+      - name: Validate NCCL workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          actionlint .github/workflows/physical-multi-node-nccl-proof.yml
