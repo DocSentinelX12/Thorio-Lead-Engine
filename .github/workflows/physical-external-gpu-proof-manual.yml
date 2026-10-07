@@ -144,6 +144,22 @@ jobs:
           deadline=$((SECONDS + 600))
 
           while [ "$SECONDS" -lt "$deadline" ]; do
+            status_output="$(kaggle kernels status "$kernel_ref" 2>&1)" || {
+              echo "Kaggle kernel status could not be read:"
+              echo "$status_output"
+              sleep 10
+              continue
+            }
+            echo "Kaggle kernel status: $status_output"
+
+            if echo "$status_output" | grep -Eq 'ERROR|CANCEL_REQUESTED|CANCEL_ACKNOWLEDGED'; then
+              log_file=/tmp/thorio-physical-gpu-proof.log
+              kaggle kernels logs "$kernel_ref" > "$log_file" 2>&1 || true
+              cat "$log_file"
+              echo "Kaggle reported a terminal worker failure before physical proof." >&2
+              exit 1
+            fi
+
             log_file=/tmp/thorio-physical-gpu-proof.log
             if kaggle kernels logs "$kernel_ref" > "$log_file" 2>&1; then
               cat "$log_file"
