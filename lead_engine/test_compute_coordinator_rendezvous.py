@@ -159,7 +159,8 @@ def test_fabric_rendezvous_via_existing_handoff_route(tmp_path: Path):
 
 def test_fabric_rendezvous_rejects_invalid_endpoint(tmp_path: Path):
     coordinator = ComputeCoordinator(
-        str(tmp_path / "coordinator.sqlite3"), "test-token"
+        str(tmp_path / "coordinator.sqlite3"),
+        "test-token",
     )
 
     try:
@@ -194,6 +195,7 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert 'base + "/fabric/acquisition/handoff"' in text
     assert text.count("/fabric/acquisition/handoff") >= 4
     assert 'base + "/fabric/rendezvous"' not in text
-    assert re.search(r'"action"\s*:\s*"rendezvous_publish"', text)
-    assert re.search(r'"action"\s*:\s*"rendezvous_get"', text)
-    assert re.search(r'"action"\s*:\s*"rendezvous_clear"', text)
+    action_pattern = r'\\?"action\\?"\s*:\s*\\?"{action}\\?"'
+    assert re.search(action_pattern.format(action="rendezvous_publish"), text)
+    assert re.search(action_pattern.format(action="rendezvous_get"), text)
+    assert re.search(action_pattern.format(action="rendezvous_clear"), text)
