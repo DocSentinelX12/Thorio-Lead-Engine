@@ -16,7 +16,6 @@ from typing import Any, Callable
 from .free_compute_acquisition import FreeComputeAcquisitionManager, FreeComputeAcquisitionStore
 from .free_compute_fleet import FreeComputeFleetController, FreeComputeFleetTarget
 from .kaggle_free_compute import KaggleFreeComputeProvider
-from .lightning_free_compute import LightningFreeComputeProvider
 
 
 @dataclass(frozen=True)
@@ -120,8 +119,7 @@ class GpuCapacityBroker:
                 })
 
         register("kaggle", KaggleFreeComputeProvider.from_environment)
-        register("lightning_ai", LightningFreeComputeProvider.from_environment)
-        return cls(manager), tuple(errors)
+            return cls(manager), tuple(errors)
 
     def cycle(self, target_gpu_nodes: int, configuration_errors: tuple[dict[str, str], ...] = ()) -> BrokerCycle:
         if isinstance(target_gpu_nodes, bool) or target_gpu_nodes < 0:

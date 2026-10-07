@@ -51,5 +51,3 @@ def test_external_browser_bootstrap_uses_persistent_systemd_services():
 def test_rejected_runtime_paths_are_removed():
     assert not (ROOT / "infra" / "android-termux").exists()
     assert not (ROOT / "lead_engine" / "test_android_runtime_scripts.py").exists()
-    assert not (ROOT / "infra" / "external-browser" / "lightning-supervisor.py").exists()
-    assert not (ROOT / "infra" / "external-browser" / "lightning-start.sh").exists()

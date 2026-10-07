@@ -1,6 +1,6 @@
 # Thorio external browser collection
 
-The phone and Lightning runtime paths are removed. Browser collection runs on
+The phone runtime path is removed. Browser collection runs on
 GitHub-hosted Linux runners, which are external to the phone and are recreated
 for each job.
 

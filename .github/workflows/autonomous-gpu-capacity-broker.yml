@@ -33,13 +33,6 @@ jobs:
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
-      THORIO_LIGHTNING_ENABLED: "1"
-      LIGHTNING_USER_ID: ${{ secrets.THORIO_LIGHTNING_USER_ID }}
-      LIGHTNING_API_KEY: ${{ secrets.THORIO_LIGHTNING_API_KEY }}
-      THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING: ${{ secrets.THORIO_LIGHTNING_FREE_GPU_HOURS_REMAINING }}
-      THORIO_LIGHTNING_STUDIO: "thorio-gpu-broker"
-      THORIO_LIGHTNING_MACHINE: "T4"
-      THORIO_LIGHTNING_REF: "${{ github.ref_name }}"
     steps:
       - name: Check out exact GPU branch
         uses: actions/checkout@v5
@@ -53,7 +46,7 @@ jobs:
           if [ -f requirements.txt ]; then
             python -m pip install -r requirements.txt
           fi
-          python -m pip install --upgrade pytest lightning-sdk
+          python -m pip install --upgrade pytest
 
       - name: Verify broker readiness gating
         run: python -m pytest -q tests/test_gpu_capacity_broker.py

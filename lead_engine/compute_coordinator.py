@@ -3863,9 +3863,6 @@ def coordinator_from_environment() -> ComputeCoordinator:
         coordinator.register_llama_cpp_rpc_execution(LlamaCppRpcExecutionProvider.from_environment())
     if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
-    if os.environ.get("THORIO_LIGHTNING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
-        from .lightning_free_compute import LightningFreeComputeProvider
-        coordinator.register_free_compute_provider(LightningFreeComputeProvider.from_environment())
     return coordinator
 
 
