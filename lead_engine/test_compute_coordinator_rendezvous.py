@@ -198,3 +198,5 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert re.search(action_pattern.format(action="rendezvous_publish"), text)
     assert re.search(action_pattern.format(action="rendezvous_get"), text)
     assert re.search(action_pattern.format(action="rendezvous_clear"), text)
+    assert '"User-Agent": "Mozilla/5.0' in text
+    assert '"User-Agent: Mozilla/5.0' in text
