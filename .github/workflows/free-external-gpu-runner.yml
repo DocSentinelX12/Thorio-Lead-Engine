@@ -179,7 +179,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"kernel_ref={kernel_ref}\n")
               output.write(f"acquisition_id={acquisition_id}\n")
-              output.write(f"domain_id={durable["domain_id"]}\n")
+              output.write(f"domain_id={durable['domain_id']}\n")
           print(f"THORIO_EXTERNAL_GPU_ACQUISITION_DURABLY_REGISTERED {acquisition_id}")
           print(f"EXTERNAL_GPU_KERNEL_RUNNING {kernel_ref}")
           PY
