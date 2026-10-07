@@ -778,14 +778,22 @@ jobs:
           print(json.dumps(evidence, sort_keys=True))
           PY
 
-      - name: Clear NCCL rendezvous registration
-        if: always() && matrix.rank == 0
+      - name: Clean up NCCL relay and rendezvous
+        if: always()
         shell: bash
         run: |
           set +e
-          if [ -n "${THORIO_COMPUTE_COORDINATOR_URL}" ] && [ -n "${THORIO_COMPUTE_AUTH_TOKEN}" ]; then
+          if [ -n "${THORIO_COMPUTE_COORDINATOR_URL:-}" ] && [ -n "${THORIO_COMPUTE_AUTH_TOKEN:-}" ]; then
             curl --fail --silent --show-error               -X POST               -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}"               -H "Content-Type: application/json"               -d "{\"action\":\"rendezvous_clear\",\"session_id\":\"${THORIO_NCCL_RENDEZVOUS_SESSION}\"}"               "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" >/dev/null || true
           fi
+          if [ -n "${THORIO_PINGGY_PID:-}" ]; then
+            kill "${THORIO_PINGGY_PID}" 2>/dev/null || true
+          fi
+          if [ -n "${THORIO_RELAY_PID:-}" ]; then
+            kill "${THORIO_RELAY_PID}" 2>/dev/null || true
+          fi
+          wait "${THORIO_PINGGY_PID:-}" 2>/dev/null || true
+          wait "${THORIO_RELAY_PID:-}" 2>/dev/null || true
 
       - name: Capture rank failure diagnostics
         if: always()
