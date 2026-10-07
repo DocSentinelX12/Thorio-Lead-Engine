@@ -575,7 +575,7 @@ jobs:
           import json, os, urllib.request
           base=os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
           request=urllib.request.Request(
-              base+"/fabric/acquisition/handoff",
+              base + "/fabric/acquisition/handoff",
               data=json.dumps({
                   "action":"rendezvous_publish",
                   "session_id":os.environ["THORIO_NCCL_RELAY_SESSION"],
@@ -633,7 +633,7 @@ jobs:
           import json, os, urllib.request
           base=os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
           request=urllib.request.Request(
-              base+"/fabric/acquisition/handoff",
+              base + "/fabric/acquisition/handoff",
               data=json.dumps({"action":"rendezvous_publish","session_id":os.environ["THORIO_NCCL_RENDEZVOUS_SESSION"],"address":os.environ["MASTER_ADDR"],"port":int(os.environ["MASTER_PORT"]),"interface_name":os.environ["NCCL_SOCKET_IFNAME"],"ttl_seconds":900}).encode(),
               method="POST",
               headers={"Authorization":f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}","Content-Type":"application/json","Accept":"application/json","User-Agent":"Mozilla/5.0"},
