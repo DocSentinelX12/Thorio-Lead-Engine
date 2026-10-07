@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.request
 from pathlib import Path
@@ -43,8 +44,7 @@ def test_fabric_rendezvous_round_trip(tmp_path: Path):
 
 def test_fabric_rendezvous_http_publish_and_read(tmp_path: Path):
     coordinator = ComputeCoordinator(
-        str(tmp_path / "coordinator.sqlite3"),
-        "test-token",
+        str(tmp_path / "coordinator.sqlite3"), "test-token"
     )
     server = ComputeCoordinatorServer(coordinator, host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -95,8 +95,7 @@ def test_fabric_rendezvous_http_publish_and_read(tmp_path: Path):
 
 def test_fabric_rendezvous_via_existing_handoff_route(tmp_path: Path):
     coordinator = ComputeCoordinator(
-        str(tmp_path / "coordinator.sqlite3"),
-        "test-token",
+        str(tmp_path / "coordinator.sqlite3"), "test-token"
     )
     server = ComputeCoordinatorServer(coordinator, host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -118,33 +117,39 @@ def test_fabric_rendezvous_via_existing_handoff_route(tmp_path: Path):
             with urllib.request.urlopen(request, timeout=5) as response:
                 return json.loads(response.read().decode("utf-8"))
 
-        published = post({
-            "action": "rendezvous_publish",
-            "session_id": "nccl-handoff-route-test",
-            "address": "10.0.0.30",
-            "port": 29502,
-            "interface_name": "eth2",
-            "ttl_seconds": 60,
-        })
+        published = post(
+            {
+                "action": "rendezvous_publish",
+                "session_id": "nccl-handoff-route-test",
+                "address": "10.0.0.30",
+                "port": 29502,
+                "interface_name": "eth2",
+                "ttl_seconds": 60,
+            }
+        )
         assert published["ok"] is True
         assert published["address"] == "10.0.0.30"
         assert published["port"] == 29502
         assert published["interface_name"] == "eth2"
 
-        observed = post({
-            "action": "rendezvous_get",
-            "session_id": "nccl-handoff-route-test",
-        })
+        observed = post(
+            {
+                "action": "rendezvous_get",
+                "session_id": "nccl-handoff-route-test",
+            }
+        )
         assert observed["ok"] is True
         assert observed["status"] == "published"
         assert observed["address"] == "10.0.0.30"
         assert observed["port"] == 29502
         assert observed["interface_name"] == "eth2"
 
-        cleared = post({
-            "action": "rendezvous_clear",
-            "session_id": "nccl-handoff-route-test",
-        })
+        cleared = post(
+            {
+                "action": "rendezvous_clear",
+                "session_id": "nccl-handoff-route-test",
+            }
+        )
         assert cleared["ok"] is True
     finally:
         server.shutdown()
@@ -154,8 +159,7 @@ def test_fabric_rendezvous_via_existing_handoff_route(tmp_path: Path):
 
 def test_fabric_rendezvous_rejects_invalid_endpoint(tmp_path: Path):
     coordinator = ComputeCoordinator(
-        str(tmp_path / "coordinator.sqlite3"),
-        "test-token",
+        str(tmp_path / "coordinator.sqlite3"), "test-token"
     )
 
     try:
@@ -190,6 +194,6 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert 'base + "/fabric/acquisition/handoff"' in text
     assert text.count("/fabric/acquisition/handoff") >= 4
     assert 'base + "/fabric/rendezvous"' not in text
-    assert 'action": "rendezvous_publish"' in text
-    assert 'action": "rendezvous_get"' in text
-    assert 'action": "rendezvous_clear"' in text
+    assert re.search(r'"action"\\s*:\\s*"rendezvous_publish"', text)
+    assert re.search(r'"action"\\s*:\\s*"rendezvous_get"', text)
+    assert re.search(r'"action"\\s*:\\s*"rendezvous_clear"', text)
