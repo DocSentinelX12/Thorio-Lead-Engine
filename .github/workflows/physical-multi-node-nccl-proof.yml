@@ -1,4 +1,4 @@
-name: Physical Multi-Node NCCL Proof
+name: Physical Multi Node NCCL Proof
 
 on:
   workflow_dispatch:
