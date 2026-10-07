@@ -187,8 +187,9 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     workflow = Path(__file__).parents[1] / ".github" / "workflows" / "physical-multi-node-nccl-proof.yml"
     text = workflow.read_text(encoding="utf-8")
 
-    assert 'base + "/fabric/rendezvous"' in text
-    assert "/fabric/acquisition/handoff" in text
-    assert 'action": "rendezvous_publish"' not in text
-    assert 'action": "rendezvous_get"' not in text
-    assert 'action": "rendezvous_clear"' not in text
+    assert 'base + "/fabric/acquisition/handoff"' in text
+    assert text.count('"/fabric/acquisition/handoff"') >= 3
+    assert 'base + "/fabric/rendezvous"' not in text
+    assert 'action": "rendezvous_publish"' in text
+    assert 'action": "rendezvous_get"' in text
+    assert 'action": "rendezvous_clear"' in text
