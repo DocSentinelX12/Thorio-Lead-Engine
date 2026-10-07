@@ -12,9 +12,7 @@ may require a newer Python runtime.
 """
 from __future__ import annotations
 
-import csv
 import hashlib
-import io
 import json
 import os
 import re
@@ -294,63 +292,6 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             return "cancelled"
         return "unknown"
 
-    def _kernel_list_snapshot(self, kernel_ref: str) -> tuple[bool, str | None]:
-        """Observe this account's kernel through the list endpoint.
-        
-        Kaggle's session-status endpoint can deny kernels.get even for an
-        otherwise valid owned kernel. The list endpoint exposes the kernel
-        reference and lastRunTime without requiring session-status access.
-        """
-        try:
-            output = self._run(
-                [
-                    "kernels",
-                    "list",
-                    "--mine",
-                    "--page-size",
-                    "100",
-                    "--sort-by",
-                    "dateRun",
-                    "--csv",
-                ]
-            )
-        except KaggleFreeComputeError as exc:
-            message = str(exc).lower()
-            if "permission 'kernels.get' was denied" in message or "not found" in message or "404" in message:
-                return False, None
-            raise
-        lines = [line for line in output.splitlines() if line.strip()]
-        header_index = next(
-            (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
-            None,
-        )
-        if header_index is None:
-            raise KaggleFreeComputeError("Kaggle kernel list command returned invalid CSV")
-        try:
-            rows = csv.DictReader(io.StringIO("\n".join(lines[header_index:])))
-        except (csv.Error, TypeError) as exc:
-            raise KaggleFreeComputeError("Kaggle kernel list command returned invalid CSV") from exc
-        for row in rows:
-            if str(row.get("ref") or "").strip() != kernel_ref:
-                continue
-            last_run_time = str(row.get("lastRunTime") or "").strip() or None
-            return True, last_run_time
-        return False, None
-
-    @staticmethod
-    def _last_run_time_advanced(previous: str | None, current: str | None) -> bool:
-        if not current:
-            return False
-        if not previous:
-            return True
-        try:
-            from datetime import datetime
-            previous_dt = datetime.fromisoformat(previous.replace("Z", "+00:00"))
-            current_dt = datetime.fromisoformat(current.replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            return current != previous
-        return current_dt > previous_dt
-
     def _kernel_ref(self) -> str:
         return f"{self.config.username}/{self.config.kernel_slug}"
 
@@ -530,13 +471,14 @@ run("bash", str(runner_script))
             )
         return path.read_text(encoding="utf-8")
 
-    def _wait_for_running(
-        self,
-        kernel_ref: str,
-        *,
-        baseline_visible: bool = False,
-        baseline_last_run_time: str | None = None,
-    ) -> str:
+    def _wait_for_running(self, kernel_ref: str) -> str:
+        """Wait for Kaggle to report the actual latest run as running.
+        
+        Kernel visibility, last-run timestamps, or successful submission are
+        not equivalent to an active compute session. The provider status
+        endpoint is therefore the only signal that can promote acquisition
+        to the running state.
+        """
         deadline = self._clock() + self.config.acquisition_ready_timeout_seconds
         last_status = "unknown"
         while True:
@@ -547,19 +489,6 @@ run("bash", str(runner_script))
                 raise KaggleFreeComputeError(
                     f"Kaggle provider run did not reach running state: {last_status}"
                 )
-            if last_status == "not_found":
-                visible, last_run_time = self._kernel_list_snapshot(kernel_ref)
-                if visible and self._last_run_time_advanced(baseline_last_run_time, last_run_time):
-                    return "running"
-                if visible and not baseline_visible and last_run_time:
-                    return "running"
-                remaining = deadline - self._clock()
-                if remaining <= 0:
-                    raise KaggleFreeComputeError(
-                        "Kaggle provider run did not become visible before timeout: not_found"
-                    )
-                self._sleeper(min(self.config.acquisition_ready_poll_interval_seconds, remaining))
-                continue
             remaining = deadline - self._clock()
             if remaining <= 0:
                 raise KaggleFreeComputeError(
