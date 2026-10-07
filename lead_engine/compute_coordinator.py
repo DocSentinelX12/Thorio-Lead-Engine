@@ -37,6 +37,8 @@ from .execution_fabric_contract import ExecutionMode
 from .execution_work_units import build_gpu_workload_payload, build_independent_work_units
 from .zerogpu_execution import ZeroGPUExecutionProvider
 from .openhydra_execution import OpenHydraExecutionProvider
+from .joule_execution import JouleExecutionProvider
+from .bothy_execution import BothyExecutionProvider
 
 
 class ComputeCoordinator:
@@ -60,6 +62,8 @@ class ComputeCoordinator:
         self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path), clock=clock)
         self.zerogpu_execution: ZeroGPUExecutionProvider | None = None
         self.openhydra_execution: OpenHydraExecutionProvider | None = None
+        self.joule_execution: JouleExecutionProvider | None = None
+        self.bothy_execution: BothyExecutionProvider | None = None
         self.compute_execution = ComputeExecutionRegistry()
         self._lock = threading.RLock()
         self._initialize_tasks()
@@ -227,6 +231,32 @@ class ComputeCoordinator:
                 return {"enabled": False, "provider_id": "openhydra"}
             return {"enabled": True, **dict(self.openhydra_execution.health())}
 
+
+    def register_joule_execution(self, provider: JouleExecutionProvider) -> None:
+        with self._lock:
+            if self.joule_execution is not None:
+                raise ValueError("Joule execution provider already registered")
+            self.compute_execution.register(provider)
+            self.joule_execution = provider
+
+    def joule_status(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.joule_execution is None:
+                return {"enabled": False, "provider_id": "joule"}
+            return {"enabled": True, **dict(self.joule_execution.health())}
+
+    def register_bothy_execution(self, provider: BothyExecutionProvider) -> None:
+        with self._lock:
+            if self.bothy_execution is not None:
+                raise ValueError("Bothy execution provider already registered")
+            self.compute_execution.register(provider)
+            self.bothy_execution = provider
+
+    def bothy_status(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.bothy_execution is None:
+                return {"enabled": False, "provider_id": "bothy"}
+            return {"enabled": True, **dict(self.bothy_execution.health())}
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
@@ -3773,6 +3803,10 @@ def coordinator_from_environment() -> ComputeCoordinator:
         coordinator.register_free_compute_provider(KaggleFreeComputeProvider.from_environment())
     if os.environ.get("THORIO_OPENHYDRA_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_openhydra_execution(OpenHydraExecutionProvider.from_environment())
+    if os.environ.get("THORIO_JOULE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_joule_execution(JouleExecutionProvider.from_environment())
+    if os.environ.get("THORIO_BOTHY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_bothy_execution(BothyExecutionProvider.from_environment())
     if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
     if os.environ.get("THORIO_LIGHTNING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
