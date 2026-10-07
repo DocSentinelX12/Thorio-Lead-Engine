@@ -168,22 +168,32 @@ def test_pipeline_preserves_commercial_signal_fields(tmp_path):
         mock_sync.return_value = {
             "status": "synced",
             "lead": {},
-            "airtable_record": {"id": "rec_signal_strength"},
+            "airtable_record": {"id": "rec_commercial_signal"},
             "error": None,
         }
 
         result = pipeline.process(
             source="test",
-            source_id="signal-strength-001",
-            url="https://example.com/posts/signal-strength-001",
+            source_id="commercial-signal-001",
+            url="https://example.com/posts/commercial-signal-001",
             company="Acme",
             signal="raised Series A and is looking for a development partner",
             evidence="Acme raised Series A and is looking for a development partner.",
             signal_type="commercial_intent",
             signal_strength="compound",
+            signal_matches=["acquisition"],
+            signal_context=["acquisition context"],
+            commercial_signal_broadening={
+                "matches": [{"phrase": "acquisition", "promotion_eligible": True}]
+            },
+            website="https://example.com",
         )
 
     assert result["status"] == "accepted"
-    assert result["lead"]["signal_strength"] == "compound"
-    assert result["lead"]["signal_type"] == "commercial_intent"
-
+    lead = result["lead"]
+    assert lead["signal_strength"] == "compound"
+    assert lead["signal_type"] == "commercial_intent"
+    assert lead["signal_matches"] == ["acquisition"]
+    assert lead["signal_context"] == ["acquisition context"]
+    assert lead["commercial_signal_broadening"]["matches"][0]["phrase"] == "acquisition"
+    assert lead["website"] == "https://example.com"
