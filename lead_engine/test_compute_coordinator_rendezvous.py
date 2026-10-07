@@ -159,8 +159,7 @@ def test_fabric_rendezvous_via_existing_handoff_route(tmp_path: Path):
 
 def test_fabric_rendezvous_rejects_invalid_endpoint(tmp_path: Path):
     coordinator = ComputeCoordinator(
-        str(tmp_path / "coordinator.sqlite3"),
-        "test-token",
+        str(tmp_path / "coordinator.sqlite3"), "test-token"
     )
 
     try:
