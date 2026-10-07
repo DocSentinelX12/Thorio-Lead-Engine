@@ -41,9 +41,20 @@ def _allowed_destination(raw_ip: str) -> bool:
     ip = ipaddress.ip_address(raw_ip)
     return ip.is_private and not ip.is_loopback and not ip.is_link_local
 
+def _recv_exact(sock: socket.socket, size: int) -> bytes:
+    chunks = []
+    remaining = size
+    while remaining:
+        data = sock.recv(remaining)
+        if not data:
+            return b""
+        chunks.append(data)
+        remaining -= len(data)
+    return b"".join(chunks)
+
 def _handle(client: socket.socket) -> None:
     try:
-        header = client.recv(MAX_HEADER)
+        header = _recv_exact(client, MAX_HEADER)
         if len(header) != MAX_HEADER:
             return
         magic, token, packed_ip, port = HEADER.unpack(header)
