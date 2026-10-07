@@ -601,7 +601,7 @@ jobs:
           peer_session="physical-nccl-relay-${GITHUB_RUN_ID}-rank-${peer_rank}"
           deadline=$((SECONDS + 120))
           while [ "${SECONDS}" -lt "${deadline}" ]; do
-            response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0" -d "{"action":"rendezvous_get","session_id":"${peer_session}"}" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
+            response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0" --data-binary "$(printf '{"action":"rendezvous_get","session_id":"%s"}' "${peer_session}")" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
             if [ -n "${response}" ] && python - "${response}" <<'PY'
           import json, os, sys
           payload=json.loads(sys.argv[1])
@@ -609,10 +609,8 @@ jobs:
           host=str(payload["address"]).strip(); port=int(payload["port"])
           if not host or not 1 <= port <= 65535: raise SystemExit(1)
           with open(os.environ["GITHUB_ENV"],"a",encoding="utf-8") as env:
-              env.write(f"THORIO_PEER_TUNNEL_HOST={host}
-")
-              env.write(f"THORIO_PEER_TUNNEL_PORT={port}
-")
+              env.write("THORIO_PEER_TUNNEL_HOST=" + host + chr(10))
+              env.write("THORIO_PEER_TUNNEL_PORT=" + str(port) + chr(10))
           print("NCCL_PEER_RELAY_ENDPOINT",json.dumps({"host":host,"port":port},sort_keys=True))
           PY
             then break; fi
