@@ -684,7 +684,21 @@ run("bash", str(runner_script))
                     f"Kaggle kernel push did not report an accepted submission: {push_output.strip()!r}"
                 )
 
-        provider_run_status = "submitted"
+        try:
+            provider_run_status = self._wait_for_running(kernel_ref)
+        except Exception as exc:
+            try:
+                self._run(["kernels", "delete", kernel_ref, "--yes"])
+            except Exception as cleanup_exc:
+                raise KaggleFreeComputeError(
+                    f"Kaggle worker did not reach running state: {type(exc).__name__}: {exc}; "
+                    f"cleanup also failed: {type(cleanup_exc).__name__}: {cleanup_exc}"
+                ) from exc
+            if isinstance(exc, KaggleFreeComputeError):
+                raise
+            raise KaggleFreeComputeError(
+                f"Kaggle worker did not reach running state: {type(exc).__name__}: {exc}"
+            ) from exc
 
         expires_at = None
         if offer.expires_at is not None:
