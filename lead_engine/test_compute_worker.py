@@ -60,3 +60,40 @@ def test_worker_client_rejects_invalid_configuration():
             pass
         else:
             raise AssertionError("invalid coordinator URL was accepted")
+
+
+class FakeGpuApiClient:
+    def __init__(self):
+        self.calls = []
+
+    def gpu_api_execute(self, data, required_capabilities=None):
+        self.calls.append((data, required_capabilities))
+        return {
+            "provider_id": "huggingface-zerogpu",
+            "result": {"checksum": 13.0, "cuda": True},
+            "capabilities": {"api_gpu_execution": True, "cuda_execution": True},
+        }
+
+
+def test_execute_compute_task_routes_gpu_api_through_coordinator_client():
+    client = FakeGpuApiClient()
+    result = execute_compute_task({
+        "kind": "gpu_api",
+        "data": ["probe"],
+        "required_capabilities": {"api_gpu_execution": True, "cuda_execution": True},
+    }, client)
+    assert result["kind"] == "gpu_api"
+    assert result["provider_id"] == "huggingface-zerogpu"
+    assert result["result"] == {"checksum": 13.0, "cuda": True}
+    assert client.calls == [
+        (["probe"], {"api_gpu_execution": True, "cuda_execution": True}),
+    ]
+
+
+def test_execute_compute_task_rejects_gpu_api_without_coordinator_client():
+    try:
+        execute_compute_task({"kind": "gpu_api", "data": ["probe"]})
+    except ComputeWorkerError as error:
+        assert "requires a coordinator client" in str(error)
+    else:
+        raise AssertionError("GPU API execution bypassed the coordinator")
