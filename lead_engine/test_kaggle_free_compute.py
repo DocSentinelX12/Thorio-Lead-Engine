@@ -155,7 +155,7 @@ def test_acquire_free_creates_bounded_private_gpu_kernel_without_persisting_secr
     assert acquired.enrollment["free_only"] is True
     assert acquired.enrollment["physical_verification_required"] is True
     assert acquired.enrollment["provider_submission_accepted"] is True
-    assert acquired.enrollment["provider_run_status"] == "submitted"
+    assert acquired.enrollment["provider_run_status"] == "running"
     assert acquired.enrollment["external_capacity_acquired"] is True
 
     push = next(command for command in calls if command[1:3] == ["kernels", "push"])
@@ -321,7 +321,7 @@ def test_configuration_rejects_paid_or_unknown_accelerator():
 
 
 
-def test_acquire_free_accepts_successful_provider_push_without_status_endpoint():
+def test_acquire_free_waits_for_running_provider_status():
     now = [1_700_000_000.0]
     status_calls = 0
     commands: list[list[str]] = []
@@ -372,10 +372,57 @@ def test_acquire_free_accepts_successful_provider_push_without_status_endpoint()
 
     acquired = provider.acquire_free(offer)
 
-    assert acquired.enrollment["provider_run_status"] == "submitted"
+    assert acquired.enrollment["provider_run_status"] == "running"
     assert acquired.enrollment["external_capacity_acquired"] is True
-    assert not any(command[1:3] == ["kernels", "delete"] for command in commands)
+    assert any(command[1:3] == ["kernels", "status"] for command in commands)
 
+
+def test_acquire_free_fails_when_provider_never_reaches_running():
+    now = [1_700_000_000.0]
+    commands: list[list[str]] = []
+
+    def runner(command, *, timeout, cwd=None):
+        commands.append(list(command))
+        if command[1:3] == ["quota", "--format"]:
+            payload = [{
+                "resource": "GPU",
+                "used": "10.00h",
+                "remaining": "20.00h",
+                "total": "30.00h",
+                "refreshAt": "2099-01-01T00:00:00+00:00",
+            }]
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[1:3] == ["kernels", "list"]:
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
+        if command[1:3] == ["kernels", "status"]:
+            return subprocess.CompletedProcess(command, 0, "Status: Queued", "")
+        if command[1:3] == ["kernels", "push"]:
+            return subprocess.CompletedProcess(command, 0, "Kernel version 1 successfully pushed.", "")
+        if command[1:3] == ["kernels", "delete"]:
+            return subprocess.CompletedProcess(command, 0, "Deleted", "")
+        raise AssertionError(f"unexpected Kaggle command: {command}")
+
+    def sleeper(seconds):
+        now[0] += seconds
+
+    provider = KaggleFreeComputeProvider(
+        KaggleFreeComputeConfig(
+            username="example-user",
+            kernel_slug="thorio-free-gpu-worker",
+            repository_ref="main",
+            acquisition_ready_timeout_seconds=10,
+            acquisition_ready_poll_interval_seconds=5,
+        ),
+        runner=runner,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+    offer = provider.discover_free()[0]
+
+    with pytest.raises(KaggleFreeComputeError, match="did not reach running state before timeout"):
+        provider.acquire_free(offer)
+
+    assert any(command[1:3] == ["kernels", "delete"] for command in commands)
 
 def test_acquire_free_retries_transient_kaggle_batch_session_limit():
     push_calls = 0
