@@ -484,6 +484,7 @@ jobs:
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
       THORIO_NCCL_RENDEZVOUS_SESSION: physical-nccl-${{ github.run_id }}-rank-${{ matrix.rank }}
+      THORIO_NCCL_RELAY_SESSION: physical-nccl-relay-${{ github.run_id }}-rank-${{ matrix.rank }}
     steps:
       - name: Check out exact proof ref
         uses: actions/checkout@v5
@@ -583,7 +584,7 @@ jobs:
               base+"/fabric/acquisition/handoff",
               data=json.dumps({
                   "action":"rendezvous_publish",
-                  "session_id":os.environ["THORIO_NCCL_RENDEZVOUS_SESSION"],
+                  "session_id":os.environ["THORIO_NCCL_RELAY_SESSION"],
                   "address":os.environ["THORIO_LOCAL_TUNNEL_HOST"],
                   "port":int(os.environ["THORIO_LOCAL_TUNNEL_PORT"]),
                   "interface_name":"tcp-relay+pinggy",
@@ -597,7 +598,7 @@ jobs:
           print("NCCL_RELAY_ENDPOINT_PUBLISHED",json.dumps(result,sort_keys=True))
           PY
 
-          peer_session="physical-nccl-${GITHUB_RUN_ID}-rank-${peer_rank}"
+          peer_session="physical-nccl-relay-${GITHUB_RUN_ID}-rank-${peer_rank}"
           deadline=$((SECONDS + 120))
           while [ "${SECONDS}" -lt "${deadline}" ]; do
             response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0" -d "{"action":"rendezvous_get","session_id":"${peer_session}"}" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
