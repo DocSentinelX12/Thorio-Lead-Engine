@@ -394,6 +394,8 @@ def test_acquire_free_fails_when_provider_never_reaches_running():
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if command[1:3] == ["kernels", "list"]:
             return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
+        if command[1:3] == ["kernels", "list"]:
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
         if command[1:3] == ["kernels", "status"]:
             return subprocess.CompletedProcess(command, 0, "Status: Queued", "")
         if command[1:3] == ["kernels", "push"]:
@@ -438,6 +440,8 @@ def test_acquire_free_retries_transient_kaggle_batch_session_limit():
                 "refreshAt": "2099-01-01T00:00:00+00:00",
             }]
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[1:3] == ["kernels", "list"]:
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
         if command[1:3] == ["kernels", "status"]:
             return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
         if command[1:3] == ["kernels", "push"]:
