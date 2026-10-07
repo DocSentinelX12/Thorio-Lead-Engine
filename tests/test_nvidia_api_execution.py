@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from lead_engine.compute_fabric import ComputeExecutionRegistry
@@ -37,7 +35,7 @@ def test_nvidia_api_provider_executes_free_chat_endpoint():
     session = FakeSession()
     provider = NvidiaAPIExecutionProvider(
         NvidiaAPIExecutionConfig(
-            api_key="nvapi-test",
+            credential="nvapi-test",
             model="nvidia/test-model",
         ),
         session=session,
