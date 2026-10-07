@@ -194,6 +194,6 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert 'base + "/fabric/acquisition/handoff"' in text
     assert text.count("/fabric/acquisition/handoff") >= 4
     assert 'base + "/fabric/rendezvous"' not in text
-    assert re.search(r'"action"\\s*:\\s*"rendezvous_publish"', text)
-    assert re.search(r'"action"\\s*:\\s*"rendezvous_get"', text)
-    assert re.search(r'"action"\\s*:\\s*"rendezvous_clear"', text)
+    assert re.search(r'"action"\s*:\s*"rendezvous_publish"', text)
+    assert re.search(r'"action"\s*:\s*"rendezvous_get"', text)
+    assert re.search(r'"action"\s*:\s*"rendezvous_clear"', text)
