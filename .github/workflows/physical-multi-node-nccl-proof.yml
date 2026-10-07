@@ -204,47 +204,59 @@ jobs:
                           "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                       },
                   )
-                  try:
-                      with urllib.request.urlopen(request, timeout=20) as response:
-                          response_payload = json.loads(response.read().decode())
-                  except urllib.error.HTTPError as exc:
-                      response_body = ""
+                  for attempt in range(1, 4):
                       try:
-                          response_body = exc.read(4096).decode("utf-8", errors="replace")
-                      except Exception:
-                          response_body = "<unable to read HTTP error body>"
-                      safe_headers = {}
-                      for header_name in (
-                          "Server", "Content-Type", "Via", "Location",
-                          "X-Request-ID", "X-Correlation-ID", "X-Request-Id",
-                          "CF-Ray", "X-Served-By",
-                      ):
-                          value = exc.headers.get(header_name)
-                          if value:
-                              safe_headers[header_name] = value
-                      parsed_url = urllib.parse.urlsplit(request.full_url)
-                      safe_target = urllib.parse.urlunsplit(
-                          (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "")
-                      )
-                      print(
-                          "COORDINATOR_HANDOFF_HTTP_DIAGNOSTIC "
-                          + json.dumps(
-                              {
-                                  "status": exc.code,
-                                  "reason": str(exc.reason),
-                                  "target": safe_target,
-                                  "headers": safe_headers,
-                                  "body": response_body,
-                              },
-                              sort_keys=True,
-                          ),
-                          flush=True,
-                      )
-                      raise SystemExit(
-                          f"Coordinator acquisition handoff failed: HTTP {exc.code} {exc.reason}"
-                      ) from exc
-                  except Exception as exc:
-                      raise SystemExit(f"Coordinator acquisition handoff failed: {exc}") from exc
+                          with urllib.request.urlopen(request, timeout=20) as response:
+                              response_payload = json.loads(response.read().decode())
+                          break
+                      except urllib.error.HTTPError as exc:
+                          response_body = ""
+                          try:
+                              response_body = exc.read(4096).decode("utf-8", errors="replace")
+                          except Exception:
+                              response_body = "<unable to read HTTP error body>"
+                          safe_headers = {}
+                          for header_name in (
+                              "Server", "Content-Type", "Via", "Location",
+                              "X-Request-ID", "X-Correlation-ID", "X-Request-Id",
+                              "CF-Ray", "X-Served-By",
+                          ):
+                              value = exc.headers.get(header_name)
+                              if value:
+                                  safe_headers[header_name] = value
+                          parsed_url = urllib.parse.urlsplit(request.full_url)
+                          safe_target = urllib.parse.urlunsplit(
+                              (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "")
+                          )
+                          print(
+                              "COORDINATOR_HANDOFF_HTTP_DIAGNOSTIC "
+                              + json.dumps(
+                                  {
+                                      "attempt": attempt,
+                                      "status": exc.code,
+                                      "reason": str(exc.reason),
+                                      "target": safe_target,
+                                      "headers": safe_headers,
+                                      "body": response_body,
+                                  },
+                                  sort_keys=True,
+                              ),
+                              flush=True,
+                          )
+                          if exc.code not in {502, 503, 504} or attempt == 3:
+                              raise SystemExit(
+                                  f"Coordinator acquisition handoff failed: HTTP {exc.code} {exc.reason}"
+                              ) from exc
+                          import time
+                          delay = 5 * attempt
+                          print(
+                              f"Coordinator unavailable with HTTP {exc.code}; retrying in {delay}s "
+                              f"(attempt {attempt}/3).",
+                              flush=True,
+                          )
+                          time.sleep(delay)
+                      except Exception as exc:
+                          raise SystemExit(f"Coordinator acquisition handoff failed: {exc}") from exc
                   if response_payload.get("ok") is not True or str(response_payload.get("acquisition_id") or "") != acquisition_id:
                       raise SystemExit(f"Coordinator rejected acquisition handoff for rank {rank}: {response_payload!r}")
 
