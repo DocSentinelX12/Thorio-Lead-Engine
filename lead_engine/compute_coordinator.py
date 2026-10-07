@@ -42,6 +42,7 @@ from .bothy_execution import BothyExecutionProvider
 from .swarmllm_execution import SwarmLLMExecutionProvider
 from .viiwork_execution import ViiworkExecutionProvider
 from .moregpu_execution import MoreGPUExecutionProvider
+from .llama_cpp_rpc_execution import LlamaCppRpcExecutionProvider
 
 
 class ComputeCoordinator:
@@ -70,6 +71,7 @@ class ComputeCoordinator:
         self.swarmllm_execution: SwarmLLMExecutionProvider | None = None
         self.viiwork_execution: ViiworkExecutionProvider | None = None
         self.moregpu_execution: MoreGPUExecutionProvider | None = None
+        self.llama_cpp_rpc_execution: LlamaCppRpcExecutionProvider | None = None
         self.compute_execution = ComputeExecutionRegistry()
         self._lock = threading.RLock()
         self._initialize_tasks()
@@ -276,6 +278,24 @@ class ComputeCoordinator:
         with self._lock:
             if self.moregpu_execution is not None: raise ValueError("MoreGPU execution provider already registered")
             self.compute_execution.register(provider); self.moregpu_execution=provider
+
+    def register_llama_cpp_rpc_execution(self, provider: LlamaCppRpcExecutionProvider) -> None:
+        with self._lock:
+            if self.llama_cpp_rpc_execution is not None:
+                raise ValueError("llama.cpp RPC execution substrate already registered")
+            self.llama_cpp_rpc_execution = provider
+
+    def llama_cpp_rpc_status(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.llama_cpp_rpc_execution is None:
+                return {"enabled": False, "provider_id": "llama-cpp-rpc"}
+            return {"enabled": True, **dict(self.llama_cpp_rpc_execution.health())}
+
+    def execute_llama_cpp_rpc(self, data: list[Any]) -> Dict[str, Any]:
+        with self._lock:
+            if self.llama_cpp_rpc_execution is None:
+                raise ValueError("llama.cpp RPC execution substrate is not enabled")
+            return self.llama_cpp_rpc_execution.execute(data)
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
         """Refresh provider observations and return evidence-backed fabric capacity."""
@@ -3687,6 +3707,13 @@ class _Handler(BaseHTTPRequestHandler):
                     gpu_required=bool(body.get("gpu_required", False)),
                 )
                 self._send(200, result)
+            elif self.path == "/fabric/llama-cpp-rpc/status":
+                self._send(200, self.server.coordinator.llama_cpp_rpc_status())
+            elif self.path == "/fabric/llama-cpp-rpc/execute":
+                data = body.get("data")
+                if not isinstance(data, list):
+                    raise ValueError("data must be a list")
+                self._send(200, {"ok": True, "provider_id": "llama-cpp-rpc", "result": self.server.coordinator.execute_llama_cpp_rpc(data)})
             elif self.path == "/fabric/gpu/execute":
                 data = body.get("data")
                 if not isinstance(data, list):
@@ -3832,6 +3859,8 @@ def coordinator_from_environment() -> ComputeCoordinator:
         coordinator.register_viiwork_execution(ViiworkExecutionProvider.from_environment())
     if os.environ.get("THORIO_MOREGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_moregpu_execution(MoreGPUExecutionProvider.from_environment())
+    if os.environ.get("THORIO_LLAMA_CPP_RPC_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_llama_cpp_rpc_execution(LlamaCppRpcExecutionProvider.from_environment())
     if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
     if os.environ.get("THORIO_LIGHTNING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
