@@ -552,9 +552,9 @@ jobs:
 
           base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
           request = urllib.request.Request(
-              base + "/fabric/rendezvous",
+              base + "/fabric/acquisition/handoff",
               data=json.dumps({
-                  "action": "publish",
+                  "action": "rendezvous_publish",
                   "session_id": os.environ["THORIO_NCCL_RENDEZVOUS_SESSION"],
                   "address": os.environ["MASTER_ADDR"],
                   "port": int(os.environ["MASTER_PORT"]),
@@ -709,6 +709,39 @@ jobs:
           set +e
           if [ -n "${THORIO_COMPUTE_COORDINATOR_URL}" ] && [ -n "${THORIO_COMPUTE_AUTH_TOKEN}" ]; then
             curl --fail --silent --show-error               -X POST               -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}"               -H "Content-Type: application/json"               -d "{\"action\":\"clear\",\"session_id\":\"${THORIO_NCCL_RENDEZVOUS_SESSION}\"}"               "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/rendezvous" >/dev/null || true
+          fi
+
+      - name: Capture rank failure diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/thorio-nccl-rank.log ]; then
+            printf 'THORIO_NCCL_PROBE_NOT_REACHED\n' > /tmp/thorio-nccl-rank.log
+          fi
+          if [ ! -f rank-evidence.json ]; then
+            python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          Path("rank-evidence.json").write_text(
+              json.dumps(
+                  {
+                      "verified": False,
+                      "proof_ref": os.environ["THORIO_PROOF_REF"],
+                      "proof_sha": os.environ["THORIO_CHECKED_OUT_SHA"],
+                      "rank": int(os.environ["RANK"]),
+                      "world_size": int(os.environ["WORLD_SIZE"]),
+                      "nnodes": int(os.environ["THORIO_EXPECTED_NNODES"]),
+                      "failure_stage": "rank execution did not reach physical NCCL evidence capture",
+                  },
+                  sort_keys=True,
+                  indent=2,
+              ),
+              encoding="utf-8",
+          )
+          PY
           fi
 
       - name: Upload physical rank evidence
