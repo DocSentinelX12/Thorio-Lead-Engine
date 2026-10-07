@@ -36,6 +36,7 @@ from .execution_fabric_runtime import ProductionExecutionFabric
 from .execution_fabric_contract import ExecutionMode
 from .execution_work_units import build_gpu_workload_payload, build_independent_work_units
 from .zerogpu_execution import ZeroGPUExecutionProvider
+from .nvidia_api_execution import NvidiaAPIExecutionProvider
 
 
 class ComputeCoordinator:
@@ -58,6 +59,7 @@ class ComputeCoordinator:
         self.execution_fabric = ProductionExecutionFabric()
         self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path), clock=clock)
         self.zerogpu_execution: ZeroGPUExecutionProvider | None = None
+        self.nvidia_api_execution: NvidiaAPIExecutionProvider | None = None
         self.compute_execution = ComputeExecutionRegistry()
         self._lock = threading.RLock()
         self._initialize_tasks()
@@ -210,6 +212,19 @@ class ComputeCoordinator:
                 data,
                 required_capabilities=required_capabilities or {"api_gpu_execution": True, "cuda_execution": True},
             )
+
+    def register_nvidia_api_execution(self, provider: NvidiaAPIExecutionProvider) -> None:
+        with self._lock:
+            if self.nvidia_api_execution is not None:
+                raise ValueError("NVIDIA API execution provider already registered")
+            self.compute_execution.register(provider)
+            self.nvidia_api_execution = provider
+
+    def nvidia_api_status(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.nvidia_api_execution is None:
+                return {"enabled": False, "provider_id": "nvidia-api"}
+            return {"enabled": True, **dict(self.nvidia_api_execution.health())}
 
 
     def refresh_compute_fabric(self) -> Dict[str, Any]:
@@ -3757,6 +3772,8 @@ def coordinator_from_environment() -> ComputeCoordinator:
         coordinator.register_free_compute_provider(KaggleFreeComputeProvider.from_environment())
     if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
+    if os.environ.get("THORIO_NVIDIA_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_nvidia_api_execution(NvidiaAPIExecutionProvider.from_environment())
     if os.environ.get("THORIO_LIGHTNING_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         from .lightning_free_compute import LightningFreeComputeProvider
         coordinator.register_free_compute_provider(LightningFreeComputeProvider.from_environment())
