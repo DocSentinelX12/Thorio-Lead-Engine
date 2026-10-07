@@ -339,7 +339,7 @@ def test_acquire_free_waits_for_running_provider_status():
             }]
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if command[1:3] == ["kernels", "list"]:
-            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\nexample-user/thorio-free-gpu-worker,Thorio,test-user,2026-10-07T00:00:00Z,0\n", "")
         if command[1:3] == ["kernels", "status"]:
             status_calls += 1
             if status_calls <= 2:
@@ -393,9 +393,9 @@ def test_acquire_free_fails_when_provider_never_reaches_running():
             }]
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if command[1:3] == ["kernels", "list"]:
-            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\nexample-user/thorio-free-gpu-worker,Thorio,test-user,2026-10-07T00:00:00Z,0\n", "")
         if command[1:3] == ["kernels", "status"]:
-            if not commands or sum(command[1:3] == ["kernels", "status"] for command in commands) == 1:
+            if sum(command[1:3] == ["kernels", "status"] for command in commands) == 1:
                 return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
             return subprocess.CompletedProcess(command, 0, "Status: Queued", "")
         if command[1:3] == ["kernels", "push"]:
@@ -430,6 +430,7 @@ def test_acquire_free_retries_transient_kaggle_batch_session_limit():
     push_calls = 0
 
     status_calls = 0
+    now = [1_700_000_000.0]
     def runner(command, *, timeout, cwd=None):
         nonlocal push_calls, status_calls
         if command[1:3] == ["quota", "--format"]:
@@ -470,8 +471,8 @@ def test_acquire_free_retries_transient_kaggle_batch_session_limit():
             acquisition_ready_poll_interval_seconds=0.01,
         ),
         runner=runner,
-        clock=lambda: 1_700_000_000.0,
-        sleeper=lambda seconds: None,
+        clock=lambda: now[0],
+        sleeper=lambda seconds: now.__setitem__(0, now[0] + seconds),
     )
     acquired = provider.acquire_free(provider.discover_free()[0])
 
