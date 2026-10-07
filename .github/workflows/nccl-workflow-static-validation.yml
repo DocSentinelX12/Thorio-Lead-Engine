@@ -22,9 +22,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://github.com/rhysd/actionlint/releases/latest/download/actionlint_linux_x86_64.tar.gz -o /tmp/actionlint.tar.gz
-          tar -xzf /tmp/actionlint.tar.gz -C /tmp
-          install -m 0755 /tmp/actionlint/actionlint /usr/local/bin/actionlint
+          mkdir -p /tmp/actionlint
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.12 /tmp/actionlint
 
       - name: Validate NCCL workflow
         shell: bash
