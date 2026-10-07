@@ -455,3 +455,11 @@ def test_acquire_free_rejects_provider_push_without_success_marker():
         provider.acquire_free(offer)
 
     assert any(command[1:3] == ["kernels", "delete"] for command in commands)
+
+
+def test_embedded_runner_bootstrap_tracks_current_actions_runner_release():
+    from pathlib import Path
+
+    script = (Path(__file__).parents[1] / "infra" / "free-compute" / "register-ephemeral-gpu-runner.sh").read_text(encoding="utf-8")
+    assert 'RUNNER_VERSION="${RUNNER_VERSION:-latest}"' in script
+    assert 'GITHUB_API_URL}/repos/actions/runner/releases/latest' in script
