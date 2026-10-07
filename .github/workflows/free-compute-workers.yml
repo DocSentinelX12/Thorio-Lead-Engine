@@ -135,4 +135,4 @@ jobs:
 
       - name: Run bounded worker
         run: |
-          timeout --signal=TERM --kill-after=20s 8m30s python -m lead_engine.compute_worker
+          timeout --signal=TERM --kill-after=20s 510s python -m lead_engine.compute_worker
