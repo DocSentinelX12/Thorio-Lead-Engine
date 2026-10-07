@@ -36,6 +36,7 @@ from .execution_fabric_runtime import ProductionExecutionFabric
 from .execution_fabric_contract import ExecutionMode
 from .execution_work_units import build_gpu_workload_payload, build_independent_work_units
 from .zerogpu_execution import ZeroGPUExecutionProvider
+from .openhydra_execution import OpenHydraExecutionProvider
 from .nvidia_api_execution import NvidiaAPIExecutionProvider
 
 
@@ -60,6 +61,7 @@ class ComputeCoordinator:
         self.free_compute_acquisition = FreeComputeAcquisitionManager(FreeComputeAcquisitionStore(db_path), clock=clock)
         self.zerogpu_execution: ZeroGPUExecutionProvider | None = None
         self.nvidia_api_execution: NvidiaAPIExecutionProvider | None = None
+        self.openhydra_execution: OpenHydraExecutionProvider | None = None
         self.compute_execution = ComputeExecutionRegistry()
         self._lock = threading.RLock()
         self._initialize_tasks()
@@ -219,6 +221,19 @@ class ComputeCoordinator:
                 raise ValueError("NVIDIA API execution provider already registered")
             self.compute_execution.register(provider)
             self.nvidia_api_execution = provider
+
+    def register_openhydra_execution(self, provider: OpenHydraExecutionProvider) -> None:
+        with self._lock:
+            if self.openhydra_execution is not None:
+                raise ValueError("OpenHydra execution provider already registered")
+            self.compute_execution.register(provider)
+            self.openhydra_execution = provider
+
+    def openhydra_status(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.openhydra_execution is None:
+                return {"enabled": False, "provider_id": "openhydra"}
+            return {"enabled": True, **dict(self.openhydra_execution.health())}
 
     def nvidia_api_status(self) -> Dict[str, Any]:
         with self._lock:
@@ -3770,6 +3785,8 @@ def coordinator_from_environment() -> ComputeCoordinator:
     if os.environ.get("THORIO_KAGGLE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         from .kaggle_free_compute import KaggleFreeComputeProvider
         coordinator.register_free_compute_provider(KaggleFreeComputeProvider.from_environment())
+    if os.environ.get("THORIO_OPENHYDRA_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        coordinator.register_openhydra_execution(OpenHydraExecutionProvider.from_environment())
     if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
         coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
     if os.environ.get("THORIO_NVIDIA_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
