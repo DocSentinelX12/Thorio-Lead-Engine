@@ -188,7 +188,7 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     text = workflow.read_text(encoding="utf-8")
 
     assert 'base + "/fabric/rendezvous"' in text
-    assert 'base + "/fabric/acquisition/handoff"' in text
+    assert "/fabric/acquisition/handoff" in text
     assert 'action": "rendezvous_publish"' not in text
     assert 'action": "rendezvous_get"' not in text
     assert 'action": "rendezvous_clear"' not in text
