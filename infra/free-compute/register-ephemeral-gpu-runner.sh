@@ -6,7 +6,7 @@ set -euo pipefail
 
 RUNNER_ROOT="${RUNNER_ROOT:-/opt/actions-runner}"
 RUNNER_LABELS="${RUNNER_LABELS:-gpu,cuda}"
-RUNNER_VERSION="${RUNNER_VERSION:-2.337.0}"
+RUNNER_VERSION="${RUNNER_VERSION:-latest}"
 GITHUB_API_URL="${GITHUB_API_URL:-https://api.github.com}"
 GITHUB_API_VERSION="${GITHUB_API_VERSION:-2026-03-10}"
 RUNNER_GROUP_ID="${GITHUB_RUNNER_GROUP_ID:-1}"
@@ -70,10 +70,15 @@ if [ -n "${RUNNER_DOWNLOAD_URL:-}" ] && [ -n "${RUNNER_TARBALL_NAME:-}" ]; then
 elif [ -n "${RUNNER_VERSION:-}" ]; then
   RELEASE_JSON_FILE="$(mktemp)"
   trap 'rm -f "${RELEASE_JSON_FILE}"' EXIT
+  if [ "${RUNNER_VERSION}" = "latest" ]; then
+    RELEASE_URL="${GITHUB_API_URL}/repos/actions/runner/releases/latest"
+  else
+    RELEASE_URL="${GITHUB_API_URL}/repos/actions/runner/releases/tags/v${RUNNER_VERSION}"
+  fi
   curl --fail --silent --show-error --location \
     -H 'Accept: application/vnd.github+json' \
     -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
-    "${GITHUB_API_URL}/repos/actions/runner/releases/tags/v${RUNNER_VERSION}" \
+    "${RELEASE_URL}" \
     --output "${RELEASE_JSON_FILE}"
   RUNNER_ASSET_METADATA="$(python3 - "${RELEASE_JSON_FILE}" "${ASSET_ARCH}" <<'PY'
 import json
