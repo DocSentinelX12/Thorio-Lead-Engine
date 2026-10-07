@@ -82,6 +82,15 @@ class ComputeWorkerClient:
         return result
 
     def heartbeat(self, current_load: int = 0) -> Dict[str, Any]: return self.request("/workers/heartbeat", {"worker_id": self.worker_id, "current_load": current_load})
+    def gpu_api_execute(self, data: list[Any], required_capabilities: Mapping[str, bool] | None = None) -> Dict[str, Any]:
+        if not isinstance(data, list):
+            raise ComputeWorkerError("GPU API execution data must be a list")
+        body: Dict[str, Any] = {"data": data}
+        if required_capabilities is not None:
+            if not isinstance(required_capabilities, Mapping) or not all(isinstance(key, str) and isinstance(value, bool) for key, value in required_capabilities.items()):
+                raise ComputeWorkerError("required_capabilities must be a mapping of strings to booleans")
+            body["required_capabilities"] = dict(required_capabilities)
+        return self.request("/fabric/gpu/execute", body)
     def fabric_assignments(self) -> list[Dict[str, Any]]: return list(self.request("/fabric/assignments", {"worker_id": self.worker_id}).get("assignments", []))
     def fleet_observability(self) -> Dict[str, Any]: return self.request("/fabric/fleet")
     def free_compute_status(self) -> Dict[str, Any]: return self.request("/fabric/acquisition/status")
@@ -138,9 +147,20 @@ def execute_checkpointed_lead_prepare(client: ComputeWorkerClient, task_id: str,
     return {"kind":"lead_prepare","leads":ordered,"count":len(ordered)}
 
 
-def execute_compute_task(payload: Mapping[str, Any]) -> Dict[str, Any]:
+def execute_compute_task(payload: Mapping[str, Any], client: ComputeWorkerClient | None = None) -> Dict[str, Any]:
     if not isinstance(payload, Mapping): raise ComputeWorkerError("task payload must be an object")
     kind=str(payload.get("kind") or "").strip()
+    if kind == "gpu_api":
+        if client is None:
+            raise ComputeWorkerError("gpu_api execution requires a coordinator client")
+        data = payload.get("data")
+        if not isinstance(data, list):
+            raise ComputeWorkerError("gpu_api requires a data list")
+        required = payload.get("required_capabilities")
+        if required is not None and (not isinstance(required, Mapping) or not all(isinstance(key, str) and isinstance(value, bool) for key, value in required.items())):
+            raise ComputeWorkerError("gpu_api required_capabilities must be a mapping of strings to booleans")
+        response = client.gpu_api_execute(data, required_capabilities=required)
+        return {"kind": kind, **response}
     if kind == "lead_prepare":
         leads=payload.get("leads")
         if not isinstance(leads,list): raise ComputeWorkerError("lead_prepare requires a leads list")
@@ -574,7 +594,7 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
             if kind == "gpu_workload":
                 result=execute_gpu_workload(client,task,heartbeat_seconds=heartbeat_seconds)
             else:
-                result=execute_checkpointed_lead_prepare(client,task["task_id"],task["lease_token"],payload) if kind=="lead_prepare" else execute_compute_task(payload)
+                result=execute_checkpointed_lead_prepare(client,task["task_id"],task["lease_token"],payload) if kind=="lead_prepare" else execute_compute_task(payload, client)
             client.complete(task["task_id"],task["lease_token"],result)
         except Exception as error:
             try: client.release(task["task_id"],task["lease_token"],str(error))
