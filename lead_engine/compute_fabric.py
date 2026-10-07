@@ -37,6 +37,9 @@ class ProviderCapabilities:
     explicit_release: bool = False
     physical_identity_attestation: bool = False
     api_gpu_execution: bool = False
+    community_inference: bool = False
+    openai_compatible_api: bool = False
+    peer_network: bool = False
 
     def __post_init__(self) -> None:
         for field_name in self.__dataclass_fields__:
