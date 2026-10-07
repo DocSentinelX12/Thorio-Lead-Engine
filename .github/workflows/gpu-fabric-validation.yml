@@ -151,4 +151,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          /tmp/actionlint .github/workflows/physical-multi-node-nccl-proof.yml
+          /tmp/actionlint/actionlint .github/workflows/physical-multi-node-nccl-proof.yml
