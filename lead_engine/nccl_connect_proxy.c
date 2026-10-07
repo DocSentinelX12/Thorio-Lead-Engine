@@ -34,7 +34,7 @@ static int is_private_v4(uint32_t host_order) {
 static int connect_peer(int fd, const struct sockaddr_in *original) {
     const char *peer_host = getenv("THORIO_PEER_TUNNEL_HOST");
     const char *peer_port = getenv("THORIO_PEER_TUNNEL_PORT");
-    const char *relay_token = getenv("THORIO_RELAY_TOKEN");
+    const char *relay_token = getenv("THORIO_PEER_RELAY_TOKEN");
     if (!peer_host || !peer_port || !relay_token || !*peer_host || !*peer_port || !*relay_token) {
         errno = ENETUNREACH;
         return -1;
