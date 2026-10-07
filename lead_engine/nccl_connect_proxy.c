@@ -34,7 +34,8 @@ static int is_private_v4(uint32_t host_order) {
 static int connect_peer(int fd, const struct sockaddr_in *original) {
     const char *peer_host = getenv("THORIO_PEER_TUNNEL_HOST");
     const char *peer_port = getenv("THORIO_PEER_TUNNEL_PORT");
-    if (!peer_host || !peer_port || !*peer_host || !*peer_port) {
+    const char *relay_token = getenv("THORIO_RELAY_TOKEN");
+    if (!peer_host || !peer_port || !relay_token || !*peer_host || !*peer_port || !*relay_token) {
         errno = ENETUNREACH;
         return -1;
     }
@@ -55,10 +56,12 @@ static int connect_peer(int fd, const struct sockaddr_in *original) {
 
     int rc = real_connect_fn(fd, result->ai_addr, (socklen_t)result->ai_addrlen);
     if (rc == 0) {
-        unsigned char header[13];
+        unsigned char header[45];
+        memset(header, 0, sizeof(header));
         memcpy(header, "THORIO1", 7);
-        memcpy(header + 7, &original->sin_addr.s_addr, 4);
-        memcpy(header + 11, &original->sin_port, 2);
+        strncpy((char *)header + 7, relay_token, 32);
+        memcpy(header + 39, &original->sin_addr.s_addr, 4);
+        memcpy(header + 43, &original->sin_port, 2);
         size_t sent = 0;
         while (sent < sizeof(header)) {
             ssize_t n = send(fd, header + sent, sizeof(header) - sent, MSG_NOSIGNAL);
