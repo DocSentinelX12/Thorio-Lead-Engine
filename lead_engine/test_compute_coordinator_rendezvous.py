@@ -200,3 +200,5 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert re.search(action_pattern.format(action="rendezvous_clear"), text)
     assert '"User-Agent": "Mozilla/5.0' in text
     assert '"User-Agent: Mozilla/5.0' in text
+    assert "for attempt in range(1, 4):" in text
+    assert "if exc.code not in {502, 503, 504} or attempt == 3:" in text
