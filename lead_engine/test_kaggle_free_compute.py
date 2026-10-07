@@ -394,9 +394,9 @@ def test_acquire_free_fails_when_provider_never_reaches_running():
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if command[1:3] == ["kernels", "list"]:
             return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
-        if command[1:3] == ["kernels", "list"]:
-            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
         if command[1:3] == ["kernels", "status"]:
+            if not commands or sum(command[1:3] == ["kernels", "status"] for command in commands) == 1:
+                return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
             return subprocess.CompletedProcess(command, 0, "Status: Queued", "")
         if command[1:3] == ["kernels", "push"]:
             return subprocess.CompletedProcess(command, 0, "Kernel version 1 successfully pushed.", "")
@@ -429,8 +429,9 @@ def test_acquire_free_fails_when_provider_never_reaches_running():
 def test_acquire_free_retries_transient_kaggle_batch_session_limit():
     push_calls = 0
 
+    status_calls = 0
     def runner(command, *, timeout, cwd=None):
-        nonlocal push_calls
+        nonlocal push_calls, status_calls
         if command[1:3] == ["quota", "--format"]:
             payload = [{
                 "resource": "GPU",
@@ -443,7 +444,10 @@ def test_acquire_free_retries_transient_kaggle_batch_session_limit():
         if command[1:3] == ["kernels", "list"]:
             return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
         if command[1:3] == ["kernels", "status"]:
-            return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
+            status_calls += 1
+            if status_calls == 1:
+                return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
+            return subprocess.CompletedProcess(command, 0, "Status: Running", "")
         if command[1:3] == ["kernels", "push"]:
             push_calls += 1
             if push_calls == 1:
@@ -472,7 +476,8 @@ def test_acquire_free_retries_transient_kaggle_batch_session_limit():
     acquired = provider.acquire_free(provider.discover_free()[0])
 
     assert push_calls == 2
-    assert acquired.enrollment["provider_run_status"] == "submitted"
+    assert acquired.enrollment["provider_run_status"] == "running"
+    assert status_calls == 2
 
 
 def test_acquire_free_rejects_provider_push_without_success_marker():
