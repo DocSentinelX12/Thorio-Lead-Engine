@@ -566,6 +566,7 @@ jobs:
                   "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
                   "Content-Type": "application/json",
                   "Accept": "application/json",
+                  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
               },
           )
           with urllib.request.urlopen(request, timeout=20) as response:
@@ -584,7 +585,7 @@ jobs:
           test -n "${THORIO_COMPUTE_AUTH_TOKEN}"
           deadline=$((SECONDS + 120))
           while [ "${SECONDS}" -lt "${deadline}" ]; do
-            response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -d "{\"action\":\"rendezvous_get\",\"session_id\":\"${THORIO_NCCL_RENDEZVOUS_SESSION}\"}" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
+            response="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" -d "{\"action\":\"rendezvous_get\",\"session_id\":\"${THORIO_NCCL_RENDEZVOUS_SESSION}\"}" "${THORIO_COMPUTE_COORDINATOR_URL%/}/fabric/acquisition/handoff" || true)"
             if [ -n "${response}" ] && python - "${response}" <<'PY'
           import json, os, socket, sys, time
           payload=json.loads(sys.argv[1])
