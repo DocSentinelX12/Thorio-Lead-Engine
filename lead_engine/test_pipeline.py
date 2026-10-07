@@ -55,6 +55,34 @@ def test_pipeline_routes_and_persists_lead(tmp_path):
     mock_sync.assert_called_once()
 
 
+def test_pipeline_preserves_signal_strength_extra_field(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db)
+
+    with patch("lead_engine.pipeline.sync_one") as mock_sync:
+        mock_sync.return_value = {
+            "status": "synced",
+            "lead": {},
+            "airtable_record": {"id": "rec_signal_strength"},
+            "error": None,
+        }
+
+        result = pipeline.process(
+            source="test",
+            source_id="signal-strength-001",
+            url="https://example.com/posts/signal-strength-001",
+            company="Acme",
+            signal="raised Series A and is looking for a development partner",
+            evidence="Acme raised Series A and is looking for a development partner.",
+            signal_type="commercial_intent",
+            signal_strength="compound",
+        )
+
+    assert result["status"] == "accepted"
+    assert result["lead"]["signal_strength"] == "compound"
+    assert result["lead"]["signal_type"] == "commercial_intent"
+
+
 def test_pipeline_does_not_lose_lead_when_sync_fails(tmp_path):
     db = LeadDB(
         data_dir=str(tmp_path)
