@@ -181,3 +181,14 @@ def test_fabric_rendezvous_rejects_invalid_endpoint(tmp_path: Path):
         assert "port" in str(exc)
     else:
         raise AssertionError("invalid rendezvous port must be rejected")
+
+
+def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
+    workflow = Path(__file__).parents[1] / ".github" / "workflows" / "physical-multi-node-nccl-proof.yml"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert 'base + "/fabric/rendezvous"' in text
+    assert 'base + "/fabric/acquisition/handoff"' in text
+    assert 'action": "rendezvous_publish"' not in text
+    assert 'action": "rendezvous_get"' not in text
+    assert 'action": "rendezvous_clear"' not in text
