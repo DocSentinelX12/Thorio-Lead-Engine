@@ -140,6 +140,73 @@ jobs:
               )
           PY
 
+      - name: Clear stale NCCL JIT runner registrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
+          owner, repo = repository.split("/", 1)
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2026-03-10",
+          }
+          stale = {}
+          page = 1
+          while True:
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{owner}/{repo}/actions/runners?per_page=100&page={page}",
+                  headers=headers,
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      payload = json.loads(response.read().decode("utf-8"))
+              except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                  raise SystemExit(f"Could not inspect stale NCCL JIT runner registrations: {exc}") from exc
+              runners = payload.get("runners", [])
+              for runner in runners:
+                  if isinstance(runner, dict):
+                      name = str(runner.get("name") or "")
+                      runner_id = runner.get("id")
+                      if name.startswith("thorio-free-gpu-nccl-") and isinstance(runner_id, int):
+                          stale[name] = runner_id
+              if len(runners) < 100:
+                  break
+              page += 1
+
+          failures = []
+          for name, runner_id in sorted(stale.items()):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{runner_id}",
+                  headers=headers,
+                  method="DELETE",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      if response.status not in (200, 204):
+                          failures.append(f"{name}: unexpected HTTP {response.status}")
+                      else:
+                          print(f"STALE_NCCL_JIT_RUNNER_REMOVED {name}", flush=True)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      print(f"STALE_NCCL_JIT_RUNNER_ALREADY_ABSENT {name}", flush=True)
+                  else:
+                      failures.append(f"{name}: HTTP {exc.code} {exc.reason}")
+              except (urllib.error.URLError, TimeoutError) as exc:
+                  failures.append(f"{name}: {exc}")
+          if failures:
+              raise SystemExit("Stale NCCL JIT runner cleanup failed: " + "; ".join(failures))
+          if not stale:
+              print("No stale NCCL JIT runner registrations found.", flush=True)
+          PY
+
       - name: Acquire two independent Kaggle GPU workers
         id: acquire
         run: |
