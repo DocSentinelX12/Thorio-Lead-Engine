@@ -255,39 +255,49 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         import csv
         import io
 
-        try:
-            output = self._run(
-                [
-                    "kernels",
-                    "list",
-                    "--mine",
-                    "--search",
-                    self.config.kernel_slug,
-                    "--page-size",
-                    "100",
-                    "--csv",
-                ]
-            )
-        except KaggleFreeComputeError as exc:
-            raise KaggleFreeComputeError(
-                "Cannot safely classify Kaggle status permission denial because "
-                f"owner-scoped kernel listing failed: {exc}"
-            ) from exc
+        # Kaggle's --search filter can return an empty body without a CSV
+        # header when a newly pushed slug is not yet indexed. Search the
+        # Thorio namespace, as the cleanup workflow does, then compare exact
+        # owner-qualified refs. Never infer absence from a headerless response.
+        page = 1
+        while True:
+            try:
+                output = self._run(
+                    [
+                        "kernels",
+                        "list",
+                        "--mine",
+                        "--search",
+                        "thorio-",
+                        "--page",
+                        str(page),
+                        "--page-size",
+                        "100",
+                        "--csv",
+                    ]
+                )
+            except KaggleFreeComputeError as exc:
+                raise KaggleFreeComputeError(
+                    "Cannot safely classify Kaggle status permission denial because "
+                    f"owner-scoped kernel listing failed: {exc}"
+                ) from exc
 
-        lines = [line for line in output.splitlines() if line.strip()]
-        header = next(
-            (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
-            None,
-        )
-        if header is None:
-            raise KaggleFreeComputeError(
-                "Cannot safely classify Kaggle status permission denial because "
-                "kernel listing returned no CSV header"
+            lines = [line for line in output.splitlines() if line.strip()]
+            header = next(
+                (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
+                None,
             )
-        return any(
-            str(row.get("ref") or "").strip() == kernel_ref
-            for row in csv.DictReader(io.StringIO("\n".join(lines[header:])))
-        )
+            if header is None:
+                raise KaggleFreeComputeError(
+                    "Cannot safely classify Kaggle status permission denial because "
+                    f"kernel listing page {page} returned no CSV header"
+                )
+            rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
+            if any(str(row.get("ref") or "").strip() == kernel_ref for row in rows):
+                return True
+            if len(rows) < 100:
+                return False
+            page += 1
 
     def _kernel_status(self, kernel_ref: str) -> str:
         try:
