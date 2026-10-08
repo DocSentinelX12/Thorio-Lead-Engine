@@ -129,6 +129,7 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
           import urllib.error
           import urllib.request
 
@@ -158,7 +159,7 @@ jobs:
                   if isinstance(runner, dict):
                       name = str(runner.get("name") or "")
                       runner_id = runner.get("id")
-                      if name.startswith(prefixes) and isinstance(runner_id, int):
+                      if (name.startswith(prefixes) or re.fullmatch(r"thorio-free-gpu-[0-9a-f]{12}", name)) and isinstance(runner_id, int):
                           stale[name] = runner_id
               if len(runners) < 100:
                   break
@@ -309,6 +310,7 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
           import urllib.error
           import urllib.request
 
@@ -337,7 +339,10 @@ jobs:
                   if isinstance(runner, dict):
                       name = str(runner.get("name") or "")
                       runner_id = runner.get("id")
-                      if name.startswith("thorio-free-gpu-worker-") and isinstance(runner_id, int):
+                      if (
+                          name.startswith(("thorio-free-gpu-worker-", "thorio-free-gpu-nccl-"))
+                          or re.fullmatch(r"thorio-free-gpu-[0-9a-f]{12}", name)
+                      ) and isinstance(runner_id, int):
                           stale[name] = runner_id
               if len(runners) < 100:
                   break
