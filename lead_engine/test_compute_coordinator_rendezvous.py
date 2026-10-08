@@ -210,6 +210,8 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME" in text
     assert "runner_names.update(" in text
     assert "Clear stale NCCL JIT runner registrations" in text
+    assert "kaggle_jit_secret_configured:" in text
+    assert "Require Kaggle JIT secret confirmation before GPU acquisition" in text
     assert '"--search", "thorio-"' in text
 
 
@@ -234,9 +236,11 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
 
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME: thorio-free-gpu-worker-${{ github.run_id }}" in workflow
     assert "cleanup_only:" in workflow
+    assert "kaggle_jit_secret_configured:" in workflow
+    assert "Require Kaggle JIT secret confirmation before GPU acquisition" in workflow
     assert "Remove stale Thorio Kaggle kernels and JIT runner registrations only" in workflow
     assert "No GPU has been acquired." in workflow
-    assert 'if: ${{ !inputs.cleanup_only }}' in workflow
+    assert 'if: ${{ !inputs.cleanup_only && inputs.kaggle_jit_secret_configured }}' in workflow
     assert 'expected_name="thorio-free-gpu-worker-${GITHUB_RUN_ID}"' in workflow
     assert "Remove any remaining JIT runner registration" in workflow
     assert "EXTERNAL_GPU_JIT_RUNNER_REMOVED" in workflow
@@ -254,5 +258,7 @@ def test_capacity_broker_delegates_to_the_authoritative_gpu_lifecycle():
     assert "workflow_dispatch:" in broker
     assert "push:" not in broker
     assert "uses: ./.github/workflows/free-external-gpu-runner.yml" in broker
+    assert "with:" in broker
+    assert "kaggle_jit_secret_configured: ${{ inputs.kaggle_jit_secret_configured }}" in broker
     assert "Acquire, enroll, physically verify, and release a real free GPU" in broker
     assert "python -m lead_engine.gpu_capacity_broker | tee" not in broker
