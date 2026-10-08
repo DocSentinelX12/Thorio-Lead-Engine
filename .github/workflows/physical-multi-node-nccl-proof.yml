@@ -690,7 +690,7 @@ jobs:
           test -n "${THORIO_PEER_RELAY_TOKEN}"
           echo "NCCL transparent peer TCP proxy enabled through authenticated external relay."
           export NCCL_COMM_ID="${MASTER_ADDR}:${THORIO_NCCL_BOOTSTRAP_PORT}"
-          echo "NCCL fixed bootstrap root: "${NCCL_COMM_ID}"
+          echo "NCCL fixed bootstrap root: ${NCCL_COMM_ID}"
           LD_PRELOAD=/tmp/libthorio-connect-proxy.so python -m lead_engine.nccl_all_reduce_probe 2>&1 | tee /tmp/thorio-nccl-rank.log
           grep -F "THORIO_NCCL_PROBE_OK " /tmp/thorio-nccl-rank.log
 
