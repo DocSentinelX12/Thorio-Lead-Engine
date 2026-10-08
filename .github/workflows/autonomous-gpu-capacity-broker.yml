@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: autonomous-gpu-capacity-broker-${{ github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate-broker:
