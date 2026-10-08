@@ -108,6 +108,10 @@ def test_discover_free_treats_kaggle_private_kernel_permission_error_as_absent()
     assert len(offers) == 1
     assert offers[0].capacity_evidence["kernel_status"] == "not_found"
     assert any(command[1:3] == ["kernels", "status"] for command in calls)
+    listing_commands = [command for command in calls if command[1:3] == ["kernels", "list"]]
+    assert listing_commands
+    assert listing_commands[0][listing_commands[0].index("--search") + 1] == "thorio-"
+    assert "--page" in listing_commands[0]
 
 
 def test_discover_free_fails_closed_when_permission_denied_kernel_is_listed():
