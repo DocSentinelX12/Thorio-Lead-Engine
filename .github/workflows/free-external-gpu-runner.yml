@@ -401,6 +401,7 @@ jobs:
               raise SystemExit("Stale JIT runner cleanup failed: " + "; ".join(failures))
           if not stale:
               print("No stale Thorio free GPU JIT runner registrations found.", flush=True)
+          PY
 
       - name: Acquire free external GPU and start JIT runner
         id: acquire
