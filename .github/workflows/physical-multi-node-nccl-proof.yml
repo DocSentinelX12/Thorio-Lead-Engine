@@ -18,7 +18,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: physical-multi-node-nccl-proof
+  group: thorio-external-gpu-fabric
   cancel-in-progress: false
 
 env:
