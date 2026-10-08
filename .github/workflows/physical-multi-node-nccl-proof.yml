@@ -462,6 +462,83 @@ jobs:
               raise SystemExit("Partial GPU acquisition cleanup failed: " + "; ".join(cleanup_errors))
           PY
 
+      - name: Remove partial JIT runner registrations after provisioning failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          path = Path("/tmp/nccl-acquisitions.json")
+          if not path.is_file():
+              print("No acquisition records exist to identify partial JIT runner registrations.")
+              raise SystemExit(0)
+          records = json.loads(path.read_text(encoding="utf-8"))
+          names = {
+              str(item.get("runner_name") or "").strip()
+              for item in records
+              if isinstance(item, dict) and str(item.get("runner_name") or "").strip()
+          }
+          if not names:
+              print("No named JIT runner registrations were created by the partial acquisition.")
+              raise SystemExit(0)
+
+          repository = os.environ["GITHUB_REPOSITORY"]
+          owner, repo = repository.split("/", 1)
+          token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2026-03-10",
+          }
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{owner}/{repo}/actions/runners?per_page=100",
+              headers=headers,
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  payload = json.loads(response.read().decode("utf-8"))
+          except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+              raise SystemExit(f"Could not inspect partial JIT runner registrations: {exc}") from exc
+
+          failures = []
+          runners = {
+              str(item.get("name") or ""): item.get("id")
+              for item in payload.get("runners", [])
+              if isinstance(item, dict) and str(item.get("name") or "") in names
+          }
+          for name in sorted(names):
+              runner_id = runners.get(name)
+              if not isinstance(runner_id, int):
+                  print(f"NCCL_PARTIAL_JIT_RUNNER_ALREADY_ABSENT {name}", flush=True)
+                  continue
+              delete_request = urllib.request.Request(
+                  f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{runner_id}",
+                  headers=headers,
+                  method="DELETE",
+              )
+              try:
+                  with urllib.request.urlopen(delete_request, timeout=20) as response:
+                      if response.status not in (200, 204):
+                          failures.append(f"{name}: unexpected HTTP {response.status}")
+                      else:
+                          print(f"NCCL_PARTIAL_JIT_RUNNER_REMOVED {name}", flush=True)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      print(f"NCCL_PARTIAL_JIT_RUNNER_ALREADY_ABSENT {name}", flush=True)
+                  else:
+                      failures.append(f"{name}: HTTP {exc.code} {exc.reason}")
+              except (urllib.error.URLError, TimeoutError) as exc:
+                  failures.append(f"{name}: {exc}")
+          if failures:
+              raise SystemExit("Partial JIT runner cleanup failed: " + "; ".join(failures))
+          PY
+
 
       - name: Persist acquisition identifiers
         uses: actions/upload-artifact@v4
@@ -1018,6 +1095,12 @@ jobs:
               raise SystemExit("Acquisition cleanup artifact must contain a JSON list.")
 
           failures = []
+          recorded_ranks = {
+              int(item["rank"])
+              for item in records
+              if isinstance(item, dict) and str(item.get("rank", "")).isdigit()
+          }
+          untracked_kernel_released = False
           for rank in (1, 0):
               kernel_ref = next(
                   (
@@ -1035,6 +1118,8 @@ jobs:
               )
               if result.returncode == 0:
                   print(f"NCCL_KAGGLE_WORKER_RELEASED rank={rank} ref={kernel_ref}", flush=True)
+                  if rank not in recorded_ranks:
+                      untracked_kernel_released = True
               else:
                   detail = (result.stderr or result.stdout or "").strip()
                   if "not found" in detail.lower() or "404" in detail:
@@ -1096,6 +1181,11 @@ jobs:
                   except (urllib.error.URLError, TimeoutError) as exc:
                       failures.append(f"JIT runner {runner_name}: {exc}")
 
+          if untracked_kernel_released:
+              failures.append(
+                  "a run-owned Kaggle worker existed without an acquisition record, so its JIT runner "
+                  "registration could not be tied to this run and safely removed"
+              )
           if failures:
               raise SystemExit("NCCL cleanup incomplete: " + "; ".join(failures))
           print("NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED", flush=True)
