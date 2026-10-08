@@ -228,6 +228,10 @@ def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_
     assert '"is_private": false' in workflow
     assert "physical-external-gpu-proof.yml" in controller
     assert "physical-external-gpu-proof-run.yml" not in controller
+    assert "autonomous-gpu-capacity-broker.yml" in controller
+    assert "kaggle_jit_secret_configured" in controller
+    assert '-f proof_ref="$TARGET_REF"' in controller
+    assert '-f cleanup_only="$CLEANUP_ONLY"' in controller
     assert not (root / ".github" / "workflows" / "physical-external-gpu-proof-manual.yml").exists()
 
 def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
