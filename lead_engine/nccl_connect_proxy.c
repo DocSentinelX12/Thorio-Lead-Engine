@@ -6,6 +6,7 @@
 #include <netdb.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -36,6 +37,8 @@ static int connect_peer(int fd, const struct sockaddr_in *original) {
     const char *peer_port = getenv("THORIO_PEER_TUNNEL_PORT");
     const char *relay_token = getenv("THORIO_PEER_RELAY_TOKEN");
     if (!peer_host || !peer_port || !relay_token || !*peer_host || !*peer_port || !*relay_token) {
+        fprintf(stderr, "THORIO_CONNECT_PROXY_MISSING_RELAY_CONFIG\\n");
+        fflush(stderr);
         errno = ENETUNREACH;
         return -1;
     }
@@ -45,7 +48,10 @@ static int connect_peer(int fd, const struct sockaddr_in *original) {
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     struct addrinfo *result = NULL;
-    if (getaddrinfo(peer_host, peer_port, &hints, &result) != 0 || !result) {
+    int gai_rc = getaddrinfo(peer_host, peer_port, &hints, &result);
+    if (gai_rc != 0 || !result) {
+        fprintf(stderr, "THORIO_CONNECT_PROXY_DNS_FAIL host=%s port=%s rc=%d\\n", peer_host, peer_port, gai_rc);
+        fflush(stderr);
         errno = EHOSTUNREACH;
         return -1;
     }
@@ -54,6 +60,11 @@ static int connect_peer(int fd, const struct sockaddr_in *original) {
     int was_nonblocking = flags >= 0 && (flags & O_NONBLOCK);
     if (was_nonblocking) fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 
+    char original_ip[INET_ADDRSTRLEN] = {0};
+    inet_ntop(AF_INET, &original->sin_addr, original_ip, sizeof(original_ip));
+    fprintf(stderr, "THORIO_CONNECT_PROXY_ATTEMPT fd=%d destination=%s:%u tunnel=%s:%s nonblocking=%d\\n",
+            fd, original_ip, (unsigned)ntohs(original->sin_port), peer_host, peer_port, was_nonblocking);
+    fflush(stderr);
     int rc = real_connect_fn(fd, result->ai_addr, (socklen_t)result->ai_addrlen);
     if (rc == 0) {
         unsigned char header[45];
@@ -74,12 +85,18 @@ static int connect_peer(int fd, const struct sockaddr_in *original) {
             }
             sent += (size_t)n;
         }
+        fprintf(stderr, "THORIO_CONNECT_PROXY_CONNECTED fd=%d destination=%s:%u tunnel=%s:%s\\n",
+                fd, original_ip, (unsigned)ntohs(original->sin_port), peer_host, peer_port);
+        fflush(stderr);
         freeaddrinfo(result);
         if (was_nonblocking) fcntl(fd, F_SETFL, flags);
         return 0;
     }
 
     int saved = errno;
+    fprintf(stderr, "THORIO_CONNECT_PROXY_CONNECT_FAIL fd=%d destination=%s:%u tunnel=%s:%s errno=%d\\n",
+            fd, original_ip, (unsigned)ntohs(original->sin_port), peer_host, peer_port, saved);
+    fflush(stderr);
     freeaddrinfo(result);
     if (was_nonblocking) fcntl(fd, F_SETFL, flags);
     errno = saved;
