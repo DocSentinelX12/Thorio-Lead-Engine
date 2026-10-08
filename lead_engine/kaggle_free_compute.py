@@ -19,7 +19,7 @@ import re
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -43,13 +43,8 @@ class KaggleFreeComputeConfig:
     accelerator: str = "NvidiaTeslaT4"
     repository_url: str = "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git"
     repository_ref: str = "main"
-    coordinator_secret_label: str = "THORIO_COMPUTE_AUTH_TOKEN"
-    coordinator_url_secret_label: str = "THORIO_COMPUTE_COORDINATOR_URL"
+    # Only this Kaggle secret label is embedded in public kernel source.
     github_runner_jit_token_secret_label: str = "THORIO_GITHUB_RUNNER_JIT_TOKEN"
-    # Control-plane credentials are never serialized into the public Kaggle kernel source.
-    coordinator_token: str = field(default="", repr=False, compare=False)
-    coordinator_url: str = field(default="", repr=False, compare=False)
-    github_runner_jit_token: str = field(default="", repr=False, compare=False)
     github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
     github_runner_name: str = ""
     github_runner_labels: str = "self-hosted,thorio-free-gpu,cuda"
@@ -77,8 +72,6 @@ class KaggleFreeComputeConfig:
             raise ValueError("repository_url must use HTTPS")
         if not self.repository_ref.strip():
             raise ValueError("repository_ref is required")
-        if not self.coordinator_secret_label.strip() or not self.coordinator_url_secret_label.strip():
-            raise ValueError("Kaggle coordinator secret labels are required")
         if not self.github_runner_jit_token_secret_label.strip():
             raise ValueError("GitHub runner JIT token secret label is required")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.github_repository):
@@ -149,14 +142,6 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                 repository_ref=os.environ.get(
                     "THORIO_KAGGLE_REPOSITORY_REF",
                     "main",
-                ).strip(),
-                coordinator_secret_label=os.environ.get(
-                    "THORIO_KAGGLE_COORDINATOR_TOKEN_SECRET",
-                    "THORIO_COMPUTE_AUTH_TOKEN",
-                ).strip(),
-                coordinator_url_secret_label=os.environ.get(
-                    "THORIO_KAGGLE_COORDINATOR_URL_SECRET",
-                    "THORIO_COMPUTE_COORDINATOR_URL",
                 ).strip(),
                 github_runner_jit_token_secret_label=os.environ.get(
                     "THORIO_KAGGLE_GITHUB_RUNNER_JIT_TOKEN_SECRET",
