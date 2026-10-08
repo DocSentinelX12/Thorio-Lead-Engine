@@ -658,20 +658,61 @@ jobs:
     steps:
       - name: Install Kaggle CLI
         run: python -m pip install --upgrade kaggle
-      - name: Delete the external Kaggle worker kernel
+      - name: Confirm the run-owned Kaggle kernel exists before deleting it
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import io
+          import os
+          import subprocess
+
+          target = os.environ["KERNEL_REF"].strip()
+          if not target or "/" not in target:
+              raise SystemExit("Run-owned Kaggle kernel reference is invalid; refusing cleanup.")
+          refs = set()
+          page = 1
+          while True:
+              result = subprocess.run(
+                  [
+                      "kaggle", "kernels", "list", "--mine",
+                      "--search", "thorio-", "--page", str(page),
+                      "--page-size", "100", "--csv",
+                  ],
+                  capture_output=True, text=True, check=False,
+              )
+              if result.returncode != 0:
+                  detail = (result.stderr or result.stdout or "").strip()
+                  raise SystemExit(f"Cannot verify run-owned Kaggle kernel before cleanup: {detail}")
+              lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+              header = next(
+                  (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
+                  None,
+              )
+              if header is None:
+                  raise SystemExit("Kaggle kernel inventory returned no CSV header; refusing to guess.")
+              rows = list(csv.DictReader(io.StringIO("\\n".join(lines[header:]))))
+              refs.update(str(row.get("ref") or "").strip() for row in rows if str(row.get("ref") or "").strip())
+              if len(rows) < 100:
+                  break
+              page += 1
+
+          if target not in refs:
+              print(f"EXTERNAL_GPU_CAPACITY_ALREADY_ABSENT {target}", flush=True)
+              raise SystemExit(0)
+          print(f"EXTERNAL_GPU_KERNEL_CONFIRMED_IN_OWNER_INVENTORY {target}", flush=True)
+          PY
+      - name: Delete the confirmed external Kaggle worker kernel
         run: |
           set -euo pipefail
           if output="$(kaggle kernels delete "${KERNEL_REF}" --yes 2>&1)"; then
-            printf '%s\n' "${output}"
+            printf '%s\\n' "${output}"
             echo "EXTERNAL_GPU_CAPACITY_RELEASED ${KERNEL_REF}"
           else
-            printf '%s\n' "${output}" >&2
-            if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
-              echo "EXTERNAL_GPU_CAPACITY_ALREADY_ABSENT ${KERNEL_REF}"
-            else
-              echo "EXTERNAL_GPU_CAPACITY_RELEASE_FAILED ${KERNEL_REF}" >&2
-              exit 1
-            fi
+            printf '%s\\n' "${output}" >&2
+            echo "EXTERNAL_GPU_CAPACITY_RELEASE_FAILED ${KERNEL_REF}" >&2
+            exit 1
           fi
       - name: Remove any remaining JIT runner registration
         if: always()
