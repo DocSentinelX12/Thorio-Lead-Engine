@@ -1266,7 +1266,7 @@ jobs:
                       failures.append("Kaggle worker inventory returned no CSV header; refusing to guess cleanup targets.")
                       inventory_ok = False
                       break
-                  rows = list(csv.DictReader(io.StringIO("\\n".join(lines[header:]))))
+                  rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
                   listed_refs.update(
                       str(row.get("ref") or "").strip()
                       for row in rows
