@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: free-external-gpu-runner
+  group: thorio-external-gpu-fabric
   cancel-in-progress: false
 
 jobs:
