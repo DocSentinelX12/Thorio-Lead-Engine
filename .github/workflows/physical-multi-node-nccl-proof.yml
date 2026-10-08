@@ -480,9 +480,15 @@ jobs:
           path = Path("/tmp/nccl-acquisitions.json")
           records = []
           if path.is_file():
-              records = json.loads(path.read_text(encoding="utf-8"))
+              try:
+                  records = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError) as exc:
+                  print(f"Acquisition records unreadable; using deterministic runner names: {exc}", flush=True)
           else:
               print("No acquisition records found; using deterministic run-owned JIT runner names.")
+          if not isinstance(records, list):
+              print("Acquisition records are not a list; using deterministic runner names.", flush=True)
+              records = []
           names = {
               str(item.get("runner_name") or "").strip()
               for item in records
@@ -1092,15 +1098,17 @@ jobs:
           token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
           records_path = pathlib.Path("/tmp/thorio-nccl-cleanup/nccl-acquisitions.json")
           records = []
+          artifact_error = ""
           if records_path.is_file():
               try:
                   records = json.loads(records_path.read_text(encoding="utf-8"))
               except (OSError, json.JSONDecodeError) as exc:
-                  raise SystemExit(f"Acquisition cleanup artifact is unreadable: {exc}") from exc
+                  artifact_error = f"Acquisition cleanup artifact is unreadable: {exc}"
           if not isinstance(records, list):
-              raise SystemExit("Acquisition cleanup artifact must contain a JSON list.")
+              artifact_error = artifact_error or "Acquisition cleanup artifact must contain a JSON list."
+              records = []
 
-          failures = []
+          failures = [artifact_error] if artifact_error else []
           for rank in (1, 0):
               kernel_ref = next(
                   (
