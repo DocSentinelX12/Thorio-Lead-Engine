@@ -50,6 +50,7 @@ class KaggleFreeComputeConfig:
     coordinator_url: str = ""
     github_runner_jit_token: str = ""
     github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
+    github_runner_name: str = ""
     github_runner_labels: str = "self-hosted,thorio-free-gpu,cuda"
     minimum_remaining_hours: float = 1.0
     maximum_runtime_hours: float = 6.0
@@ -81,6 +82,8 @@ class KaggleFreeComputeConfig:
             raise ValueError("GitHub runner JIT token secret label is required")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.github_repository):
             raise ValueError("github_repository must use owner/repository form")
+        if self.github_runner_name and not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", self.github_runner_name):
+            raise ValueError("github_runner_name must be a valid 1-64 character runner name")
         if not any(item.strip() for item in self.github_runner_labels.split(",")):
             raise ValueError("github_runner_labels must contain at least one label")
         if self.minimum_remaining_hours <= 0:
@@ -165,6 +168,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                     "THORIO_KAGGLE_GITHUB_REPOSITORY",
                     "DocSentinelX12/Thorio-Lead-Engine",
                 ).strip(),
+                github_runner_name=os.environ.get("THORIO_KAGGLE_GITHUB_RUNNER_NAME", "").strip(),
                 github_runner_labels=os.environ.get(
                     "THORIO_KAGGLE_GITHUB_RUNNER_LABELS",
                     "self-hosted,thorio-free-gpu,cuda",
@@ -406,6 +410,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         coordinator_url: str,
         github_runner_jit_token: str,
         github_repository: str,
+        github_runner_name: str,
         github_runner_labels: str,
         runner_bootstrap_script: str,
     ) -> str:
@@ -422,6 +427,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             "coordinator_url": coordinator_url,
             "github_runner_jit_token": github_runner_jit_token,
             "github_repository": github_repository,
+            "github_runner_name": github_runner_name,
             "github_runner_labels": github_runner_labels,
             "runner_bootstrap_script": runner_bootstrap_script,
         }
@@ -484,7 +490,7 @@ os.environ["THORIO_WORKER_ID"] = CONFIG["worker_id"]
 os.environ["THORIO_FREE_ONLY"] = "1"
 os.environ["PYTHONUNBUFFERED"] = "1"
 os.environ["GITHUB_REPOSITORY"] = CONFIG["github_repository"]
-os.environ["RUNNER_NAME"] = "thorio-free-gpu-" + CONFIG["acquisition_id"][:12]
+os.environ["RUNNER_NAME"] = CONFIG["github_runner_name"] or ("thorio-free-gpu-" + CONFIG["acquisition_id"][:12])
 os.environ["RUNNER_LABELS"] = CONFIG["github_runner_labels"]
 jit_token_file = ROOT / "github-runner-jit-token"
 jit_token_file.write_text(jit_token, encoding="utf-8")
@@ -611,6 +617,7 @@ run("bash", str(runner_script))
             coordinator_url=self.config.coordinator_url,
             github_runner_jit_token=self.config.github_runner_jit_token,
             github_repository=self.config.github_repository,
+            github_runner_name=self.config.github_runner_name,
             github_runner_labels=self.config.github_runner_labels,
             runner_bootstrap_script=self._runner_bootstrap_script(),
         )
