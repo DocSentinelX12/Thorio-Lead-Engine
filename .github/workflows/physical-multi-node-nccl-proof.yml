@@ -738,9 +738,25 @@ jobs:
           command -v gcc
           gcc -shared -fPIC -O2 -Wall -Wextra lead_engine/nccl_connect_proxy.c -o /tmp/libthorio-connect-proxy.so -ldl -pthread
 
-          local_token="$(printf '%s:%s:%s' "${GITHUB_RUN_ID}" "${THORIO_CHECKED_OUT_SHA}" "${RANK}" | sha256sum | cut -c1-32)"
+          test -n "${THORIO_COMPUTE_AUTH_TOKEN}"
           peer_rank="$((1 - RANK))"
-          peer_token="$(printf '%s:%s:%s' "${GITHUB_RUN_ID}" "${THORIO_CHECKED_OUT_SHA}" "${peer_rank}" | sha256sum | cut -c1-32)"
+          relay_tokens="$(python - <<'PY'
+          import hashlib
+          import hmac
+          import os
+
+          key = os.environ["THORIO_COMPUTE_AUTH_TOKEN"].encode("utf-8")
+          run_id = os.environ["GITHUB_RUN_ID"]
+          proof_sha = os.environ["THORIO_CHECKED_OUT_SHA"]
+          for rank in (os.environ["RANK"], str(1 - int(os.environ["RANK"]))):
+              message = f"thorio-nccl-relay:{run_id}:{proof_sha}:{rank}".encode("utf-8")
+              print(hmac.new(key, message, hashlib.sha256).hexdigest()[:32])
+          PY
+          )"
+          local_token="$(printf '%s\n' "${relay_tokens}" | sed -n '1p')"
+          peer_token="$(printf '%s\n' "${relay_tokens}" | sed -n '2p')"
+          test "${#local_token}" -eq 32
+          test "${#peer_token}" -eq 32
           export THORIO_RELAY_TOKEN="${local_token}"
           export THORIO_PEER_RELAY_TOKEN="${peer_token}"
           printf 'THORIO_RELAY_TOKEN=%s\n' "${local_token}" >> "${GITHUB_ENV}"
