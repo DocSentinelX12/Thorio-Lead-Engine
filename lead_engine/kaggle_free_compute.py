@@ -263,20 +263,58 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             "refresh_at": refresh_at,
         }
 
+    def _kernel_is_listed(self, kernel_ref: str) -> bool:
+        """Check Kaggle's owner-scoped kernel inventory before interpreting a 403."""
+        import csv
+        import io
+
+        try:
+            output = self._run(
+                [
+                    "kernels",
+                    "list",
+                    "--mine",
+                    "--search",
+                    self.config.kernel_slug,
+                    "--page-size",
+                    "100",
+                    "--csv",
+                ]
+            )
+        except KaggleFreeComputeError as exc:
+            raise KaggleFreeComputeError(
+                "Cannot safely classify Kaggle status permission denial because "
+                f"owner-scoped kernel listing failed: {exc}"
+            ) from exc
+
+        lines = [line for line in output.splitlines() if line.strip()]
+        header = next(
+            (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
+            None,
+        )
+        if header is None:
+            raise KaggleFreeComputeError(
+                "Cannot safely classify Kaggle status permission denial because "
+                "kernel listing returned no CSV header"
+            )
+        return any(
+            str(row.get("ref") or "").strip() == kernel_ref
+            for row in csv.DictReader(io.StringIO("\\n".join(lines[header:])))
+        )
+
     def _kernel_status(self, kernel_ref: str) -> str:
         try:
             output = self._run(["kernels", "status", kernel_ref])
         except KaggleFreeComputeError as exc:
             message = str(exc).lower()
-            if (
-                "not found" in message
-                or "404" in message
-                or "permission 'kernels.get' was denied" in message
-            ):
-                # Kaggle currently reports a not-yet-created private kernel as
-                # a permission error instead of HTTP 404. The configured
-                # username owns this worker namespace, so this exact response
-                # is treated as absence and acquisition may create the kernel.
+            if "not found" in message or "404" in message:
+                return "not_found"
+            if "permission 'kernels.get' was denied" in message:
+                if self._kernel_is_listed(kernel_ref):
+                    raise KaggleFreeComputeError(
+                        f"Kaggle denied status access for listed kernel {kernel_ref}; "
+                        "refusing to treat a permission error as absence"
+                    ) from exc
                 return "not_found"
             raise
         lowered = output.lower()
