@@ -19,7 +19,7 @@ import re
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -46,9 +46,10 @@ class KaggleFreeComputeConfig:
     coordinator_secret_label: str = "THORIO_COMPUTE_AUTH_TOKEN"
     coordinator_url_secret_label: str = "THORIO_COMPUTE_COORDINATOR_URL"
     github_runner_jit_token_secret_label: str = "THORIO_GITHUB_RUNNER_JIT_TOKEN"
-    coordinator_token: str = ""
-    coordinator_url: str = ""
-    github_runner_jit_token: str = ""
+    # Control-plane credentials are never serialized into the public Kaggle kernel source.
+    coordinator_token: str = field(default="", repr=False, compare=False)
+    coordinator_url: str = field(default="", repr=False, compare=False)
+    github_runner_jit_token: str = field(default="", repr=False, compare=False)
     github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
     github_runner_name: str = ""
     github_runner_labels: str = "self-hosted,thorio-free-gpu,cuda"
@@ -161,9 +162,6 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                     "THORIO_KAGGLE_GITHUB_RUNNER_JIT_TOKEN_SECRET",
                     "THORIO_GITHUB_RUNNER_JIT_TOKEN",
                 ).strip(),
-                coordinator_token=os.environ.get("THORIO_COMPUTE_AUTH_TOKEN", ""),
-                coordinator_url=os.environ.get("THORIO_COMPUTE_COORDINATOR_URL", ""),
-                github_runner_jit_token=os.environ.get("GITHUB_RUNNER_JIT_TOKEN", ""),
                 github_repository=os.environ.get(
                     "THORIO_KAGGLE_GITHUB_REPOSITORY",
                     "DocSentinelX12/Thorio-Lead-Engine",
@@ -406,9 +404,6 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         coordinator_token_secret: str,
         coordinator_url_secret: str,
         github_runner_jit_token_secret: str,
-        coordinator_token: str,
-        coordinator_url: str,
-        github_runner_jit_token: str,
         github_repository: str,
         github_runner_name: str,
         github_runner_labels: str,
@@ -423,9 +418,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             "coordinator_token_secret": coordinator_token_secret,
             "coordinator_url_secret": coordinator_url_secret,
             "github_runner_jit_token_secret": github_runner_jit_token_secret,
-            "coordinator_token": coordinator_token,
-            "coordinator_url": coordinator_url,
-            "github_runner_jit_token": github_runner_jit_token,
+            "coordinator_token": "",
+            "coordinator_url": "",
+            "github_runner_jit_token": "",
             "github_repository": github_repository,
             "github_runner_name": github_runner_name,
             "github_runner_labels": github_runner_labels,
@@ -613,9 +608,6 @@ run("bash", str(runner_script))
             coordinator_token_secret=self.config.coordinator_secret_label,
             coordinator_url_secret=self.config.coordinator_url_secret_label,
             github_runner_jit_token_secret=self.config.github_runner_jit_token_secret_label,
-            coordinator_token=self.config.coordinator_token,
-            coordinator_url=self.config.coordinator_url,
-            github_runner_jit_token=self.config.github_runner_jit_token,
             github_repository=self.config.github_repository,
             github_runner_name=self.config.github_runner_name,
             github_runner_labels=self.config.github_runner_labels,
