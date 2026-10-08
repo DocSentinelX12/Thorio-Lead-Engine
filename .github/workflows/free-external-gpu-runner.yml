@@ -75,10 +75,10 @@ jobs:
           import subprocess
 
           allowed_prefixes = (
-              "thorio-free-gpu-worker-",
-              "thorio-free-gpu-nccl-",
-              "thorio-physical-gpu-proof-",
-              "thorio-physical-external-gpu-proof-",
+              "thorio-free-gpu-worker",
+              "thorio-free-gpu-nccl",
+              "thorio-physical-gpu-proof",
+              "thorio-physical-external-gpu-proof",
           )
           refs = set()
           page = 1
@@ -152,7 +152,7 @@ jobs:
               "Authorization": f"Bearer {token}",
               "X-GitHub-Api-Version": "2026-03-10",
           }
-          prefixes = ("thorio-free-gpu-worker-", "thorio-free-gpu-nccl-")
+          prefixes = ("thorio-free-gpu-worker", "thorio-free-gpu-nccl")
           stale = {}
           page = 1
           while True:
@@ -271,10 +271,10 @@ jobs:
           import csv, io, os, subprocess
           username = os.environ["KAGGLE_USERNAME"]
           allowed_prefixes = (
-              "thorio-free-gpu-worker-",
-              "thorio-free-gpu-nccl-",
-              "thorio-physical-gpu-proof-",
-              "thorio-physical-external-gpu-proof-",
+              "thorio-free-gpu-worker",
+              "thorio-free-gpu-nccl",
+              "thorio-physical-gpu-proof",
+              "thorio-physical-external-gpu-proof",
           )
           stale_refs = set()
           page = 1
@@ -369,7 +369,7 @@ jobs:
                       name = str(runner.get("name") or "")
                       runner_id = runner.get("id")
                       if (
-                          name.startswith(("thorio-free-gpu-worker-", "thorio-free-gpu-nccl-"))
+                          name.startswith(("thorio-free-gpu-worker", "thorio-free-gpu-nccl"))
                           or re.fullmatch(r"thorio-free-gpu-[0-9a-f]{12}", name)
                       ) and isinstance(runner_id, int):
                           stale[name] = runner_id
