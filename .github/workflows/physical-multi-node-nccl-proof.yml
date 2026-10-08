@@ -676,6 +676,7 @@ jobs:
         shell: bash
         env:
           USE_LIBUV: "0"
+          NCCL_RUNTIME_CONNECT: "0"
         run: |
           set -euo pipefail
           test -n "${MASTER_ADDR}"
