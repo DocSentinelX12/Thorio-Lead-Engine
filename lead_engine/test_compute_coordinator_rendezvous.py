@@ -285,3 +285,15 @@ def test_gpu_workflow_embedded_python_blocks_compile():
             compile(source, f"{workflow_path.name}:python-heredoc-{index}", "exec")
             compiled += 1
     assert compiled >= 5
+
+def test_external_gpu_workflows_share_non_cancelling_concurrency_group():
+    root = Path(__file__).parents[1]
+    workflow_paths = (
+        root / ".github" / "workflows" / "free-external-gpu-runner.yml",
+        root / ".github" / "workflows" / "physical-multi-node-nccl-proof.yml",
+        root / ".github" / "workflows" / "physical-external-gpu-proof.yml",
+    )
+    for workflow_path in workflow_paths:
+        workflow = workflow_path.read_text(encoding="utf-8")
+        assert "group: thorio-external-gpu-fabric" in workflow
+        assert "cancel-in-progress: false" in workflow
