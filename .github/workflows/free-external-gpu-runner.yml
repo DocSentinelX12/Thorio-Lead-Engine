@@ -2,7 +2,19 @@ name: Free External GPU Runner
 
 on:
   workflow_dispatch:
+    inputs:
+      cleanup_only:
+        description: "Only remove stale Thorio Kaggle kernels and JIT runners. Do not acquire a GPU."
+        required: true
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      cleanup_only:
+        description: "Only remove stale Thorio Kaggle kernels and JIT runners. Do not acquire a GPU."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,7 +24,172 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  cleanup_stale:
+    name: Remove stale Thorio Kaggle kernels and JIT runner registrations only
+    if: ${{ inputs.cleanup_only }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+      GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
+    steps:
+      - name: Install Kaggle CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade kaggle
+
+      - name: Verify cleanup credentials without acquiring GPU capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${KAGGLE_USERNAME}"
+          test -n "${KAGGLE_API_TOKEN}"
+          test -n "${GITHUB_RUNNER_JIT_TOKEN}"
+          kaggle kernels list --mine --page-size 1 --csv >/dev/null
+          curl --fail --silent --show-error \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GITHUB_RUNNER_JIT_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "https://api.github.com/repos/${GITHUB_RUNNER_REPOSITORY}/actions/runners?per_page=1" >/dev/null
+          echo "Cleanup credentials verified. No GPU has been acquired."
+
+      - name: Delete all stale Thorio GPU kernels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import io
+          import subprocess
+
+          allowed_prefixes = (
+              "thorio-free-gpu-worker-",
+              "thorio-free-gpu-nccl-",
+              "thorio-physical-gpu-proof-",
+              "thorio-physical-external-gpu-proof-",
+          )
+          refs = set()
+          page = 1
+          while True:
+              result = subprocess.run(
+                  [
+                      "kaggle", "kernels", "list",
+                      "--mine", "--search", "thorio-",
+                      "--page", str(page), "--page-size", "100",
+                      "--sort-by", "dateRun", "--csv",
+                  ],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if result.returncode != 0:
+                  detail = (result.stderr or result.stdout or "").strip()
+                  raise SystemExit(f"Could not enumerate Kaggle kernels for cleanup: {detail}")
+              lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+              header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
+              if header is None:
+                  raise SystemExit("Kaggle kernel list returned no CSV header; refusing to claim cleanup.")
+              rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:])))
+              for row in rows:
+                  ref = str(row.get("ref") or "").strip()
+                  slug = ref.split("/", 1)[-1]
+                  if any(slug.startswith(prefix) for prefix in allowed_prefixes):
+                      refs.add(ref)
+              if len(rows) < 100:
+                  break
+              page += 1
+
+          failures = []
+          for ref in sorted(refs):
+              result = subprocess.run(
+                  ["kaggle", "kernels", "delete", ref, "--yes"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if result.returncode == 0:
+                  print(f"THORIO_KAGGLE_KERNEL_REMOVED {ref}", flush=True)
+              else:
+                  detail = (result.stderr or result.stdout or "").strip()
+                  if "not found" in detail.lower() or "404" in detail:
+                      print(f"THORIO_KAGGLE_KERNEL_ALREADY_ABSENT {ref}", flush=True)
+                  else:
+                      failures.append(f"{ref}: {detail}")
+          if failures:
+              raise SystemExit("Kaggle kernel cleanup failed: " + "; ".join(failures))
+          if not refs:
+              print("No stale Thorio GPU kernels found.", flush=True)
+
+      - name: Remove all stale Thorio JIT runner registrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          repository = os.environ["GITHUB_RUNNER_REPOSITORY"]
+          token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
+          owner, repo = repository.split("/", 1)
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2026-03-10",
+          }
+          prefixes = ("thorio-free-gpu-worker-", "thorio-free-gpu-nccl-")
+          stale = {}
+          page = 1
+          while True:
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{owner}/{repo}/actions/runners?per_page=100&page={page}",
+                  headers=headers,
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      payload = json.loads(response.read().decode("utf-8"))
+              except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                  raise SystemExit(f"Could not enumerate GitHub runner registrations for cleanup: {exc}") from exc
+              runners = payload.get("runners", [])
+              for runner in runners:
+                  if isinstance(runner, dict):
+                      name = str(runner.get("name") or "")
+                      runner_id = runner.get("id")
+                      if name.startswith(prefixes) and isinstance(runner_id, int):
+                          stale[name] = runner_id
+              if len(runners) < 100:
+                  break
+              page += 1
+
+          failures = []
+          for name, runner_id in sorted(stale.items()):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{runner_id}",
+                  headers=headers,
+                  method="DELETE",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      if response.status not in (200, 204):
+                          failures.append(f"{name}: unexpected HTTP {response.status}")
+                      else:
+                          print(f"THORIO_JIT_RUNNER_REMOVED {name}", flush=True)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 404:
+                      print(f"THORIO_JIT_RUNNER_ALREADY_ABSENT {name}", flush=True)
+                  else:
+                      failures.append(f"{name}: HTTP {exc.code} {exc.reason}")
+              except (urllib.error.URLError, TimeoutError) as exc:
+                  failures.append(f"{name}: {exc}")
+          if failures:
+              raise SystemExit("JIT runner cleanup failed: " + "; ".join(failures))
+          if not stale:
+              print("No stale Thorio JIT runner registrations found.", flush=True)
   provision:
+    if: ${{ !inputs.cleanup_only }}
     name: Provision one real free external GPU runner
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -336,7 +513,7 @@ jobs:
 
   external_kernel_diagnostics:
     name: Inspect external GPU kernel startup
-    if: ${{ always() }}
+    if: ${{ always() && !inputs.cleanup_only }}
     needs: provision
     runs-on: ubuntu-latest
     timeout-minutes: 6
@@ -432,7 +609,7 @@ jobs:
 
   cleanup:
     name: Release external GPU capacity
-    if: ${{ always() }}
+    if: ${{ always() && !inputs.cleanup_only }}
     needs: [provision, external_kernel_diagnostics, gpu_worker]
     runs-on: ubuntu-latest
     timeout-minutes: 5
