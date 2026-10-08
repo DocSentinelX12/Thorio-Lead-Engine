@@ -75,6 +75,12 @@ jobs:
           import io
           import subprocess
 
+          allowed_prefixes = (
+              "thorio-free-gpu-worker-",
+              "thorio-free-gpu-nccl-",
+              "thorio-physical-gpu-proof-",
+              "thorio-physical-external-gpu-proof-",
+          )
           stale_refs = set()
           page = 1
           while True:
@@ -82,7 +88,7 @@ jobs:
                   [
                       "kaggle", "kernels", "list",
                       "--mine",
-                      "--search", "thorio-free-gpu-nccl-",
+                      "--search", "thorio-",
                       "--page", str(page),
                       "--page-size", "100",
                       "--sort-by", "dateRun",
@@ -105,7 +111,8 @@ jobs:
               rows = list(csv.DictReader(io.StringIO("\n".join(lines[header_index:]))))
               for row in rows:
                   ref = str(row.get("ref") or "").strip()
-                  if ref.split("/", 1)[-1].startswith("thorio-free-gpu-nccl-"):
+                  slug = ref.split("/", 1)[-1]
+                  if any(slug.startswith(prefix) for prefix in allowed_prefixes):
                       stale_refs.add(ref)
               if len(rows) < 100:
                   break
