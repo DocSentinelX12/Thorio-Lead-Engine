@@ -3,6 +3,11 @@ name: Physical Multi Node NCCL Proof
 on:
   workflow_dispatch:
     inputs:
+      kaggle_jit_secret_configured:
+        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is set to the rotated GitHub runner-management token."
+        required: true
+        default: false
+        type: boolean
       proof_ref:
         description: "Exact branch or ref to prove"
         required: true
@@ -26,7 +31,18 @@ env:
   THORIO_PROOF_SHA: ${{ github.sha }}
 
 jobs:
+  require_kaggle_jit_secret_confirmation:
+    name: Require Kaggle JIT secret confirmation before GPU acquisition
+    if: ${{ !inputs.kaggle_jit_secret_configured }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop before consuming GPU quota
+        run: |
+          echo "::error::No GPU was acquired. Add or update the Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN with the rotated GitHub runner-management token, then rerun with kaggle_jit_secret_configured=true."
+          exit 1
+
   provision:
+    if: ${{ inputs.kaggle_jit_secret_configured }}
     name: Provision two real free external GPU runners
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -1141,7 +1157,7 @@ jobs:
   cleanup:
     name: Release Kaggle GPU workers and JIT runner registrations
     if: always()
-    needs: [provision, rank, aggregate]
+    needs: [require_kaggle_jit_secret_confirmation, provision, rank, aggregate]
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
