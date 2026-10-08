@@ -133,8 +133,8 @@ def test_discover_free_fails_closed_when_permission_denied_kernel_is_listed():
             return subprocess.CompletedProcess(
                 command,
                 0,
-                "ref,title,author,lastRunTime,totalVotes\\n"
-                "example-user/thorio-free-gpu-worker,thorio-free-gpu-worker,example-user,2026-10-08,0\\n",
+                "ref,title,author,lastRunTime,totalVotes\n"
+                "example-user/thorio-free-gpu-worker,thorio-free-gpu-worker,example-user,2026-10-08,0\n",
                 "",
             )
         raise AssertionError(f"unexpected command: {command}")
