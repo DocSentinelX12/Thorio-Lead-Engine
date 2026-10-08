@@ -208,6 +208,9 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "thorio-nccl-rank-${{ matrix.rank }}" in text
     assert "Release Kaggle GPU workers and JIT runner registrations" in text
     assert "NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED" in text
+    assert '"--search", "thorio-"' in text
+    assert "if kernel_ref not in listed_refs:" in text
+    assert "refusing to guess cleanup targets" in text
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME" in text
     assert "runner_names.update(" in text
     assert "hmac.new(key, message, hashlib.sha256).hexdigest()[:32]" in text
@@ -260,6 +263,9 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert '"--search", "thorio-"' in workflow
     assert '"--page", str(page)' in workflow
     assert "No structured Kaggle kernel list was returned; continuing." not in workflow
+    assert "Confirm the run-owned Kaggle kernel exists before deleting it" in workflow
+    assert "EXTERNAL_GPU_KERNEL_CONFIRMED_IN_OWNER_INVENTORY" in workflow
+    assert "Cannot verify run-owned Kaggle kernel before cleanup" in workflow
 
 def test_capacity_broker_delegates_to_the_authoritative_gpu_lifecycle():
     root = Path(__file__).parents[1]
