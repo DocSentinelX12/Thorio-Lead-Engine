@@ -220,6 +220,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
             repository_ref="main",
             github_runner_jit_token_secret_label="THORIO_GITHUB_RUNNER_JIT_TOKEN",
             github_repository="DocSentinelX12/Thorio-Lead-Engine",
+            github_runner_name="thorio-free-gpu-worker-123",
             github_runner_labels="self-hosted,thorio-free-gpu,cuda",
         ),
         runner=capturing_runner,
@@ -244,6 +245,8 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "GPU RUNNER PHASE: requesting GitHub JIT runner configuration." in script
     assert "GPU RUNNER JIT CREATED:" in script
     assert "GPU RUNNER PHASE: launching Actions runner with JIT configuration." in script
+    assert '"github_runner_name": "thorio-free-gpu-worker-123"' in script
+    assert 'os.environ["RUNNER_NAME"] = CONFIG["github_runner_name"] or' in script
     assert 'os.environ.pop("GITHUB_RUNNER_JIT_TOKEN", None)' in script
     assert "secret-value" not in script
     assert "jit-token-value" not in script
