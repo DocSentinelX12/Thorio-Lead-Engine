@@ -1236,26 +1236,68 @@ jobs:
               return {}
 
           if not username:
-              print("KAGGLE_USERNAME is empty; no Kaggle worker could have been acquired in this run.", flush=True)
+              failures.append("KAGGLE_USERNAME is empty; cannot verify NCCL worker cleanup.")
           else:
-              for rank in (1, 0):
-                  record = record_for_rank(rank)
-                  kernel_ref = str(record.get("kernel_ref") or "").strip() or (
-                      f"{username}/thorio-free-gpu-nccl-{run_id}-rank-{rank}"
-                  )
+              listed_refs = set()
+              inventory_ok = True
+              page = 1
+              while True:
                   result = subprocess.run(
-                      ["kaggle", "kernels", "delete", kernel_ref, "--yes"],
+                      [
+                          "kaggle", "kernels", "list", "--mine",
+                          "--search", "thorio-", "--page", str(page),
+                          "--page-size", "100", "--csv",
+                      ],
                       capture_output=True,
                       text=True,
                       check=False,
                   )
-                  if result.returncode == 0:
-                      print(f"NCCL_KAGGLE_WORKER_RELEASED rank={rank} ref={kernel_ref}", flush=True)
-                  else:
+                  if result.returncode != 0:
                       detail = (result.stderr or result.stdout or "").strip()
-                      if "not found" in detail.lower() or "404" in detail:
-                          print(f"NCCL_KAGGLE_WORKER_ALREADY_ABSENT rank={rank} ref={kernel_ref}", flush=True)
+                      failures.append(f"Could not verify Kaggle worker inventory before cleanup: {detail}")
+                      inventory_ok = False
+                      break
+                  lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+                  header = next(
+                      (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
+                      None,
+                  )
+                  if header is None:
+                      failures.append("Kaggle worker inventory returned no CSV header; refusing to guess cleanup targets.")
+                      inventory_ok = False
+                      break
+                  rows = list(csv.DictReader(io.StringIO("\\n".join(lines[header:]))))
+                  listed_refs.update(
+                      str(row.get("ref") or "").strip()
+                      for row in rows
+                      if str(row.get("ref") or "").strip()
+                  )
+                  if len(rows) < 100:
+                      break
+                  page += 1
+
+              if inventory_ok:
+                  for rank in (1, 0):
+                      record = record_for_rank(rank)
+                      kernel_ref = str(record.get("kernel_ref") or "").strip() or (
+                          f"{username}/thorio-free-gpu-nccl-{run_id}-rank-{rank}"
+                      )
+                      if kernel_ref not in listed_refs:
+                          print(
+                              f"NCCL_KAGGLE_WORKER_ALREADY_ABSENT rank={rank} ref={kernel_ref}",
+                              flush=True,
+                          )
+                          continue
+                      result = subprocess.run(
+                          ["kaggle", "kernels", "delete", kernel_ref, "--yes"],
+                          capture_output=True,
+                          text=True,
+                          check=False,
+                      )
+                      if result.returncode == 0:
+                          print(f"NCCL_KAGGLE_WORKER_RELEASED rank={rank} ref={kernel_ref}", flush=True)
                       else:
+                          detail = (result.stderr or result.stdout or "").strip()
                           failures.append(f"Kaggle rank {rank} {kernel_ref}: {detail}")
 
           api = "https://api.github.com"
