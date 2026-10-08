@@ -120,9 +120,12 @@ def _start_tcpstore_forwarder(
         ),
         flush=True,
     )
-    while True:
-        client, _ = server.accept()
-        threading.Thread(target=handle, args=(client,), daemon=True).start()
+    def accept_clients() -> None:
+        while True:
+            client, _ = server.accept()
+            threading.Thread(target=handle, args=(client,), daemon=True).start()
+
+    threading.Thread(target=accept_clients, daemon=True).start()
 
 def main() -> None:
     try:
