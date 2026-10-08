@@ -299,7 +299,7 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel():
     assert "jit-token-value" not in script
     assert 'credential("coordinator_token", "coordinator_token_secret")' not in script
     assert 'credential("coordinator_url", "coordinator_url_secret")' not in script
-    assert 'credential("github_runner_jit_token", "github_runner_jit_token_secret")' in script
+    assert 'credential("github_runner_jit_token_secret")' in script
 
 
 def test_acquire_free_passes_the_durable_acquisition_id_to_worker(tmp_path):
