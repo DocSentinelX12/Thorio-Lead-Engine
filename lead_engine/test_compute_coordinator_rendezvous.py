@@ -210,7 +210,7 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME" in text
     assert "runner_names.update(" in text
     assert "Clear stale NCCL JIT runner registrations" in text
-    assert '"--search", "thorio-free-gpu-nccl-"' in text
+    assert '"--search", "thorio-"' in text
 
 
 def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_slug():
