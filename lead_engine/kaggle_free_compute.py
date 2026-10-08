@@ -458,9 +458,6 @@ def credential(label_key):
     # Always read secrets at runtime from Kaggle Secrets. Never fall
     # back to any value serialized into the public notebook source.
     return get_secret(CONFIG[label_key])
-        return value
-    return get_secret(CONFIG[label_key])
-
 print("KAGGLE WORKER PHASE: starting credential handoff.", flush=True)
 jit_token = credential("github_runner_jit_token_secret")
 print("KAGGLE WORKER PHASE: GitHub JIT token retrieved.", flush=True)
