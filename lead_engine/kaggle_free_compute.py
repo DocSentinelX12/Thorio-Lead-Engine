@@ -299,7 +299,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             )
         return any(
             str(row.get("ref") or "").strip() == kernel_ref
-            for row in csv.DictReader(io.StringIO("\\n".join(lines[header:])))
+            for row in csv.DictReader(io.StringIO("\n".join(lines[header:])))
         )
 
     def _kernel_status(self, kernel_ref: str) -> str:
