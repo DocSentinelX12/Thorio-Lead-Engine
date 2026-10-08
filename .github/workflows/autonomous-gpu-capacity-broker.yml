@@ -1,13 +1,6 @@
-name: Autonomous GPU Capacity Broker
+name: GPU Capacity Broker End-to-End Validation
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "lead_engine/gpu_capacity_broker.py"
-      - "tests/test_gpu_capacity_broker.py"
-      - ".github/workflows/autonomous-gpu-capacity-broker.yml"
   workflow_dispatch:
 
 permissions:
