@@ -32,7 +32,6 @@ jobs:
       RUNNER_VERSION: "latest"
     outputs:
       acquisition_id: ${{ steps.acquire.outputs.acquisition_id }}
-      domain_id: ${{ steps.acquire.outputs.domain_id }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -179,7 +178,6 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"kernel_ref={kernel_ref}\n")
               output.write(f"acquisition_id={acquisition_id}\n")
-              output.write(f"domain_id={durable['domain_id']}\n")
           print(f"THORIO_EXTERNAL_GPU_ACQUISITION_DURABLY_REGISTERED {acquisition_id}")
           print(f"EXTERNAL_GPU_KERNEL_RUNNING {kernel_ref}")
           PY
@@ -252,7 +250,7 @@ jobs:
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
       THORIO_WORKER_ID: kaggle-jit-${{ github.run_id }}
       THORIO_COMPUTE_ACQUISITION_ID: ${{ needs.provision.outputs.acquisition_id }}
-      THORIO_COMPUTE_DOMAIN: ${{ needs.provision.outputs.domain_id }}
+      THORIO_COMPUTE_DOMAIN: kaggle:${{ secrets.THORIO_KAGGLE_USERNAME }}:thorio-free-gpu-worker-${{ github.run_id }}
       THORIO_COMPUTE_HTTP_TIMEOUT: "20"
     steps:
       - name: Check out exact GPU branch
