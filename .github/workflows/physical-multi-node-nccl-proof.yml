@@ -554,7 +554,7 @@ jobs:
           done
           if [ -z "${relay_port:-}" ]; then cat /tmp/thorio-nccl-relay.log >&2 || true; exit 1; fi
 
-          ssh -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -R0:127.0.0.1:"${relay_port}" tcp@free.pinggy.io >/tmp/thorio-pinggy.log 2>&1 &
+          ssh -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -T -R0:127.0.0.1:"${relay_port}" tcp@free.pinggy.io >/tmp/thorio-pinggy.log 2>&1 &
           pinggy_pid=$!
           printf 'THORIO_PINGGY_PID=%s\\n' "${pinggy_pid}" >> "${GITHUB_ENV}"
 
