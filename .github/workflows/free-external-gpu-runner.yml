@@ -91,7 +91,7 @@ jobs:
               header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
               if header is None:
                   raise SystemExit("Kaggle kernel list returned no CSV header; refusing to claim cleanup.")
-              rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:])))
+              rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
               for row in rows:
                   ref = str(row.get("ref") or "").strip()
                   slug = ref.split("/", 1)[-1]
