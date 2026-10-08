@@ -232,6 +232,7 @@ def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_
     assert '"is_private": false' in workflow
     assert "printf '%s\\\\n'" not in workflow
     assert "printf '%s\\n'" in workflow
+    assert "failing fast rather than consuming the full proof timeout" in workflow
     assert "physical-external-gpu-proof.yml" in controller
     assert "physical-external-gpu-proof-run.yml" not in controller
     assert "autonomous-gpu-capacity-broker.yml" in controller
