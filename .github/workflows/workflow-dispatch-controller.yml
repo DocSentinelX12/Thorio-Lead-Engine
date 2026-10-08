@@ -16,6 +16,7 @@ on:
           - free-compute-workers.yml
           - python-app.yml
           - free-external-gpu-runner.yml
+          - autonomous-gpu-capacity-broker.yml
           - free-compute-fleet-verification.yml
           - gpu-fabric-validation.yml
           - physical-external-gpu-proof.yml
@@ -30,6 +31,16 @@ on:
         required: true
         default: "75"
         type: string
+      cleanup_only:
+        description: "For Free External GPU Runner only, remove stale resources without acquiring a GPU."
+        required: true
+        type: boolean
+        default: false
+      kaggle_jit_secret_configured:
+        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is configured with the rotated token."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,6 +55,8 @@ jobs:
       TARGET_WORKFLOW: ${{ inputs.workflow_file }}
       TARGET_REF: ${{ inputs.ref }}
       WAIT_MINUTES: ${{ inputs.wait_minutes }}
+      CLEANUP_ONLY: ${{ inputs.cleanup_only }}
+      KAGGLE_JIT_SECRET_CONFIGURED: ${{ inputs.kaggle_jit_secret_configured }}
     steps:
       - name: Check out controller revision
         uses: actions/checkout@v5
@@ -53,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$TARGET_WORKFLOW" in
-            ci.yml|full-test-suite.yml|source-live-diagnostic.yml|revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|free-compute-fleet-verification.yml|gpu-fabric-validation.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml) ;;
+            ci.yml|full-test-suite.yml|source-live-diagnostic.yml|revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|free-compute-fleet-verification.yml|gpu-fabric-validation.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml) ;;
             *)
               echo "DISPATCH REQUEST FAILURE: workflow is not on the approved allowlist: $TARGET_WORKFLOW"
               exit 1
@@ -69,6 +82,10 @@ jobs:
           fi
           if [ -z "$TARGET_REF" ]; then
             echo "DISPATCH REQUEST FAILURE: ref cannot be empty."
+            exit 1
+          fi
+          if [ "$CLEANUP_ONLY" = "true" ] && [ "$TARGET_WORKFLOW" != "free-external-gpu-runner.yml" ]; then
+            echo "DISPATCH REQUEST FAILURE: cleanup_only is valid only for free-external-gpu-runner.yml."
             exit 1
           fi
           case "$TARGET_WORKFLOW" in
@@ -96,7 +113,25 @@ jobs:
           echo "dispatch_epoch=$dispatch_epoch" >> "$GITHUB_OUTPUT"
           echo "dispatch_iso=$dispatch_iso"
 
-          gh workflow run "$TARGET_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$TARGET_REF"
+          case "$TARGET_WORKFLOW" in
+            free-external-gpu-runner.yml)
+              gh workflow run "$TARGET_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$TARGET_REF" \
+                -f cleanup_only="$CLEANUP_ONLY" \
+                -f kaggle_jit_secret_configured="$KAGGLE_JIT_SECRET_CONFIGURED"
+              ;;
+            physical-multi-node-nccl-proof.yml)
+              gh workflow run "$TARGET_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$TARGET_REF" \
+                -f proof_ref="$TARGET_REF" \
+                -f kaggle_jit_secret_configured="$KAGGLE_JIT_SECRET_CONFIGURED"
+              ;;
+            autonomous-gpu-capacity-broker.yml)
+              gh workflow run "$TARGET_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$TARGET_REF" \
+                -f kaggle_jit_secret_configured="$KAGGLE_JIT_SECRET_CONFIGURED"
+              ;;
+            *)
+              gh workflow run "$TARGET_WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$TARGET_REF"
+              ;;
+          esac
 
           echo "DISPATCH ACCEPTED: $TARGET_WORKFLOW on $TARGET_REF"
 
