@@ -255,9 +255,17 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "jit-token-value" not in script
 
 
-def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel():
+def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel(monkeypatch):
     runner, calls = _runner_factory()
     captured_script = {}
+    monkeypatch.setenv("THORIO_KAGGLE_ENABLED", "1")
+    monkeypatch.setenv("THORIO_KAGGLE_USERNAME", "example-user")
+    monkeypatch.setenv("THORIO_KAGGLE_KERNEL_SLUG", "thorio-free-gpu-worker")
+    monkeypatch.setenv("THORIO_KAGGLE_REPOSITORY_REF", "main")
+    monkeypatch.setenv("THORIO_KAGGLE_GITHUB_RUNNER_NAME", "thorio-free-gpu-worker-123")
+    monkeypatch.setenv("THORIO_COMPUTE_AUTH_TOKEN", "coordinator-token-value")
+    monkeypatch.setenv("THORIO_COMPUTE_COORDINATOR_URL", "https://coordinator.example.test")
+    monkeypatch.setenv("GITHUB_RUNNER_JIT_TOKEN", "jit-token-value")
 
     def capturing_runner(command, *, timeout, cwd=None):
         if command[1:3] == ["kernels", "push"]:
@@ -270,18 +278,10 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel():
             captured_script["metadata"] = json.loads(metadata_path.read_text(encoding="utf-8"))
         return runner(command, timeout=timeout, cwd=cwd)
 
-    provider = KaggleFreeComputeProvider(
-        KaggleFreeComputeConfig(
-            username="example-user",
-            kernel_slug="thorio-free-gpu-worker",
-            repository_ref="main",
-            coordinator_token="coordinator-token-value",
-            coordinator_url="https://coordinator.example.test",
-            github_runner_jit_token="jit-token-value",
-        ),
-        runner=capturing_runner,
-        clock=lambda: 1_700_000_000.0,
-    )
+    provider = KaggleFreeComputeProvider.from_environment()
+    provider._runner = capturing_runner
+    provider._clock = lambda: 1_700_000_000.0
+    provider._sleeper = lambda _: None
     offer = provider.discover_free()[0]
 
     provider.acquire_free(offer)
