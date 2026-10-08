@@ -267,3 +267,20 @@ def test_capacity_broker_delegates_to_the_authoritative_gpu_lifecycle():
     assert "kaggle_jit_secret_configured: ${{ inputs.kaggle_jit_secret_configured }}" in broker
     assert "Acquire, enroll, physically verify, and release a real free GPU" in broker
     assert "python -m lead_engine.gpu_capacity_broker | tee" not in broker
+
+def test_gpu_workflow_embedded_python_blocks_compile():
+    root = Path(__file__).parents[1]
+    workflow_paths = (
+        root / ".github" / "workflows" / "free-external-gpu-runner.yml",
+        root / ".github" / "workflows" / "physical-multi-node-nccl-proof.yml",
+        root / ".github" / "workflows" / "physical-external-gpu-proof.yml",
+    )
+    pattern = re.compile(r"(?m)^[ \\t]*python - <<'PY'[ \\t]*\\n(.*?)^[ \\t]*PY[ \\t]*$", re.DOTALL | re.MULTILINE)
+    compiled = 0
+    for workflow_path in workflow_paths:
+        workflow = workflow_path.read_text(encoding="utf-8")
+        for index, match in enumerate(pattern.finditer(workflow), start=1):
+            source = textwrap.dedent(match.group(1))
+            compile(source, f"{workflow_path.name}:python-heredoc-{index}", "exec")
+            compiled += 1
+    assert compiled >= 5
