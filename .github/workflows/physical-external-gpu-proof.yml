@@ -203,5 +203,16 @@ jobs:
         run: |
           set +e
           if [ -n "${KAGGLE_USERNAME:-}" ]; then
-            kaggle kernels delete "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" --yes || true
+            if output="$(kaggle kernels delete "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" --yes 2>&1)"; then
+              printf '%s\\n' "${output}"
+              echo "PHYSICAL_GPU_PROOF_KERNEL_RELEASED ${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}"
+            else
+              printf '%s\\n' "${output}" >&2
+              if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
+                echo "PHYSICAL_GPU_PROOF_KERNEL_ALREADY_ABSENT ${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}"
+              else
+                echo "PHYSICAL_GPU_PROOF_KERNEL_RELEASE_FAILED ${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}" >&2
+                exit 1
+              fi
+            fi
           fi
