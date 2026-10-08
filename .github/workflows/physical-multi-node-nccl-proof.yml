@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: physical-multi-node-nccl-proof
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   THORIO_PROOF_REF: ${{ inputs.proof_ref || github.ref }}
