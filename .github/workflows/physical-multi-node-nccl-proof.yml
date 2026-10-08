@@ -308,7 +308,7 @@ jobs:
 
           def runner_snapshot():
               request = urllib.request.Request(
-                  f"https://api.github.com/repos/{repo}/actions/runners",
+                  f"https://api.github.com/repos/{repo}/actions/runners?per_page=100",
                   headers={
                       "Accept": "application/vnd.github+json",
                       "Authorization": f"Bearer {token}",
@@ -1018,7 +1018,6 @@ jobs:
               raise SystemExit("Acquisition cleanup artifact must contain a JSON list.")
 
           failures = []
-          known_ranks = {int(item["rank"]) for item in records if isinstance(item, dict) and "rank" in item}
           for rank in (1, 0):
               kernel_ref = next(
                   (
