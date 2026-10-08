@@ -153,6 +153,9 @@ jobs:
           try:
               for rank in (0, 1):
                   os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
+                  os.environ["THORIO_KAGGLE_GITHUB_RUNNER_LABELS"] = (
+                      "self-hosted,thorio-free-gpu,cuda,thorio-nccl-rank-" + str(rank)
+                  )
                   manager = FreeComputeAcquisitionManager(
                       FreeComputeAcquisitionStore(f"/tmp/thorio-free-compute-{rank}.sqlite3")
                   )
@@ -166,7 +169,13 @@ jobs:
                   acquisition_id = str(acquired["acquisition_id"])
                   kernel_ref = str(acquired["enrollment"]["kernel_ref"])
                   live_acquisitions.append((rank, manager, AcquiredCompute(**acquired)))
-                  records.append({"rank": rank, "acquisition_id": acquisition_id, "kernel_ref": kernel_ref})
+                  records.append({
+                      "rank": rank,
+                      "acquisition_id": acquisition_id,
+                      "kernel_ref": kernel_ref,
+                      "runner_name": f"thorio-free-gpu-{acquisition_id[:12]}",
+                      "runner_label": f"thorio-nccl-rank-{rank}",
+                  })
                   Path("/tmp/nccl-acquisitions.json").write_text(
                       json.dumps(records, sort_keys=True),
                       encoding="utf-8",
@@ -292,7 +301,7 @@ jobs:
           records = json.loads(open("/tmp/nccl-acquisitions.json", encoding="utf-8").read())
           token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
           repo = os.environ["GITHUB_REPOSITORY"]
-          expected_labels = {"self-hosted", "thorio-free-gpu", "cuda"}
+          base_labels = {"self-hosted", "thorio-free-gpu", "cuda"}
 
           if len(records) != 2:
               raise SystemExit(f"Expected two acquired GPU records before runner verification, found {len(records)}")
@@ -313,7 +322,8 @@ jobs:
               rank = int(record["rank"])
               acquisition_id = str(record["acquisition_id"])
               kernel_ref = str(record["kernel_ref"])
-              runner_name = f"thorio-free-gpu-{acquisition_id[:12]}"
+              runner_name = str(record.get("runner_name") or f"thorio-free-gpu-{acquisition_id[:12]}")
+              expected_labels = base_labels | {str(record.get("runner_label") or f"thorio-nccl-rank-{rank}")}
               os.environ["THORIO_KAGGLE_KERNEL_SLUG"] = (
                   f"thorio-free-gpu-nccl-{os.environ['GITHUB_RUN_ID']}-rank-{rank}"
               )
@@ -469,7 +479,11 @@ jobs:
         include:
           - rank: 0
           - rank: 1
-    runs-on: [self-hosted, thorio-free-gpu, cuda]
+    runs-on:
+      - self-hosted
+      - thorio-free-gpu
+      - cuda
+      - thorio-nccl-rank-${{ matrix.rank }}
     timeout-minutes: 15
     env:
       RANK: ${{ matrix.rank }}
@@ -952,4 +966,138 @@ jobs:
               "expected_sum": 3,
               "rank_evidence": records,
           }, sort_keys=True))
+          PY
+  cleanup:
+    name: Release Kaggle GPU workers and JIT runner registrations
+    if: always()
+    needs: [provision, rank, aggregate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
+      KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+      GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
+    steps:
+      - name: Install Kaggle CLI
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade kaggle
+
+      - name: Download acquisition identifiers when available
+        uses: actions/download-artifact@v5
+        continue-on-error: true
+        with:
+          name: physical-nccl-acquisitions
+          path: /tmp/thorio-nccl-cleanup
+
+      - name: Stop all run-owned Kaggle workers and remove JIT runner registrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import urllib.error
+          import urllib.request
+
+          username = os.environ["KAGGLE_USERNAME"].strip()
+          run_id = os.environ["GITHUB_RUN_ID"]
+          repository = os.environ["GITHUB_RUNNER_REPOSITORY"]
+          token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
+          records_path = pathlib.Path("/tmp/thorio-nccl-cleanup/nccl-acquisitions.json")
+          records = []
+          if records_path.is_file():
+              try:
+                  records = json.loads(records_path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError) as exc:
+                  raise SystemExit(f"Acquisition cleanup artifact is unreadable: {exc}") from exc
+          if not isinstance(records, list):
+              raise SystemExit("Acquisition cleanup artifact must contain a JSON list.")
+
+          failures = []
+          known_ranks = {int(item["rank"]) for item in records if isinstance(item, dict) and "rank" in item}
+          for rank in (1, 0):
+              kernel_ref = next(
+                  (
+                      str(item.get("kernel_ref") or "").strip()
+                      for item in records
+                      if isinstance(item, dict) and int(item.get("rank", -1)) == rank
+                  ),
+                  "",
+              ) or f"{username}/thorio-free-gpu-nccl-{run_id}-rank-{rank}"
+              result = subprocess.run(
+                  ["kaggle", "kernels", "delete", kernel_ref, "--yes"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if result.returncode == 0:
+                  print(f"NCCL_KAGGLE_WORKER_RELEASED rank={rank} ref={kernel_ref}", flush=True)
+              else:
+                  detail = (result.stderr or result.stdout or "").strip()
+                  if "not found" in detail.lower() or "404" in detail:
+                      print(f"NCCL_KAGGLE_WORKER_ALREADY_ABSENT rank={rank} ref={kernel_ref}", flush=True)
+                  else:
+                      failures.append(f"Kaggle rank {rank} {kernel_ref}: {detail}")
+
+          api = "https://api.github.com"
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2026-03-10",
+          }
+          runner_names = {
+              str(item.get("runner_name") or "").strip()
+              for item in records
+              if isinstance(item, dict) and str(item.get("runner_name") or "").strip()
+          }
+          runner_ids = {}
+          if runner_names:
+              owner, repo = repository.split("/", 1)
+              request = urllib.request.Request(
+                  f"{api}/repos/{owner}/{repo}/actions/runners?per_page=100",
+                  headers=headers,
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      payload = json.loads(response.read().decode("utf-8"))
+              except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                  raise SystemExit(f"Could not inspect run-owned JIT runner registrations: {exc}") from exc
+              runner_ids = {
+                  str(item.get("name") or ""): int(item["id"])
+                  for item in payload.get("runners", [])
+                  if isinstance(item, dict)
+                  and str(item.get("name") or "") in runner_names
+                  and isinstance(item.get("id"), int)
+              }
+              for runner_name in sorted(runner_names):
+                  runner_id = runner_ids.get(runner_name)
+                  if runner_id is None:
+                      print(f"NCCL_JIT_RUNNER_ALREADY_ABSENT {runner_name}", flush=True)
+                      continue
+                  delete_request = urllib.request.Request(
+                      f"{api}/repos/{owner}/{repo}/actions/runners/{runner_id}",
+                      headers=headers,
+                      method="DELETE",
+                  )
+                  try:
+                      with urllib.request.urlopen(delete_request, timeout=20) as response:
+                          if response.status not in (200, 204):
+                              failures.append(f"JIT runner {runner_name}: unexpected HTTP {response.status}")
+                          else:
+                              print(f"NCCL_JIT_RUNNER_REMOVED {runner_name} id={runner_id}", flush=True)
+                  except urllib.error.HTTPError as exc:
+                      if exc.code == 404:
+                          print(f"NCCL_JIT_RUNNER_ALREADY_ABSENT {runner_name}", flush=True)
+                      else:
+                          failures.append(f"JIT runner {runner_name}: HTTP {exc.code} {exc.reason}")
+                  except (urllib.error.URLError, TimeoutError) as exc:
+                      failures.append(f"JIT runner {runner_name}: {exc}")
+
+          if failures:
+              raise SystemExit("NCCL cleanup incomplete: " + "; ".join(failures))
+          print("NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED", flush=True)
           PY
