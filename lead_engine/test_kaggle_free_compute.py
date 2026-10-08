@@ -110,6 +110,40 @@ def test_discover_free_treats_kaggle_private_kernel_permission_error_as_absent()
     assert any(command[1:3] == ["kernels", "status"] for command in calls)
 
 
+def test_discover_free_fails_closed_when_permission_denied_kernel_is_listed():
+    def runner(command, *, timeout, cwd=None):
+        if command[1:3] == ["quota", "--format"]:
+            payload = [{
+                "resource": "GPU",
+                "used": "1.00h",
+                "remaining": "20.00h",
+                "total": "30.00h",
+                "refreshAt": "2099-01-01T00:00:00+00:00",
+            }]
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[1:3] == ["kernels", "status"]:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "Cannot access kernel 'example-user/thorio-free-gpu-worker' "
+                "(Permission 'kernels.get' was denied).",
+            )
+        if command[1:3] == ["kernels", "list"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                "ref,title,author,lastRunTime,totalVotes\\n"
+                "example-user/thorio-free-gpu-worker,thorio-free-gpu-worker,example-user,2026-10-08,0\\n",
+                "",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    provider = _provider(runner)
+    with pytest.raises(KaggleFreeComputeError, match="refusing to treat a permission error as absence"):
+        provider.discover_free()
+
+
 def test_discover_free_fails_closed_when_quota_is_exhausted():
     runner, _ = _runner_factory("0.00h")
     provider = _provider(runner)
