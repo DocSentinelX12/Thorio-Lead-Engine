@@ -44,6 +44,86 @@ def build_probe_evidence(
     }
 
 
+
+def _start_tcpstore_forwarder(
+    *,
+    local_host: str,
+    local_port: int,
+    peer_host: str,
+    peer_port: int,
+    relay_token: str,
+    destination_host: str,
+    destination_port: int,
+) -> None:
+    """Forward a local TCPStore socket through the authenticated NCCL relay."""
+    import threading
+
+    def copy_stream(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    return
+                dst.sendall(data)
+        except OSError:
+            return
+        finally:
+            for sock in (src, dst):
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+
+    def handle(client: socket.socket) -> None:
+        try:
+            upstream = socket.create_connection((peer_host, peer_port), timeout=15)
+            token = relay_token.encode("ascii")
+            if len(token) > 32:
+                raise SystemExit("Relay token exceeds 32 bytes.")
+            header = (
+                b"THORIO1"
+                + token.ljust(32, b"\x00")
+                + socket.inet_aton(destination_host)
+                + int(destination_port).to_bytes(2, "big")
+            )
+            upstream.sendall(header)
+            client.settimeout(None)
+            upstream.settimeout(None)
+            threading.Thread(target=copy_stream, args=(client, upstream), daemon=True).start()
+            copy_stream(upstream, client)
+        except OSError:
+            try:
+                client.close()
+            except OSError:
+                pass
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((local_host, local_port))
+    server.listen(16)
+    print(
+        "THORIO_TCPSTORE_FORWARDER_READY "
+        + json.dumps(
+            {
+                "listen_host": local_host,
+                "listen_port": local_port,
+                "peer_tunnel_host": peer_host,
+                "peer_tunnel_port": peer_port,
+                "destination_host": destination_host,
+                "destination_port": destination_port,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    while True:
+        client, _ = server.accept()
+        threading.Thread(target=handle, args=(client,), daemon=True).start()
+
 def main() -> None:
     try:
         import torch
@@ -84,7 +164,45 @@ def main() -> None:
             f"GPU UUID mismatch: expected {expected_gpu_uuid}, observed {observed_gpu_uuid}"
         )
 
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    if rank == 0:
+        store = dist.TCPStore(
+            os.environ["MASTER_ADDR"],
+            int(os.environ["MASTER_PORT"]),
+            world_size=world_size,
+            is_master=True,
+            use_libuv=False,
+        )
+    else:
+        peer_host = os.environ.get("THORIO_PEER_TUNNEL_HOST", "").strip()
+        peer_port = int(os.environ.get("THORIO_PEER_TUNNEL_PORT", "0"))
+        peer_token = os.environ.get("THORIO_PEER_RELAY_TOKEN", "").strip()
+        destination_host = os.environ["MASTER_ADDR"].strip()
+        destination_port = int(os.environ["MASTER_PORT"])
+        if not peer_host or not peer_token or not (1 <= peer_port <= 65535):
+            raise SystemExit("Rank 1 is missing authenticated NCCL relay endpoint.")
+        _start_tcpstore_forwarder(
+            local_host="127.0.0.1",
+            local_port=29501,
+            peer_host=peer_host,
+            peer_port=peer_port,
+            relay_token=peer_token,
+            destination_host=destination_host,
+            destination_port=destination_port,
+        )
+        store = dist.TCPStore(
+            "127.0.0.1",
+            29501,
+            world_size=world_size,
+            is_master=False,
+            use_libuv=False,
+        )
+
+    dist.init_process_group(
+        backend="nccl",
+        store=store,
+        rank=rank,
+        world_size=world_size,
+    )
     try:
         value = torch.tensor([rank + 1], dtype=torch.int64, device=device)
         started = time.perf_counter()
