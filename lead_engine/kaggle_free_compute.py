@@ -454,14 +454,15 @@ def get_secret(label):
         f"Kaggle secret service did not return {{label!r}} after 8 attempts: {{last_error}}"
     ) from last_error
 
-def credential(value_key, label_key):
-    value = CONFIG.get(value_key, "").strip()
-    if value:
+def credential(label_key):
+    # Always read secrets at runtime from Kaggle Secrets. Never fall
+    # back to any value serialized into the public notebook source.
+    return get_secret(CONFIG[label_key])
         return value
     return get_secret(CONFIG[label_key])
 
 print("KAGGLE WORKER PHASE: starting credential handoff.", flush=True)
-jit_token = credential("github_runner_jit_token", "github_runner_jit_token_secret")
+jit_token = credential("github_runner_jit_token_secret")
 print("KAGGLE WORKER PHASE: GitHub JIT token retrieved.", flush=True)
 if not jit_token:
     raise RuntimeError("Kaggle GitHub runner JIT token secret is empty")
