@@ -8,10 +8,20 @@ on:
         required: true
         type: boolean
         default: false
+      kaggle_jit_secret_configured:
+        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is set to the rotated GitHub runner-management token."
+        required: true
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       cleanup_only:
         description: "Only remove stale Thorio Kaggle kernels and JIT runners. Do not acquire a GPU."
+        required: false
+        type: boolean
+        default: false
+      kaggle_jit_secret_configured:
+        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is configured."
         required: false
         type: boolean
         default: false
@@ -189,8 +199,18 @@ jobs:
               raise SystemExit("JIT runner cleanup failed: " + "; ".join(failures))
           if not stale:
               print("No stale Thorio JIT runner registrations found.", flush=True)
+  require_kaggle_jit_secret_confirmation:
+    name: Require Kaggle JIT secret confirmation before GPU acquisition
+    if: ${{ !inputs.cleanup_only && !inputs.kaggle_jit_secret_configured }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop before consuming GPU quota
+        run: |
+          echo "::error::No GPU was acquired. Add or update the Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN with the rotated GitHub runner-management token, then rerun with kaggle_jit_secret_configured=true."
+          exit 1
+
   provision:
-    if: ${{ !inputs.cleanup_only }}
+    if: ${{ !inputs.cleanup_only && inputs.kaggle_jit_secret_configured }}
     name: Provision one real free external GPU runner
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -524,7 +544,7 @@ jobs:
 
   external_kernel_diagnostics:
     name: Inspect external GPU kernel startup
-    if: ${{ always() && !inputs.cleanup_only }}
+    if: ${{ always() && !inputs.cleanup_only && inputs.kaggle_jit_secret_configured }}
     needs: provision
     runs-on: ubuntu-latest
     timeout-minutes: 6
@@ -620,8 +640,8 @@ jobs:
 
   cleanup:
     name: Release external GPU capacity
-    if: ${{ always() && !inputs.cleanup_only }}
-    needs: [provision, external_kernel_diagnostics, gpu_worker]
+    if: ${{ always() && !inputs.cleanup_only && inputs.kaggle_jit_secret_configured }}
+    needs: [require_kaggle_jit_secret_confirmation, provision, external_kernel_diagnostics, gpu_worker]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
