@@ -209,8 +209,11 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
         if command[1:3] == ["kernels", "push"]:
             from pathlib import Path
 
-            script_path = Path(command[command.index("-p") + 1]) / "thorio_worker.py"
+            kernel_dir = Path(command[command.index("-p") + 1])
+            script_path = kernel_dir / "thorio_worker.py"
+            metadata_path = kernel_dir / "kernel-metadata.json"
             captured_script["content"] = script_path.read_text(encoding="utf-8")
+            captured_script["metadata"] = json.loads(metadata_path.read_text(encoding="utf-8"))
         return runner(command, timeout=timeout, cwd=cwd)
 
     provider = KaggleFreeComputeProvider(
@@ -281,6 +284,10 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel():
     provider.acquire_free(offer)
 
     script = captured_script["content"]
+    metadata = captured_script["metadata"]
+    assert metadata["id"] == "example-user/thorio-free-gpu-worker"
+    assert metadata["title"] == "thorio-free-gpu-worker"
+    assert metadata["is_private"] is False
     assert '"coordinator_token":' not in script
     assert '"coordinator_url":' not in script
     assert '"github_runner_jit_token":' not in script
