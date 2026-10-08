@@ -210,6 +210,9 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED" in text
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME" in text
     assert "runner_names.update(" in text
+    assert "hmac.new(key, message, hashlib.sha256).hexdigest()[:32]" in text
+    assert "thorio-nccl-relay:{run_id}:{proof_sha}:{rank}" in text
+    assert "sha256sum | cut -c1-32" not in text
     assert "Clear stale NCCL JIT runner registrations" in text
     assert "kaggle_jit_secret_configured:" in text
     assert "Require Kaggle JIT secret confirmation before GPU acquisition" in text
@@ -227,6 +230,8 @@ def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_
     assert '"id": "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}"' in workflow
     assert '"title": "${THORIO_KAGGLE_KERNEL_SLUG}"' in workflow
     assert '"is_private": false' in workflow
+    assert "printf '%s\\\\n'" not in workflow
+    assert "printf '%s\\n'" in workflow
     assert "physical-external-gpu-proof.yml" in controller
     assert "physical-external-gpu-proof-run.yml" not in controller
     assert "autonomous-gpu-capacity-broker.yml" in controller
