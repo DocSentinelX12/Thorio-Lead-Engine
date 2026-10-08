@@ -74,7 +74,7 @@ jobs:
               raise SystemExit("Kaggle kernel list returned no CSV header; refusing to continue without stale-worker cleanup.")
           prefix = f"{username}/thorio-free-gpu-worker-"
           failures = []
-          for row in csv.DictReader(io.StringIO("\\n".join(lines[header:]))):
+          for row in csv.DictReader(io.StringIO("\n".join(lines[header:]))):
               ref = str(row.get("ref") or "").strip()
               if ref.startswith(prefix):
                   print(f"Deleting stale Thorio Kaggle worker kernel: {ref}", flush=True)
@@ -349,10 +349,10 @@ jobs:
         run: |
           set -euo pipefail
           if output="$(kaggle kernels delete "${KERNEL_REF}" --yes 2>&1)"; then
-            printf '%s\\n' "${output}"
+            printf '%s\n' "${output}"
             echo "EXTERNAL_GPU_CAPACITY_RELEASED ${KERNEL_REF}"
           else
-            printf '%s\\n' "${output}" >&2
+            printf '%s\n' "${output}" >&2
             if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
               echo "EXTERNAL_GPU_CAPACITY_ALREADY_ABSENT ${KERNEL_REF}"
             else
