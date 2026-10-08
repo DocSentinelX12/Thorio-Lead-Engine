@@ -1109,29 +1109,40 @@ jobs:
               records = []
 
           failures = [artifact_error] if artifact_error else []
-          for rank in (1, 0):
-              kernel_ref = next(
-                  (
-                      str(item.get("kernel_ref") or "").strip()
-                      for item in records
-                      if isinstance(item, dict) and int(item.get("rank", -1)) == rank
-                  ),
-                  "",
-              ) or f"{username}/thorio-free-gpu-nccl-{run_id}-rank-{rank}"
-              result = subprocess.run(
-                  ["kaggle", "kernels", "delete", kernel_ref, "--yes"],
-                  capture_output=True,
-                  text=True,
-                  check=False,
-              )
-              if result.returncode == 0:
-                  print(f"NCCL_KAGGLE_WORKER_RELEASED rank={rank} ref={kernel_ref}", flush=True)
-              else:
-                  detail = (result.stderr or result.stdout or "").strip()
-                  if "not found" in detail.lower() or "404" in detail:
-                      print(f"NCCL_KAGGLE_WORKER_ALREADY_ABSENT rank={rank} ref={kernel_ref}", flush=True)
+
+          def record_for_rank(rank):
+              for item in records:
+                  if not isinstance(item, dict):
+                      continue
+                  try:
+                      if int(item.get("rank", -1)) == rank:
+                          return item
+                  except (TypeError, ValueError):
+                      continue
+              return {}
+
+          if not username:
+              print("KAGGLE_USERNAME is empty; no Kaggle worker could have been acquired in this run.", flush=True)
+          else:
+              for rank in (1, 0):
+                  record = record_for_rank(rank)
+                  kernel_ref = str(record.get("kernel_ref") or "").strip() or (
+                      f"{username}/thorio-free-gpu-nccl-{run_id}-rank-{rank}"
+                  )
+                  result = subprocess.run(
+                      ["kaggle", "kernels", "delete", kernel_ref, "--yes"],
+                      capture_output=True,
+                      text=True,
+                      check=False,
+                  )
+                  if result.returncode == 0:
+                      print(f"NCCL_KAGGLE_WORKER_RELEASED rank={rank} ref={kernel_ref}", flush=True)
                   else:
-                      failures.append(f"Kaggle rank {rank} {kernel_ref}: {detail}")
+                      detail = (result.stderr or result.stdout or "").strip()
+                      if "not found" in detail.lower() or "404" in detail:
+                          print(f"NCCL_KAGGLE_WORKER_ALREADY_ABSENT rank={rank} ref={kernel_ref}", flush=True)
+                      else:
+                          failures.append(f"Kaggle rank {rank} {kernel_ref}: {detail}")
 
           api = "https://api.github.com"
           headers = {
