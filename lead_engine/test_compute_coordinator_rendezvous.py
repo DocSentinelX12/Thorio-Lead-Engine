@@ -202,3 +202,24 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert '"User-Agent: Mozilla/5.0' in text
     assert "for attempt in range(1, 4):" in text
     assert "if exc.code not in {502, 503, 504} or attempt == 3:" in text
+    assert "thorio-nccl-rank-" in text
+    assert '"runner_label": f"thorio-nccl-rank-{rank}"' in text
+    assert "thorio-nccl-rank-${{ matrix.rank }}" in text
+    assert "Release Kaggle GPU workers and JIT runner registrations" in text
+    assert "NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED" in text
+
+
+def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_slug():
+    root = Path(__file__).parents[1]
+    workflow_path = root / ".github" / "workflows" / "physical-external-gpu-proof.yml"
+    workflow = workflow_path.read_text(encoding="utf-8")
+    controller = (root / ".github" / "workflows" / "workflow-dispatch-controller.yml").read_text(encoding="utf-8")
+
+    assert "name: Physical External GPU Proof" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert '"id": "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}"' in workflow
+    assert '"title": "${THORIO_KAGGLE_KERNEL_SLUG}"' in workflow
+    assert '"is_private": false' in workflow
+    assert "physical-external-gpu-proof.yml" in controller
+    assert "physical-external-gpu-proof-run.yml" not in controller
+    assert not (root / ".github" / "workflows" / "physical-external-gpu-proof-manual.yml").exists()
