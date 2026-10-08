@@ -176,7 +176,7 @@ def test_discover_free_does_not_offer_a_running_kernel():
     assert provider.discover_free() == ()
 
 
-def test_acquire_free_creates_bounded_private_gpu_kernel_without_persisting_secrets():
+def test_acquire_free_creates_bounded_gpu_kernel_without_persisting_secrets():
     runner, calls = _runner_factory()
     provider = _provider(runner)
     offer = provider.discover_free()[0]
@@ -252,7 +252,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert "jit-token-value" not in script
 
 
-def test_acquire_free_uses_provisioner_credentials_without_kaggle_secret_service():
+def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel():
     runner, calls = _runner_factory()
     captured_script = {}
 
@@ -281,11 +281,14 @@ def test_acquire_free_uses_provisioner_credentials_without_kaggle_secret_service
     provider.acquire_free(offer)
 
     script = captured_script["content"]
-    assert '"coordinator_token": "coordinator-token-value"' in script
-    assert '"coordinator_url": "https://coordinator.example.test"' in script
-    assert '"github_runner_jit_token": "jit-token-value"' in script
-    assert 'credential("coordinator_token", "coordinator_token_secret")' not in script
-    assert 'credential("coordinator_url", "coordinator_url_secret")' not in script
+    assert '"coordinator_token": ""' in script
+    assert '"coordinator_url": ""' in script
+    assert '"github_runner_jit_token": ""' in script
+    assert "coordinator-token-value" not in script
+    assert "https://coordinator.example.test" not in script
+    assert "jit-token-value" not in script
+    assert 'credential("coordinator_token", "coordinator_token_secret")' in script
+    assert 'credential("coordinator_url", "coordinator_url_secret")' in script
     assert 'credential("github_runner_jit_token", "github_runner_jit_token_secret")' in script
 
 
