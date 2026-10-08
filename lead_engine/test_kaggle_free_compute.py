@@ -281,14 +281,14 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel():
     provider.acquire_free(offer)
 
     script = captured_script["content"]
-    assert '"coordinator_token": ""' in script
-    assert '"coordinator_url": ""' in script
-    assert '"github_runner_jit_token": ""' in script
+    assert '"coordinator_token":' not in script
+    assert '"coordinator_url":' not in script
+    assert '"github_runner_jit_token":' not in script
     assert "coordinator-token-value" not in script
     assert "https://coordinator.example.test" not in script
     assert "jit-token-value" not in script
-    assert 'credential("coordinator_token", "coordinator_token_secret")' in script
-    assert 'credential("coordinator_url", "coordinator_url_secret")' in script
+    assert 'credential("coordinator_token", "coordinator_token_secret")' not in script
+    assert 'credential("coordinator_url", "coordinator_url_secret")' not in script
     assert 'credential("github_runner_jit_token", "github_runner_jit_token_secret")' in script
 
 
