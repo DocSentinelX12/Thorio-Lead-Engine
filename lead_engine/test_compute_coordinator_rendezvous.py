@@ -233,6 +233,10 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     workflow = (root / ".github" / "workflows" / "free-external-gpu-runner.yml").read_text(encoding="utf-8")
 
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME: thorio-free-gpu-worker-${{ github.run_id }}" in workflow
+    assert "cleanup_only:" in workflow
+    assert "Remove stale Thorio Kaggle kernels and JIT runner registrations only" in workflow
+    assert "No GPU has been acquired." in workflow
+    assert 'if: ${{ !inputs.cleanup_only }}' in workflow
     assert 'expected_name="thorio-free-gpu-worker-${GITHUB_RUN_ID}"' in workflow
     assert "Remove any remaining JIT runner registration" in workflow
     assert "EXTERNAL_GPU_JIT_RUNNER_REMOVED" in workflow
