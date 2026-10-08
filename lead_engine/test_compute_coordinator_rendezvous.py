@@ -235,3 +235,13 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert "Remove any remaining JIT runner registration" in workflow
     assert "EXTERNAL_GPU_JIT_RUNNER_REMOVED" in workflow
     assert "No structured Kaggle kernel list was returned; continuing." not in workflow
+
+def test_capacity_broker_delegates_to_the_authoritative_gpu_lifecycle():
+    root = Path(__file__).parents[1]
+    broker = (root / ".github" / "workflows" / "autonomous-gpu-capacity-broker.yml").read_text(encoding="utf-8")
+    worker = (root / ".github" / "workflows" / "free-external-gpu-runner.yml").read_text(encoding="utf-8")
+
+    assert "workflow_call:" in worker
+    assert "uses: ./.github/workflows/free-external-gpu-runner.yml" in broker
+    assert "Acquire, enroll, physically verify, and release a real free GPU" in broker
+    assert "python -m lead_engine.gpu_capacity_broker | tee" not in broker
