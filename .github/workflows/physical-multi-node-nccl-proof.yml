@@ -1199,6 +1199,8 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
+          import csv
+          import io
           import json
           import os
           import pathlib
