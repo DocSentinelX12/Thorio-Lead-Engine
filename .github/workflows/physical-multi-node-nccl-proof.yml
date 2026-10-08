@@ -478,10 +478,11 @@ jobs:
           from pathlib import Path
 
           path = Path("/tmp/nccl-acquisitions.json")
-          if not path.is_file():
-              print("No acquisition records exist to identify partial JIT runner registrations.")
-              raise SystemExit(0)
-          records = json.loads(path.read_text(encoding="utf-8"))
+          records = []
+          if path.is_file():
+              records = json.loads(path.read_text(encoding="utf-8"))
+          else:
+              print("No acquisition records found; using deterministic run-owned JIT runner names.")
           names = {
               str(item.get("runner_name") or "").strip()
               for item in records
