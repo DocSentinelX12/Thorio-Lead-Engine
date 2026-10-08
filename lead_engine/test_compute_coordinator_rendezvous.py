@@ -230,6 +230,7 @@ def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_
     assert "physical-external-gpu-proof-run.yml" not in controller
     assert "autonomous-gpu-capacity-broker.yml" in controller
     assert "kaggle_jit_secret_configured" in controller
+    assert "free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml" in controller
     assert '-f proof_ref="$TARGET_REF"' in controller
     assert '-f cleanup_only="$CLEANUP_ONLY"' in controller
     assert not (root / ".github" / "workflows" / "physical-external-gpu-proof-manual.yml").exists()
