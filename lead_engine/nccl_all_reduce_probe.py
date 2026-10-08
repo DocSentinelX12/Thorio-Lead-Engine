@@ -193,6 +193,33 @@ def main() -> None:
             destination_host=destination_host,
             destination_port=destination_port,
         )
+        bootstrap_port = int(os.environ.get("THORIO_NCCL_BOOTSTRAP_PORT", "29502"))
+        if not (1 <= bootstrap_port <= 65535):
+            raise SystemExit("THORIO_NCCL_BOOTSTRAP_PORT is invalid.")
+        _start_tcpstore_forwarder(
+            local_host=destination_host,
+            local_port=bootstrap_port,
+            peer_host=peer_host,
+            peer_port=peer_port,
+            relay_token=peer_token,
+            destination_host=destination_host,
+            destination_port=bootstrap_port,
+        )
+        print(
+            "THORIO_NCCL_BOOTSTRAP_FORWARDER_READY "
+            + json.dumps(
+                {
+                    "local_host": destination_host,
+                    "local_port": bootstrap_port,
+                    "peer_tunnel_host": peer_host,
+                    "peer_tunnel_port": peer_port,
+                    "destination_host": destination_host,
+                    "destination_port": bootstrap_port,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
         store = dist.TCPStore(
             "127.0.0.1",
             29501,
@@ -212,6 +239,7 @@ def main() -> None:
         rank=rank,
         world_size=world_size,
         timeout=timedelta(seconds=120),
+        device_id=0,
     )
     print(
         "THORIO_NCCL_INIT_OK "
