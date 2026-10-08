@@ -61,41 +61,60 @@ jobs:
           python - <<'PY'
           import csv, io, os, subprocess
           username = os.environ["KAGGLE_USERNAME"]
-          result = subprocess.run(
-              ["kaggle", "kernels", "list", "--user", username, "--page-size", "100", "--sort-by", "dateRun", "--csv"],
-              capture_output=True,
-              text=True,
-              check=False,
-          )
-          if result.returncode != 0:
-              detail = (result.stderr or result.stdout or "").strip()
-              raise SystemExit(f"Could not inspect Kaggle kernels before acquisition: {detail}")
-          lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
-          header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
-          if header is None:
-              raise SystemExit("Kaggle kernel list returned no CSV header; refusing to continue without stale-worker cleanup.")
           prefix = f"{username}/thorio-free-gpu-worker-"
+          stale_refs = set()
+          page = 1
+          while True:
+              result = subprocess.run(
+                  [
+                      "kaggle", "kernels", "list",
+                      "--user", username,
+                      "--search", "thorio-free-gpu-worker-",
+                      "--page", str(page),
+                      "--page-size", "100",
+                      "--sort-by", "dateRun",
+                      "--csv",
+                  ],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if result.returncode != 0:
+                  detail = (result.stderr or result.stdout or "").strip()
+                  raise SystemExit(f"Could not inspect Kaggle kernels before acquisition: {detail}")
+              lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+              header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
+              if header is None:
+                  raise SystemExit("Kaggle kernel list returned no CSV header; refusing to continue without stale-worker cleanup.")
+              rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
+              for row in rows:
+                  ref = str(row.get("ref") or "").strip()
+                  if ref.startswith(prefix):
+                      stale_refs.add(ref)
+              if len(rows) < 100:
+                  break
+              page += 1
           failures = []
-          for row in csv.DictReader(io.StringIO("\n".join(lines[header:]))):
-              ref = str(row.get("ref") or "").strip()
-              if ref.startswith(prefix):
-                  print(f"Deleting stale Thorio Kaggle worker kernel: {ref}", flush=True)
-                  deleted = subprocess.run(
-                      ["kaggle", "kernels", "delete", ref, "--yes"],
-                      capture_output=True,
-                      text=True,
-                      check=False,
-                  )
-                  if deleted.returncode == 0:
-                      print(f"STALE_KAGGLE_WORKER_RELEASED {ref}", flush=True)
+          for ref in sorted(stale_refs):
+              print(f"Deleting stale Thorio Kaggle worker kernel: {ref}", flush=True)
+              deleted = subprocess.run(
+                  ["kaggle", "kernels", "delete", ref, "--yes"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              if deleted.returncode == 0:
+                  print(f"STALE_KAGGLE_WORKER_RELEASED {ref}", flush=True)
+              else:
+                  detail = (deleted.stderr or deleted.stdout or "").strip()
+                  if "not found" in detail.lower() or "404" in detail:
+                      print(f"STALE_KAGGLE_WORKER_ALREADY_ABSENT {ref}", flush=True)
                   else:
-                      detail = (deleted.stderr or deleted.stdout or "").strip()
-                      if "not found" in detail.lower() or "404" in detail:
-                          print(f"STALE_KAGGLE_WORKER_ALREADY_ABSENT {ref}", flush=True)
-                      else:
-                          failures.append(f"{ref}: {detail}")
+                      failures.append(f"{ref}: {detail}")
           if failures:
               raise SystemExit("Stale Kaggle worker cleanup failed: " + "; ".join(failures))
+          if not stale_refs:
+              print("No stale Thorio Kaggle worker kernels found.", flush=True)
           PY
 
       - name: Acquire free external GPU and start JIT runner
