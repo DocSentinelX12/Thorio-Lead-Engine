@@ -131,6 +131,7 @@ jobs:
               raise SystemExit("Kaggle kernel cleanup failed: " + "; ".join(failures))
           if not refs:
               print("No stale Thorio GPU kernels found.", flush=True)
+          PY
 
       - name: Remove all stale Thorio JIT runner registrations
         shell: bash
@@ -199,6 +200,8 @@ jobs:
               raise SystemExit("JIT runner cleanup failed: " + "; ".join(failures))
           if not stale:
               print("No stale Thorio JIT runner registrations found.", flush=True)
+          PY
+
   require_kaggle_jit_secret_confirmation:
     name: Require Kaggle JIT secret confirmation before GPU acquisition
     if: ${{ !inputs.cleanup_only && !inputs.kaggle_jit_secret_configured }}
