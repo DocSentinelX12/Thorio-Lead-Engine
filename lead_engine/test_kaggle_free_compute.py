@@ -263,8 +263,11 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel():
         if command[1:3] == ["kernels", "push"]:
             from pathlib import Path
 
-            script_path = Path(command[command.index("-p") + 1]) / "thorio_worker.py"
+            kernel_dir = Path(command[command.index("-p") + 1])
+            script_path = kernel_dir / "thorio_worker.py"
+            metadata_path = kernel_dir / "kernel-metadata.json"
             captured_script["content"] = script_path.read_text(encoding="utf-8")
+            captured_script["metadata"] = json.loads(metadata_path.read_text(encoding="utf-8"))
         return runner(command, timeout=timeout, cwd=cwd)
 
     provider = KaggleFreeComputeProvider(
