@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import time
+from datetime import timedelta
 
 
 def build_probe_evidence(
@@ -200,11 +201,22 @@ def main() -> None:
             use_libuv=False,
         )
 
+    print(
+        "THORIO_NCCL_INIT_START "
+        + json.dumps({"rank": rank, "world_size": world_size}, sort_keys=True),
+        flush=True,
+    )
     dist.init_process_group(
         backend="nccl",
         store=store,
         rank=rank,
         world_size=world_size,
+        timeout=timedelta(seconds=120),
+    )
+    print(
+        "THORIO_NCCL_INIT_OK "
+        + json.dumps({"rank": rank, "world_size": world_size}, sort_keys=True),
+        flush=True,
     )
     try:
         value = torch.tensor([rank + 1], dtype=torch.int64, device=device)
