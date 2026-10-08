@@ -480,7 +480,7 @@ jobs:
       THORIO_EXPECTED_RANK: ${{ matrix.rank }}
       MASTER_PORT: ${{ inputs.master_port }}
       NCCL_DEBUG: INFO
-      NCCL_DEBUG_SUBSYS: NET
+      NCCL_DEBUG_SUBSYS: INIT,NET
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
       THORIO_NCCL_RENDEZVOUS_SESSION: physical-nccl-${{ github.run_id }}-rank-${{ matrix.rank }}
