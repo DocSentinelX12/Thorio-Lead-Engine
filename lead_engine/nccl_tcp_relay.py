@@ -7,6 +7,7 @@ inside the same Kaggle network namespace and shuttles bytes both ways.
 """
 from __future__ import annotations
 import ipaddress
+import json
 import os
 import socket
 import struct
@@ -64,7 +65,17 @@ def _handle(client: socket.socket) -> None:
         destination = socket.inet_ntoa(packed_ip)
         if not _allowed_destination(destination):
             return
+        print(
+            "THORIO_RELAY_INCOMING "
+            + json.dumps({"destination": destination, "port": port}, sort_keys=True),
+            flush=True,
+        )
         upstream = socket.create_connection((destination, port), timeout=10)
+        print(
+            "THORIO_RELAY_UPSTREAM_CONNECTED "
+            + json.dumps({"destination": destination, "port": port}, sort_keys=True),
+            flush=True,
+        )
         client.settimeout(None)
         upstream.settimeout(None)
         t = threading.Thread(target=_copy, args=(client, upstream), daemon=True)
