@@ -276,7 +276,7 @@ def test_gpu_workflow_embedded_python_blocks_compile():
         root / ".github" / "workflows" / "physical-multi-node-nccl-proof.yml",
         root / ".github" / "workflows" / "physical-external-gpu-proof.yml",
     )
-    pattern = re.compile(r"(?m)^[ \\t]*python - <<'PY'[ \\t]*\\n(.*?)^[ \\t]*PY[ \\t]*$", re.DOTALL | re.MULTILINE)
+    pattern = re.compile(r"(?m)^[ \t]*python - <<'PY'[ \t]*\n(.*?)^[ \t]*PY[ \t]*$", re.DOTALL | re.MULTILINE)
     compiled = 0
     for workflow_path in workflow_paths:
         workflow = workflow_path.read_text(encoding="utf-8")
