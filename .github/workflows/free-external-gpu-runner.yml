@@ -124,6 +124,12 @@ jobs:
           if durable is None:
               raise SystemExit(f"Local acquisition ledger has no record for {acquisition_id}")
 
+          # Publish identifiers before remote handoff so cleanup can still find
+          # and release this worker if the coordinator is unavailable.
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"kernel_ref={kernel_ref}\n")
+              output.write(f"acquisition_id={acquisition_id}\n")
+
           handoff_payload = {
               "offer": {
                   "provider_id": durable["provider_id"],
@@ -198,9 +204,6 @@ jobs:
           if handoff.get("ok") is not True or str(handoff.get("acquisition_id") or "") != acquisition_id:
               raise SystemExit(f"Coordinator rejected acquisition handoff: {handoff!r}")
 
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"kernel_ref={kernel_ref}\n")
-              output.write(f"acquisition_id={acquisition_id}\n")
           print(f"THORIO_EXTERNAL_GPU_ACQUISITION_DURABLY_REGISTERED {acquisition_id}")
           print(f"EXTERNAL_GPU_KERNEL_RUNNING {kernel_ref}")
           PY
@@ -246,6 +249,9 @@ jobs:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
+      ACQUISITION_ID: ${{ needs.provision.outputs.acquisition_id }}
+      GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+      GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
     steps:
       - name: Install Kaggle CLI
         run: python -m pip install --upgrade kaggle
@@ -360,3 +366,65 @@ jobs:
               exit 1
             fi
           fi
+      - name: Remove any remaining JIT runner registration
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ACQUISITION_ID}" ]; then
+            echo "No acquisition ID was recorded; no run-owned JIT runner name can be derived."
+            exit 0
+          fi
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          acquisition_id = os.environ["ACQUISITION_ID"].strip()
+          runner_name = "thorio-free-gpu-" + acquisition_id[:12]
+          repository = os.environ["GITHUB_RUNNER_REPOSITORY"]
+          token = os.environ["GITHUB_RUNNER_JIT_TOKEN"]
+          owner, repo = repository.split("/", 1)
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2026-03-10",
+          }
+          request = urllib.request.Request(
+              f"https://api.github.com/repos/{owner}/{repo}/actions/runners?per_page=100",
+              headers=headers,
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  payload = json.loads(response.read().decode("utf-8"))
+          except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+              raise SystemExit(f"Could not inspect JIT runner registrations during cleanup: {exc}") from exc
+
+          runner = next(
+              (
+                  item for item in payload.get("runners", [])
+                  if isinstance(item, dict) and str(item.get("name") or "") == runner_name
+              ),
+              None,
+          )
+          if runner is None:
+              print(f"EXTERNAL_GPU_JIT_RUNNER_ALREADY_ABSENT {runner_name}", flush=True)
+              raise SystemExit(0)
+          runner_id = runner.get("id")
+          if not isinstance(runner_id, int):
+              raise SystemExit(f"JIT runner {runner_name} has no numeric registration ID.")
+          delete_request = urllib.request.Request(
+              f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{runner_id}",
+              headers=headers,
+              method="DELETE",
+          )
+          try:
+              with urllib.request.urlopen(delete_request, timeout=20) as response:
+                  if response.status not in (200, 204):
+                      raise SystemExit(f"Unexpected HTTP {response.status} removing JIT runner {runner_name}.")
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise SystemExit(f"HTTP {exc.code} removing JIT runner {runner_name}: {exc.reason}") from exc
+          print(f"EXTERNAL_GPU_JIT_RUNNER_REMOVED {runner_name}", flush=True)
+          PY
