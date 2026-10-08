@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: thorio-external-gpu-fabric
+  cancel-in-progress: false
+
 jobs:
   physical-external-gpu-proof:
     name: Run real CUDA proof on external Kaggle GPU
