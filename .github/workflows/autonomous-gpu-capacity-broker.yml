@@ -2,6 +2,12 @@ name: GPU Capacity Broker End-to-End Validation
 
 on:
   workflow_dispatch:
+    inputs:
+      kaggle_jit_secret_configured:
+        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is set to the rotated GitHub runner-management token."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,4 +50,6 @@ jobs:
     name: Acquire, enroll, physically verify, and release a real free GPU
     needs: validate-broker
     uses: ./.github/workflows/free-external-gpu-runner.yml
+    with:
+      kaggle_jit_secret_configured: ${{ inputs.kaggle_jit_secret_configured }}
     secrets: inherit
