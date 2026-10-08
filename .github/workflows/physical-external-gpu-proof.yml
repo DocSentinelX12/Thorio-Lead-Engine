@@ -151,6 +151,10 @@ jobs:
             status_output="$(kaggle kernels status "$kernel_ref" 2>&1)" || {
               echo "Kaggle kernel status could not be read:"
               echo "$status_output"
+              if [[ "$status_output" == *"kernels.get"* && "$status_output" == *"denied"* ]]; then
+                echo "Kaggle denied status access for the submitted kernel; failing fast rather than consuming the full proof timeout." >&2
+                exit 1
+              fi
               sleep 10
               continue
             }
