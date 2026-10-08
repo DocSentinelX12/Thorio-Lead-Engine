@@ -257,7 +257,7 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert "Remove any remaining JIT runner registration" in workflow
     assert "EXTERNAL_GPU_JIT_RUNNER_REMOVED" in workflow
     assert "Clear stale Thorio free GPU JIT runner registrations" in workflow
-    assert '"--search", "thorio-free-gpu-worker-"' in workflow
+    assert '"--search", "thorio-"' in workflow
     assert '"--page", str(page)' in workflow
     assert "No structured Kaggle kernel list was returned; continuing." not in workflow
 
