@@ -692,7 +692,7 @@ jobs:
               )
               if header is None:
                   raise SystemExit("Kaggle kernel inventory returned no CSV header; refusing to guess.")
-              rows = list(csv.DictReader(io.StringIO("\\n".join(lines[header:]))))
+              rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
               refs.update(str(row.get("ref") or "").strip() for row in rows if str(row.get("ref") or "").strip())
               if len(rows) < 100:
                   break
@@ -707,10 +707,10 @@ jobs:
         run: |
           set -euo pipefail
           if output="$(kaggle kernels delete "${KERNEL_REF}" --yes 2>&1)"; then
-            printf '%s\\n' "${output}"
+            printf '%s\n' "${output}"
             echo "EXTERNAL_GPU_CAPACITY_RELEASED ${KERNEL_REF}"
           else
-            printf '%s\\n' "${output}" >&2
+            printf '%s\n' "${output}" >&2
             echo "EXTERNAL_GPU_CAPACITY_RELEASE_FAILED ${KERNEL_REF}" >&2
             exit 1
           fi
