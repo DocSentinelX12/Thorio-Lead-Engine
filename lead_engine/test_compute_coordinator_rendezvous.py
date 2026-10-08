@@ -209,6 +209,8 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED" in text
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME" in text
     assert "runner_names.update(" in text
+    assert "Clear stale NCCL JIT runner registrations" in text
+    assert '"--search", "thorio-free-gpu-nccl-"' in text
 
 
 def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_slug():
@@ -234,6 +236,9 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert 'expected_name="thorio-free-gpu-worker-${GITHUB_RUN_ID}"' in workflow
     assert "Remove any remaining JIT runner registration" in workflow
     assert "EXTERNAL_GPU_JIT_RUNNER_REMOVED" in workflow
+    assert "Clear stale Thorio free GPU JIT runner registrations" in workflow
+    assert '"--search", "thorio-free-gpu-worker-"' in workflow
+    assert '"--page", str(page)' in workflow
     assert "No structured Kaggle kernel list was returned; continuing." not in workflow
 
 def test_capacity_broker_delegates_to_the_authoritative_gpu_lifecycle():
