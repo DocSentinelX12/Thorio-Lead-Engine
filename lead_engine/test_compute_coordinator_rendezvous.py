@@ -242,6 +242,8 @@ def test_capacity_broker_delegates_to_the_authoritative_gpu_lifecycle():
     worker = (root / ".github" / "workflows" / "free-external-gpu-runner.yml").read_text(encoding="utf-8")
 
     assert "workflow_call:" in worker
+    assert "workflow_dispatch:" in broker
+    assert "push:" not in broker
     assert "uses: ./.github/workflows/free-external-gpu-runner.yml" in broker
     assert "Acquire, enroll, physically verify, and release a real free GPU" in broker
     assert "python -m lead_engine.gpu_capacity_broker | tee" not in broker
