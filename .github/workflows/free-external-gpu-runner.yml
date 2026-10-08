@@ -250,9 +250,6 @@ jobs:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
-      RUNNER_NAME: thorio-free-gpu-worker-${{ github.run_id }}
-      GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
-      GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
     steps:
       - name: Install Kaggle CLI
         run: python -m pip install --upgrade kaggle
@@ -349,6 +346,9 @@ jobs:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
+      RUNNER_NAME: thorio-free-gpu-worker-${{ github.run_id }}
+      GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
+      GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
     steps:
       - name: Install Kaggle CLI
         run: python -m pip install --upgrade kaggle
