@@ -8,6 +8,7 @@ def test_provider_readiness_requires_complete_kaggle_inputs(monkeypatch):
         "THORIO_KAGGLE_ENABLED",
         "THORIO_KAGGLE_USERNAME",
         "KAGGLE_API_TOKEN",
+        "THORIO_KAGGLE_SECRET_DATASET_SLUG",
         "THORIO_COMPUTE_COORDINATOR_URL",
         "THORIO_COMPUTE_AUTH_TOKEN",
     ):
@@ -21,6 +22,7 @@ def test_provider_readiness_requires_complete_kaggle_inputs(monkeypatch):
     assert set(state["missing"]) == {
         "THORIO_KAGGLE_USERNAME",
         "KAGGLE_API_TOKEN",
+        "THORIO_KAGGLE_SECRET_DATASET_SLUG",
         "THORIO_COMPUTE_COORDINATOR_URL",
         "THORIO_COMPUTE_AUTH_TOKEN",
     }
@@ -31,6 +33,7 @@ def test_disabled_providers_are_not_marked_missing(monkeypatch):
         "THORIO_KAGGLE_ENABLED",
         "THORIO_KAGGLE_USERNAME",
         "KAGGLE_API_TOKEN",
+        "THORIO_KAGGLE_SECRET_DATASET_SLUG",
         "THORIO_COMPUTE_COORDINATOR_URL",
         "THORIO_COMPUTE_AUTH_TOKEN",
     ):
@@ -45,6 +48,7 @@ def test_ready_kaggle_requires_all_inputs(monkeypatch):
     monkeypatch.setenv("THORIO_KAGGLE_ENABLED", "1")
     monkeypatch.setenv("THORIO_KAGGLE_USERNAME", "example")
     monkeypatch.setenv("KAGGLE_API_TOKEN", "token")
+    monkeypatch.setenv("THORIO_KAGGLE_SECRET_DATASET_SLUG", "thorio-runner-credentials-123-1")
     monkeypatch.setenv("THORIO_COMPUTE_COORDINATOR_URL", "https://example.invalid")
     monkeypatch.setenv("THORIO_COMPUTE_AUTH_TOKEN", "coordinator-token")
 
