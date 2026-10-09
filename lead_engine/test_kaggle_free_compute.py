@@ -383,7 +383,8 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
 
     script = captured_script["content"]
     assert "def get_runner_token():" in script
-    assert 'Path("/kaggle/input") / dataset_slug / "runner-token"' in script
+    assert 'input_root = Path("/kaggle/input")' in script
+    assert 'secret_file = input_root / dataset_slug / "runner-token"' in script
     assert "UserSecretsClient" not in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
     assert 'RUNNER_ROOT"] = "/kaggle/working/actions-runner"' in script
