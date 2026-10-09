@@ -124,7 +124,7 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
     acquired = provider.acquire_free(offer)
 
     dataset_slug = acquired.enrollment["runner_credential_dataset_slug"]
-    assert captured["dataset_metadata"]["isPrivate"] is True
+    assert "isPrivate" not in captured["dataset_metadata"]
     assert captured["dataset_token"] == "jit-token-value"
     assert captured["kernel_metadata"]["dataset_sources"] == [f"example-user/{dataset_slug}"]
     assert acquired.enrollment["runner_credential_dataset_owned"] is True
