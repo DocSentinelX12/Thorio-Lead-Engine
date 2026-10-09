@@ -52,10 +52,11 @@ printf '%s\n' "${create_output}"
 # Require Kaggle's own upload confirmation for the exact secret filename.
 # This proves the CLI reported uploading runner-token, without relying on the
 # file-list endpoint that returned HTTP 403 in the observed runs.
-if ! printf '%s\n' "${create_output}" | grep -Eq 'Upload successful:[[:space:]]*runner-token[[:space:]]+\\([^)]*\\)'; then
+if ! printf '%s\n' "${create_output}" | grep -Eq 'Upload successful:[[:space:]]*runner-token[[:space:]]+\([^)]*\)'; then
   echo "Kaggle did not confirm uploading runner-token; refusing GPU acquisition." >&2
   exit 1
 fi
+printf '%s\n' "THORIO_PRIVATE_RUNNER_CREDENTIAL_FILE_VERIFIED"
 
 # Confirm the exact run-scoped dataset appears in the authenticated owner's
 # dataset inventory. Parse CSV, require a valid ref header, and fail closed on
