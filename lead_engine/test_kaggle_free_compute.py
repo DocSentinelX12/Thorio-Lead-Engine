@@ -100,6 +100,11 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
                 encoding="utf-8",
             )
             return subprocess.CompletedProcess(command, 0, "Metadata downloaded", "")
+        if command[1:3] == ["kernels", "list"]:
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\\nexample-user/thorio-free-gpu-worker,Thorio,test-user,2026-10-07T00:00:00Z,0\\n", "")
+        if command[1:3] == ["datasets", "list"]:
+            dataset_ref = captured["dataset_metadata"]["id"]
+            return subprocess.CompletedProcess(command, 0, "ref,title\\n" + dataset_ref + ",Thorio credential\\n", "")
         if command[1:3] == ["datasets", "files"]:
             return subprocess.CompletedProcess(command, 0, "name,size\nrunner-token,32\n", "")
         if command[1:3] == ["kernels", "push"]:
