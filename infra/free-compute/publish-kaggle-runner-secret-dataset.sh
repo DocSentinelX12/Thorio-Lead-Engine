@@ -59,8 +59,45 @@ path = Path(metadata_path)
 if not path.is_file():
     raise SystemExit("Kaggle did not return dataset metadata for private-visibility verification.")
 metadata = json.loads(path.read_text(encoding="utf-8"))
-if str(metadata.get("id") or "").strip() != dataset_ref:
-    raise SystemExit("Kaggle returned metadata for a different runner credential dataset.")
+
+# Kaggle CLI/API versions have returned both the documented "id" field and
+# expanded nullable identity fields. Accept only an exact owner/slug match.
+expected = dataset_ref.strip().casefold().strip("/")
+identities = set()
+for key in ("id", "datasetRef", "dataset_ref"):
+    value = str(metadata.get(key) or "").strip().casefold().strip("/")
+    if value:
+        identities.add(value)
+
+owner = str(
+    metadata.get("ownerUserNullable")
+    or metadata.get("ownerUser")
+    or metadata.get("owner")
+    or ""
+).strip()
+slug = str(
+    metadata.get("datasetSlugNullable")
+    or metadata.get("datasetSlug")
+    or metadata.get("slug")
+    or ""
+).strip()
+if owner and slug:
+    identities.add(f"{owner}/{slug}".casefold().strip("/"))
+
+if expected not in identities:
+    # Emit only non-secret identity fields to make schema drift diagnosable.
+    observed = {
+        key: metadata.get(key)
+        for key in (
+            "id", "datasetRef", "dataset_ref", "ownerUserNullable",
+            "ownerUser", "owner", "datasetSlugNullable", "datasetSlug", "slug",
+        )
+        if metadata.get(key) is not None
+    }
+    raise SystemExit(
+        "Kaggle returned metadata whose identity did not match the requested "
+        f"runner credential dataset. Observed identity fields: {json.dumps(observed, sort_keys=True)}"
+    )
 if metadata.get("isPrivate") is False:
     raise SystemExit("Kaggle reports the runner credential dataset is public; refusing GPU acquisition.")
 print(f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} privacy=private-by-default", flush=True)
