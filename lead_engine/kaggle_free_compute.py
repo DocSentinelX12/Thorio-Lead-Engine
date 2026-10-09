@@ -469,10 +469,10 @@ def get_runner_token():
                 entry.name for entry in input_root.iterdir() if entry.is_dir()
             )
         except OSError as exc:
-            mounted_inputs = [f"<input listing failed: {type(exc).__name__}>"]
+            mounted_inputs = [f"<input listing failed: {{type(exc).__name__}}>"]
         raise RuntimeError(
             "Run-scoped private runner credential file is unavailable; "
-            f"expected={secret_file}; mounted_input_directories={json.dumps(mounted_inputs)}; "
+            f"expected={{secret_file}}; mounted_input_directories={{json.dumps(mounted_inputs)}}; "
             "refusing to start an unauthenticated GPU worker"
         )
     value = secret_file.read_text(encoding="utf-8").strip()
