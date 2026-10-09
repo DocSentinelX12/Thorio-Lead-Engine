@@ -437,8 +437,10 @@ LOG_PATH = Path("/kaggle/working/thorio-worker.log")
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 def _log_uncaught_exception(exc_type, exc, tb):
+    # Stream the traceback as well as saving it for Kaggle output downloads.
     with LOG_PATH.open("a", encoding="utf-8") as log:
         traceback.print_exception(exc_type, exc, tb, file=log)
+    traceback.print_exception(exc_type, exc, tb, file=sys.stderr)
 
 sys.excepthook = _log_uncaught_exception
 
@@ -456,11 +458,22 @@ def run(*args):
 
 def get_runner_token():
     dataset_slug = CONFIG["github_runner_jit_token_dataset_slug"]
-    secret_file = Path("/kaggle/input") / dataset_slug / "runner-token"
+    input_root = Path("/kaggle/input")
+    secret_file = input_root / dataset_slug / "runner-token"
     if not secret_file.is_file():
+        # Directory names are safe to report; never print file contents or
+        # environment values. This distinguishes an absent mount from a
+        # filename/layout mismatch without exposing credentials.
+        try:
+            mounted_inputs = sorted(
+                entry.name for entry in input_root.iterdir() if entry.is_dir()
+            )
+        except OSError as exc:
+            mounted_inputs = [f"<input listing failed: {type(exc).__name__}>"]
         raise RuntimeError(
-            "Run-scoped private runner credential dataset is not mounted at "
-            f"{{secret_file}}; refusing to start an unauthenticated GPU worker"
+            "Run-scoped private runner credential file is unavailable; "
+            f"expected={secret_file}; mounted_input_directories={json.dumps(mounted_inputs)}; "
+            "refusing to start an unauthenticated GPU worker"
         )
     value = secret_file.read_text(encoding="utf-8").strip()
     if not value:
