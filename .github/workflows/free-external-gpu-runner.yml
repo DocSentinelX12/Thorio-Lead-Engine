@@ -265,6 +265,9 @@ jobs:
             "https://api.github.com/repos/${GITHUB_RUNNER_REPOSITORY}/actions/runners?per_page=1" >/dev/null
           echo "Kaggle, coordinator, and GitHub runner credentials are present; runner API read access verified."
 
+      - name: Remove stale run-scoped private JIT credential datasets
+        run: bash infra/free-compute/cleanup-stale-kaggle-runner-secret-datasets.sh
+
       - name: Publish the run-scoped private JIT credential dataset
         run: bash infra/free-compute/publish-kaggle-runner-secret-dataset.sh
 
