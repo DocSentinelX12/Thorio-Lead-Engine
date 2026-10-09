@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       kaggle_jit_secret_configured:
-        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is set to the rotated GitHub runner-management token."
+        description: "Confirm GitHub Actions secret THORIO_GITHUB_RUNNER_JIT_TOKEN contains the rotated GitHub runner-management token."
         required: true
         default: false
         type: boolean
@@ -38,7 +38,7 @@ jobs:
     steps:
       - name: Stop before consuming GPU quota
         run: |
-          echo "::error::No GPU was acquired. Add or update the Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN with the rotated GitHub runner-management token, then rerun with kaggle_jit_secret_configured=true."
+          echo "::error::No GPU was acquired. Add or update the GitHub Actions secret THORIO_GITHUB_RUNNER_JIT_TOKEN with the rotated GitHub runner-management token, then rerun with kaggle_jit_secret_configured=true."
           exit 1
 
   provision:
