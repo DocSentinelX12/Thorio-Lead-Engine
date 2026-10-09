@@ -659,6 +659,7 @@ run("bash", str(runner_script))
                     encoding="utf-8",
                 )
                 create_output = self._run(["datasets", "create", "-p", str(path)], cwd=str(path))
+                created = True
                 if not re.search(
                     r"Upload successful:\s*runner-token\s+\([^)]*\)",
                     create_output,
@@ -667,7 +668,6 @@ run("bash", str(runner_script))
                     raise KaggleFreeComputeError(
                         "Kaggle did not confirm uploading runner-token; refusing GPU acquisition"
                     )
-                created = True
 
             # Verify the exact owner-scoped dataset through the inventory. The
             # metadata and files endpoints returned 403/incomplete responses in
