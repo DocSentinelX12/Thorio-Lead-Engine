@@ -15,8 +15,11 @@ from .kaggle_free_compute import (
 def _runner_factory(quota_remaining: str = "20.00h"):
     calls: list[list[str]] = []
     status_calls = 0
+    kernel_exists = False
+    kernel_ref = "example-user/thorio-free-gpu-worker"
 
     def runner(command, *, timeout, cwd=None):
+        nonlocal status_calls, kernel_exists
         calls.append(list(command))
         if command[1:3] == ["quota", "--format"]:
             payload = [
@@ -30,21 +33,26 @@ def _runner_factory(quota_remaining: str = "20.00h"):
             ]
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if command[1:3] == ["kernels", "list"]:
-            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n", "")
+            rows = f"{kernel_ref},Thorio,test-user,2026-10-07T00:00:00Z,0\\n" if kernel_exists else ""
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\\n" + rows, "")
+        if command[1:3] == ["datasets", "list"]:
+            return subprocess.CompletedProcess(command, 0, "ref,title\\n", "")
         if command[1:3] == ["kernels", "status"]:
-            nonlocal status_calls
             status_calls += 1
             if status_calls <= 2:
                 return subprocess.CompletedProcess(command, 1, "", "Kernel not found")
             return subprocess.CompletedProcess(command, 0, "Status: Running", "")
         if command[1:3] == ["kernels", "push"]:
+            kernel_exists = True
             return subprocess.CompletedProcess(command, 0, "Kernel version 1 successfully pushed.", "")
         if command[1:3] == ["kernels", "delete"]:
+            kernel_exists = False
+            return subprocess.CompletedProcess(command, 0, "Deleted", "")
+        if command[1:3] == ["datasets", "delete"]:
             return subprocess.CompletedProcess(command, 0, "Deleted", "")
         raise AssertionError(f"unexpected Kaggle command: {command}")
 
     return runner, calls
-
 
 def _provider(runner):
     return KaggleFreeComputeProvider(
@@ -140,6 +148,27 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
     assert any(command[1:3] == ["datasets", "delete"] for command in calls)
     assert any(command[1:3] == ["kernels", "delete"] for command in calls)
 
+
+
+def test_kernel_cleanup_skips_delete_when_owner_inventory_proves_absent():
+    runner, calls = _runner_factory()
+    provider = _provider(runner)
+
+    deleted = provider._delete_kernel_if_listed("example-user/thorio-free-gpu-worker")
+
+    assert deleted is False
+    assert not any(command[1:3] == ["kernels", "delete"] for command in calls)
+    assert any(command[1:3] == ["kernels", "list"] and "--search" not in command for command in calls)
+
+
+def test_dataset_cleanup_skips_delete_when_owner_inventory_proves_absent():
+    runner, calls = _runner_factory()
+    provider = _provider(runner)
+
+    provider._delete_private_runner_credential_dataset("thorio-runner-credentials-12345-1")
+
+    assert not any(command[1:3] == ["datasets", "delete"] for command in calls)
+    assert any(command[1:3] == ["datasets", "list"] and "--search" not in command for command in calls)
 
 
 def test_failed_kernel_output_is_captured_before_cleanup_and_secrets_are_redacted(monkeypatch):

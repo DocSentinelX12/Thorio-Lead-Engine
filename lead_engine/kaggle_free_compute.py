@@ -577,13 +577,51 @@ run("bash", str(runner_script))
             raise KaggleFreeComputeError("acquisition domain does not match the configured Kaggle worker")
         return self._kernel_status(self._kernel_ref())
 
+    def _dataset_is_listed(self, dataset_ref: str) -> bool:
+        """Check the complete owner-scoped dataset inventory before deleting a dataset."""
+        page = 1
+        while True:
+            output = self._run(
+                ["datasets", "list", "--mine", "--page", str(page), "--page-size", "100", "--csv"]
+            )
+            lines = [line for line in output.splitlines() if line.strip()]
+            header = next(
+                (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
+                None,
+            )
+            if header is None:
+                preview = " | ".join(lines[:3]) or "<empty response>"
+                raise KaggleFreeComputeError(
+                    "Cannot safely classify Kaggle dataset deletion because "
+                    f"dataset inventory page {page} returned no CSV header: {preview}"
+                )
+            rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
+            if any(str(row.get("ref") or "").strip().lower() == dataset_ref.lower() for row in rows):
+                return True
+            if len(rows) < 100:
+                return False
+            page += 1
+
+    def _delete_kernel_if_listed(self, kernel_ref: str) -> bool:
+        """Delete only a kernel confirmed in the authenticated owner's full inventory."""
+        if not self._kernel_is_listed(kernel_ref):
+            return False
+        try:
+            self._delete_kernel_if_listed(kernel_ref)
+        except KaggleFreeComputeError:
+            if not self._kernel_is_listed(kernel_ref):
+                return False
+            raise
+        return True
+
     def _delete_private_runner_credential_dataset(self, dataset_slug: str) -> None:
         dataset_ref = f"{self.config.username}/{dataset_slug}"
+        if not self._dataset_is_listed(dataset_ref):
+            return
         try:
             self._run(["datasets", "delete", dataset_ref, "--yes"])
-        except KaggleFreeComputeError as exc:
-            message = str(exc).lower()
-            if "not found" in message or "404" in message:
+        except KaggleFreeComputeError:
+            if not self._dataset_is_listed(dataset_ref):
                 return
             raise
 
@@ -778,7 +816,7 @@ run("bash", str(runner_script))
             except Exception as exc:
                 cleanup_errors = []
                 try:
-                    self._run(["kernels", "delete", kernel_ref, "--yes"])
+                    self._delete_kernel_if_listed(kernel_ref)
                 except KaggleFreeComputeError as cleanup_exc:
                     if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
                         cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
@@ -800,7 +838,7 @@ run("bash", str(runner_script))
             ):
                 cleanup_errors = []
                 try:
-                    self._run(["kernels", "delete", kernel_ref, "--yes"])
+                    self._delete_kernel_if_listed(kernel_ref)
                 except KaggleFreeComputeError as cleanup_exc:
                     if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
                         cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
@@ -820,7 +858,7 @@ run("bash", str(runner_script))
             cleanup_errors = []
             diagnostics = self._capture_kernel_failure_output(kernel_ref)
             try:
-                self._run(["kernels", "delete", kernel_ref, "--yes"])
+                self._delete_kernel_if_listed(kernel_ref)
             except KaggleFreeComputeError as cleanup_exc:
                 if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
                     cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
@@ -879,7 +917,7 @@ run("bash", str(runner_script))
         cleanup_errors = []
         kernel_ref = str(acquisition.enrollment.get("kernel_ref") or self._kernel_ref())
         try:
-            self._run(["kernels", "delete", kernel_ref, "--yes"])
+            self._delete_kernel_if_listed(kernel_ref)
         except KaggleFreeComputeError as exc:
             if "not found" not in str(exc).lower() and "404" not in str(exc).lower():
                 cleanup_errors.append(f"kernel cleanup failed: {exc}")

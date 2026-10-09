@@ -10,7 +10,7 @@ page=1
 all_refs=()
 
 while true; do
-  listing="$(kaggle datasets list --mine --search "thorio-runner-credentials-" --page "${page}" --page-size 100 --csv)"
+  listing="$(kaggle datasets list --mine --page "${page}" --page-size 100 --csv)"
   parsed="$(printf '%s\n' "${listing}" | python -c '
 import csv, io, re, sys
 lines = [line for line in sys.stdin.read().splitlines() if line.strip()]

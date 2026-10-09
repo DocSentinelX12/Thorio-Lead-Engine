@@ -213,7 +213,7 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "Remove stale run-scoped private JIT credential datasets" in text
     assert "cleanup-stale-kaggle-runner-secret-datasets.sh" in text
     assert "Delete the run-scoped private JIT credential dataset" in text
-    assert '"--search", "thorio-"' in text
+    assert '"--search", "thorio-"' not in text
     assert "if kernel_ref not in listed_refs:" in text
     assert "refusing to guess cleanup targets" in text
     assert "THORIO_KAGGLE_GITHUB_RUNNER_NAME" in text
@@ -233,7 +233,7 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
         if line.lstrip().startswith("run:")
     )
     assert "Require Kaggle JIT secret confirmation before GPU acquisition" in text
-    assert '"--search", "thorio-"' in text
+    assert '"--search", "thorio-"' not in text
 
 
 def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_slug():
@@ -274,7 +274,7 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert "Remove any remaining JIT runner registration" in workflow
     assert "EXTERNAL_GPU_JIT_RUNNER_REMOVED" in workflow
     assert "Clear stale Thorio free GPU JIT runner registrations" in workflow
-    assert '"--search", "thorio-"' in workflow
+    assert '"--search", "thorio-"' not in workflow
     assert '"--page", str(page)' in workflow
     assert "No structured Kaggle kernel list was returned; continuing." not in workflow
     assert "Confirm the run-owned Kaggle kernel exists before deleting it" in workflow
