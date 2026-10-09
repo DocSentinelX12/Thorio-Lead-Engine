@@ -225,6 +225,8 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "kaggle_jit_secret_configured:" in text
     assert "THORIO_COORDINATOR_PREFLIGHT_OK free_only=true paid_capacity_allowed=false" in text
     assert "NCCL_COMM_ID" not in text
+    assert 'env.write("NCCL_SOCKET_IFNAME=" + interface + chr(10))' not in text
+    assert "local_interface_preserved" in text
     assert all(
         len(line) - len(line.lstrip(" ")) == 8
         for line in text.splitlines()
