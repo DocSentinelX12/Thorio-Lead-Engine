@@ -223,6 +223,7 @@ jobs:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       THORIO_KAGGLE_KERNEL_SLUG: thorio-free-gpu-worker-${{ github.run_id }}
+      THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}
       THORIO_KAGGLE_REPOSITORY_URL: https://github.com/DocSentinelX12/Thorio-Lead-Engine.git
       THORIO_KAGGLE_REPOSITORY_REF: ${{ github.ref_name }}
       THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
@@ -263,6 +264,9 @@ jobs:
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "https://api.github.com/repos/${GITHUB_RUNNER_REPOSITORY}/actions/runners?per_page=1" >/dev/null
           echo "Kaggle, coordinator, and GitHub runner credentials are present; runner API read access verified."
+
+      - name: Publish the run-scoped private JIT credential dataset
+        run: bash infra/free-compute/publish-kaggle-runner-secret-dataset.sh
 
       - name: Clear stale Thorio Kaggle worker kernels
         run: |
@@ -653,6 +657,7 @@ jobs:
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       KERNEL_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-free-gpu-worker-${{ github.run_id }}
       RUNNER_NAME: thorio-free-gpu-worker-${{ github.run_id }}
+      THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}
       GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
       GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
     steps:
@@ -775,3 +780,23 @@ jobs:
                   raise SystemExit(f"HTTP {exc.code} removing JIT runner {runner_name}: {exc.reason}") from exc
           print(f"EXTERNAL_GPU_JIT_RUNNER_REMOVED {runner_name}", flush=True)
           PY
+
+      - name: Delete the run-scoped private JIT credential dataset
+        if: always()
+        shell: bash
+        env:
+          DATASET_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/${{ env.THORIO_KAGGLE_SECRET_DATASET_SLUG }}
+        run: |
+          set -euo pipefail
+          if output="$(kaggle datasets delete "${DATASET_REF}" --yes 2>&1)"; then
+            printf '%s\\n' "${output}"
+            echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_REMOVED ${DATASET_REF}"
+          else
+            printf '%s\\n' "${output}" >&2
+            if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
+              echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_ALREADY_ABSENT ${DATASET_REF}"
+            else
+              echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_CLEANUP_FAILED ${DATASET_REF}" >&2
+              exit 1
+            fi
+          fi
