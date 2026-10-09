@@ -745,7 +745,7 @@ def test_embedded_runner_bootstrap_tracks_current_actions_runner_release():
 def test_inventory_plain_text_empty_sentinel_is_treated_as_absent(resource_type, empty_output):
     def runner(command, *, timeout, cwd=None):
         if command[1:3] == [resource_type, "list"]:
-            return subprocess.CompletedProcess(command, 0, empty_output + "\\n", "")
+            return subprocess.CompletedProcess(command, 0, empty_output + "\n", "")
         raise AssertionError(f"unexpected Kaggle command: {command}")
 
     provider = _provider(runner)
@@ -758,7 +758,7 @@ def test_inventory_plain_text_empty_sentinel_is_treated_as_absent(resource_type,
 def test_inventory_unrecognized_headerless_response_still_fails_closed():
     def runner(command, *, timeout, cwd=None):
         if command[1:3] == ["datasets", "list"]:
-            return subprocess.CompletedProcess(command, 0, "Unexpected API response\\n", "")
+            return subprocess.CompletedProcess(command, 0, "Unexpected API response\n", "")
         raise AssertionError(f"unexpected Kaggle command: {command}")
 
     provider = _provider(runner)
