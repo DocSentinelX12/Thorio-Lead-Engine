@@ -607,7 +607,7 @@ run("bash", str(runner_script))
         if not self._kernel_is_listed(kernel_ref):
             return False
         try:
-            self._delete_kernel_if_listed(kernel_ref)
+            self._run(["kernels", "delete", kernel_ref, "--yes"])
         except KaggleFreeComputeError:
             if not self._kernel_is_listed(kernel_ref):
                 return False

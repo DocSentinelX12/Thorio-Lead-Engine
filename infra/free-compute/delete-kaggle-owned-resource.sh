@@ -39,14 +39,13 @@ while true; do
     printf 'Could not enumerate Kaggle %s inventory before cleanup: %s\n' "${resource_type}" "${listing}" >&2
     exit 1
   fi
-  parsed="$(KAGGLE_LISTING="${listing}" python - "${resource_ref}" <<'PY'
+  parsed="$(printf '%s\n' "${listing}" | python - "${resource_ref}" <<'PY'
 import csv
 import io
-import os
 import sys
 
 target = sys.argv[1]
-lines = [line for line in os.environ["KAGGLE_LISTING"].splitlines() if line.strip()]
+lines = [line for line in sys.stdin.read().splitlines() if line.strip()]
 header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
 if header is None:
     preview = " | ".join(lines[:3]) or "<empty response>"
@@ -65,8 +64,30 @@ PY
       exit 0
     fi
     printf '%s\n' "${output}" >&2
-    echo "Kaggle resource exists in the owner inventory but deletion failed; refusing to claim cleanup success." >&2
-    exit 1
+    if ! verify="$(kaggle "${resource_type}" list --mine --page 1 --page-size 100 --csv 2>&1)"; then
+      printf 'Could not recheck Kaggle inventory after delete failure: %s\n' "${verify}" >&2
+      exit 1
+    fi
+    if printf '%s\n' "${verify}" | python - "${resource_ref}" <<'PY'
+import csv
+import io
+import sys
+
+target = sys.argv[1].lower()
+lines = [line for line in sys.stdin.read().splitlines() if line.strip()]
+header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
+if header is None:
+    raise SystemExit("Kaggle inventory returned no CSV header after delete failure.")
+rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
+raise SystemExit(0 if any(str(row.get("ref") or "").strip().lower() == target for row in rows) else 1)
+PY
+    then
+      echo "Kaggle resource still exists after delete failure; refusing to report cleanup success." >&2
+      exit 1
+    else
+      echo "THORIO_KAGGLE_RESOURCE_ALREADY_ABSENT type=${resource_type} ref=${resource_ref}"
+      exit 0
+    fi
   fi
   if [[ ! "${row_count}" =~ ^[0-9]+$ ]]; then
     echo "Kaggle inventory parser returned an invalid row count; refusing cleanup." >&2

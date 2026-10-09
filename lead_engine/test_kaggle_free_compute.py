@@ -33,10 +33,10 @@ def _runner_factory(quota_remaining: str = "20.00h"):
             ]
             return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
         if command[1:3] == ["kernels", "list"]:
-            rows = f"{kernel_ref},Thorio,test-user,2026-10-07T00:00:00Z,0\\n" if kernel_exists else ""
-            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\\n" + rows, "")
+            rows = f"{kernel_ref},Thorio,test-user,2026-10-07T00:00:00Z,0\n" if kernel_exists else ""
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\n" + rows, "")
         if command[1:3] == ["datasets", "list"]:
-            return subprocess.CompletedProcess(command, 0, "ref,title\\n", "")
+            return subprocess.CompletedProcess(command, 0, "ref,title\n", "")
         if command[1:3] == ["kernels", "status"]:
             status_calls += 1
             if status_calls <= 2:
@@ -101,10 +101,10 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
             )
             return subprocess.CompletedProcess(command, 0, "Metadata downloaded", "")
         if command[1:3] == ["kernels", "list"]:
-            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\\nexample-user/thorio-free-gpu-worker,Thorio,test-user,2026-10-07T00:00:00Z,0\\n", "")
+            return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\nexample-user/thorio-free-gpu-worker,Thorio,test-user,2026-10-07T00:00:00Z,0\n", "")
         if command[1:3] == ["datasets", "list"]:
             dataset_ref = captured["dataset_metadata"]["id"]
-            return subprocess.CompletedProcess(command, 0, "ref,title\\n" + dataset_ref + ",Thorio credential\\n", "")
+            return subprocess.CompletedProcess(command, 0, "ref,title\n" + dataset_ref + ",Thorio credential\n", "")
         if command[1:3] == ["datasets", "files"]:
             return subprocess.CompletedProcess(command, 0, "name,size\nrunner-token,32\n", "")
         if command[1:3] == ["kernels", "push"]:
@@ -188,7 +188,7 @@ def test_failed_kernel_output_is_captured_before_cleanup_and_secrets_are_redacte
         if command[1:3] == ["kernels", "output"]:
             output_dir = Path(command[command.index("-p") + 1])
             (output_dir / "thorio-worker.log").write_text(
-                "KAGGLE WORKER ROOT CAUSE: JIT configuration rejected\\ndo-not-log-this-token",
+                "KAGGLE WORKER ROOT CAUSE: JIT configuration rejected\ndo-not-log-this-token",
                 encoding="utf-8",
             )
             return subprocess.CompletedProcess(command, 0, "Output downloaded", "")
@@ -727,7 +727,7 @@ def test_acquire_free_rejects_provider_push_without_success_marker():
     with pytest.raises(KaggleFreeComputeError, match="accepted submission"):
         provider.acquire_free(offer)
 
-    assert any(command[1:3] == ["kernels", "delete"] for command in commands)
+    assert not any(command[1:3] == ["kernels", "delete"] for command in commands)
 
 
 def test_embedded_runner_bootstrap_tracks_current_actions_runner_release():
