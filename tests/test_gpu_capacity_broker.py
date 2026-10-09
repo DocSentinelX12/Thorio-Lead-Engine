@@ -9,6 +9,7 @@ def test_provider_readiness_requires_complete_kaggle_inputs(monkeypatch):
         "THORIO_KAGGLE_USERNAME",
         "KAGGLE_API_TOKEN",
         "GITHUB_RUNNER_JIT_TOKEN",
+        "THORIO_GITHUB_RUNNER_JIT_TOKEN",
         "THORIO_COMPUTE_COORDINATOR_URL",
         "THORIO_COMPUTE_AUTH_TOKEN",
     ):
@@ -23,6 +24,7 @@ def test_provider_readiness_requires_complete_kaggle_inputs(monkeypatch):
         "THORIO_KAGGLE_USERNAME",
         "KAGGLE_API_TOKEN",
         "GITHUB_RUNNER_JIT_TOKEN",
+        "THORIO_GITHUB_RUNNER_JIT_TOKEN",
         "THORIO_COMPUTE_COORDINATOR_URL",
         "THORIO_COMPUTE_AUTH_TOKEN",
     }
@@ -34,6 +36,7 @@ def test_disabled_providers_are_not_marked_missing(monkeypatch):
         "THORIO_KAGGLE_USERNAME",
         "KAGGLE_API_TOKEN",
         "GITHUB_RUNNER_JIT_TOKEN",
+        "THORIO_GITHUB_RUNNER_JIT_TOKEN",
         "THORIO_COMPUTE_COORDINATOR_URL",
         "THORIO_COMPUTE_AUTH_TOKEN",
     ):
