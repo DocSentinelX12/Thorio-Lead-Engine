@@ -660,7 +660,7 @@ run("bash", str(runner_script))
                 )
                 create_output = self._run(["datasets", "create", "-p", str(path)], cwd=str(path))
                 if not re.search(
-                    r"Upload successful:\\s*runner-token\\s+\\([^)]*\\)",
+                    r"Upload successful:\s*runner-token\s+\([^)]*\)",
                     create_output,
                     flags=re.IGNORECASE,
                 ):
