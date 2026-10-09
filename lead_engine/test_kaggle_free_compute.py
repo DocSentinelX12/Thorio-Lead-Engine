@@ -58,6 +58,24 @@ def _provider(runner):
     )
 
 
+def test_acquire_free_fails_closed_without_private_credential_dataset():
+    runner, calls = _runner_factory()
+    provider = KaggleFreeComputeProvider(
+        KaggleFreeComputeConfig(
+            username="example-user",
+            github_runner_jit_token_dataset_slug="",
+        ),
+        runner=runner,
+        clock=lambda: 1_700_000_000.0,
+    )
+
+    offer = provider.discover_free()[0]
+
+    with pytest.raises(KaggleFreeComputeError, match="THORIO_KAGGLE_SECRET_DATASET_SLUG is required"):
+        provider.acquire_free(offer)
+    assert not any(command[1:3] == ["kernels", "push"] for command in calls)
+
+
 def test_discover_free_requires_observed_gpu_quota_and_returns_evidence():
     runner, calls = _runner_factory()
     provider = _provider(runner)
