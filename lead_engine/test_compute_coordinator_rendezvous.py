@@ -247,8 +247,7 @@ def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_
     assert '"id": "${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}"' in workflow
     assert '"title": "${THORIO_KAGGLE_KERNEL_SLUG}"' in workflow
     assert '"is_private": false' in workflow
-    assert "printf '%s\\\\n'" not in workflow
-    assert "printf '%s\\n'" in workflow
+    assert "delete-kaggle-owned-resource.sh kernels" in workflow
     assert "failing fast rather than consuming the full proof timeout" in workflow
     assert "physical-external-gpu-proof.yml" in controller
     assert "physical-external-gpu-proof-run.yml" not in controller
