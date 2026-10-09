@@ -210,6 +210,8 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED" in text
     assert "THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}" in text
     assert "Publish the run-scoped private JIT credential dataset" in text
+    assert "Remove stale run-scoped private JIT credential datasets" in text
+    assert "cleanup-stale-kaggle-runner-secret-datasets.sh" in text
     assert "Delete the run-scoped private JIT credential dataset" in text
     assert '"--search", "thorio-"' in text
     assert "if kernel_ref not in listed_refs:" in text
@@ -271,6 +273,8 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert "Cannot verify run-owned Kaggle kernel before cleanup" in workflow
     assert "THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
     assert "Publish the run-scoped private JIT credential dataset" in workflow
+    assert "Remove stale run-scoped private JIT credential datasets" in workflow
+    assert "cleanup-stale-kaggle-runner-secret-datasets.sh" in workflow
     assert "Delete the run-scoped private JIT credential dataset" in workflow
     assert "publish-kaggle-runner-secret-dataset.sh" in workflow
 
