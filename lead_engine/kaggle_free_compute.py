@@ -260,10 +260,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         import csv
         import io
 
-        # Kaggle's --search filter can return an empty body without a CSV
-        # header when a newly pushed slug is not yet indexed. Search the
-        # Thorio namespace, as the cleanup workflow does, then compare exact
-        # owner-qualified refs. Never infer absence from a headerless response.
+        # Use the complete owner-scoped inventory, not --search: Kaggle's
+        # search endpoint can omit the CSV header when a newly pushed slug is
+        # not indexed yet. Compare exact refs and fail closed on malformed output.
         page = 1
         while True:
             try:
@@ -272,8 +271,6 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                         "kernels",
                         "list",
                         "--mine",
-                        "--search",
-                        "thorio-",
                         "--page",
                         str(page),
                         "--page-size",
