@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       kaggle_jit_secret_configured:
-        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is set to the rotated GitHub runner-management token."
+        description: "Confirm GitHub Actions secret THORIO_GITHUB_RUNNER_JIT_TOKEN contains the rotated GitHub runner-management token."
         required: true
         type: boolean
         default: false
