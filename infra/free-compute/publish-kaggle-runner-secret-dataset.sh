@@ -49,10 +49,10 @@ PY
 
 kaggle datasets create -p "${workdir}"
 # Kaggle's documented create behavior is private by default; this command deliberately
-# omits --public/-u. Avoid the metadata-download endpoint here: it has returned 403
+# leaves the default private visibility unchanged. Avoid the metadata-download endpoint here: it has returned 403
 # or metadata documents without identity fields immediately after successful creation.
 # Verify the exact owner/slug directly by listing files through that dataset reference.
-printf 'THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_CREATED ref=%s visibility=private-by-default\\n' "${dataset_ref}"
+printf 'THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref=%s visibility=private-by-default\\n' "${dataset_ref}"
 
 kaggle datasets files "${dataset_ref}" --csv > "${verify_dir}/dataset-files.csv"
 python - "${verify_dir}/dataset-files.csv" <<'PY'
