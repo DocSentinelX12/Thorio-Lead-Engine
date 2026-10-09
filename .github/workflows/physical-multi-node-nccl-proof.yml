@@ -51,6 +51,7 @@ jobs:
       THORIO_KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}
       THORIO_KAGGLE_REPOSITORY_URL: https://github.com/DocSentinelX12/Thorio-Lead-Engine.git
       THORIO_KAGGLE_REPOSITORY_REF: ${{ inputs.proof_ref }}
       THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
@@ -82,6 +83,9 @@ jobs:
           test -n "${THORIO_COMPUTE_AUTH_TOKEN}"
           kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
           echo "Free GPU acquisition credentials verified."
+
+      - name: Publish the run-scoped private JIT credential dataset
+        run: bash infra/free-compute/publish-kaggle-runner-secret-dataset.sh
 
       - name: Clean up stale NCCL GPU workers before acquisition
         run: |
@@ -1179,6 +1183,7 @@ jobs:
     env:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
+      THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}
       GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
       GITHUB_RUNNER_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
     steps:
@@ -1364,3 +1369,23 @@ jobs:
               raise SystemExit("NCCL cleanup incomplete: " + "; ".join(failures))
           print("NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED", flush=True)
           PY
+
+      - name: Delete the run-scoped private JIT credential dataset
+        if: always()
+        shell: bash
+        env:
+          DATASET_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if output="$(kaggle datasets delete "${DATASET_REF}" --yes 2>&1)"; then
+            printf '%s\\n' "${output}"
+            echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_REMOVED ${DATASET_REF}"
+          else
+            printf '%s\\n' "${output}" >&2
+            if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
+              echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_ALREADY_ABSENT ${DATASET_REF}"
+            else
+              echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_CLEANUP_FAILED ${DATASET_REF}" >&2
+              exit 1
+            fi
+          fi
