@@ -806,7 +806,7 @@ jobs:
       - thorio-free-gpu
       - cuda
       - thorio-nccl-rank-${{ matrix.rank }}
-    timeout-minutes: 15
+    timeout-minutes: 5
     env:
       RANK: ${{ matrix.rank }}
       WORLD_SIZE: "2"
@@ -892,6 +892,8 @@ jobs:
           peer_token="$(printf '%s\n' "${relay_tokens}" | sed -n '2p')"
           test "${#local_token}" -eq 32
           test "${#peer_token}" -eq 32
+          echo "::add-mask::${local_token}"
+          echo "::add-mask::${peer_token}"
           export THORIO_RELAY_TOKEN="${local_token}"
           export THORIO_PEER_RELAY_TOKEN="${peer_token}"
           printf 'THORIO_RELAY_TOKEN=%s\n' "${local_token}" >> "${GITHUB_ENV}"
@@ -1039,12 +1041,11 @@ jobs:
           test -n "${THORIO_PEER_TUNNEL_PORT}"
           test -n "${THORIO_PEER_RELAY_TOKEN}"
           echo "NCCL transparent peer TCP proxy enabled through authenticated external relay."
-          echo "THORIO_NCCL_PROBE_PROCESS_DEADLINE_SECONDS=180"
+          echo "THORIO_NCCL_PROBE_PROCESS_DEADLINE_SECONDS=60"
           # The PyTorch process-group timeout did not interrupt NCCL communicator
-          # initialization in prior physical runs. Bound the process itself so
-          # a transport stall fails with captured evidence instead of consuming
-          # the full 15-minute job timeout and ending as a cancelled workflow.
-          timeout --signal=TERM --kill-after=10s 180s env LD_PRELOAD=/tmp/libthorio-connect-proxy.so python -m lead_engine.nccl_all_reduce_probe 2>&1 | tee /tmp/thorio-nccl-rank.log
+          # initialization in prior physical runs. Bound the process itself to
+          # 60 seconds, then let always-run cleanup and evidence upload execute.
+          timeout --signal=TERM --kill-after=5s 60s env LD_PRELOAD=/tmp/libthorio-connect-proxy.so python -m lead_engine.nccl_all_reduce_probe 2>&1 | tee /tmp/thorio-nccl-rank.log
           grep -F "THORIO_NCCL_PROBE_OK " /tmp/thorio-nccl-rank.log
 
       - name: Capture physical rank evidence
