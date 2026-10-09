@@ -1039,7 +1039,12 @@ jobs:
           test -n "${THORIO_PEER_TUNNEL_PORT}"
           test -n "${THORIO_PEER_RELAY_TOKEN}"
           echo "NCCL transparent peer TCP proxy enabled through authenticated external relay."
-          LD_PRELOAD=/tmp/libthorio-connect-proxy.so python -m lead_engine.nccl_all_reduce_probe 2>&1 | tee /tmp/thorio-nccl-rank.log
+          echo "THORIO_NCCL_PROBE_PROCESS_DEADLINE_SECONDS=180"
+          # The PyTorch process-group timeout did not interrupt NCCL communicator
+          # initialization in prior physical runs. Bound the process itself so
+          # a transport stall fails with captured evidence instead of consuming
+          # the full 15-minute job timeout and ending as a cancelled workflow.
+          timeout --signal=TERM --kill-after=10s 180s env LD_PRELOAD=/tmp/libthorio-connect-proxy.so python -m lead_engine.nccl_all_reduce_probe 2>&1 | tee /tmp/thorio-nccl-rank.log
           grep -F "THORIO_NCCL_PROBE_OK " /tmp/thorio-nccl-rank.log
 
       - name: Capture physical rank evidence
