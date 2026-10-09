@@ -91,7 +91,7 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
                 (dataset_dir / "dataset-metadata.json").read_text(encoding="utf-8")
             )
             captured["dataset_token"] = (dataset_dir / "runner-token").read_text(encoding="utf-8")
-            return subprocess.CompletedProcess(command, 0, "Upload successful: runner-token (32B)\\nDataset created", "")
+            return subprocess.CompletedProcess(command, 0, "Upload successful: runner-token (32B)\nDataset created", "")
         if command[1:3] == ["kernels", "list"]:
             return subprocess.CompletedProcess(command, 0, "ref,title,author,lastRunTime,totalVotes\nexample-user/thorio-free-gpu-worker,Thorio,test-user,2026-10-07T00:00:00Z,0\n", "")
         if command[1:3] == ["datasets", "list"]:
