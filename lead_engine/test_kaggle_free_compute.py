@@ -138,6 +138,40 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
 
 
 
+def test_failed_kernel_output_is_captured_before_cleanup_and_secrets_are_redacted(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setenv("GITHUB_RUNNER_JIT_TOKEN", "do-not-log-this-token")
+    calls = []
+    base_runner, _ = _runner_factory()
+
+    def runner(command, *, timeout, cwd=None):
+        calls.append(list(command))
+        if command[1:3] == ["kernels", "output"]:
+            output_dir = Path(command[command.index("-p") + 1])
+            (output_dir / "thorio-worker.log").write_text(
+                "KAGGLE WORKER ROOT CAUSE: JIT configuration rejected\\ndo-not-log-this-token",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, "Output downloaded", "")
+        return base_runner(command, timeout=timeout, cwd=cwd)
+
+    provider = _provider(runner)
+    offer = provider.discover_free()[0]
+    provider._runner_bootstrap_script = lambda: "echo runner"
+    provider._kernel_status = lambda kernel_ref: "failed"
+
+    with pytest.raises(KaggleFreeComputeError, match="KAGGLE WORKER ROOT CAUSE") as error:
+        provider.acquire_free(offer)
+
+    message = str(error.value)
+    assert "[REDACTED]" in message
+    assert "do-not-log-this-token" not in message
+    output_index = next(i for i, command in enumerate(calls) if command[1:3] == ["kernels", "output"])
+    delete_index = next(i for i, command in enumerate(calls) if command[1:3] == ["kernels", "delete"])
+    assert output_index < delete_index
+
+
 def test_discover_free_requires_observed_gpu_quota_and_returns_evidence():
     runner, calls = _runner_factory()
     provider = _provider(runner)
