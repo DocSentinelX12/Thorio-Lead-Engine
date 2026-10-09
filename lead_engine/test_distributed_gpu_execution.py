@@ -1,10 +1,30 @@
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
 from lead_engine.compute_worker import ComputeWorkerError, run_fabric_verification
 from lead_engine.nvidia_runtime import NvidiaRuntime, NvidiaRuntimeError
 from lead_engine.nccl_all_reduce_probe import build_probe_evidence
+
+
+def test_rank_one_nccl_forwarder_binds_only_to_its_local_loopback():
+    source_path = Path(__file__).with_name("nccl_all_reduce_probe.py")
+    source = source_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_start_tcpstore_forwarder"
+    ]
+    assert len(calls) == 1
+    local_host = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "local_host")
+    assert isinstance(local_host, ast.Constant)
+    assert local_host.value == "127.0.0.1"
+    assert "THORIO_NCCL_BOOTSTRAP_PORT" not in source
 
 
 class FakeRuntime(NvidiaRuntime):
