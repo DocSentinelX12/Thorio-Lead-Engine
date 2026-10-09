@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+from typing import NoReturn
 
 
 def fail(message: str) -> "NoReturn":

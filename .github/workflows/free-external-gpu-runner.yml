@@ -327,7 +327,6 @@ jobs:
                   [
                       "kaggle", "kernels", "list",
                       "--user", username,
-                      "--search", "thorio-",
                       "--page", str(page),
                       "--page-size", "100",
                       "--sort-by", "dateRun",
@@ -749,24 +748,15 @@ jobs:
           if target not in refs:
               print(f"EXTERNAL_GPU_CAPACITY_ALREADY_ABSENT {target}", flush=True)
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                  output.write("exists=false\\n")
+                  output.write("exists=false\n")
               raise SystemExit(0)
           print(f"EXTERNAL_GPU_KERNEL_CONFIRMED_IN_OWNER_INVENTORY {target}", flush=True)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write("exists=true\\n")
+              output.write("exists=true\n")
           PY
       - name: Delete the confirmed external Kaggle worker kernel
         if: steps.confirm_kernel.outputs.exists == 'true'
-        run: |
-          set -euo pipefail
-          if output="$(kaggle kernels delete "${KERNEL_REF}" --yes 2>&1)"; then
-            printf '%s\n' "${output}"
-            echo "EXTERNAL_GPU_CAPACITY_RELEASED ${KERNEL_REF}"
-          else
-            printf '%s\n' "${output}" >&2
-            echo "EXTERNAL_GPU_CAPACITY_RELEASE_FAILED ${KERNEL_REF}" >&2
-            exit 1
-          fi
+        run: bash infra/free-compute/delete-kaggle-owned-resource.sh kernels "${KERNEL_REF}"
       - name: Remove any remaining JIT runner registration
         if: always()
         shell: bash

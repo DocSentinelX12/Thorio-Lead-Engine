@@ -142,7 +142,7 @@ jobs:
                   [
                       "kaggle", "kernels", "list",
                       "--mine",
-                                            "--page", str(page),
+                      "--page", str(page),
                       "--page-size", "100",
                       "--sort-by", "dateRun",
                       "--csv",
@@ -1284,7 +1284,7 @@ jobs:
                   result = subprocess.run(
                       [
                           "kaggle", "kernels", "list", "--mine",
-                          "--search", "thorio-", "--page", str(page),
+                          "--page", str(page),
                           "--page-size", "100", "--csv",
                       ],
                       capture_output=True,
