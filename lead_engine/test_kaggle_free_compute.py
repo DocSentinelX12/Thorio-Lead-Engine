@@ -225,7 +225,7 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
             username="example-user",
             kernel_slug="thorio-free-gpu-worker",
             repository_ref="main",
-            github_runner_jit_token_secret_label="THORIO_GITHUB_RUNNER_JIT_TOKEN",
+            github_runner_jit_token_dataset_slug="thorio-runner-credentials-test",
             github_repository="DocSentinelX12/Thorio-Lead-Engine",
             github_runner_name="thorio-free-gpu-worker-123",
             github_runner_labels="self-hosted,thorio-free-gpu,cuda",
@@ -238,16 +238,16 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     provider.acquire_free(offer)
 
     script = captured_script["content"]
-    assert 'return get_secret(CONFIG[label_key])' in script
-    assert "for attempt in range(1, 9)" in script
-    assert "time.sleep(5)" in script
+    assert "def get_runner_token():" in script
+    assert 'Path("/kaggle/input") / dataset_slug / "runner-token"' in script
+    assert "UserSecretsClient" not in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
     assert 'RUNNER_ROOT"] = "/kaggle/working/actions-runner"' in script
     assert "register-ephemeral-gpu-runner.sh" in script
     assert "self-hosted,thorio-free-gpu,cuda" in script
     assert 'git", "clone"' not in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
-    assert "KAGGLE WORKER PHASE: starting credential handoff." in script
+    assert "KAGGLE WORKER PHASE: reading the run-scoped private credential dataset." in script
     assert "KAGGLE WORKER PHASE: invoking ephemeral runner bootstrap." in script
     assert "GPU RUNNER PHASE: requesting GitHub JIT runner configuration." in script
     assert "GPU RUNNER JIT CREATED:" in script
@@ -265,6 +265,7 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel(monk
     monkeypatch.setenv("THORIO_KAGGLE_ENABLED", "1")
     monkeypatch.setenv("THORIO_KAGGLE_USERNAME", "example-user")
     monkeypatch.setenv("THORIO_KAGGLE_KERNEL_SLUG", "thorio-free-gpu-worker")
+    monkeypatch.setenv("THORIO_KAGGLE_SECRET_DATASET_SLUG", "thorio-runner-credentials-test")
     monkeypatch.setenv("THORIO_KAGGLE_REPOSITORY_REF", "main")
     monkeypatch.setenv("THORIO_KAGGLE_GITHUB_RUNNER_NAME", "thorio-free-gpu-worker-123")
     monkeypatch.setenv("THORIO_COMPUTE_AUTH_TOKEN", "coordinator-token-value")
@@ -295,6 +296,8 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel(monk
     assert metadata["id"] == "example-user/thorio-free-gpu-worker"
     assert metadata["title"] == "thorio-free-gpu-worker"
     assert metadata["is_private"] is False
+    assert metadata["dataset_sources"] == ["example-user/thorio-runner-credentials-test"]
+    assert '"github_runner_jit_token_dataset_slug": "thorio-runner-credentials-test"' in script
     assert '"coordinator_token":' not in script
     assert '"coordinator_url":' not in script
     assert '"github_runner_jit_token":' not in script
@@ -303,7 +306,9 @@ def test_acquire_free_never_embeds_provisioner_credentials_in_public_kernel(monk
     assert "jit-token-value" not in script
     assert 'credential("coordinator_token", "coordinator_token_secret")' not in script
     assert 'credential("coordinator_url", "coordinator_url_secret")' not in script
-    assert 'credential("github_runner_jit_token_secret")' in script
+    assert "get_runner_token()" in script
+    assert "UserSecretsClient" not in script
+    assert "runner-token" in script
 
 
 def test_acquire_free_passes_the_durable_acquisition_id_to_worker(tmp_path):
