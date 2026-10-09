@@ -65,3 +65,20 @@ if metadata.get("isPrivate") is not True:
     raise SystemExit("Runner credential dataset is not verified private; refusing GPU acquisition.")
 print(f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} private=true", flush=True)
 PY
+
+kaggle datasets files "${dataset_ref}" --csv > "${verify_dir}/dataset-files.csv"
+python - "${verify_dir}/dataset-files.csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+with open(sys.argv[1], newline="", encoding="utf-8") as handle:
+    rows = list(csv.DictReader(handle))
+if not any(
+    Path(str(value or "")).name == "runner-token"
+    for row in rows
+    for value in row.values()
+):
+    raise SystemExit("Private runner credential dataset does not contain runner-token; refusing GPU acquisition.")
+print("THORIO_PRIVATE_RUNNER_CREDENTIAL_FILE_VERIFIED", flush=True)
+PY
