@@ -16,6 +16,9 @@ import csv, io, re, sys
 lines = [line for line in sys.stdin.read().splitlines() if line.strip()]
 header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
 if header is None:
+    if len(lines) == 1 and lines[0].strip().casefold() in {"no datasets found", "no datasets found."}:
+        print(0)
+        raise SystemExit(0)
     raise SystemExit("Kaggle dataset inventory returned no CSV header; refusing stale credential cleanup.")
 rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
 print(len(rows))
