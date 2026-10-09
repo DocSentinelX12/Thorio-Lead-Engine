@@ -36,6 +36,12 @@ def parse_inventory(output: str, resource_type: str, page: int) -> list[dict[str
         None,
     )
     if header is None:
+        if len(lines) == 1 and re.fullmatch(
+            rf"no {re.escape(resource_type)} found[.!]?", lines[0].strip(), re.IGNORECASE
+        ):
+            # Kaggle's CLI emits a plain-text sentinel, not an empty CSV, when
+            # the authenticated owner's inventory contains no resources.
+            return []
         preview = " | ".join(lines[:3]) or "<empty response>"
         fail(
             f"Kaggle {resource_type} inventory page {page} returned no CSV header; "
