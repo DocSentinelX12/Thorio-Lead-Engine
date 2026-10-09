@@ -24,7 +24,7 @@ for row in rows:
     if not ref:
         continue
     owner, sep, slug = ref.partition("/")
-    if sep and owner.strip() and re.fullmatch(r"thorio-runner-credentials-[0-9]+-[0-9]+", slug):
+    if sep and owner.strip() and re.fullmatch(r"thorio-runner-credentials-(?:[0-9]+-[0-9]+|acq-[a-f0-9]{16})", slug):
         print(ref)
 ')"
   row_count="$(printf '%s\n' "${parsed}" | head -n 1)"
