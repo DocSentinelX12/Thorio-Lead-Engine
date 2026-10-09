@@ -556,7 +556,6 @@ run("bash", str(runner_script))
                         {
                             "id": dataset_ref,
                             "title": dataset_slug,
-                            "isPrivate": True,
                             "licenses": [{"name": "other"}],
                         },
                         sort_keys=True,
@@ -578,9 +577,9 @@ run("bash", str(runner_script))
                     raise KaggleFreeComputeError(
                         "Kaggle returned metadata for a different runner credential dataset"
                     )
-                if metadata.get("isPrivate") is not True:
+                if metadata.get("isPrivate") is False:
                     raise KaggleFreeComputeError(
-                        "Runner credential dataset is not verified private; refusing GPU acquisition"
+                        "Kaggle reports the runner credential dataset is public; refusing GPU acquisition"
                     )
                 files_csv = self._run(["datasets", "files", dataset_ref, "--csv"])
                 lines = [line for line in files_csv.splitlines() if line.strip()]
@@ -602,7 +601,7 @@ run("bash", str(runner_script))
                         "Private runner credential dataset does not contain runner-token"
                     )
             print(
-                f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} private=true",
+                f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} privacy=private-by-default",
                 flush=True,
             )
         except Exception as exc:
