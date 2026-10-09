@@ -498,6 +498,7 @@ def test_kaggle_wait_for_running_tolerates_initial_not_found_visibility_race():
     provider = ProviderWithDelayedVisibility(
         KaggleFreeComputeConfig(
             username="test-user",
+            github_runner_jit_token_dataset_slug="thorio-runner-credentials-test",
             acquisition_ready_timeout_seconds=20,
             acquisition_ready_poll_interval_seconds=1,
         ),
@@ -530,6 +531,7 @@ def test_kaggle_acquisition_publishes_kernel_for_api_status_visibility():
     provider = KaggleFreeComputeProvider(
         KaggleFreeComputeConfig(
             username="test-user",
+            github_runner_jit_token_dataset_slug="thorio-runner-credentials-test",
             acquisition_ready_timeout_seconds=1,
         ),
         runner=runner,
@@ -558,7 +560,7 @@ def test_kaggle_provider_declares_runner_and_gpu_capabilities_without_nccL_claim
     from lead_engine.kaggle_free_compute import KaggleFreeComputeConfig, KaggleFreeComputeProvider
 
     provider = KaggleFreeComputeProvider(
-        KaggleFreeComputeConfig(username="test-user"),
+        KaggleFreeComputeConfig(username="test-user", github_runner_jit_token_dataset_slug="thorio-runner-credentials-test"),
         runner=lambda *args, **kwargs: None,
     )
 
