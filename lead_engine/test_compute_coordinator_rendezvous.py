@@ -292,7 +292,10 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert "--public" not in publisher
     assert "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY" in publisher
     assert "THORIO_PRIVATE_RUNNER_CREDENTIAL_FILE_VERIFIED" in publisher
-    assert "kaggle datasets files" in publisher
+    assert '"kaggle", "datasets", "list", "--mine"' in publisher
+    assert "kaggle datasets files" not in publisher
+    assert "Upload successful:" in publisher
+    assert "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_IN_OWNER_INVENTORY" in publisher
     assert "GITHUB_RUNNER_JIT_TOKEN" in publisher
     assert 'echo "${GITHUB_RUNNER_JIT_TOKEN}"' not in publisher
 
