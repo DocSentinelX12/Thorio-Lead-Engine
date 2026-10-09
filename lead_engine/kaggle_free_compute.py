@@ -425,13 +425,32 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 CONFIG = json.loads({encoded!r})
 ROOT = Path("/kaggle/working/thorio-lead-engine")
 
+LOG_PATH = Path("/kaggle/working/thorio-worker.log")
+LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+def _log_uncaught_exception(exc_type, exc, tb):
+    with LOG_PATH.open("a", encoding="utf-8") as log:
+        traceback.print_exception(exc_type, exc, tb, file=log)
+
+sys.excepthook = _log_uncaught_exception
+
 def run(*args):
-    subprocess.run(list(args), check=True)
+    with LOG_PATH.open("a", encoding="utf-8") as log:
+        result = subprocess.run(
+            list(args), stdout=log, stderr=subprocess.STDOUT, check=False
+        )
+    if result.returncode != 0:
+        try:
+            print(LOG_PATH.read_text(encoding="utf-8", errors="replace")[-12000:], file=sys.stderr, flush=True)
+        except OSError:
+            pass
+        raise subprocess.CalledProcessError(result.returncode, list(args))
 
 def get_runner_token():
     dataset_slug = CONFIG["github_runner_jit_token_dataset_slug"]
@@ -490,6 +509,41 @@ run("bash", str(runner_script))
                 f"ephemeral GPU runner bootstrap script is missing: {path}"
             )
         return path.read_text(encoding="utf-8")
+
+    def _capture_kernel_failure_output(self, kernel_ref: str) -> str:
+        """Retrieve the remote worker log before failed kernels are deleted."""
+        try:
+            with tempfile.TemporaryDirectory(prefix="thorio-kaggle-failure-") as directory:
+                command_output = self._run(
+                    ["kernels", "output", kernel_ref, "-p", directory, "--force"]
+                )
+                candidates = [
+                    path for path in Path(directory).rglob("*")
+                    if path.is_file() and (path.name == "thorio-worker.log" or path.suffix.lower() in {".log", ".txt"})
+                ]
+                chunks = []
+                for path in sorted(candidates):
+                    try:
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    if text.strip():
+                        chunks.append(f"--- {path.name} ---\\n{text[-12000:]}")
+                if not chunks and command_output.strip():
+                    chunks.append(command_output[-4000:])
+                detail = "\\n".join(chunks).strip()
+        except Exception as exc:
+            detail = f"Remote Kaggle output retrieval failed: {type(exc).__name__}: {exc}"
+        for name in (
+            "GITHUB_RUNNER_JIT_TOKEN",
+            "THORIO_GITHUB_RUNNER_JIT_TOKEN",
+            "KAGGLE_API_TOKEN",
+            "THORIO_COMPUTE_AUTH_TOKEN",
+        ):
+            secret = os.environ.get(name, "").strip()
+            if secret:
+                detail = detail.replace(secret, "[REDACTED]")
+        return detail[-16000:]
 
     def _wait_for_running(self, kernel_ref: str) -> str:
         """Wait for Kaggle to report the actual latest run as running.
@@ -764,6 +818,7 @@ run("bash", str(runner_script))
             provider_run_status = self._wait_for_running(kernel_ref)
         except Exception as exc:
             cleanup_errors = []
+            diagnostics = self._capture_kernel_failure_output(kernel_ref)
             try:
                 self._run(["kernels", "delete", kernel_ref, "--yes"])
             except KaggleFreeComputeError as cleanup_exc:
@@ -774,16 +829,16 @@ run("bash", str(runner_script))
                     self._delete_private_runner_credential_dataset(dataset_slug)
                 except Exception as cleanup_exc:
                     cleanup_errors.append(f"credential dataset cleanup failed: {cleanup_exc}")
-            if cleanup_errors:
-                raise KaggleFreeComputeError(
-                    f"Kaggle worker did not reach running state: {type(exc).__name__}: {exc}; "
-                    + "; ".join(cleanup_errors)
-                ) from exc
-            if isinstance(exc, KaggleFreeComputeError):
-                raise
-            raise KaggleFreeComputeError(
+            failure_detail = (
                 f"Kaggle worker did not reach running state: {type(exc).__name__}: {exc}"
-            ) from exc
+            )
+            if diagnostics:
+                failure_detail += "\\nRemote Kaggle worker diagnostics (secrets redacted):\\n" + diagnostics
+            if cleanup_errors:
+                failure_detail += "; " + "; ".join(cleanup_errors)
+            if isinstance(exc, KaggleFreeComputeError):
+                raise KaggleFreeComputeError(failure_detail) from exc
+            raise KaggleFreeComputeError(failure_detail) from exc
 
         expires_at = None
         if offer.expires_at is not None:
