@@ -84,6 +84,9 @@ jobs:
           kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
           echo "Free GPU acquisition credentials verified."
 
+      - name: Remove stale run-scoped private JIT credential datasets
+        run: bash infra/free-compute/cleanup-stale-kaggle-runner-secret-datasets.sh
+
       - name: Publish the run-scoped private JIT credential dataset
         run: bash infra/free-compute/publish-kaggle-runner-secret-dataset.sh
 
