@@ -535,6 +535,95 @@ jobs:
           print("NCCL_TWO_JIT_GPU_RUNNERS_ACTIVELY_ACQUIRED", flush=True)
           PY
 
+      - name: Capture safe Kaggle kernel diagnostics before cleanup
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          state = Path("/tmp/nccl-acquisitions.json")
+          if not state.is_file():
+              print("NCCL_KAGGLE_DIAGNOSTICS unavailable: acquisition state file missing")
+              raise SystemExit(0)
+          try:
+              records = json.loads(state.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError) as exc:
+              print(f"NCCL_KAGGLE_DIAGNOSTICS unavailable: invalid acquisition state ({type(exc).__name__})")
+              raise SystemExit(0)
+          if not isinstance(records, list):
+              print("NCCL_KAGGLE_DIAGNOSTICS unavailable: acquisition state is not a list")
+              raise SystemExit(0)
+
+          secrets = [
+              os.environ.get(name, "")
+              for name in (
+                  "KAGGLE_API_TOKEN",
+                  "GITHUB_RUNNER_JIT_TOKEN",
+                  "THORIO_COMPUTE_AUTH_TOKEN",
+              )
+              if os.environ.get(name)
+          ]
+          patterns = [
+              (re.compile(r"(?i)(bearer\\s+)[A-Za-z0-9._~+/-]+=*"), r"\\1[REDACTED]"),
+              (re.compile(r"(?i)(token|password|secret|authorization)(\\s*[=:]\\s*)[^\\s,;]+"), r"\\1\\2[REDACTED]"),
+          ]
+
+          def redact(line):
+              for secret in secrets:
+                  line = line.replace(secret, "[REDACTED]")
+              for pattern, replacement in patterns:
+                  line = pattern.sub(replacement, line)
+              return line[:500]
+
+          for record in records:
+              if not isinstance(record, dict):
+                  continue
+              rank = record.get("rank")
+              kernel_ref = str(record.get("kernel_ref") or "").strip()
+              if not kernel_ref or not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+", kernel_ref):
+                  print(f"NCCL_KAGGLE_KERNEL_DIAGNOSTICS rank={rank} skipped=invalid_kernel_ref")
+                  continue
+              result = subprocess.run(
+                  ["kaggle", "kernels", "logs", kernel_ref],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+                  timeout=45,
+              )
+              combined = (result.stdout or "") + "\\n" + (result.stderr or "")
+              lines = combined.splitlines()
+              print(
+                  "NCCL_KAGGLE_KERNEL_LOG_FETCH "
+                  + json.dumps(
+                      {"rank": rank, "kernel_ref": kernel_ref, "exit_code": result.returncode,
+                       "line_count": len(lines)},
+                      sort_keys=True,
+                  ),
+                  flush=True,
+              )
+              if result.returncode != 0 and not lines:
+                  print(f"NCCL_KAGGLE_KERNEL_LOGS_UNAVAILABLE rank={rank}")
+                  continue
+              selected = [
+                  line for line in lines
+                  if re.search(r"(?i)traceback|exception|error|failed|fatal|runner|jit|cuda|nvidia|install|permission|denied|killed|exit code|not found", line)
+                  and not re.search(r"(?i)token|password|secret|authorization|cookie|credential|api[_ -]?key", line)
+              ]
+              if not selected:
+                  selected = lines[-12:]
+              for line in selected[-40:]:
+                  safe = redact(line)
+                  if re.search(r"(?i)token|password|secret|authorization|cookie|credential|api[_ -]?key", safe):
+                      continue
+                  print(f"NCCL_KAGGLE_KERNEL_LOG rank={rank} {safe}", flush=True)
+          PY
+
       - name: Release partial GPU acquisitions after provisioning failure
         if: ${{ failure() }}
         run: |
