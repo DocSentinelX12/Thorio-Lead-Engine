@@ -208,6 +208,9 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     assert "thorio-nccl-rank-${{ matrix.rank }}" in text
     assert "Release Kaggle GPU workers and JIT runner registrations" in text
     assert "NCCL_GPU_AND_RUNNER_CLEANUP_VERIFIED" in text
+    assert "THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}" in text
+    assert "Publish the run-scoped private JIT credential dataset" in text
+    assert "Delete the run-scoped private JIT credential dataset" in text
     assert '"--search", "thorio-"' in text
     assert "if kernel_ref not in listed_refs:" in text
     assert "refusing to guess cleanup targets" in text
@@ -266,6 +269,16 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert "Confirm the run-owned Kaggle kernel exists before deleting it" in workflow
     assert "EXTERNAL_GPU_KERNEL_CONFIRMED_IN_OWNER_INVENTORY" in workflow
     assert "Cannot verify run-owned Kaggle kernel before cleanup" in workflow
+    assert "THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
+    assert "Publish the run-scoped private JIT credential dataset" in workflow
+    assert "Delete the run-scoped private JIT credential dataset" in workflow
+    assert "publish-kaggle-runner-secret-dataset.sh" in workflow
+
+    publisher = (root / "infra" / "free-compute" / "publish-kaggle-runner-secret-dataset.sh").read_text(encoding="utf-8")
+    assert '"isPrivate": True' in publisher
+    assert "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY" in publisher
+    assert "GITHUB_RUNNER_JIT_TOKEN" in publisher
+    assert 'echo "${GITHUB_RUNNER_JIT_TOKEN}"' not in publisher
 
 def test_capacity_broker_delegates_to_the_authoritative_gpu_lifecycle():
     root = Path(__file__).parents[1]
