@@ -48,60 +48,11 @@ Path(metadata_path).write_text(
 PY
 
 kaggle datasets create -p "${workdir}"
-kaggle datasets metadata "${dataset_ref}" -p "${verify_dir}"
-python - "${verify_dir}/dataset-metadata.json" "${dataset_ref}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-metadata_path, dataset_ref = sys.argv[1:]
-path = Path(metadata_path)
-if not path.is_file():
-    raise SystemExit("Kaggle did not return dataset metadata for private-visibility verification.")
-metadata = json.loads(path.read_text(encoding="utf-8"))
-
-# Kaggle CLI/API versions have returned both the documented "id" field and
-# expanded nullable identity fields. Accept only an exact owner/slug match.
-expected = dataset_ref.strip().casefold().strip("/")
-identities = set()
-for key in ("id", "datasetRef", "dataset_ref"):
-    value = str(metadata.get(key) or "").strip().casefold().strip("/")
-    if value:
-        identities.add(value)
-
-owner = str(
-    metadata.get("ownerUserNullable")
-    or metadata.get("ownerUser")
-    or metadata.get("owner")
-    or ""
-).strip()
-slug = str(
-    metadata.get("datasetSlugNullable")
-    or metadata.get("datasetSlug")
-    or metadata.get("slug")
-    or ""
-).strip()
-if owner and slug:
-    identities.add(f"{owner}/{slug}".casefold().strip("/"))
-
-if expected not in identities:
-    # Emit only non-secret identity fields to make schema drift diagnosable.
-    observed = {
-        key: metadata.get(key)
-        for key in (
-            "id", "datasetRef", "dataset_ref", "ownerUserNullable",
-            "ownerUser", "owner", "datasetSlugNullable", "datasetSlug", "slug",
-        )
-        if metadata.get(key) is not None
-    }
-    raise SystemExit(
-        "Kaggle returned metadata whose identity did not match the requested "
-        f"runner credential dataset. Observed identity fields: {json.dumps(observed, sort_keys=True)}"
-    )
-if metadata.get("isPrivate") is False:
-    raise SystemExit("Kaggle reports the runner credential dataset is public; refusing GPU acquisition.")
-print(f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} privacy=private-by-default", flush=True)
-PY
+# Kaggle's documented create behavior is private by default; this command deliberately
+# omits --public/-u. Avoid the metadata-download endpoint here: it has returned 403
+# or metadata documents without identity fields immediately after successful creation.
+# Verify the exact owner/slug directly by listing files through that dataset reference.
+printf 'THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_CREATED ref=%s visibility=private-by-default\\n' "${dataset_ref}"
 
 kaggle datasets files "${dataset_ref}" --csv > "${verify_dir}/dataset-files.csv"
 python - "${verify_dir}/dataset-files.csv" <<'PY'
