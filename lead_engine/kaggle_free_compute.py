@@ -47,7 +47,7 @@ class KaggleFreeComputeConfig:
     repository_url: str = "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git"
     repository_ref: str = "main"
     # The JIT token is delivered through a run-scoped private Kaggle dataset.
-    github_runner_jit_token_dataset_slug: str = "thorio-runner-credentials-test"
+    github_runner_jit_token_dataset_slug: str = ""
     github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
     github_runner_name: str = ""
     github_runner_labels: str = "self-hosted,thorio-free-gpu,cuda"
@@ -684,7 +684,6 @@ run("bash", str(runner_script))
         dataset_owned = not bool(dataset_slug)
         if dataset_owned:
             dataset_slug = f"thorio-runner-credentials-acq-{uuid.uuid4().hex[:16]}"
-            self._publish_private_runner_credential_dataset(dataset_slug)
 
         worker_script = self._worker_script(
             repository_url=self.config.repository_url,
@@ -722,6 +721,8 @@ run("bash", str(runner_script))
                 encoding="utf-8",
             )
             (path / "thorio_worker.py").write_text(worker_script, encoding="utf-8")
+            if dataset_owned:
+                self._publish_private_runner_credential_dataset(dataset_slug)
             try:
                 push_output = self._push_kernel_with_retry(path, timeout_seconds)
             except Exception as exc:
