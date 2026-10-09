@@ -736,3 +736,31 @@ def test_embedded_runner_bootstrap_tracks_current_actions_runner_release():
     script = (Path(__file__).parents[1] / "infra" / "free-compute" / "register-ephemeral-gpu-runner.sh").read_text(encoding="utf-8")
     assert 'RUNNER_VERSION="${RUNNER_VERSION:-latest}"' in script
     assert 'GITHUB_API_URL}/repos/actions/runner/releases/latest' in script
+
+
+@pytest.mark.parametrize("resource_type,empty_output", [
+    ("kernels", "No kernels found"),
+    ("datasets", "No datasets found"),
+])
+def test_inventory_plain_text_empty_sentinel_is_treated_as_absent(resource_type, empty_output):
+    def runner(command, *, timeout, cwd=None):
+        if command[1:3] == [resource_type, "list"]:
+            return subprocess.CompletedProcess(command, 0, empty_output + "\\n", "")
+        raise AssertionError(f"unexpected Kaggle command: {command}")
+
+    provider = _provider(runner)
+    if resource_type == "kernels":
+        assert provider._kernel_is_listed("example-user/thorio-free-gpu-worker") is False
+    else:
+        assert provider._dataset_is_listed("example-user/thorio-runner-credentials-12345-1") is False
+
+
+def test_inventory_unrecognized_headerless_response_still_fails_closed():
+    def runner(command, *, timeout, cwd=None):
+        if command[1:3] == ["datasets", "list"]:
+            return subprocess.CompletedProcess(command, 0, "Unexpected API response\\n", "")
+        raise AssertionError(f"unexpected Kaggle command: {command}")
+
+    provider = _provider(runner)
+    with pytest.raises(KaggleFreeComputeError, match="no CSV header"):
+        provider._dataset_is_listed("example-user/thorio-runner-credentials-12345-1")
