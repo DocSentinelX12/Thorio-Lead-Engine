@@ -72,7 +72,9 @@ class KaggleFreeComputeConfig:
             raise ValueError("repository_url must use HTTPS")
         if not self.repository_ref.strip():
             raise ValueError("repository_ref is required")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,49}", self.github_runner_jit_token_dataset_slug):
+        if self.github_runner_jit_token_dataset_slug and not re.fullmatch(
+            r"[a-z0-9][a-z0-9-]{0,49}", self.github_runner_jit_token_dataset_slug
+        ):
             raise ValueError("GitHub runner JIT token dataset slug must be a valid Kaggle dataset slug")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.github_repository):
             raise ValueError("github_repository must use owner/repository form")
@@ -554,6 +556,10 @@ run("bash", str(runner_script))
 
 
     def acquire_free(self, offer: FreeComputeOffer) -> AcquiredCompute:
+        if not self.config.github_runner_jit_token_dataset_slug:
+            raise KaggleFreeComputeError(
+                "THORIO_KAGGLE_SECRET_DATASET_SLUG is required to acquire a GPU worker securely"
+            )
         if offer.provider_id != self.provider_id:
             raise KaggleFreeComputeError("offer belongs to a different provider")
         if not offer.no_cost:
