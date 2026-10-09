@@ -52,28 +52,90 @@ def _provider(runner):
             username="example-user",
             kernel_slug="thorio-free-gpu-worker",
             repository_ref="main",
+            github_runner_jit_token_dataset_slug="thorio-runner-credentials-test",
         ),
         runner=runner,
         clock=lambda: 1_700_000_000.0,
     )
 
 
-def test_acquire_free_fails_closed_without_private_credential_dataset():
-    runner, calls = _runner_factory()
+def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setenv("GITHUB_RUNNER_JIT_TOKEN", "jit-token-value")
+    calls = []
+    captured = {}
+
+    def runner(command, *, timeout, cwd=None):
+        calls.append(list(command))
+        if command[1:3] == ["quota", "--format"]:
+            payload = [{
+                "resource": "GPU",
+                "used": "10.00h",
+                "remaining": "20.00h",
+                "total": "30.00h",
+                "refreshAt": "2099-01-01T00:00:00+00:00",
+            }]
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        if command[1:3] == ["datasets", "create"]:
+            dataset_dir = Path(command[command.index("-p") + 1])
+            captured["dataset_metadata"] = json.loads(
+                (dataset_dir / "dataset-metadata.json").read_text(encoding="utf-8")
+            )
+            captured["dataset_token"] = (dataset_dir / "runner-token").read_text(encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "Dataset created", "")
+        if command[1:3] == ["datasets", "metadata"]:
+            dataset_ref = command[3]
+            verify_dir = Path(command[command.index("-p") + 1])
+            (verify_dir / "dataset-metadata.json").write_text(
+                json.dumps({"id": dataset_ref, "isPrivate": True}),
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, "Metadata downloaded", "")
+        if command[1:3] == ["datasets", "files"]:
+            return subprocess.CompletedProcess(command, 0, "name,size\\nrunner-token,32\\n", "")
+        if command[1:3] == ["kernels", "push"]:
+            kernel_dir = Path(command[command.index("-p") + 1])
+            captured["kernel_metadata"] = json.loads(
+                (kernel_dir / "kernel-metadata.json").read_text(encoding="utf-8")
+            )
+            captured["worker_script"] = (kernel_dir / "thorio_worker.py").read_text(encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "Kernel version 1 successfully pushed.", "")
+        if command[1:3] == ["kernels", "delete"]:
+            return subprocess.CompletedProcess(command, 0, "Deleted", "")
+        if command[1:3] == ["datasets", "delete"]:
+            return subprocess.CompletedProcess(command, 0, "Deleted", "")
+        raise AssertionError(f"unexpected Kaggle command: {command}")
+
     provider = KaggleFreeComputeProvider(
         KaggleFreeComputeConfig(
             username="example-user",
+            kernel_slug="thorio-free-gpu-worker",
             github_runner_jit_token_dataset_slug="",
         ),
         runner=runner,
         clock=lambda: 1_700_000_000.0,
     )
-
+    provider._kernel_status = lambda kernel_ref: "not_found"
+    provider._runner_bootstrap_script = lambda: "echo runner"
     offer = provider.discover_free()[0]
+    provider._kernel_status = lambda kernel_ref: "running"
 
-    with pytest.raises(KaggleFreeComputeError, match="THORIO_KAGGLE_SECRET_DATASET_SLUG is required"):
-        provider.acquire_free(offer)
-    assert not any(command[1:3] == ["kernels", "push"] for command in calls)
+    acquired = provider.acquire_free(offer)
+
+    dataset_slug = acquired.enrollment["runner_credential_dataset_slug"]
+    assert captured["dataset_metadata"]["isPrivate"] is True
+    assert captured["dataset_token"] == "jit-token-value"
+    assert captured["kernel_metadata"]["dataset_sources"] == [f"example-user/{dataset_slug}"]
+    assert acquired.enrollment["runner_credential_dataset_owned"] is True
+    assert "jit-token-value" not in captured["worker_script"]
+    assert "UserSecretsClient" not in captured["worker_script"]
+
+    provider.release_free(acquired)
+
+    assert any(command[1:3] == ["datasets", "delete"] for command in calls)
+    assert any(command[1:3] == ["kernels", "delete"] for command in calls)
+
 
 
 def test_discover_free_requires_observed_gpu_quota_and_returns_evidence():
@@ -438,6 +500,7 @@ def test_acquire_free_waits_for_running_provider_status():
             username="example-user",
             kernel_slug="thorio-free-gpu-worker",
             repository_ref="main",
+            github_runner_jit_token_dataset_slug="thorio-runner-credentials-test",
             acquisition_ready_timeout_seconds=10,
             acquisition_ready_poll_interval_seconds=5,
         ),
@@ -489,6 +552,7 @@ def test_acquire_free_fails_when_provider_never_reaches_running():
             username="example-user",
             kernel_slug="thorio-free-gpu-worker",
             repository_ref="main",
+            github_runner_jit_token_dataset_slug="thorio-runner-credentials-test",
             acquisition_ready_timeout_seconds=10,
             acquisition_ready_poll_interval_seconds=5,
         ),
@@ -544,6 +608,7 @@ def test_acquire_free_retries_transient_kaggle_batch_session_limit():
         KaggleFreeComputeConfig(
             username="example-user",
             kernel_slug="thorio-free-gpu-worker",
+            github_runner_jit_token_dataset_slug="thorio-runner-credentials-test",
             acquisition_ready_timeout_seconds=5,
             acquisition_ready_poll_interval_seconds=0.01,
         ),
