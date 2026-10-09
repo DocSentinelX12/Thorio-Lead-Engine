@@ -65,12 +65,14 @@ printf '%s\n' "THORIO_PRIVATE_RUNNER_CREDENTIAL_FILE_VERIFIED"
 python - "${dataset_ref}" <<'PY'
 import csv
 import io
-import os
 import subprocess
 import sys
+import time
 
 target = sys.argv[1].strip().lower()
 page = 1
+deadline = time.monotonic() + 60
+last_output = ""
 while True:
     command = [
         "kaggle", "datasets", "list", "--mine",
@@ -83,24 +85,50 @@ while True:
             "Cannot verify the private runner credential dataset in owner inventory: "
             + detail
         )
-    lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+    output = result.stdout or ""
+    lines = [line for line in output.splitlines() if line.strip()]
     header_index = next(
         (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
         None,
     )
     if header_index is None:
+        # Kaggle acknowledges dataset creation before the owner inventory is
+        # necessarily updated. Treat its explicit empty-inventory response as
+        # transient, but never treat it as proof that the credential dataset
+        # exists. Keep polling until the exact owner-scoped ref is visible.
+        last_output = "\\n".join(lines[:4])[:500]
+        empty_inventory = (
+            not lines
+            or (len(lines) == 1 and lines[0].strip().casefold() in {
+                "no datasets found", "no datasets found."
+            })
+        )
+        if empty_inventory and time.monotonic() < deadline:
+            print(
+                "Kaggle owner inventory has not indexed the run-scoped credential dataset yet; retrying.",
+                flush=True,
+            )
+            time.sleep(5)
+            continue
         raise SystemExit(
             f"Kaggle owner dataset inventory page {page} returned no CSV ref header; "
-            "refusing GPU acquisition."
+            f"last_output={last_output!r}; refusing GPU acquisition."
         )
-    rows = list(csv.DictReader(io.StringIO("\n".join(lines[header_index:]))))
+    rows = list(csv.DictReader(io.StringIO("\\n".join(lines[header_index:]))))
     if any(str(row.get("ref") or "").strip().lower() == target for row in rows):
         print("THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_IN_OWNER_INVENTORY", flush=True)
         break
     if len(rows) < 100:
+        if time.monotonic() < deadline:
+            print(
+                "Kaggle owner inventory is valid but the run-scoped credential dataset is not visible yet; retrying.",
+                flush=True,
+            )
+            time.sleep(5)
+            continue
         raise SystemExit(
-            "Kaggle owner inventory does not contain the run-scoped runner credential dataset; "
-            "refusing GPU acquisition."
+            "Kaggle owner inventory does not contain the run-scoped runner credential dataset "
+            "after the visibility wait; refusing GPU acquisition."
         )
     page += 1
 
