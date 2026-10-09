@@ -658,44 +658,24 @@ run("bash", str(runner_script))
                     ),
                     encoding="utf-8",
                 )
-                self._run(["datasets", "create", "-p", str(path)], cwd=str(path))
-                created = True
-
-            with tempfile.TemporaryDirectory(prefix="thorio-kaggle-credential-verify-") as directory:
-                self._run(["datasets", "metadata", dataset_ref, "-p", directory], cwd=directory)
-                metadata_path = Path(directory) / "dataset-metadata.json"
-                if not metadata_path.is_file():
-                    raise KaggleFreeComputeError(
-                        "Kaggle returned no metadata for the private runner credential dataset"
-                    )
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                if str(metadata.get("id") or "").strip() != dataset_ref:
-                    raise KaggleFreeComputeError(
-                        "Kaggle returned metadata for a different runner credential dataset"
-                    )
-                if metadata.get("isPrivate") is False:
-                    raise KaggleFreeComputeError(
-                        "Kaggle reports the runner credential dataset is public; refusing GPU acquisition"
-                    )
-                files_csv = self._run(["datasets", "files", dataset_ref, "--csv"])
-                lines = [line for line in files_csv.splitlines() if line.strip()]
-                header = next(
-                    (index for index, line in enumerate(lines) if line.strip().lower().startswith("name,")),
-                    None,
-                )
-                if header is None:
-                    raise KaggleFreeComputeError(
-                        "Kaggle runner credential dataset file listing returned no CSV header"
-                    )
-                rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
-                if not any(
-                    Path(str(value or "")).name == "runner-token"
-                    for row in rows
-                    for value in row.values()
+                create_output = self._run(["datasets", "create", "-p", str(path)], cwd=str(path))
+                if not re.search(
+                    r"Upload successful:\\s*runner-token\\s+\\([^)]*\\)",
+                    create_output,
+                    flags=re.IGNORECASE,
                 ):
                     raise KaggleFreeComputeError(
-                        "Private runner credential dataset does not contain runner-token"
+                        "Kaggle did not confirm uploading runner-token; refusing GPU acquisition"
                     )
+                created = True
+
+            # Verify the exact owner-scoped dataset through the inventory. The
+            # metadata and files endpoints returned 403/incomplete responses in
+            # live runs after the CLI reported a successful upload.
+            if not self._dataset_is_listed(dataset_ref):
+                raise KaggleFreeComputeError(
+                    "Run-scoped private runner credential dataset is absent from Kaggle owner inventory"
+                )
             print(
                 f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} privacy=private-by-default",
                 flush=True,
