@@ -43,8 +43,8 @@ class KaggleFreeComputeConfig:
     accelerator: str = "NvidiaTeslaT4"
     repository_url: str = "https://github.com/DocSentinelX12/Thorio-Lead-Engine.git"
     repository_ref: str = "main"
-    # Only this Kaggle secret label is embedded in public kernel source.
-    github_runner_jit_token_secret_label: str = "THORIO_GITHUB_RUNNER_JIT_TOKEN"
+    # The JIT token is delivered through a run-scoped private Kaggle dataset.
+    github_runner_jit_token_dataset_slug: str = "thorio-runner-credentials-test"
     github_repository: str = "DocSentinelX12/Thorio-Lead-Engine"
     github_runner_name: str = ""
     github_runner_labels: str = "self-hosted,thorio-free-gpu,cuda"
@@ -72,8 +72,8 @@ class KaggleFreeComputeConfig:
             raise ValueError("repository_url must use HTTPS")
         if not self.repository_ref.strip():
             raise ValueError("repository_ref is required")
-        if not self.github_runner_jit_token_secret_label.strip():
-            raise ValueError("GitHub runner JIT token secret label is required")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,49}", self.github_runner_jit_token_dataset_slug):
+            raise ValueError("GitHub runner JIT token dataset slug must be a valid Kaggle dataset slug")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.github_repository):
             raise ValueError("github_repository must use owner/repository form")
         if self.github_runner_name and not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", self.github_runner_name):
@@ -143,9 +143,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                     "THORIO_KAGGLE_REPOSITORY_REF",
                     "main",
                 ).strip(),
-                github_runner_jit_token_secret_label=os.environ.get(
-                    "THORIO_KAGGLE_GITHUB_RUNNER_JIT_TOKEN_SECRET",
-                    "THORIO_GITHUB_RUNNER_JIT_TOKEN",
+                github_runner_jit_token_dataset_slug=os.environ.get(
+                    "THORIO_KAGGLE_SECRET_DATASET_SLUG",
+                    "",
                 ).strip(),
                 github_repository=os.environ.get(
                     "THORIO_KAGGLE_GITHUB_REPOSITORY",
@@ -396,7 +396,7 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
         acquisition_id: str,
         domain_id: str,
         worker_id: str,
-        github_runner_jit_token_secret: str,
+        github_runner_jit_token_dataset_slug: str,
         github_repository: str,
         github_runner_name: str,
         github_runner_labels: str,
@@ -408,9 +408,9 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
             "acquisition_id": acquisition_id,
             "domain_id": domain_id,
             "worker_id": worker_id,
-            # Only the Kaggle-side secret LABEL is embedded. Never serialize
-            # control-plane credentials or their values into a public kernel.
-            "github_runner_jit_token_secret": github_runner_jit_token_secret,
+            # The dataset contains the token, but the dataset itself is private
+            # and the value is never serialized into the public kernel source.
+            "github_runner_jit_token_dataset_slug": github_runner_jit_token_dataset_slug,
             "github_repository": github_repository,
             "github_runner_name": github_runner_name,
             "github_runner_labels": github_runner_labels,
@@ -425,36 +425,27 @@ import sys
 import time
 from pathlib import Path
 
-from kaggle_secrets import UserSecretsClient
-
 CONFIG = json.loads({encoded!r})
 ROOT = Path("/kaggle/working/thorio-lead-engine")
 
 def run(*args):
     subprocess.run(list(args), check=True)
 
-def get_secret(label):
-    last_error = None
-    for attempt in range(1, 9):
-        try:
-            value = UserSecretsClient().get_secret(label).strip()
-            if value:
-                return value
-            last_error = RuntimeError(f"Kaggle secret {{label!r}} is empty")
-        except Exception as exc:
-            last_error = exc
-        if attempt < 8:
-            time.sleep(5)
-    raise RuntimeError(
-        f"Kaggle secret service did not return {{label!r}} after 8 attempts: {{last_error}}"
-    ) from last_error
+def get_runner_token():
+    dataset_slug = CONFIG["github_runner_jit_token_dataset_slug"]
+    secret_file = Path("/kaggle/input") / dataset_slug / "runner-token"
+    if not secret_file.is_file():
+        raise RuntimeError(
+            "Run-scoped private runner credential dataset is not mounted at "
+            f"{{secret_file}}; refusing to start an unauthenticated GPU worker"
+        )
+    value = secret_file.read_text(encoding="utf-8").strip()
+    if not value:
+        raise RuntimeError("Run-scoped private runner credential file is empty")
+    return value
 
-def credential(label_key):
-    # Always read secrets at runtime from Kaggle Secrets. Never fall
-    # back to any value serialized into the public notebook source.
-    return get_secret(CONFIG[label_key])
-print("KAGGLE WORKER PHASE: starting credential handoff.", flush=True)
-jit_token = credential("github_runner_jit_token_secret")
+print("KAGGLE WORKER PHASE: reading the run-scoped private credential dataset.", flush=True)
+jit_token = get_runner_token()
 print("KAGGLE WORKER PHASE: GitHub JIT token retrieved.", flush=True)
 if not jit_token:
     raise RuntimeError("Kaggle GitHub runner JIT token secret is empty")
@@ -593,7 +584,7 @@ run("bash", str(runner_script))
             acquisition_id=acquisition_id,
             domain_id=offer.domain_id,
             worker_id=offer.domain_id,
-            github_runner_jit_token_secret=self.config.github_runner_jit_token_secret_label,
+            github_runner_jit_token_dataset_slug=self.config.github_runner_jit_token_dataset_slug,
             github_repository=self.config.github_repository,
             github_runner_name=self.config.github_runner_name,
             github_runner_labels=self.config.github_runner_labels,
@@ -609,7 +600,9 @@ run("bash", str(runner_script))
             "enable_gpu": True,
             "enable_internet": True,
             "machine_shape": self.config.accelerator,
-            "dataset_sources": [],
+            "dataset_sources": [
+                f"{self.config.username}/{self.config.github_runner_jit_token_dataset_slug}"
+            ],
             "competition_sources": [],
             "kernel_sources": [],
             "model_sources": [],
