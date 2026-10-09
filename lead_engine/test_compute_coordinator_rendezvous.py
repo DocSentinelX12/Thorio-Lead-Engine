@@ -296,6 +296,9 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     assert "kaggle datasets files" not in publisher
     assert "Upload successful:" in publisher
     assert "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_IN_OWNER_INVENTORY" in publisher
+    assert "time.monotonic() + 60" in publisher
+    assert "not indexed the run-scoped credential dataset yet; retrying" in publisher
+    assert "after the visibility wait; refusing GPU acquisition" in publisher
     assert "GITHUB_RUNNER_JIT_TOKEN" in publisher
     assert 'echo "${GITHUB_RUNNER_JIT_TOKEN}"' not in publisher
 
