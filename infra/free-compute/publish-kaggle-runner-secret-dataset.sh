@@ -23,7 +23,7 @@ cleanup_temp() {
 }
 trap cleanup_temp EXIT
 
-# Kaggle datasets are private by default. Do not pass --public or rely on
+# Kaggle datasets are private by default. Do not request public visibility or rely on
 # an unsupported isPrivate field in dataset-metadata.json. The token is never
 # placed in kernel source, metadata, command arguments, or logs.
 printf '%s' "${GITHUB_RUNNER_JIT_TOKEN}" > "${workdir}/runner-token"
