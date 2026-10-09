@@ -785,14 +785,14 @@ jobs:
         if: always()
         shell: bash
         env:
-          DATASET_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/${{ env.THORIO_KAGGLE_SECRET_DATASET_SLUG }}
+          DATASET_REF: ${{ secrets.THORIO_KAGGLE_USERNAME }}/thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           if output="$(kaggle datasets delete "${DATASET_REF}" --yes 2>&1)"; then
-            printf '%s\\n' "${output}"
+            printf '%s\n' "${output}"
             echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_REMOVED ${DATASET_REF}"
           else
-            printf '%s\\n' "${output}" >&2
+            printf '%s\n' "${output}" >&2
             if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
               echo "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_ALREADY_ABSENT ${DATASET_REF}"
             else
