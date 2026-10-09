@@ -7,7 +7,7 @@ set -euo pipefail
 owner="${KAGGLE_USERNAME,,}"
 prefix="${owner}/thorio-runner-credentials-"
 page=1
-removed=0
+all_refs=()
 
 while true; do
   listing="$(kaggle datasets list --mine --search "thorio-runner-credentials-" --page "${page}" --page-size 100 --csv)"
@@ -33,27 +33,31 @@ for row in rows:
   if [[ -n "${refs_text}" ]]; then
     mapfile -t refs <<< "${refs_text}"
   fi
-  count="${row_count}"
   for ref in "${refs[@]}"; do
     [[ "${ref,,}" == "${prefix}"* ]] || continue
-    if output="$(kaggle datasets delete "${ref}" --yes 2>&1)"; then
-      printf '%s\n' "${output}"
-      echo "STALE_PRIVATE_RUNNER_CREDENTIAL_DATASET_REMOVED ${ref}"
-      removed=$((removed + 1))
-    else
-      printf '%s\n' "${output}" >&2
-      if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
-        echo "STALE_PRIVATE_RUNNER_CREDENTIAL_DATASET_ALREADY_ABSENT ${ref}"
-      else
-        echo "STALE_PRIVATE_RUNNER_CREDENTIAL_DATASET_CLEANUP_FAILED ${ref}" >&2
-        exit 1
-      fi
-    fi
+    all_refs+=("${ref}")
   done
-  if (( count < 100 )); then
+  if (( row_count < 100 )); then
     break
   fi
   page=$((page + 1))
+done
+
+removed=0
+for ref in "${all_refs[@]}"; do
+  if output="$(kaggle datasets delete "${ref}" --yes 2>&1)"; then
+    printf '%s\n' "${output}"
+    echo "STALE_PRIVATE_RUNNER_CREDENTIAL_DATASET_REMOVED ${ref}"
+    removed=$((removed + 1))
+  else
+    printf '%s\n' "${output}" >&2
+    if printf '%s' "${output}" | grep -Eiq 'not found|404'; then
+      echo "STALE_PRIVATE_RUNNER_CREDENTIAL_DATASET_ALREADY_ABSENT ${ref}"
+    else
+      echo "STALE_PRIVATE_RUNNER_CREDENTIAL_DATASET_CLEANUP_FAILED ${ref}" >&2
+      exit 1
+    fi
+  fi
 done
 
 echo "STALE_PRIVATE_RUNNER_CREDENTIAL_DATASETS_CLEANUP_COMPLETE removed=${removed}"
