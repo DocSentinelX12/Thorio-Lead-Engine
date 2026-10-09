@@ -130,6 +130,10 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
     assert acquired.enrollment["runner_credential_dataset_owned"] is True
     assert "jit-token-value" not in captured["worker_script"]
     assert "UserSecretsClient" not in captured["worker_script"]
+    assert "thorio-worker.log" in captured["worker_script"]
+    assert "sys.excepthook" in captured["worker_script"]
+    assert "stdout=log" in captured["worker_script"]
+    compile(captured["worker_script"], "thorio_worker.py", "exec")
 
     provider.release_free(acquired)
 
