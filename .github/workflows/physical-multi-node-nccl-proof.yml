@@ -25,6 +25,7 @@ permissions:
 concurrency:
   group: thorio-external-gpu-fabric
   cancel-in-progress: false
+  queue: max
 
 env:
   THORIO_PROOF_REF: ${{ inputs.proof_ref || github.ref }}
@@ -1140,6 +1141,12 @@ jobs:
           if [ ! -f /tmp/thorio-nccl-rank.log ]; then
             printf 'THORIO_NCCL_PROBE_NOT_REACHED\n' > /tmp/thorio-nccl-rank.log
           fi
+          if [ ! -f /tmp/thorio-nccl-relay.log ]; then
+            printf 'THORIO_NCCL_RELAY_LOG_NOT_CREATED\n' > /tmp/thorio-nccl-relay.log
+          fi
+          if [ ! -f /tmp/thorio-pinggy.log ]; then
+            printf 'THORIO_NCCL_PINGGY_LOG_NOT_CREATED\n' > /tmp/thorio-pinggy.log
+          fi
           if [ ! -f rank-evidence.json ]; then
             python - <<'PY'
           import json
@@ -1173,6 +1180,8 @@ jobs:
           path: |
             rank-evidence.json
             /tmp/thorio-nccl-rank.log
+            /tmp/thorio-nccl-relay.log
+            /tmp/thorio-pinggy.log
           if-no-files-found: error
 
   aggregate:
