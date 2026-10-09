@@ -47,26 +47,65 @@ Path(metadata_path).write_text(
 )
 PY
 
-kaggle datasets create -p "${workdir}"
-# Kaggle's documented create behavior is private by default; this command deliberately
-# leaves the default private visibility unchanged. Avoid the metadata-download endpoint here: it has returned 403
-# or metadata documents without identity fields immediately after successful creation.
-# Verify the exact owner/slug directly by listing files through that dataset reference.
-printf 'THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref=%s visibility=private-by-default\\n' "${dataset_ref}"
+create_output="$(kaggle datasets create -p "${workdir}" 2>&1)"
+printf '%s\n' "${create_output}"
+# Require Kaggle's own upload confirmation for the exact secret filename.
+# This proves the CLI reported uploading runner-token, without relying on the
+# file-list endpoint that returned HTTP 403 in the observed runs.
+if ! printf '%s\n' "${create_output}" | grep -Eq 'Upload successful:[[:space:]]*runner-token[[:space:]]+\\([^)]*\\)'; then
+  echo "Kaggle did not confirm uploading runner-token; refusing GPU acquisition." >&2
+  exit 1
+fi
 
-kaggle datasets files "${dataset_ref}" --csv > "${verify_dir}/dataset-files.csv"
-python - "${verify_dir}/dataset-files.csv" <<'PY'
+# Confirm the exact run-scoped dataset appears in the authenticated owner's
+# dataset inventory. Parse CSV, require a valid ref header, and fail closed on
+# malformed inventory or CLI errors. Do not use datasets files/metadata here:
+# both endpoints have returned 403 or incomplete metadata after creation.
+python - "${dataset_ref}" <<'PY'
 import csv
+import io
+import os
+import subprocess
 import sys
-from pathlib import Path
 
-with open(sys.argv[1], newline="", encoding="utf-8") as handle:
-    rows = list(csv.DictReader(handle))
-if not any(
-    Path(str(value or "")).name == "runner-token"
-    for row in rows
-    for value in row.values()
-):
-    raise SystemExit("Private runner credential dataset does not contain runner-token; refusing GPU acquisition.")
-print("THORIO_PRIVATE_RUNNER_CREDENTIAL_FILE_VERIFIED", flush=True)
+target = sys.argv[1].strip().lower()
+page = 1
+while True:
+    command = [
+        "kaggle", "datasets", "list", "--mine",
+        "--page", str(page), "--page-size", "100", "--csv",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[-2000:]
+        raise SystemExit(
+            "Cannot verify the private runner credential dataset in owner inventory: "
+            + detail
+        )
+    lines = [line for line in (result.stdout or "").splitlines() if line.strip()]
+    header_index = next(
+        (index for index, line in enumerate(lines) if line.strip().lower().startswith("ref,")),
+        None,
+    )
+    if header_index is None:
+        raise SystemExit(
+            f"Kaggle owner dataset inventory page {page} returned no CSV ref header; "
+            "refusing GPU acquisition."
+        )
+    rows = list(csv.DictReader(io.StringIO("\n".join(lines[header_index:]))))
+    if any(str(row.get("ref") or "").strip().lower() == target for row in rows):
+        print("THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_IN_OWNER_INVENTORY", flush=True)
+        break
+    if len(rows) < 100:
+        raise SystemExit(
+            "Kaggle owner inventory does not contain the run-scoped runner credential dataset; "
+            "refusing GPU acquisition."
+        )
+    page += 1
+
+print(
+    f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={sys.argv[1]} "
+    "visibility=private-by-default",
+    flush=True,
+)
 PY
