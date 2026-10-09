@@ -603,17 +603,63 @@ jobs:
       - name: Install Kaggle CLI
         run: python -m pip install --upgrade kaggle
       - name: Poll external kernel and preserve startup diagnostics
+        shell: bash
         run: |
           set -u
+          terminal=false
           for attempt in $(seq 1 12); do
             status="$(kaggle kernels status "${KERNEL_REF}" 2>&1 || true)"
             printf 'Kaggle status attempt %s:\n%s\n' "$attempt" "$status"
             logs="$(kaggle kernels logs "${KERNEL_REF}" 2>&1 || true)"
-            printf '%s\n' "$logs" | tail -n 120
+            printf '%s\n' "$logs" | tail -n 160
             lowered="$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')"
-            if printf '%s' "$lowered" | grep -Eq 'complete|completed|error|failed|cancelled'; then exit 0; fi
+            if printf '%s' "$lowered" | grep -Eq 'complete|completed|error|failed|cancelled'; then
+              terminal=true
+              break
+            fi
             sleep 15
           done
+
+          # Streamed console logs do not necessarily include the saved worker
+          # traceback. Download kernel output before cleanup deletes the kernel.
+          output_dir="$(mktemp -d)"
+          trap 'rm -rf "$output_dir"' EXIT
+          output_result="$(kaggle kernels output "${KERNEL_REF}" -p "$output_dir" --force 2>&1)"
+          output_status=$?
+          printf 'Kaggle output download exit=%s\n%s\n' "$output_status" "$output_result"
+          if [ "$output_status" -eq 0 ]; then
+            python - "$output_dir" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          root = Path(sys.argv[1])
+          candidates = sorted(
+              path for path in root.rglob("*")
+              if path.is_file()
+              and (path.name == "thorio-worker.log" or path.suffix.lower() in {".log", ".txt"})
+          )
+          if not candidates:
+              print("THORIO_WORKER_LOG_NOT_FOUND_IN_KAGGLE_OUTPUT")
+          for path in candidates:
+              try:
+                  content = path.read_text(encoding="utf-8", errors="replace")
+              except OSError as exc:
+                  print(f"Could not read {path.name}: {type(exc).__name__}")
+                  continue
+              content = re.sub(
+                  r"(?i)(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})",
+                  "[REDACTED_GITHUB_TOKEN]",
+                  content,
+              )
+              print(f"--- BEGIN {path.name} ---")
+              print(content[-16000:])
+              print(f"--- END {path.name} ---")
+          PY
+          fi
+          if [ "$terminal" != true ]; then
+            echo "Kaggle kernel did not report a terminal state within the diagnostic window." >&2
+          fi
 
   gpu_worker:
     name: Execute on the real external GPU runner
