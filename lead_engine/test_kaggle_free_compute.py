@@ -392,6 +392,8 @@ def test_acquire_free_builds_jit_runner_handoff_without_persisting_jit_token():
     assert 'git", "clone"' not in script
     assert "GITHUB_RUNNER_JIT_TOKEN" in script
     assert "KAGGLE WORKER PHASE: reading the run-scoped private credential dataset." in script
+    assert "mounted_input_directories=" in script
+    assert "traceback.print_exception(exc_type, exc, tb, file=sys.stderr)" in script
     assert "KAGGLE WORKER PHASE: invoking ephemeral runner bootstrap." in script
     assert "GPU RUNNER PHASE: requesting GitHub JIT runner configuration." in script
     assert "GPU RUNNER JIT CREATED:" in script
