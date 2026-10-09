@@ -589,25 +589,33 @@ jobs:
               if not kernel_ref or not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+", kernel_ref):
                   print(f"NCCL_KAGGLE_KERNEL_DIAGNOSTICS rank={rank} skipped=invalid_kernel_ref")
                   continue
-              result = subprocess.run(
-                  ["kaggle", "kernels", "logs", kernel_ref],
-                  capture_output=True,
-                  text=True,
-                  check=False,
-                  timeout=45,
-              )
-              combined = (result.stdout or "") + "\n" + (result.stderr or "")
+              try:
+                  result = subprocess.run(
+                      ["kaggle", "kernels", "logs", kernel_ref],
+                      capture_output=True,
+                      text=True,
+                      check=False,
+                      timeout=45,
+                  )
+                  return_code = result.returncode
+                  combined = (result.stdout or "") + "\n" + (result.stderr or "")
+              except subprocess.TimeoutExpired:
+                  print(f"NCCL_KAGGLE_KERNEL_LOGS_UNAVAILABLE rank={rank} reason=timeout", flush=True)
+                  continue
+              except OSError as exc:
+                  print(f"NCCL_KAGGLE_KERNEL_LOGS_UNAVAILABLE rank={rank} reason={type(exc).__name__}", flush=True)
+                  continue
               lines = combined.splitlines()
               print(
                   "NCCL_KAGGLE_KERNEL_LOG_FETCH "
                   + json.dumps(
-                      {"rank": rank, "kernel_ref": kernel_ref, "exit_code": result.returncode,
+                      {"rank": rank, "kernel_ref": kernel_ref, "exit_code": return_code,
                        "line_count": len(lines)},
                       sort_keys=True,
                   ),
                   flush=True,
               )
-              if result.returncode != 0 and not lines:
+              if return_code != 0 and not lines:
                   print(f"NCCL_KAGGLE_KERNEL_LOGS_UNAVAILABLE rank={rank}")
                   continue
               selected = [
