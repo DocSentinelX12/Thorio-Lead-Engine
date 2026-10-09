@@ -65,6 +65,12 @@ jobs:
             "https://api.github.com/repos/${GITHUB_RUNNER_REPOSITORY}/actions/runners?per_page=1" >/dev/null
           echo "Cleanup credentials verified. No GPU has been acquired."
 
+      - name: Check out cleanup helpers
+        uses: actions/checkout@v5
+
+      - name: Remove stale run-scoped private JIT credential datasets
+        run: bash infra/free-compute/cleanup-stale-kaggle-runner-secret-datasets.sh
+
       - name: Delete all stale Thorio GPU kernels
         shell: bash
         run: |
