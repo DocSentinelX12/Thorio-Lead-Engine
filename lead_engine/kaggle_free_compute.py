@@ -290,6 +290,8 @@ class KaggleFreeComputeProvider(FreeComputeProvider):
                 None,
             )
             if header is None:
+                if len(lines) == 1 and lines[0].strip().casefold() in {"no kernels found", "no kernels found."}:
+                    return False
                 raise KaggleFreeComputeError(
                     "Cannot safely classify Kaggle status permission denial because "
                     f"kernel listing page {page} returned no CSV header"
@@ -590,6 +592,8 @@ run("bash", str(runner_script))
                 None,
             )
             if header is None:
+                if len(lines) == 1 and lines[0].strip().casefold() in {"no datasets found", "no datasets found."}:
+                    return False
                 preview = " | ".join(lines[:3]) or "<empty response>"
                 raise KaggleFreeComputeError(
                     "Cannot safely classify Kaggle dataset deletion because "
