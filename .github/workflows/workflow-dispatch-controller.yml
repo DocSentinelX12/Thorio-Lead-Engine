@@ -37,7 +37,7 @@ on:
         type: boolean
         default: false
       kaggle_jit_secret_configured:
-        description: "Confirm Kaggle Notebook Secret THORIO_GITHUB_RUNNER_JIT_TOKEN is configured with the rotated token."
+        description: "Confirm GitHub Actions secret THORIO_GITHUB_RUNNER_JIT_TOKEN contains the rotated GitHub runner-management token."
         required: true
         type: boolean
         default: false
