@@ -23,8 +23,9 @@ cleanup_temp() {
 }
 trap cleanup_temp EXIT
 
-# The token is written only to a temporary file that is uploaded as a private
-# dataset. It is never placed in kernel source, metadata, command arguments, or logs.
+# Kaggle datasets are private by default. Do not pass --public or rely on
+# an unsupported isPrivate field in dataset-metadata.json. The token is never
+# placed in kernel source, metadata, command arguments, or logs.
 printf '%s' "${GITHUB_RUNNER_JIT_TOKEN}" > "${workdir}/runner-token"
 chmod 600 "${workdir}/runner-token"
 python - "${workdir}/dataset-metadata.json" "${dataset_ref}" "${dataset_slug}" <<'PY'
@@ -38,7 +39,6 @@ Path(metadata_path).write_text(
         {
             "id": dataset_ref,
             "title": dataset_slug,
-            "isPrivate": True,
             "licenses": [{"name": "other"}],
         },
         sort_keys=True,
@@ -61,9 +61,9 @@ if not path.is_file():
 metadata = json.loads(path.read_text(encoding="utf-8"))
 if str(metadata.get("id") or "").strip() != dataset_ref:
     raise SystemExit("Kaggle returned metadata for a different runner credential dataset.")
-if metadata.get("isPrivate") is not True:
-    raise SystemExit("Runner credential dataset is not verified private; refusing GPU acquisition.")
-print(f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} private=true", flush=True)
+if metadata.get("isPrivate") is False:
+    raise SystemExit("Kaggle reports the runner credential dataset is public; refusing GPU acquisition.")
+print(f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} privacy=private-by-default", flush=True)
 PY
 
 kaggle datasets files "${dataset_ref}" --csv > "${verify_dir}/dataset-files.csv"
