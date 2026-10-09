@@ -97,8 +97,6 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
         if command[1:3] == ["datasets", "list"]:
             dataset_ref = captured["dataset_metadata"]["id"]
             return subprocess.CompletedProcess(command, 0, "ref,title\n" + dataset_ref + ",Thorio credential\n", "")
-        if command[1:3] == ["datasets", "files"]:
-            return subprocess.CompletedProcess(command, 0, "name,size\nrunner-token,32\n", "")
         if command[1:3] == ["kernels", "push"]:
             kernel_dir = Path(command[command.index("-p") + 1])
             captured["kernel_metadata"] = json.loads(
