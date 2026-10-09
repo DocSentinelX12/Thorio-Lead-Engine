@@ -459,8 +459,14 @@ def run(*args):
 def get_runner_token():
     dataset_slug = CONFIG["github_runner_jit_token_dataset_slug"]
     input_root = Path("/kaggle/input")
-    secret_file = input_root / dataset_slug / "runner-token"
-    if not secret_file.is_file():
+    # Kaggle can mount dataset inputs using either the legacy flat path
+    # or the newer /kaggle/input/datasets/<owner>/<slug> layout. Resolve only
+    # the exact run-scoped dataset slug and fail closed on ambiguity.
+    secret_files = sorted(
+        path for path in input_root.rglob("runner-token")
+        if path.is_file() and path.parent.name == dataset_slug
+    )
+    if len(secret_files) != 1:
         # Directory names are safe to report; never print file contents or
         # environment values. This distinguishes an absent mount from a
         # filename/layout mismatch without exposing credentials.
@@ -471,10 +477,13 @@ def get_runner_token():
         except OSError as exc:
             mounted_inputs = [f"<input listing failed: {{type(exc).__name__}}>"]
         raise RuntimeError(
-            "Run-scoped private runner credential file is unavailable; "
-            f"expected={{secret_file}}; mounted_input_directories={{json.dumps(mounted_inputs)}}; "
+            "Run-scoped private runner credential file is unavailable or ambiguous; "
+            f"expected exactly one runner-token beneath dataset slug {{dataset_slug}}; "
+            f"matches={{len(secret_files)}}; "
+            f"mounted_input_directories={{json.dumps(mounted_inputs)}}; "
             "refusing to start an unauthenticated GPU worker"
         )
+    secret_file = secret_files[0]
     value = secret_file.read_text(encoding="utf-8").strip()
     if not value:
         raise RuntimeError("Run-scoped private runner credential file is empty")
