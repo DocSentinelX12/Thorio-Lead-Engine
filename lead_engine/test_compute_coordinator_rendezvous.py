@@ -277,6 +277,8 @@ def test_free_external_gpu_runner_uses_run_scoped_runner_identity_and_cleanup():
     publisher = (root / "infra" / "free-compute" / "publish-kaggle-runner-secret-dataset.sh").read_text(encoding="utf-8")
     assert '"isPrivate": True' in publisher
     assert "THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY" in publisher
+    assert "THORIO_PRIVATE_RUNNER_CREDENTIAL_FILE_VERIFIED" in publisher
+    assert "kaggle datasets files" in publisher
     assert "GITHUB_RUNNER_JIT_TOKEN" in publisher
     assert 'echo "${GITHUB_RUNNER_JIT_TOKEN}"' not in publisher
 
