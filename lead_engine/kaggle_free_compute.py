@@ -12,13 +12,16 @@ may require a newer Python runtime.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -523,6 +526,103 @@ run("bash", str(runner_script))
             raise KaggleFreeComputeError("acquisition domain does not match the configured Kaggle worker")
         return self._kernel_status(self._kernel_ref())
 
+    def _delete_private_runner_credential_dataset(self, dataset_slug: str) -> None:
+        dataset_ref = f"{self.config.username}/{dataset_slug}"
+        try:
+            self._run(["datasets", "delete", dataset_ref, "--yes"])
+        except KaggleFreeComputeError as exc:
+            message = str(exc).lower()
+            if "not found" in message or "404" in message:
+                return
+            raise
+
+    def _publish_private_runner_credential_dataset(self, dataset_slug: str) -> None:
+        token = (
+            os.environ.get("GITHUB_RUNNER_JIT_TOKEN", "").strip()
+            or os.environ.get("THORIO_GITHUB_RUNNER_JIT_TOKEN", "").strip()
+        )
+        if not token:
+            raise KaggleFreeComputeError(
+                "GITHUB_RUNNER_JIT_TOKEN or THORIO_GITHUB_RUNNER_JIT_TOKEN is required "
+                "to publish a private runner credential dataset"
+            )
+        dataset_ref = f"{self.config.username}/{dataset_slug}"
+        created = False
+        try:
+            with tempfile.TemporaryDirectory(prefix="thorio-kaggle-credential-") as directory:
+                path = Path(directory)
+                token_path = path / "runner-token"
+                token_path.write_text(token, encoding="utf-8")
+                token_path.chmod(0o600)
+                (path / "dataset-metadata.json").write_text(
+                    json.dumps(
+                        {
+                            "id": dataset_ref,
+                            "title": dataset_slug,
+                            "isPrivate": True,
+                            "licenses": [{"name": "other"}],
+                        },
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
+                )
+                self._run(["datasets", "create", "-p", str(path)], cwd=str(path))
+                created = True
+
+            with tempfile.TemporaryDirectory(prefix="thorio-kaggle-credential-verify-") as directory:
+                self._run(["datasets", "metadata", dataset_ref, "-p", directory], cwd=directory)
+                metadata_path = Path(directory) / "dataset-metadata.json"
+                if not metadata_path.is_file():
+                    raise KaggleFreeComputeError(
+                        "Kaggle returned no metadata for the private runner credential dataset"
+                    )
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if str(metadata.get("id") or "").strip() != dataset_ref:
+                    raise KaggleFreeComputeError(
+                        "Kaggle returned metadata for a different runner credential dataset"
+                    )
+                if metadata.get("isPrivate") is not True:
+                    raise KaggleFreeComputeError(
+                        "Runner credential dataset is not verified private; refusing GPU acquisition"
+                    )
+                files_csv = self._run(["datasets", "files", dataset_ref, "--csv"])
+                lines = [line for line in files_csv.splitlines() if line.strip()]
+                header = next(
+                    (index for index, line in enumerate(lines) if line.strip().lower().startswith("name,")),
+                    None,
+                )
+                if header is None:
+                    raise KaggleFreeComputeError(
+                        "Kaggle runner credential dataset file listing returned no CSV header"
+                    )
+                rows = list(csv.DictReader(io.StringIO("\n".join(lines[header:]))))
+                if not any(
+                    Path(str(value or "")).name == "runner-token"
+                    for row in rows
+                    for value in row.values()
+                ):
+                    raise KaggleFreeComputeError(
+                        "Private runner credential dataset does not contain runner-token"
+                    )
+            print(
+                f"THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_READY ref={dataset_ref} private=true",
+                flush=True,
+            )
+        except Exception as exc:
+            if created:
+                try:
+                    self._delete_private_runner_credential_dataset(dataset_slug)
+                except Exception as cleanup_exc:
+                    raise KaggleFreeComputeError(
+                        f"Private runner credential dataset setup failed: {exc}; "
+                        f"dataset cleanup also failed: {cleanup_exc}"
+                    ) from exc
+            if isinstance(exc, KaggleFreeComputeError):
+                raise
+            raise KaggleFreeComputeError(
+                f"Private runner credential dataset setup failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
     def _push_kernel_with_retry(self, path: Path, timeout_seconds: int) -> str:
         deadline = self._clock() + self.config.acquisition_ready_timeout_seconds
         while True:
@@ -556,10 +656,6 @@ run("bash", str(runner_script))
 
 
     def acquire_free(self, offer: FreeComputeOffer) -> AcquiredCompute:
-        if not self.config.github_runner_jit_token_dataset_slug:
-            raise KaggleFreeComputeError(
-                "THORIO_KAGGLE_SECRET_DATASET_SLUG is required to acquire a GPU worker securely"
-            )
         if offer.provider_id != self.provider_id:
             raise KaggleFreeComputeError("offer belongs to a different provider")
         if not offer.no_cost:
@@ -584,13 +680,19 @@ run("bash", str(runner_script))
         acquisition_id = hashlib.sha256(
             f"{offer.provider_id}\x00{offer.domain_id}\x00{offer.offer_id}".encode("utf-8")
         ).hexdigest()
+        dataset_slug = self.config.github_runner_jit_token_dataset_slug
+        dataset_owned = not bool(dataset_slug)
+        if dataset_owned:
+            dataset_slug = f"thorio-runner-credentials-acq-{uuid.uuid4().hex[:16]}"
+            self._publish_private_runner_credential_dataset(dataset_slug)
+
         worker_script = self._worker_script(
             repository_url=self.config.repository_url,
             repository_ref=self.config.repository_ref,
             acquisition_id=acquisition_id,
             domain_id=offer.domain_id,
             worker_id=offer.domain_id,
-            github_runner_jit_token_dataset_slug=self.config.github_runner_jit_token_dataset_slug,
+            github_runner_jit_token_dataset_slug=dataset_slug,
             github_repository=self.config.github_repository,
             github_runner_name=self.config.github_runner_name,
             github_runner_labels=self.config.github_runner_labels,
@@ -607,7 +709,7 @@ run("bash", str(runner_script))
             "enable_internet": True,
             "machine_shape": self.config.accelerator,
             "dataset_sources": [
-                f"{self.config.username}/{self.config.github_runner_jit_token_dataset_slug}"
+                f"{self.config.username}/{dataset_slug}"
             ],
             "competition_sources": [],
             "kernel_sources": [],
@@ -620,30 +722,65 @@ run("bash", str(runner_script))
                 encoding="utf-8",
             )
             (path / "thorio_worker.py").write_text(worker_script, encoding="utf-8")
-            push_output = self._push_kernel_with_retry(path, timeout_seconds)
+            try:
+                push_output = self._push_kernel_with_retry(path, timeout_seconds)
+            except Exception as exc:
+                cleanup_errors = []
+                try:
+                    self._run(["kernels", "delete", kernel_ref, "--yes"])
+                except KaggleFreeComputeError as cleanup_exc:
+                    if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
+                        cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
+                if dataset_owned:
+                    try:
+                        self._delete_private_runner_credential_dataset(dataset_slug)
+                    except Exception as cleanup_exc:
+                        cleanup_errors.append(f"credential dataset cleanup failed: {cleanup_exc}")
+                if cleanup_errors:
+                    raise KaggleFreeComputeError(
+                        f"Kaggle kernel push failed: {exc}; " + "; ".join(cleanup_errors)
+                    ) from exc
+                raise
             lowered_push_output = push_output.lower().strip()
             if (
                 not lowered_push_output
                 or "kernel push error" in lowered_push_output
                 or "push error" in lowered_push_output
             ):
+                cleanup_errors = []
                 try:
                     self._run(["kernels", "delete", kernel_ref, "--yes"])
-                except Exception:
-                    pass
-                raise KaggleFreeComputeError(
-                    f"Kaggle kernel push did not report an accepted submission: {push_output.strip()!r}"
-                )
+                except KaggleFreeComputeError as cleanup_exc:
+                    if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
+                        cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
+                if dataset_owned:
+                    try:
+                        self._delete_private_runner_credential_dataset(dataset_slug)
+                    except Exception as cleanup_exc:
+                        cleanup_errors.append(f"credential dataset cleanup failed: {cleanup_exc}")
+                detail = f"Kaggle kernel push did not report an accepted submission: {push_output.strip()!r}"
+                if cleanup_errors:
+                    detail += "; " + "; ".join(cleanup_errors)
+                raise KaggleFreeComputeError(detail)
 
         try:
             provider_run_status = self._wait_for_running(kernel_ref)
         except Exception as exc:
+            cleanup_errors = []
             try:
                 self._run(["kernels", "delete", kernel_ref, "--yes"])
-            except Exception as cleanup_exc:
+            except KaggleFreeComputeError as cleanup_exc:
+                if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
+                    cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
+            if dataset_owned:
+                try:
+                    self._delete_private_runner_credential_dataset(dataset_slug)
+                except Exception as cleanup_exc:
+                    cleanup_errors.append(f"credential dataset cleanup failed: {cleanup_exc}")
+            if cleanup_errors:
                 raise KaggleFreeComputeError(
                     f"Kaggle worker did not reach running state: {type(exc).__name__}: {exc}; "
-                    f"cleanup also failed: {type(cleanup_exc).__name__}: {cleanup_exc}"
+                    + "; ".join(cleanup_errors)
                 ) from exc
             if isinstance(exc, KaggleFreeComputeError):
                 raise
@@ -671,7 +808,9 @@ run("bash", str(runner_script))
                 "domain_id": offer.domain_id,
                 "accelerator": self.config.accelerator,
                 "runtime_timeout_seconds": timeout_seconds,
-                "authentication": "Kaggle Secrets",
+                "authentication": "Run-scoped private Kaggle dataset",
+                "runner_credential_dataset_slug": dataset_slug,
+                "runner_credential_dataset_owned": dataset_owned,
                 "physical_verification_required": True,
                 "provider_submission_accepted": True,
                 "provider_run_status": provider_run_status,
@@ -685,9 +824,19 @@ run("bash", str(runner_script))
             raise KaggleFreeComputeError("acquisition belongs to a different provider")
         if acquisition.domain_id != self._domain_id():
             raise KaggleFreeComputeError("acquisition domain does not match the configured Kaggle worker")
+        cleanup_errors = []
+        kernel_ref = str(acquisition.enrollment.get("kernel_ref") or self._kernel_ref())
         try:
-            self._run(["kernels", "delete", self._kernel_ref(), "--yes"])
+            self._run(["kernels", "delete", kernel_ref, "--yes"])
         except KaggleFreeComputeError as exc:
-            if "not found" in str(exc).lower() or "404" in str(exc):
-                return
-            raise
+            if "not found" not in str(exc).lower() and "404" not in str(exc).lower():
+                cleanup_errors.append(f"kernel cleanup failed: {exc}")
+        dataset_slug = str(acquisition.enrollment.get("runner_credential_dataset_slug") or "").strip()
+        dataset_owned = acquisition.enrollment.get("runner_credential_dataset_owned") is True
+        if dataset_owned and dataset_slug:
+            try:
+                self._delete_private_runner_credential_dataset(dataset_slug)
+            except Exception as exc:
+                cleanup_errors.append(f"credential dataset cleanup failed: {exc}")
+        if cleanup_errors:
+            raise KaggleFreeComputeError("; ".join(cleanup_errors))
