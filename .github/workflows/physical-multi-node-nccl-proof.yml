@@ -935,7 +935,7 @@ jobs:
           NCCL_RUNTIME_CONNECT: "0"
           NCCL_SOCKET_RETRY_CNT: "3"
           NCCL_SOCKET_RETRY_SLEEP_MSEC: "200"
-            run: |
+        run: |
           set -euo pipefail
           test -n "${MASTER_ADDR}"
           test -n "${MASTER_PORT}"
