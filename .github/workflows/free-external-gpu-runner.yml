@@ -32,6 +32,7 @@ permissions:
 concurrency:
   group: thorio-external-gpu-fabric
   cancel-in-progress: false
+  queue: max
 
 jobs:
   cleanup_stale:
@@ -594,7 +595,7 @@ jobs:
     if: ${{ always() && !inputs.cleanup_only && inputs.kaggle_jit_secret_configured }}
     needs: provision
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 10
     env:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
@@ -605,12 +606,15 @@ jobs:
       - name: Poll external kernel and preserve startup diagnostics
         shell: bash
         run: |
-          set -u
+          set +e
           terminal=false
           for attempt in $(seq 1 12); do
-            status="$(kaggle kernels status "${KERNEL_REF}" 2>&1 || true)"
-            printf 'Kaggle status attempt %s:\n%s\n' "$attempt" "$status"
-            logs="$(kaggle kernels logs "${KERNEL_REF}" 2>&1 || true)"
+            status="$(timeout 10s kaggle kernels status "${KERNEL_REF}" 2>&1)"
+            status_rc=$?
+            printf 'Kaggle status attempt %s exit=%s:\n%s\n' "$attempt" "$status_rc" "$status"
+            logs="$(timeout 10s kaggle kernels logs "${KERNEL_REF}" 2>&1)"
+            logs_rc=$?
+            printf 'Kaggle logs attempt %s exit=%s:\n' "$attempt" "$logs_rc"
             printf '%s\n' "$logs" | tail -n 160
             lowered="$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')"
             if printf '%s' "$lowered" | grep -Eq 'complete|completed|error|failed|cancelled'; then
@@ -621,12 +625,16 @@ jobs:
           done
 
           # Streamed console logs do not necessarily include the saved worker
-          # traceback. Download kernel output before cleanup deletes the kernel.
+          # traceback. Bound the output request so a Kaggle API stall cannot
+          # cancel this entire workflow after the worker has already finished.
           output_dir="$(mktemp -d)"
           trap 'rm -rf "$output_dir"' EXIT
-          output_result="$(kaggle kernels output "${KERNEL_REF}" -p "$output_dir" --force 2>&1)"
+          output_result="$(timeout 45s kaggle kernels output "${KERNEL_REF}" -p "$output_dir" --force 2>&1)"
           output_status=$?
           printf 'Kaggle output download exit=%s\n%s\n' "$output_status" "$output_result"
+          if [ "$output_status" -eq 124 ]; then
+            echo "::warning::Kaggle output retrieval exceeded 45 seconds; preserving streamed logs and allowing the proof/cleanup jobs to finish."
+          fi
           if [ "$output_status" -eq 0 ]; then
             python - "$output_dir" <<'PY'
           from pathlib import Path
@@ -658,8 +666,9 @@ jobs:
           PY
           fi
           if [ "$terminal" != true ]; then
-            echo "Kaggle kernel did not report a terminal state within the diagnostic window." >&2
+            echo "::warning::Kaggle kernel did not report a terminal state within the diagnostic window."
           fi
+          exit 0
 
   gpu_worker:
     name: Execute on the real external GPU runner
