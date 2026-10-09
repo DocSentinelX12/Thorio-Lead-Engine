@@ -82,6 +82,37 @@ jobs:
           test -n "${THORIO_COMPUTE_COORDINATOR_URL}"
           test -n "${THORIO_COMPUTE_AUTH_TOKEN}"
           kaggle kernels list --user "${KAGGLE_USERNAME}" --page-size 1 >/dev/null
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
+          request = urllib.request.Request(
+              base + "/health",
+              headers={
+                  "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
+                  "Accept": "application/json",
+                  "User-Agent": "Thorio-GPU-preflight/1.0",
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=15) as response:
+                  payload = json.loads(response.read().decode("utf-8"))
+          except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+              raise SystemExit(
+                  f"Coordinator preflight failed before GPU acquisition: {type(exc).__name__}: {exc}"
+              ) from exc
+          if (
+              not isinstance(payload, dict)
+              or payload.get("ok") is not True
+              or payload.get("free_only") is not True
+              or payload.get("paid_capacity_allowed") is not False
+          ):
+              raise SystemExit("Coordinator preflight returned an unhealthy or non-free-only response.")
+          print("THORIO_COORDINATOR_PREFLIGHT_OK free_only=true paid_capacity_allowed=false")
+          PY
           echo "Free GPU acquisition credentials verified."
 
       - name: Remove stale run-scoped private JIT credential datasets
