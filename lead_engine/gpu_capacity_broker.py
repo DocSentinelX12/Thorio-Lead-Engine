@@ -55,7 +55,13 @@ def provider_readiness_from_environment() -> dict[str, dict[str, Any]]:
     kaggle_enabled = _enabled("THORIO_KAGGLE_ENABLED")
     kaggle_missing = ()
     if kaggle_enabled:
-        missing = list(_missing_environment("THORIO_KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "THORIO_KAGGLE_SECRET_DATASET_SLUG"))
+        missing = list(
+            _missing_environment(
+                "THORIO_KAGGLE_USERNAME",
+                "KAGGLE_API_TOKEN",
+                "THORIO_KAGGLE_SECRET_DATASET_SLUG",
+            )
+        )
         missing.extend(coordinator_missing)
         kaggle_missing = tuple(dict.fromkeys(missing))
 
