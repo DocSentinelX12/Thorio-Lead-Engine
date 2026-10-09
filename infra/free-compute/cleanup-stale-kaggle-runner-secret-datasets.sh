@@ -11,7 +11,7 @@ removed=0
 
 while true; do
   listing="$(kaggle datasets list --mine --search "thorio-runner-credentials-" --page "${page}" --page-size 100 --csv)"
-  parsed="$(printf '%s\n' "\${listing}" | python -c '
+  parsed="$(printf '%s\n' "${listing}" | python -c '
 import csv, io, re, sys
 lines = [line for line in sys.stdin.read().splitlines() if line.strip()]
 header = next((i for i, line in enumerate(lines) if line.strip().lower().startswith("ref,")), None)
@@ -27,13 +27,13 @@ for row in rows:
     if sep and owner.strip() and re.fullmatch(r"thorio-runner-credentials-[0-9]+-[0-9]+", slug):
         print(ref)
 ')"
-  row_count="$(printf '%s\n' "\${parsed}" | head -n 1)"
-  refs_text="$(printf '%s\n' "\${parsed}" | tail -n +2)"
+  row_count="$(printf '%s\n' "${parsed}" | head -n 1)"
+  refs_text="$(printf '%s\n' "${parsed}" | tail -n +2)"
   refs=()
-  if [[ -n "\${refs_text}" ]]; then
-    mapfile -t refs <<< "\${refs_text}"
+  if [[ -n "${refs_text}" ]]; then
+    mapfile -t refs <<< "${refs_text}"
   fi
-  count="\${row_count}"
+  count="${row_count}"
   for ref in "${refs[@]}"; do
     [[ "${ref,,}" == "${prefix}"* ]] || continue
     if output="$(kaggle datasets delete "${ref}" --yes 2>&1)"; then
