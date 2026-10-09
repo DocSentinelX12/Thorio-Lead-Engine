@@ -1,3 +1,10 @@
-framework: python
-start: THORIO_COMPUTE_BIND_HOST=0.0.0.0 THORIO_COMPUTE_PORT=3000 PORT=3000 python -m lead_engine.compute_coordinator
-port: 3000
+version: 1
+type: web
+
+build:
+  framework: auto
+  install: pip install -r requirements.txt
+
+run:
+  command: "THORIO_COMPUTE_BIND_HOST=0.0.0.0 THORIO_COMPUTE_PORT=3000 THORIO_COMPUTE_TLS_TERMINATED_BY_PROXY=1 python -m lead_engine.compute_coordinator"
+  port: 3000
