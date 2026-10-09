@@ -528,10 +528,10 @@ run("bash", str(runner_script))
                     except OSError:
                         continue
                     if text.strip():
-                        chunks.append(f"--- {path.name} ---\\n{text[-12000:]}")
+                        chunks.append(f"--- {path.name} ---\n{text[-12000:]}")
                 if not chunks and command_output.strip():
                     chunks.append(command_output[-4000:])
-                detail = "\\n".join(chunks).strip()
+                detail = "\n".join(chunks).strip()
         except Exception as exc:
             detail = f"Remote Kaggle output retrieval failed: {type(exc).__name__}: {exc}"
         for name in (
@@ -833,7 +833,7 @@ run("bash", str(runner_script))
                 f"Kaggle worker did not reach running state: {type(exc).__name__}: {exc}"
             )
             if diagnostics:
-                failure_detail += "\\nRemote Kaggle worker diagnostics (secrets redacted):\\n" + diagnostics
+                failure_detail += "\nRemote Kaggle worker diagnostics (secrets redacted):\n" + diagnostics
             if cleanup_errors:
                 failure_detail += "; " + "; ".join(cleanup_errors)
             if isinstance(exc, KaggleFreeComputeError):
