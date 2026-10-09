@@ -96,7 +96,7 @@ while True:
         # necessarily updated. Treat its explicit empty-inventory response as
         # transient, but never treat it as proof that the credential dataset
         # exists. Keep polling until the exact owner-scoped ref is visible.
-        last_output = "\\n".join(lines[:4])[:500]
+        last_output = "\n".join(lines[:4])[:500]
         empty_inventory = (
             not lines
             or (len(lines) == 1 and lines[0].strip().casefold() in {
@@ -114,7 +114,7 @@ while True:
             f"Kaggle owner dataset inventory page {page} returned no CSV ref header; "
             f"last_output={last_output!r}; refusing GPU acquisition."
         )
-    rows = list(csv.DictReader(io.StringIO("\\n".join(lines[header_index:]))))
+    rows = list(csv.DictReader(io.StringIO("\n".join(lines[header_index:]))))
     if any(str(row.get("ref") or "").strip().lower() == target for row in rows):
         print("THORIO_PRIVATE_RUNNER_CREDENTIAL_DATASET_IN_OWNER_INVENTORY", flush=True)
         break
