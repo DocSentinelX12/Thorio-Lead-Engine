@@ -54,6 +54,8 @@ def _recv_exact(sock: socket.socket, size: int) -> bytes:
     return b"".join(chunks)
 
 def _handle(client: socket.socket) -> None:
+    destination = "<unparsed>"
+    port = 0
     try:
         header = _recv_exact(client, MAX_HEADER)
         if len(header) != MAX_HEADER:
@@ -81,7 +83,21 @@ def _handle(client: socket.socket) -> None:
         t = threading.Thread(target=_copy, args=(client, upstream), daemon=True)
         t.start()
         _copy(upstream, client)
-    except OSError:
+    except OSError as exc:
+        print(
+            "THORIO_RELAY_UPSTREAM_CONNECT_FAILED "
+            + json.dumps(
+                {
+                    "destination": destination,
+                    "port": port,
+                    "error_type": type(exc).__name__,
+                    "errno": exc.errno,
+                    "detail": str(exc)[:200],
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
         return
     finally:
         try:
