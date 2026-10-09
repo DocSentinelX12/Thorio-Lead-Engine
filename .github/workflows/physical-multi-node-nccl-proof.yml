@@ -570,8 +570,8 @@ jobs:
               if os.environ.get(name)
           ]
           patterns = [
-              (re.compile(r"(?i)(bearer\\s+)[A-Za-z0-9._~+/-]+=*"), r"\\1[REDACTED]"),
-              (re.compile(r"(?i)(token|password|secret|authorization)(\\s*[=:]\\s*)[^\\s,;]+"), r"\\1\\2[REDACTED]"),
+              (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"), r"\1[REDACTED]"),
+              (re.compile(r"(?i)(token|password|secret|authorization)(\s*[=:]\s*)[^\s,;]+"), r"\1\2[REDACTED]"),
           ]
 
           def redact(line):
@@ -596,7 +596,7 @@ jobs:
                   check=False,
                   timeout=45,
               )
-              combined = (result.stdout or "") + "\\n" + (result.stderr or "")
+              combined = (result.stdout or "") + "\n" + (result.stderr or "")
               lines = combined.splitlines()
               print(
                   "NCCL_KAGGLE_KERNEL_LOG_FETCH "
