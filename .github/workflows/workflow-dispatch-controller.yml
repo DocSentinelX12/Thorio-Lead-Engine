@@ -71,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$TARGET_WORKFLOW" in
-            ci.yml|full-test-suite.yml|source-live-diagnostic.yml|revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|free-compute-fleet-verification.yml|gpu-fabric-validation.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml) ;;
+            ci.yml|full-test-suite.yml|source-live-diagnostic.yml|revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml|free-compute-fleet-verification.yml|gpu-fabric-validation.yml) ;;
             *)
               echo "DISPATCH REQUEST FAILURE: workflow is not on the approved allowlist: $TARGET_WORKFLOW"
               exit 1
@@ -94,7 +94,7 @@ jobs:
             exit 1
           fi
           case "$TARGET_WORKFLOW" in
-            revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|free-compute-fleet-verification.yml|gpu-fabric-validation.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml)
+            revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml|free-compute-fleet-verification.yml|gpu-fabric-validation.yml)
               if [ "$TARGET_REF" != "main" ]; then
                 echo "DISPATCH REQUEST FAILURE: $TARGET_WORKFLOW is production/main-only and cannot be dispatched against $TARGET_REF."
                 echo "Use ci.yml, full-test-suite.yml, or source-live-diagnostic.yml for branch verification."
