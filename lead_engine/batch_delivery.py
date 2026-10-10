@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List
 
 from .airtable_sync import (
     AirtableSyncError,
+    AirtableTransientError,
     _master_table_url,
     _normalize_lead,
     _request,
@@ -108,6 +109,10 @@ def _resilient_batch_upsert(
     try:
         _batch_upsert(table_key, merge_field, records)
         return
+    except AirtableTransientError:
+        # Transport failures do not indicate bad records. Splitting the batch
+        # would amplify an outage into many requests and exhaust the cycle.
+        raise
     except Exception:
         if len(records) == 1:
             raise
@@ -224,6 +229,14 @@ def sync_pending_batched(
         leads = [lead for _fingerprint, lead in chunk]
         try:
             _run_batch_high_volume_sync(leads)
+        except AirtableTransientError as batch_exc:
+            # Do not fall back to one request per record after a transient
+            # outage. Keep durable rows pending for a later cycle.
+            for fingerprint, lead in chunk:
+                message = str(batch_exc)
+                db.mark_error(fingerprint, message)
+                failed.append({"status": "failed", "lead": lead, "error": message})
+            continue
         except Exception as batch_exc:
             from .sync_worker import sync_one
             for fingerprint, lead in chunk:
