@@ -60,7 +60,15 @@ def _read_response_with_deadline(response: Any, deadline: float) -> bytes:
         if sock is not None:
             sock.settimeout(remaining)
         reader = getattr(response, "read1", None)
-        chunk = reader(65536) if callable(reader) else response.read(65536)
+        if callable(reader):
+            chunk = reader(65536)
+        else:
+            try:
+                chunk = response.read(65536)
+            except TypeError:
+                # Simple file-like test doubles and some wrappers expose read()
+                # without a size parameter; preserve their supported contract.
+                chunk = response.read()
         if not chunk:
             return b"".join(chunks)
 

@@ -27,6 +27,6 @@ def test_missing_coordinator_configuration_is_not_reported_as_success():
 
 
 def test_runtime_has_success_markers_for_registration_and_heartbeat():
-    source = (WORKFLOW.parents[1] / "lead_engine" / "compute_worker.py").read_text(encoding="utf-8")
+    source = (WORKFLOW.parents[2] / "lead_engine" / "compute_worker.py").read_text(encoding="utf-8")
     assert 'print(f"THORIO_WORKER_REGISTERED worker_id={client.worker_id}", flush=True)' in source
     assert 'print(f"THORIO_WORKER_HEARTBEAT_OK worker_id={client.worker_id}", flush=True)' in source

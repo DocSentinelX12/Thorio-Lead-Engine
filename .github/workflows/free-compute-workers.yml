@@ -70,7 +70,7 @@ jobs:
     needs: coordinator_gate
     if: github.ref == 'refs/heads/main' && needs.coordinator_gate.outputs.enabled == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       # GitHub's free standard-runner concurrency remains 20.

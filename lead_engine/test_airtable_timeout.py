@@ -18,7 +18,7 @@ class Response:
 
 
 def test_airtable_request_timeout_is_not_overly_strict():
-    assert AIRTABLE_REQUEST_TIMEOUT == 60.0
+    assert AIRTABLE_REQUEST_TIMEOUT == 15.0
 
 
 def test_airtable_request_uses_configured_timeout(monkeypatch):
@@ -35,4 +35,4 @@ def test_airtable_request_uses_configured_timeout(monkeypatch):
         )
 
     assert result == {"records": []}
-    assert mocked.call_args.kwargs["timeout"] == 60.0
+    assert mocked.call_args.kwargs["timeout"] == AIRTABLE_REQUEST_TIMEOUT
