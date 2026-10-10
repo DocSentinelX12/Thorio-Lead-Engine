@@ -113,7 +113,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          target_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_REF" --jq '.sha')"
+          target_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits?sha=$TARGET_REF&per_page=1" --jq '.[0].sha')"
           test -n "$target_sha"
           dispatch_epoch="$(date +%s)"
           dispatch_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -165,7 +165,7 @@ jobs:
                 run_sha="$candidate_sha"
                 break
               fi
-            done < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$TARGET_WORKFLOW" --branch "$TARGET_REF" --limit 100 --json databaseId,createdAt,event,headSha --jq '.[] | [.databaseId,.createdAt,event,.headSha] | @tsv' | sort -k2,2)
+            done < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$TARGET_WORKFLOW" --branch "$TARGET_REF" --limit 100 --json databaseId,createdAt,event,headSha --jq '.[] | [.databaseId,.createdAt,.event,.headSha] | @tsv' | sort -k2,2)
             if [ -n "$run_id" ]; then
               echo "run_sha=$run_sha" >> "$GITHUB_OUTPUT"
               break
