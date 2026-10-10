@@ -22,7 +22,7 @@ class FakeResponse:
 
 def test_response_reader_reduces_socket_timeout_to_absolute_deadline(monkeypatch):
     ticks = iter((10.0, 11.0, 12.0))
-    monkeypatch.setattr(airtable_sync.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(airtable_sync.time, "perf_counter", lambda: next(ticks))
     response = FakeResponse()
 
     body = airtable_sync._read_response_with_deadline(response, 20.0)

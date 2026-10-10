@@ -51,7 +51,7 @@ def _read_response_with_deadline(response: Any, deadline: float) -> bytes:
     """Read response chunks while shrinking the socket timeout to an absolute deadline."""
     chunks: list[bytes] = []
     while True:
-        remaining = deadline - time.monotonic()
+        remaining = deadline - time.perf_counter()
         if remaining <= 0:
             raise TimeoutError("Airtable response exceeded its absolute request deadline")
         fp = getattr(response, "fp", None)
@@ -71,6 +71,7 @@ def _read_response_with_deadline(response: Any, deadline: float) -> bytes:
                 chunk = response.read()
         if not chunk:
             return b"".join(chunks)
+        chunks.append(chunk)
 
 
 def _require_config() -> None:
@@ -134,7 +135,7 @@ def _request(
     drain_deadline = _REQUEST_DEADLINE.get()
 
     for attempt in range(AIRTABLE_MAX_RETRIES + 1):
-        now = time.monotonic()
+        now = time.perf_counter()
         if drain_deadline is not None and now >= drain_deadline:
             raise AirtableTransientError(
                 "Airtable drain deadline expired; pending records were preserved."
@@ -174,12 +175,12 @@ def _request(
                 raise error from exc
             last_error = error
             if attempt >= AIRTABLE_MAX_RETRIES or (
-                drain_deadline is not None and time.monotonic() >= drain_deadline
+                drain_deadline is not None and time.perf_counter() >= drain_deadline
             ):
                 raise error from exc
             delay = _retry_delay(attempt, exc.headers.get("Retry-After"))
             if drain_deadline is not None:
-                delay = min(delay, max(0.0, drain_deadline - time.monotonic()))
+                delay = min(delay, max(0.0, drain_deadline - time.perf_counter()))
             if delay:
                 time.sleep(delay)
 
@@ -192,12 +193,12 @@ def _request(
                 )
             last_error = error
             if attempt >= AIRTABLE_MAX_RETRIES or (
-                drain_deadline is not None and time.monotonic() >= drain_deadline
+                drain_deadline is not None and time.perf_counter() >= drain_deadline
             ):
                 raise error from exc
             delay = _retry_delay(attempt)
             if drain_deadline is not None:
-                delay = min(delay, max(0.0, drain_deadline - time.monotonic()))
+                delay = min(delay, max(0.0, drain_deadline - time.perf_counter()))
             if delay:
                 time.sleep(delay)
 
@@ -210,12 +211,12 @@ def _request(
             error = AirtableTransientError(f"Airtable request failed: {exc}")
             last_error = error
             if attempt >= AIRTABLE_MAX_RETRIES or (
-                drain_deadline is not None and time.monotonic() >= drain_deadline
+                drain_deadline is not None and time.perf_counter() >= drain_deadline
             ):
                 raise error from exc
             delay = _retry_delay(attempt)
             if drain_deadline is not None:
-                delay = min(delay, max(0.0, drain_deadline - time.monotonic()))
+                delay = min(delay, max(0.0, drain_deadline - time.perf_counter()))
             if delay:
                 time.sleep(delay)
 
