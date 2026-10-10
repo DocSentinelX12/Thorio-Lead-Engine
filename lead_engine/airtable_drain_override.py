@@ -25,7 +25,7 @@ def drain_pending(
     This function owns repetition, bounded runtime, failure stopping, and
     durable backlog preservation for continuous production operation.
     """
-    from . import batch_delivery
+    from . import airtable_sync, batch_delivery
     if sync_batch is None:
         sync_batch = batch_delivery.sync_pending_batched
 
@@ -38,6 +38,7 @@ def drain_pending(
     deferred_fingerprints: set[str] = set()
     uses_default_batch_delivery = sync_batch is batch_delivery.sync_pending_batched
     started = time.perf_counter()
+    request_deadline = time.monotonic() + budget_seconds
 
     aggregate: Dict[str, Any] = {
         "synced": [],
@@ -53,14 +54,17 @@ def drain_pending(
     }
 
     while True:
-        if uses_default_batch_delivery:
-            result = sync_batch(
-                db,
-                limit=batch_limit,
-                exclude_fingerprints=deferred_fingerprints,
-            )
-        else:
-            result = sync_batch(db) if batch_limit == 50 else sync_batch(db, limit=batch_limit)
+        if time.monotonic() >= request_deadline:
+            break
+        with airtable_sync.bounded_request_deadline(request_deadline):
+            if uses_default_batch_delivery:
+                result = sync_batch(
+                    db,
+                    limit=batch_limit,
+                    exclude_fingerprints=deferred_fingerprints,
+                )
+            else:
+                result = sync_batch(db) if batch_limit == 50 else sync_batch(db, limit=batch_limit)
         if not isinstance(result, dict):
             raise RuntimeError("Airtable sync returned a non-object result")
 
