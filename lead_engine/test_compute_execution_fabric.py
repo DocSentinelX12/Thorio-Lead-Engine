@@ -473,3 +473,23 @@ def test_execution_recovery_records_failure_on_exact_physical_path(tmp_path):
     assert health["failure_count"] == 1
     assert health["latest_success"] is False
     assert inventory.physical_paths()[0]["state"] == "FAILED"
+
+
+
+def test_coordinator_health_probe_does_not_run_expensive_maintenance(tmp_path, monkeypatch):
+    coordinator = ComputeCoordinator(str(tmp_path / "health-probe.sqlite3"), "test-token")
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("lightweight health probe called an expensive status or maintenance path")
+
+    monkeypatch.setattr(coordinator, "reconcile_fabric", unexpected)
+    monkeypatch.setattr(coordinator.pool, "reap_stale_workers", unexpected)
+    monkeypatch.setattr(coordinator.inventory, "fleet_resource_intelligence", unexpected)
+    monkeypatch.setattr(coordinator.free_compute_acquisition, "status", unexpected)
+
+    assert coordinator.health_probe() == {
+        "ok": True,
+        "free_only": True,
+        "paid_capacity_allowed": False,
+    }
+
