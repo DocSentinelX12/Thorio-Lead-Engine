@@ -529,7 +529,7 @@ jobs:
                   time.sleep(3)
               else:
                   raise SystemExit(
-                      f"Timed out after 60 seconds actively acquiring JIT runner {runner_name} "
+                      f"Timed out after 180 seconds actively acquiring JIT runner {runner_name} "
                       f"for rank {rank}; external worker state was monitored throughout."
                   )
 
