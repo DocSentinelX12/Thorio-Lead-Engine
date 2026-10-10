@@ -135,7 +135,10 @@ def test_acquire_free_publishes_private_dataset_when_no_slug_is_configured(monke
     assert "UserSecretsClient" not in captured["worker_script"]
     assert "thorio-worker.log" in captured["worker_script"]
     assert "sys.excepthook" in captured["worker_script"]
-    assert "stdout=log" in captured["worker_script"]
+    assert "subprocess.Popen" in captured["worker_script"]
+    assert "stdout=subprocess.PIPE" in captured["worker_script"]
+    assert "print(line, end=\"\", file=sys.stdout, flush=True)" in captured["worker_script"]
+    assert "log.flush()" in captured["worker_script"]
     compile(captured["worker_script"], "thorio_worker.py", "exec")
 
     provider.release_free(acquired)
