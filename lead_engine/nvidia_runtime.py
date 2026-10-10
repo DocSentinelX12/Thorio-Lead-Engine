@@ -260,7 +260,11 @@ class NvidiaRuntime:
             if match:
                 transports.append(match.group(1)); evidence_lines.append(line[-1000:])
             match = re.search(r"NCCL INFO NET/([A-Za-z0-9_.-]+)\s*:\s*Using\b", line, re.IGNORECASE)
-            if match:
+            # NCCL's NET/IB "Using ... OOB eth0:..." message identifies the
+            # out-of-band bootstrap interface, not the selected data transport.
+            # Treating it as an IB data path conflicts with the later, explicit
+            # "Using network Socket" selection when no IB device was available.
+            if match and not re.search(r"\bOOB\b", line, re.IGNORECASE):
                 transport = match.group(1); transports.append(transport)
                 hca_match = re.search(r"\b(mlx[45]_[A-Za-z0-9_.-]+):(\d+)\/(?:IB|RoCE)\b", line, re.IGNORECASE)
                 if hca_match:
