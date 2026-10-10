@@ -3585,7 +3585,7 @@ class ComputeCoordinator:
                 return result.rowcount == 1
 
     def health_probe(self) -> Dict[str, Any]:
-        \"\"\"Return lightweight readiness without running maintenance or fabric reconciliation.\"\"\"
+        """Return lightweight readiness without running maintenance or fabric reconciliation."""
         # /health is called concurrently by every remote worker before enrollment.
         # It must not take the global coordinator lock or trigger full reconciliation,
         # fleet intelligence scans, or acquisition status aggregation.
