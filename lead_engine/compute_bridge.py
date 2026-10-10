@@ -187,12 +187,11 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
                 break
             agent = str(remote.get("payload", {}).get("agent") or task.get("agent") or "")
             inner = result.get("result") if isinstance(result.get("result"), Mapping) else result
-            try:
-                _persist_remote_result(db, agent, inner)
-                complete(db, task["task_id"], worker_id=task["worker_id"], result=dict(result))
-            except Exception as error:
-                errors.append({"task_id": task["task_id"], "error": str(error)})
-                break
+            # Local persistence and queue completion are one durable
+            # transaction. Do not downgrade a local integrity failure into a
+            # remote transport warning; let it fail loudly so rollback is tested.
+            _persist_remote_result(db, agent, inner)
+            complete(db, task["task_id"], worker_id=task["worker_id"], result=dict(result))
             completed.append(task["task_id"])
         elif status == "queued":
             retry(db, task["task_id"], worker_id=task["worker_id"], error=str(remote.get("error") or "remote task returned to queue"))
