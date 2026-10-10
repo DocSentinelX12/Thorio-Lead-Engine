@@ -1,4 +1,7 @@
+from unittest.mock import patch
+
 from lead_engine.airtable_sync import _normalize_lead, _normalize_routes, sync_lead_if_missing
+from lead_engine.config import LeadEngineConfig
 
 
 def _verified_need():
@@ -58,7 +61,20 @@ def test_normalize_lead_preserves_independent_routes():
 
 
 def test_airtable_configuration_uses_expected_environment_names():
-    assert {"AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_LEAD_TABLE"} == {"AIRTABLE_API_KEY", "AIRTABLE_BASE_ID", "AIRTABLE_LEAD_TABLE"}
+    environment = {
+        "AIRTABLE_API_KEY": "test-token",
+        "AIRTABLE_BASE_ID": "app-test-base",
+        "AIRTABLE_LEAD_TABLE": "Custom Lead Radar",
+        "AIRTABLE_RESEARCH_TABLE": "Custom Research",
+    }
+    with patch.dict("os.environ", environment, clear=True):
+        config = LeadEngineConfig.from_environment()
+
+    assert config.airtable_base_id == "app-test-base"
+    assert config.airtable_table == "Custom Lead Radar"
+    assert config.airtable_research_table == "Custom Research"
+    assert config.safe_dict()["airtable_configured"] is True
+    assert "test-token" not in repr(config.safe_dict())
 
 
 def test_sync_lead_if_missing_updates_existing_record_without_overwriting_human_fields():
