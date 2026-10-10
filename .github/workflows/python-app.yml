@@ -232,6 +232,55 @@ jobs:
               print(f"{account}: configured={item['configured']} username_configured={item['username_configured']} password_configured={item['password_configured']} storage_state_configured={item['storage_state_configured']} secrets_exposed={item['secrets_exposed']}")
           print("ACCOUNT AUTH CONFIGURATION VERIFIED: all agreed accounts are available to the production runtime without exposing secret values.")
           PY
+      - name: Report outbound revenue transport readiness
+        run: |
+          python - <<'PY'
+          import json
+          import os
+
+          mode = os.environ.get("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
+          url_configured = bool(os.environ.get("THORIO_REVENUE_TRANSPORT_URL", "").strip())
+          token_configured = bool(os.environ.get("THORIO_REVENUE_TRANSPORT_TOKEN", "").strip())
+          raw_targets = os.environ.get("THORIO_REVENUE_BROWSER_TARGETS", "").strip()
+          targets = []
+          target_error = False
+          if raw_targets:
+              try:
+                  value = json.loads(raw_targets)
+                  if isinstance(value, list):
+                      targets = [item for item in value if isinstance(item, dict)]
+                  else:
+                      target_error = True
+              except json.JSONDecodeError:
+                  target_error = True
+
+          http_ready = url_configured and token_configured
+          browser_ready = bool(targets) and not target_error
+          if mode == "http":
+              ready = http_ready
+          elif mode == "browser":
+              ready = browser_ready
+          elif mode == "":
+              ready = http_ready or browser_ready
+          else:
+              ready = False
+
+          print(
+              "OUTBOUND REVENUE TRANSPORT READINESS: "
+              f"configured={str(ready).lower()} mode={mode or 'auto'} "
+              f"http_url_configured={str(url_configured).lower()} "
+              f"http_token_configured={str(token_configured).lower()} "
+              f"browser_target_count={len(targets)} "
+              f"browser_target_config_invalid={str(target_error).lower()}"
+          )
+          if not ready:
+              print(
+                  "OUTBOUND REVENUE BLOCKER: no usable explicitly configured transport "
+                  "is available to the production runtime; collection can continue, "
+                  "but external outreach is not ready."
+              )
+          PY
+
       - name: Verify complete free source catalog wiring
         run: |
           python - <<'PY'
