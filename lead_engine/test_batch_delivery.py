@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from .batch_delivery import _batch_upsert, _run_batch_high_volume_sync, sync_pending_batched
+from .batch_delivery import _batch_upsert, _company_fields, _run_batch_high_volume_sync, sync_pending_batched
 from .database import LeadDB
 
 
@@ -153,3 +153,23 @@ def test_batch_delivery_defers_research_required_leads_without_recording_sync_er
     state = db.get_sync_state("research-deferred-001")
     assert state["synced"] is False
     assert state["last_error"] == ""
+
+
+
+def test_batch_delivery_does_not_map_job_post_url_to_company_website():
+    fields = _company_fields({
+        "company": "Example Corp",
+        "source": "job board",
+        "url": "https://remotejobs.example/jobs/software-engineer",
+    })
+    assert fields["Website"] is None
+
+
+def test_batch_delivery_uses_only_an_explicit_company_website():
+    fields = _company_fields({
+        "company": "Example Corp",
+        "source": "job board",
+        "url": "https://remotejobs.example/jobs/software-engineer",
+        "company_website": "https://example.com",
+    })
+    assert fields["Website"] == "https://example.com"

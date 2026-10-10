@@ -132,7 +132,7 @@ def _company_fields(lead: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Company synchronization requires a company.")
     return _clean_fields({
         "Company": company,
-        "Website": str(lead.get("company_website") or lead.get("url") or "").strip() or None,
+        "Website": str(lead.get("company_website") or "").strip() or None,
         "Industry": str(lead.get("industry") or "").strip() or None,
         "Decision Maker": str(lead.get("person") or lead.get("contact_name") or "").strip() or None,
         "Title": str(lead.get("contact_title") or "").strip() or None,
