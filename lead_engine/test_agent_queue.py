@@ -241,7 +241,7 @@ def test_concurrent_queue_claim_handles_high_worker_contention(tmp_path):
     barrier = Barrier(task_count)
 
     def claim_once(index):
-        worker_db = _db(tmp_path)
+        worker_db = WorkerLeadDB(data_dir=tmp_path)
         worker_id = f"high-contention-{index}"
         try:
             barrier.wait(timeout=20)
