@@ -9,10 +9,12 @@ on:
         default: false
         type: boolean
       proof_ref:
-        description: "Exact branch or ref to prove"
+        description: "Physical proof is restricted to production main"
         required: true
         default: "main"
-        type: string
+        type: choice
+        options:
+          - main
       master_port:
         description: "TCP port on the rank-0 fabric node used by NCCL rendezvous"
         required: true
@@ -28,7 +30,7 @@ concurrency:
   queue: max
 
 env:
-  THORIO_PROOF_REF: ${{ inputs.proof_ref || github.ref }}
+  THORIO_PROOF_REF: main
   THORIO_PROOF_SHA: ${{ github.sha }}
 
 jobs:
@@ -54,7 +56,7 @@ jobs:
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       THORIO_KAGGLE_SECRET_DATASET_SLUG: thorio-runner-credentials-${{ github.run_id }}-${{ github.run_attempt }}
       THORIO_KAGGLE_REPOSITORY_URL: https://github.com/DocSentinelX12/Thorio-Lead-Engine.git
-      THORIO_KAGGLE_REPOSITORY_REF: ${{ inputs.proof_ref }}
+      THORIO_KAGGLE_REPOSITORY_REF: main
       THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
       THORIO_KAGGLE_GITHUB_RUNNER_LABELS: self-hosted,thorio-free-gpu,cuda
       THORIO_KAGGLE_ACQUISITION_READY_TIMEOUT_SECONDS: "300"
@@ -62,10 +64,13 @@ jobs:
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
     steps:
-      - name: Check out exact proof ref
+      - name: Require the canonical production ref
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Check out main proof source
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.proof_ref }}
+          ref: main
 
       - name: Install Kaggle CLI and provider dependencies
         run: |
