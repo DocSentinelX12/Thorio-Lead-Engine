@@ -551,6 +551,7 @@ jobs:
           import os
           import re
           import subprocess
+          import tempfile
           from pathlib import Path
 
           state = Path("/tmp/nccl-acquisitions.json")
@@ -596,20 +597,36 @@ jobs:
                   print(f"NCCL_KAGGLE_KERNEL_DIAGNOSTICS rank={rank} skipped=invalid_kernel_ref")
                   continue
               try:
-                  result = subprocess.run(
-                      ["kaggle", "kernels", "logs", kernel_ref],
-                      capture_output=True,
-                      text=True,
-                      check=False,
-                      timeout=45,
-                  )
-                  return_code = result.returncode
-                  combined = (result.stdout or "") + "\n" + (result.stderr or "")
+                  # Kaggle's supported output command retrieves the notebook's
+                  # emitted worker log artifact. The "kernels logs" command can
+                  # exit successfully with empty output, hiding the bootstrap
+                  # exception that explains why a JIT runner never registered.
+                  with tempfile.TemporaryDirectory(prefix="thorio-nccl-kernel-output-") as directory:
+                      result = subprocess.run(
+                          ["kaggle", "kernels", "output", kernel_ref, "-p", directory, "--force"],
+                          capture_output=True,
+                          text=True,
+                          check=False,
+                          timeout=45,
+                      )
+                      return_code = result.returncode
+                      combined = (result.stdout or "") + "\n" + (result.stderr or "")
+                      output_files = sorted(
+                          path for path in Path(directory).rglob("*")
+                          if path.is_file()
+                      )
+                      for output_file in output_files:
+                          try:
+                              output_text = output_file.read_text(encoding="utf-8", errors="replace")
+                          except OSError:
+                              continue
+                          if output_text.strip():
+                              combined += f"\n--- {output_file.name} ---\n{output_text[-12000:]}"
               except subprocess.TimeoutExpired:
-                  print(f"NCCL_KAGGLE_KERNEL_LOGS_UNAVAILABLE rank={rank} reason=timeout", flush=True)
+                  print(f"NCCL_KAGGLE_KERNEL_OUTPUT_UNAVAILABLE rank={rank} reason=timeout", flush=True)
                   continue
               except OSError as exc:
-                  print(f"NCCL_KAGGLE_KERNEL_LOGS_UNAVAILABLE rank={rank} reason={type(exc).__name__}", flush=True)
+                  print(f"NCCL_KAGGLE_KERNEL_OUTPUT_UNAVAILABLE rank={rank} reason={type(exc).__name__}", flush=True)
                   continue
               lines = combined.splitlines()
               print(
