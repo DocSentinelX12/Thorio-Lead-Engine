@@ -18,7 +18,9 @@ def test_application_uses_configured_database(tmp_path):
     assert application.config.batch_size == 25
 
 
-def test_application_reports_health(tmp_path):
+def test_application_reports_health(tmp_path, monkeypatch):
+    # Production health requires an Airtable token; provide a non-secret test fixture.
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
     config = LeadEngineConfig(
         database_dir=str(tmp_path),
         airtable_base_id="appTestHealthFixture",
