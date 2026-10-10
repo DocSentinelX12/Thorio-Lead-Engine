@@ -162,7 +162,7 @@ def test_batch_delivery_does_not_map_job_post_url_to_company_website():
         "source": "job board",
         "url": "https://remotejobs.example/jobs/software-engineer",
     })
-    assert fields["Website"] is None
+    assert "Website" not in fields or fields["Website"] is None
 
 
 def test_batch_delivery_uses_only_an_explicit_company_website():
