@@ -3584,6 +3584,15 @@ class ComputeCoordinator:
                 )
                 return result.rowcount == 1
 
+    def health_probe(self) -> Dict[str, Any]:
+        \"\"\"Return lightweight readiness without running maintenance or fabric reconciliation.\"\"\"
+        # /health is called concurrently by every remote worker before enrollment.
+        # It must not take the global coordinator lock or trigger full reconciliation,
+        # fleet intelligence scans, or acquisition status aggregation.
+        with self._connect() as connection:
+            connection.execute(\"SELECT 1\").fetchone()
+        return {\"ok\": True, \"free_only\": True, \"paid_capacity_allowed\": False}
+
     def health(self) -> Dict[str, Any]:
         with self._lock:
             self.pool.reap_stale_workers(); self.recover_expired_tasks(); self.reconcile_fabric()
@@ -3617,7 +3626,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
-        if self.path == "/health": self._send(200, self.server.coordinator.health()); return
+        if self.path == "/health": self._send(200, self.server.coordinator.health_probe()); return
+        if self.path == "/status": self._send(200, self.server.coordinator.health()); return
         if self.path.startswith("/fabric/rendezvous?") or self.path.startswith("/fabric/acquisition/rendezvous?"):
             session_id = self.path.split("session_id=", 1)[-1].split("&", 1)[0]
             from urllib.parse import unquote
