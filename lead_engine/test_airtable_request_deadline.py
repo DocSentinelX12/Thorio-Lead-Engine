@@ -37,7 +37,7 @@ def test_expired_drain_deadline_fails_before_opening_an_http_connection(monkeypa
 
     monkeypatch.setenv("AIRTABLE_BASE_ID", "app-test")
     monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
-    monkeypatch.setattr(airtable_sync.time, "monotonic", lambda: 50.0)
+    monkeypatch.setattr(airtable_sync, "_deadline_now", lambda: 50.0)
     monkeypatch.setattr(
         airtable_sync.urllib.request,
         "urlopen",
