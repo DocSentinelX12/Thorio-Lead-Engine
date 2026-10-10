@@ -5,11 +5,9 @@ on:
   push:
     branches:
       - main
-      - integration/gpu-main-additive
   pull_request:
     branches:
       - main
-      - integration/gpu-main-additive
 
 concurrency:
   group: gpu-fabric-validation-${{ github.ref_name }}
