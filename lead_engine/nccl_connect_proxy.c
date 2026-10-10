@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <poll.h>
@@ -31,6 +32,47 @@ static int is_private_v4(uint32_t host_order) {
     return ((host_order >> 24) == 10) ||
            ((host_order >> 20) == 0xAC1) ||
            ((host_order >> 16) == 0xC0A8);
+}
+
+static int is_local_listening_endpoint(const struct sockaddr_in *destination) {
+    struct ifaddrs *interfaces = NULL;
+    int address_is_local = 0;
+    if (getifaddrs(&interfaces) != 0) return 0;
+    for (struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
+        if (item->ifa_addr && item->ifa_addr->sa_family == AF_INET) {
+            const struct sockaddr_in *address = (const struct sockaddr_in *)item->ifa_addr;
+            if (address->sin_addr.s_addr == destination->sin_addr.s_addr) {
+                address_is_local = 1;
+                break;
+            }
+        }
+    }
+    freeifaddrs(interfaces);
+    if (!address_is_local) return 0;
+
+    // Kaggle workers can share the same RFC1918 address in isolated network
+    // namespaces. NCCL also opens local listener sockets on that address.
+    // Preserve those self-connections locally; only relay private endpoints
+    // that are not listening on this worker.
+    FILE *tcp = fopen("/proc/net/tcp", "r");
+    if (!tcp) return 0;
+    char line[512];
+    (void)fgets(line, sizeof(line), tcp); // header
+    unsigned int local_address, local_port, state;
+    int found = 0;
+    while (fgets(line, sizeof(line), tcp)) {
+        int parsed = sscanf(line, " %*d: %8X:%4X %*s %2X",
+                            &local_address, &local_port, &state);
+        if (parsed != 3 || state != 0x0A || local_port != ntohs(destination->sin_port)) {
+            continue;
+        }
+        if (local_address == 0U || local_address == destination->sin_addr.s_addr) {
+            found = 1;
+            break;
+        }
+    }
+    fclose(tcp);
+    return found;
 }
 
 static int connect_peer(int fd, const struct sockaddr_in *original) {
@@ -144,6 +186,15 @@ int connect(int fd, const struct sockaddr *addr, socklen_t addrlen) {
     const struct sockaddr_in *in = (const struct sockaddr_in *)addr;
     uint32_t host_ip = ntohl(in->sin_addr.s_addr);
     if (!is_private_v4(host_ip)) {
+        return real_connect_fn(fd, addr, addrlen);
+    }
+
+    if (is_local_listening_endpoint(in)) {
+        char local_ip[INET_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET, &in->sin_addr, local_ip, sizeof(local_ip));
+        fprintf(stderr, "THORIO_CONNECT_PROXY_LOCAL_ENDPOINT destination=%s:%u\\n",
+                local_ip, (unsigned)ntohs(in->sin_port));
+        fflush(stderr);
         return real_connect_fn(fd, addr, addrlen);
     }
 
