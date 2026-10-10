@@ -92,6 +92,15 @@ def _start_tcpstore_forwarder(
                 + int(destination_port).to_bytes(2, "big")
             )
             upstream.sendall(header)
+            acknowledgement = upstream.recv(1)
+            if acknowledgement != b"\x00":
+                if acknowledgement == b"\x01":
+                    raise ConnectionRefusedError(
+                        f"Peer relay refused TCPStore destination {destination_host}:{destination_port}"
+                    )
+                raise ConnectionError(
+                    "Peer relay closed before acknowledging the TCPStore destination"
+                )
             client.settimeout(None)
             upstream.settimeout(None)
             threading.Thread(target=copy_stream, args=(client, upstream), daemon=True).start()
