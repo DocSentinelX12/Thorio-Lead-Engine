@@ -4,15 +4,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
 
-from .advanced_agent_logic import advanced_handler_registry
+from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim_task, complete, enqueue, pending, retry
 from .compute_worker import ComputeWorkerClient, ComputeWorkerError
 from .compute_lead_persistence import lead_compute_once
 
-REMOTE_SAFE_AGENTS = frozenset(
-    agent for agent in advanced_handler_registry()
-    if agent not in {"outreach_closer", "follow_up"}
-)
+# The remote worker intentionally executes only stateless discovery and social
+# evidence analysis. Stateful company research, qualification, routing, and
+# revenue roles must remain on the authoritative local LeadDB worker path.
+REMOTE_SAFE_AGENTS = frozenset(set(DISCOVERY_TARGETS) | set(SOCIAL_TARGETS))
 REMOTE_WORKER_PREFIX = "remote-compute:"
 
 

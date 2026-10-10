@@ -2,7 +2,8 @@ import tempfile
 from pathlib import Path
 
 from .agent_queue import enqueue, pending
-from .compute_bridge import bridge_once
+from .compute_bridge import REMOTE_SAFE_AGENTS, bridge_once
+from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS
 from .database import LeadDB
 
 
@@ -55,3 +56,16 @@ def test_remote_bridge_persists_completed_specialist_evidence_before_local_compl
         assert stored["specialist_findings"]["ai_demand_discovery"]["matched_event_count"] == 1
         assert any(item["agent"] == "ai_demand_discovery" for item in stored["specialist_evidence_events"])
         assert any(item["agent"] == "company_research" for item in pending(db))
+
+
+def test_remote_bridge_only_publishes_stateless_agents_supported_by_remote_worker():
+    supported = frozenset(set(DISCOVERY_TARGETS) | set(SOCIAL_TARGETS))
+    assert REMOTE_SAFE_AGENTS == supported
+    assert "company_research" not in REMOTE_SAFE_AGENTS
+    assert "x_signal" not in REMOTE_SAFE_AGENTS
+    assert "priority" not in REMOTE_SAFE_AGENTS
+    assert "verification" not in REMOTE_SAFE_AGENTS
+    assert "routing" not in REMOTE_SAFE_AGENTS
+    assert "airtable_integrity" not in REMOTE_SAFE_AGENTS
+    assert "outreach_closer" not in REMOTE_SAFE_AGENTS
+    assert "follow_up" not in REMOTE_SAFE_AGENTS
