@@ -134,5 +134,14 @@ jobs:
           PY
 
       - name: Run bounded worker
+        shell: bash
         run: |
+          set +e
           timeout --signal=TERM --kill-after=20s 510s python -m lead_engine.compute_worker
+          worker_status=$?
+          set -e
+          if [ "$worker_status" -eq 124 ]; then
+            echo "WORKER WINDOW COMPLETE: bounded worker session reached its planned 510-second limit."
+            exit 0
+          fi
+          exit "$worker_status"
