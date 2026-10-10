@@ -319,3 +319,14 @@ def test_concurrent_queue_claim_handles_high_worker_contention(tmp_path):
     claimed_ids = [item[0]["task_id"] for item in results if item]
     assert len(claimed_ids) == len(set(claimed_ids))
     assert set(claimed_ids).issubset({task["task_id"] for task in tasks})
+
+
+def test_pending_listing_does_not_perform_global_stale_lease_recovery(tmp_path, monkeypatch):
+    db = _db(tmp_path)
+
+    def unexpected_recovery(_now_iso):
+        raise AssertionError("pending() must be read-only; stale leases are recovered by claim paths")
+
+    monkeypatch.setattr(db, "queue_recover_stale", unexpected_recovery)
+
+    assert pending(db) == []
