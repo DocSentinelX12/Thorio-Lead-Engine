@@ -38,7 +38,7 @@ def drain_pending(
     deferred_fingerprints: set[str] = set()
     uses_default_batch_delivery = sync_batch is batch_delivery.sync_pending_batched
     started = time.perf_counter()
-    request_deadline = time.perf_counter() + budget_seconds
+    request_deadline = airtable_sync._deadline_now() + budget_seconds
 
     aggregate: Dict[str, Any] = {
         "synced": [],
@@ -54,7 +54,7 @@ def drain_pending(
     }
 
     while True:
-        if time.perf_counter() >= request_deadline:
+        if airtable_sync._deadline_now() >= request_deadline:
             break
         with airtable_sync.bounded_request_deadline(request_deadline):
             if uses_default_batch_delivery:
