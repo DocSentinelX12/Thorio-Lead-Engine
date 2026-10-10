@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,6 +85,36 @@ static int connect_peer(int fd, const struct sockaddr_in *original) {
                 return -1;
             }
             sent += (size_t)n;
+        }
+        // A tunnel connect is insufficient: wait for the relay to confirm that
+        // the actual peer destination socket accepted this connection.
+        struct pollfd ack_poll;
+        ack_poll.fd = fd;
+        ack_poll.events = POLLIN;
+        ack_poll.revents = 0;
+        int poll_rc = poll(&ack_poll, 1, 15000);
+        if (poll_rc <= 0) {
+            int saved = poll_rc == 0 ? ETIMEDOUT : errno;
+            fprintf(stderr, "THORIO_CONNECT_PROXY_ACK_TIMEOUT fd=%d destination=%s:%u tunnel=%s:%s\\n",
+                    fd, original_ip, (unsigned)ntohs(original->sin_port), peer_host, peer_port);
+            fflush(stderr);
+            freeaddrinfo(result);
+            if (was_nonblocking) fcntl(fd, F_SETFL, flags);
+            errno = saved;
+            return -1;
+        }
+        unsigned char acknowledgement = 0xff;
+        ssize_t ack_size = recv(fd, &acknowledgement, 1, 0);
+        if (ack_size != 1 || acknowledgement != 0) {
+            int saved = ack_size == 1 && acknowledgement == 1 ? ECONNREFUSED : ECONNRESET;
+            fprintf(stderr, "THORIO_CONNECT_PROXY_UPSTREAM_REJECTED fd=%d destination=%s:%u tunnel=%s:%s ack_size=%zd ack=%u errno=%d\\n",
+                    fd, original_ip, (unsigned)ntohs(original->sin_port), peer_host, peer_port,
+                    ack_size, (unsigned)acknowledgement, saved);
+            fflush(stderr);
+            freeaddrinfo(result);
+            if (was_nonblocking) fcntl(fd, F_SETFL, flags);
+            errno = saved;
+            return -1;
         }
         fprintf(stderr, "THORIO_CONNECT_PROXY_CONNECTED fd=%d destination=%s:%u tunnel=%s:%s\\n",
                 fd, original_ip, (unsigned)ntohs(original->sin_port), peer_host, peer_port);
