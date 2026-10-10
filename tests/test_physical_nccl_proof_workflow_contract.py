@@ -51,6 +51,6 @@ def test_aggregate_keeps_strict_physical_collective_gates():
 
 def test_peer_transport_accepts_nccl_socket_channel_suffix_without_promoting_rdma():
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert 'edge_transport == aggregate_transport' in workflow
+    assert 'str(edge.get("transport") or "").strip().upper() == aggregate_transport' in workflow
     assert 'aggregate_transport + "/"' in workflow
     assert "hca_selections" in workflow
