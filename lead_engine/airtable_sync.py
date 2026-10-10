@@ -153,7 +153,7 @@ def _request(
         try:
             with urllib.request.urlopen(
                 request,
-                timeout=max(0.1, attempt_deadline - now),
+                timeout=round(max(0.1, attempt_deadline - now), 6),
             ) as response:
                 body = _read_response_with_deadline(response, attempt_deadline).decode("utf-8")
                 if not body:
