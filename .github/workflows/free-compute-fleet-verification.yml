@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - integration/gpu-main-additive
     paths:
       - "lead_engine/free_compute_acquisition.py"
       - "lead_engine/free_compute_fleet.py"
