@@ -18,7 +18,6 @@ concurrency:
 jobs:
   coordinator_gate:
     name: Verify remote coordinator availability
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       enabled: ${{ steps.check.outputs.enabled }}
@@ -32,17 +31,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Free compute workers are production/main-only."
+            exit 1
+          fi
           if [ -z "${THORIO_COMPUTE_COORDINATOR_URL}" ] || [ -z "${THORIO_COMPUTE_AUTH_TOKEN}" ]; then
-            echo "Remote free workers are disabled because the coordinator URL/token secrets are not configured."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Free compute worker coordinator URL/token secrets are not configured."
+            exit 1
           fi
           case "${THORIO_COMPUTE_COORDINATOR_URL}" in
             https://*) ;;
             *)
-              echo "Remote coordinator is configured but is not HTTPS. Workers remain disabled."
-              echo "enabled=false" >> "$GITHUB_OUTPUT"
-              exit 0
+              echo "::error::Remote compute coordinator must use HTTPS."
+              exit 1
               ;;
           esac
           health_url="${THORIO_COMPUTE_COORDINATOR_URL%/}/health"
@@ -50,9 +51,8 @@ jobs:
             -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" \
             -H "Accept: application/json" \
             "${health_url}" >/tmp/thorio-coordinator-health.json; then
-            echo "Remote coordinator is configured but health check failed. Workers remain disabled for this cycle."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Remote coordinator health check failed; workers were not launched."
+            exit 1
           fi
           python - <<'PY'
           import json
@@ -133,15 +133,29 @@ jobs:
           print('Coordinator health recheck passed.')
           PY
 
-      - name: Run bounded worker
+      - name: Run bounded worker and require readiness evidence
         shell: bash
         run: |
+          set -uo pipefail
+          mkdir -p data
           set +e
-          timeout --signal=TERM --kill-after=20s 510s python -m lead_engine.compute_worker
-          worker_status=$?
+          timeout --signal=TERM --kill-after=20s 510s python -u -m lead_engine.compute_worker 2>&1 | tee data/compute-worker.log
+          worker_status=${PIPESTATUS[0]}
           set -e
+          if ! grep -Fq "THORIO_WORKER_REGISTERED worker_id=${THORIO_WORKER_ID}" data/compute-worker.log; then
+            echo "::error::Worker did not prove successful coordinator registration."
+            exit 1
+          fi
+          if ! grep -Fq "THORIO_WORKER_HEARTBEAT_OK worker_id=${THORIO_WORKER_ID}" data/compute-worker.log; then
+            echo "::error::Worker did not prove a successful heartbeat."
+            exit 1
+          fi
           if [ "$worker_status" -eq 124 ]; then
-            echo "WORKER WINDOW COMPLETE: bounded worker session reached its planned 510-second limit."
+            echo "WORKER WINDOW COMPLETE: registration and heartbeat were verified before the planned 510-second timeout."
             exit 0
+          fi
+          if [ "$worker_status" -eq 0 ]; then
+            echo "::error::Worker exited before its planned bounded session ended."
+            exit 1
           fi
           exit "$worker_status"
