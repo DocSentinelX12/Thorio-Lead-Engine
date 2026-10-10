@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import signal
 import subprocess
@@ -49,7 +50,10 @@ class ComputeWorkerClient:
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
-    def request(self, path: str, payload: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    def request(self, path: str, payload: Optional[Mapping[str, Any]] = None, *, timeout_seconds: float | None = None) -> Dict[str, Any]:
+        effective_timeout = float(self.timeout_seconds if timeout_seconds is None else timeout_seconds)
+        if not math.isfinite(effective_timeout) or effective_timeout <= 0:
+            raise ValueError("timeout_seconds must be a finite positive number")
         body = None if payload is None else json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.coordinator_url + path,
@@ -63,7 +67,7 @@ class ComputeWorkerClient:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with urllib.request.urlopen(request, timeout=effective_timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             raise ComputeWorkerError(f"coordinator HTTP {error.code}: {error.read().decode('utf-8', errors='replace')[:1000]}") from error
@@ -107,11 +111,11 @@ class ComputeWorkerClient:
     def fabric_converge(self, attempt_id: str, generation: int, lease_token: str) -> Dict[str, Any]: return self.request("/fabric/converge", {"attempt_id": attempt_id, "generation": generation, "worker_id": self.worker_id, "lease_token": lease_token})
     def claim(self) -> Optional[Dict[str, Any]]:
         result = self.request("/work/claim", {"worker_id": self.worker_id}); return result if result.get("task_id") else None
-    def status(self, task_id: str) -> Dict[str, Any]: return self.request(f"/work/status/{task_id}")
-    def enqueue(self, payload: Mapping[str, Any], task_id: Optional[str] = None) -> Dict[str, Any]:
+    def status(self, task_id: str, *, timeout_seconds: float | None = None) -> Dict[str, Any]: return self.request(f"/work/status/{task_id}", timeout_seconds=timeout_seconds)
+    def enqueue(self, payload: Mapping[str, Any], task_id: Optional[str] = None, *, timeout_seconds: float | None = None) -> Dict[str, Any]:
         body: Dict[str, Any] = {"payload": dict(payload)}
         if task_id is not None: body["task_id"] = task_id
-        return self.request("/work/enqueue", body)
+        return self.request("/work/enqueue", body, timeout_seconds=timeout_seconds)
     def checkpoint_lead_prepare(self, task_id: str, lease_token: str, items: list[Dict[str, Any]]) -> Dict[str, Any]: return self.request("/work/checkpoint", {"worker_id": self.worker_id, "task_id": task_id, "lease_token": lease_token, "items": items})
     def checkpoint_results(self, task_id: str) -> Dict[str, Any]: return self.request(f"/work/checkpoints/{task_id}")
     def complete(self, task_id: str, lease_token: str, result: Dict[str, Any]) -> Dict[str, Any]:

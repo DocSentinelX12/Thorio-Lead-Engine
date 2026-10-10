@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
+import time
 from typing import Any, Dict, Mapping
 
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS
@@ -62,7 +64,24 @@ def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> No
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20) -> Dict[str, Any]:
+
+def _call_with_deadline(
+    client: ComputeWorkerClient,
+    method_name: str,
+    *args: Any,
+    deadline_monotonic: float | None = None,
+    **kwargs: Any,
+) -> Any:
+    remaining = None if deadline_monotonic is None else deadline_monotonic - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        raise ComputeWorkerError(f"remote compute bridge deadline exceeded before coordinator {method_name}")
+    method = getattr(client, method_name)
+    if isinstance(client, ComputeWorkerClient) and remaining is not None:
+        kwargs["timeout_seconds"] = min(float(client.timeout_seconds), remaining)
+    return method(*args, **kwargs)
+
+
+def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20, deadline_monotonic: float | None = None) -> Dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
     worker_id = f"{REMOTE_WORKER_PREFIX}{client.worker_id}"
@@ -80,7 +99,7 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
         nonlocal attempted
         attempted += 1
         try:
-            client.enqueue(payload, task_id=task_id)
+            _call_with_deadline(client, "enqueue", payload, task_id=task_id, deadline_monotonic=deadline_monotonic)
         except Exception as error:
             db.compute_bridge_mark_retry(task_id, str(error), _now_iso())
             try:
@@ -129,6 +148,9 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
     for task in candidates:
         if attempted >= limit:
             break
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            errors.append({"task_id": None, "error": "remote compute bridge deadline exceeded before preparing additional work"})
+            break
         task_id = str(task["task_id"])
         payload = {
             "kind": "agent_task",
@@ -154,7 +176,7 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
         "published": published,
     }
 
-def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 50) -> Dict[str, Any]:
+def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 50, deadline_monotonic: float | None = None) -> Dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
     local_tasks = []
@@ -175,7 +197,7 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
     for task in local_tasks[:limit]:
         attempted += 1
         try:
-            remote = client.status(task["task_id"])
+            remote = _call_with_deadline(client, "status", task["task_id"], deadline_monotonic=deadline_monotonic)
         except Exception as error:
             errors.append({"task_id": task["task_id"], "error": str(error)})
             break
@@ -210,8 +232,27 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
         "retried": retried,
     }
 
-def bridge_once(db: Any, client: ComputeWorkerClient, *, publish_limit: int = 20, reconcile_limit: int = 50, include_lead_compute: bool = False) -> Dict[str, Any]:
-    reconciled = reconcile_remote_work(db, client, limit=reconcile_limit)
+def bridge_once(
+    db: Any,
+    client: ComputeWorkerClient,
+    *,
+    publish_limit: int = 20,
+    reconcile_limit: int = 50,
+    include_lead_compute: bool = False,
+    budget_seconds: float = 45.0,
+) -> Dict[str, Any]:
+    if not math.isfinite(budget_seconds) or budget_seconds <= 0:
+        raise ValueError("budget_seconds must be a finite positive number")
+    started_at = time.monotonic()
+    deadline_monotonic = started_at + budget_seconds
+    reconciled = reconcile_remote_work(
+        db, client, limit=reconcile_limit, deadline_monotonic=deadline_monotonic
+    )
+    if time.monotonic() >= deadline_monotonic and not reconciled["errors"]:
+        reconciled["errors"].append({
+            "task_id": None,
+            "error": "remote compute bridge deadline exceeded during reconciliation",
+        })
     if reconciled["errors"]:
         published = {
             "status": "skipped",
@@ -224,13 +265,17 @@ def bridge_once(db: Any, client: ComputeWorkerClient, *, publish_limit: int = 20
             "published": [],
         }
     else:
-        published = publish_remote_work(db, client, limit=publish_limit)
-    degraded = bool(reconciled["errors"] or published.get("errors"))
+        published = publish_remote_work(db, client, limit=publish_limit, deadline_monotonic=deadline_monotonic)
+    deadline_exceeded = time.monotonic() >= deadline_monotonic
+    degraded = bool(reconciled["errors"] or published.get("errors") or deadline_exceeded)
     result = {
         "status": "degraded" if degraded else "ok",
         "completed_count": reconciled["completed_count"],
         "retried_count": reconciled["retried_count"],
         "published_count": published["published_count"],
+        "elapsed_seconds": round(time.monotonic() - started_at, 3),
+        "budget_seconds": budget_seconds,
+        "deadline_exceeded": deadline_exceeded,
         "reconciled": reconciled,
         "published": published,
     }

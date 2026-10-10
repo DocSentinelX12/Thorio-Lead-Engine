@@ -97,3 +97,29 @@ def test_execute_compute_task_rejects_gpu_api_without_coordinator_client():
         assert "requires a coordinator client" in str(error)
     else:
         raise AssertionError("GPU API execution bypassed the coordinator")
+
+
+
+def test_worker_client_request_uses_remaining_bridge_deadline(monkeypatch):
+    import json
+
+    client = ComputeWorkerClient("https://coordinator.example", "token", "worker", timeout_seconds=20)
+    observed = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return json.dumps({"status": "leased"}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        observed["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert client.request("/work/status/task-1", timeout_seconds=0.25) == {"status": "leased"}
+    assert observed["timeout"] == 0.25

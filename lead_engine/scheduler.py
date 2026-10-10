@@ -178,7 +178,14 @@ class LeadScheduler:
     def _bridge_remote(self, *, publish_limit: int = 20, reconcile_limit: int = 50) -> Dict[str, Any]:
         if self._remote_compute is None:
             return {"status": "disabled", "published_count": 0, "completed_count": 0, "retried_count": 0}
-        return bridge_once(self.runner.pipeline.db, self._remote_compute, publish_limit=publish_limit, reconcile_limit=reconcile_limit)
+        deadline_seconds = float(os.environ.get("THORIO_COMPUTE_BRIDGE_DEADLINE_SECONDS", "45"))
+        return bridge_once(
+            self.runner.pipeline.db,
+            self._remote_compute,
+            publish_limit=publish_limit,
+            reconcile_limit=reconcile_limit,
+            budget_seconds=deadline_seconds,
+        )
 
     def _run_without_immediate_sync(self, callback):
         pipeline = getattr(self.runner, "pipeline", None)

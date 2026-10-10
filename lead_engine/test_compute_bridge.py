@@ -1,6 +1,7 @@
 import tempfile
 from pathlib import Path
 
+from . import compute_bridge as compute_bridge_module
 from .agent_queue import claim_task, enqueue, pending
 from .compute_bridge import REMOTE_SAFE_AGENTS, bridge_once, publish_remote_work
 from .advanced_agent_logic import DISCOVERY_TARGETS, SOCIAL_TARGETS
@@ -146,3 +147,56 @@ def test_remote_status_failure_degrades_without_scanning_or_publishing_more_work
         assert remote.status_calls == 1
         assert remote.enqueue_calls == 0
         assert pending(db, "ai_demand_discovery")[0]["status"] == "running"
+
+
+
+def test_remote_bridge_enforces_one_aggregate_deadline_for_sequential_status_requests(monkeypatch):
+    with tempfile.TemporaryDirectory() as directory:
+        db = LeadDB(data_dir=Path(directory))
+        remote = FakeRemoteClient()
+        worker_id = "remote-compute:worker-1"
+        for index in range(3):
+            lead = {
+                "fingerprint": f"deadline-lead-{index}",
+                "company": f"Example {index}",
+                "signal": "We need an AI development team",
+            }
+            assert db.insert_if_new(lead)
+            task = enqueue(db, "ai_demand_discovery", {"lead": lead, "evidence_events": []})
+            db.compute_bridge_prepare(
+                task["task_id"],
+                worker_id,
+                {"kind": "agent_task", "agent": "ai_demand_discovery", "payload": {"lead": lead}},
+                "2026-10-10T00:00:00+00:00",
+            )
+            claim_task(db, task["task_id"], worker_id=worker_id, lease_seconds=900)
+            db.compute_bridge_mark_published(task["task_id"], "2026-10-10T00:00:00+00:00")
+            remote.tasks[task["task_id"]] = {
+                "status": "leased",
+                "payload": {"agent": "ai_demand_discovery"},
+                "result": None,
+                "error": "",
+            }
+
+        now = [100.0]
+        monkeypatch.setattr(compute_bridge_module.time, "monotonic", lambda: now[0])
+
+        class AdvancingRemoteClient(FakeRemoteClient):
+            def __init__(self):
+                super().__init__()
+                self.tasks = remote.tasks
+                self.status_calls = 0
+
+            def status(self, task_id):
+                self.status_calls += 1
+                now[0] += 0.6
+                return super().status(task_id)
+
+        client = AdvancingRemoteClient()
+        result = bridge_once(db, client, reconcile_limit=10, budget_seconds=1.0)
+
+        assert client.status_calls == 2
+        assert result["status"] == "degraded"
+        assert result["deadline_exceeded"] is True
+        assert result["elapsed_seconds"] >= 1.0
+        assert any("deadline exceeded" in item["error"] for item in result["reconciled"]["errors"])
