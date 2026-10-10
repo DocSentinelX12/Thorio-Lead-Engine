@@ -1178,16 +1178,27 @@ jobs:
           PY
           fi
 
+      - name: Stage rank evidence artifact with stable relative paths
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/thorio-physical-nccl-rank-${RANK}"
+          mkdir -p "${stage}"
+          test -s rank-evidence.json
+          install -m 0600 rank-evidence.json "${stage}/rank-evidence.json"
+          for file in thorio-nccl-rank.log thorio-nccl-relay.log thorio-pinggy.log; do
+            test -s "/tmp/${file}"
+            install -m 0600 "/tmp/${file}" "${stage}/${file}"
+          done
+          find "${stage}" -maxdepth 1 -type f -printf '%f (%s bytes)\\n' | sort
+
       - name: Upload physical rank evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: physical-nccl-rank-${{ matrix.rank }}
-          path: |
-            rank-evidence.json
-            /tmp/thorio-nccl-rank.log
-            /tmp/thorio-nccl-relay.log
-            /tmp/thorio-pinggy.log
+          path: ${{ runner.temp }}/thorio-physical-nccl-rank-${{ matrix.rank }}/
           if-no-files-found: error
 
   aggregate:
