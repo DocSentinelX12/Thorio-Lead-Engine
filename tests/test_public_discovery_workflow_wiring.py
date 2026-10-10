@@ -32,3 +32,5 @@ def test_production_runtime_reports_missing_public_discovery_without_exposing_se
     assert "Report public discovery source readiness" in workflow
     assert "PUBLIC DISCOVERY READINESS:" in workflow
     assert "PUBLIC DISCOVERY BLOCKER:" in workflow
+    assert workflow.index("Report outbound revenue transport readiness") < workflow.index("Select and verify Airtable production credential")
+    assert workflow.index("Report public discovery source readiness") < workflow.index("Select and verify Airtable production credential")
