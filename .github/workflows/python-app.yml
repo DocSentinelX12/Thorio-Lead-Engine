@@ -489,7 +489,7 @@ jobs:
             [ -z "$run_id" ] && continue
             artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
             if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
-          done < <(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success" and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
+          done < <(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
       - name: Download previous Lead Engine state
         if: steps.previous_state.outputs.run_id != ''
@@ -500,6 +500,40 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.previous_state.outputs.run_id }}
+      - name: Validate restored Lead Engine state integrity
+        if: steps.previous_state.outputs.run_id != ''
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          import sqlite3
+
+          database = pathlib.Path("data/leads.sqlite3")
+          if not database.is_file() or database.stat().st_size == 0:
+              raise SystemExit(
+                  "RESTORED ENGINE STATE INVALID: selected artifact does not contain a non-empty data/leads.sqlite3; "
+                  "refusing to start from an empty database and discard prior state."
+              )
+          uri = f"file:{database.resolve()}?mode=ro"
+          with sqlite3.connect(uri, uri=True, timeout=30) as connection:
+              integrity = connection.execute("PRAGMA integrity_check").fetchone()
+              if not integrity or integrity[0] != "ok":
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite integrity_check returned {integrity!r}")
+              tables = {
+                  row[0]
+                  for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+              }
+              required = {"leads", "checkpoints"}
+              missing = sorted(required - tables)
+              if missing:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: missing required tables {missing}")
+              lead_count = connection.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+              checkpoint_count = connection.execute("SELECT COUNT(*) FROM checkpoints").fetchone()[0]
+          print(
+              "RESTORED ENGINE STATE VERIFIED: "
+              f"SQLite integrity ok, leads={lead_count}, checkpoints={checkpoint_count}."
+          )
+          PY
       - name: Ensure Lead Engine data directory exists
         run: mkdir -p data
       - name: Restore encrypted external browser authentication state
