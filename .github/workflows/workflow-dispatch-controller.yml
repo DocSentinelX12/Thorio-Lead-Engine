@@ -42,6 +42,11 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: thorio-workflow-dispatch-controller
+  queue: max
+  cancel-in-progress: false
+
 permissions:
   contents: read
   actions: write
@@ -89,7 +94,7 @@ jobs:
             exit 1
           fi
           case "$TARGET_WORKFLOW" in
-            revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml)
+            revenue-production-proof.yml|airtable-auth-diagnostic.yml|free-compute-workers.yml|python-app.yml|free-external-gpu-runner.yml|autonomous-gpu-capacity-broker.yml|free-compute-fleet-verification.yml|gpu-fabric-validation.yml|physical-external-gpu-proof.yml|physical-multi-node-nccl-proof.yml)
               if [ "$TARGET_REF" != "main" ]; then
                 echo "DISPATCH REQUEST FAILURE: $TARGET_WORKFLOW is production/main-only and cannot be dispatched against $TARGET_REF."
                 echo "Use ci.yml, full-test-suite.yml, or source-live-diagnostic.yml for branch verification."
