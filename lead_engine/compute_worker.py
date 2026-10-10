@@ -558,9 +558,14 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
     stop_event=stop_event or _NeverStop(); fabric_rendezvous_endpoint=(fabric_rendezvous_endpoint or os.environ.get("THORIO_FABRIC_RENDEZVOUS_ENDPOINT","")).strip(); backoff=1.0; last_heartbeat=0.0
     while not stop_event.is_set():
         try:
-            if not client._registered: client.register()
+            if not client._registered:
+                client.register()
+                print(f"THORIO_WORKER_REGISTERED worker_id={client.worker_id}", flush=True)
             now=time.monotonic()
-            if now-last_heartbeat>=heartbeat_seconds: client.heartbeat(1 if getattr(client,"_active_task",None) else 0); last_heartbeat=now
+            if now-last_heartbeat>=heartbeat_seconds:
+                client.heartbeat(1 if getattr(client,"_active_task",None) else 0)
+                last_heartbeat=now
+                print(f"THORIO_WORKER_HEARTBEAT_OK worker_id={client.worker_id}", flush=True)
             assignments=client.fabric_assignments()
             if assignments:
                 if not fabric_rendezvous_endpoint:
