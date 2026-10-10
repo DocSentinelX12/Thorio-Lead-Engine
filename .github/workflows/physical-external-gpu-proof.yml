@@ -4,10 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       proof_ref:
-        description: "Repository ref to test"
+        description: "Production proof is restricted to main"
         required: true
         default: "main"
-        type: string
+        type: choice
+        options:
+          - main
 
 permissions:
   contents: read
@@ -26,12 +28,15 @@ jobs:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       THORIO_KAGGLE_KERNEL_SLUG: thorio-physical-gpu-proof-${{ github.run_id }}
-      THORIO_PROOF_REF: ${{ inputs.proof_ref }}
+      THORIO_PROOF_REF: main
     steps:
-      - name: Check out requested proof ref
+      - name: Require the canonical production ref
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Check out main proof source
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.proof_ref }}
+          ref: main
 
       - name: Install Kaggle CLI
         run: |
