@@ -4,10 +4,27 @@ from threading import Barrier
 from .agent_queue import COMPLETE, QUEUED, RUNNING, claim, complete, enqueue, enqueue_many, heartbeat, pending
 from .agent_registry import agent_registry
 from .database import LeadDB
+from .worker_database import WorkerLeadDB
 
 
 def _db(tmp_path):
     return LeadDB(data_dir=tmp_path)
+
+
+
+def test_worker_database_uses_primary_busy_timeout_without_reconfiguring_wal(tmp_path):
+    primary = LeadDB(data_dir=tmp_path)
+    try:
+        assert str(primary.conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal"
+        worker = WorkerLeadDB(data_dir=tmp_path)
+        try:
+            assert worker.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 120000
+            assert str(worker.conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal"
+            assert worker.conn.execute("PRAGMA synchronous").fetchone()[0] == 2
+        finally:
+            worker.close()
+    finally:
+        primary.close()
 
 
 def test_queue_claim_respects_role_capacity(tmp_path):
