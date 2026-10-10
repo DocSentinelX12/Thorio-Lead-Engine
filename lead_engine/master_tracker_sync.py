@@ -42,7 +42,7 @@ def sync_company(lead: Dict[str, Any]) -> Dict[str, Any]:
     if not company: raise ValueError("Company synchronization requires a company.")
     research = lead.get("company_research") if isinstance(lead.get("company_research"), dict) else {}
     verified_dm = research.get("company_verified") is True and str(research.get("decision_maker_verification_status") or "").lower() == "verified"
-    fields = {"Company": company, "Website": _text(lead.get("company_website")) or _text(lead.get("url")) or None, "Industry": _text(lead.get("industry")) or None, "Decision Maker": _text(research.get("decision_maker")) if verified_dm else None, "Title": _text(lead.get("contact_title")) if verified_dm else None, "Email": _text(research.get("decision_maker_email")) if verified_dm else None, "Phone": _text(lead.get("contact_phone")) or None, "LinkedIn / X": _text(lead.get("linkedin_url")) or _text(lead.get("x_url")) or None, "Source": _company_source(lead), "Notes": _text(lead.get("notes")) or None}
+    fields = {"Company": company, "Website": _text(lead.get("company_website")) or None, "Industry": _text(lead.get("industry")) or None, "Decision Maker": _text(research.get("decision_maker")) if verified_dm else None, "Title": _text(lead.get("contact_title")) if verified_dm else None, "Email": _text(research.get("decision_maker_email")) if verified_dm else None, "Phone": _text(lead.get("contact_phone")) or None, "LinkedIn / X": _text(lead.get("linkedin_url")) or _text(lead.get("x_url")) or None, "Source": _company_source(lead), "Notes": _text(lead.get("notes")) or None}
     return _upsert("companies", "Company", company, fields)
 def _opportunity_key(lead: Dict[str, Any], route: str) -> str:
     fingerprint = _text(lead.get("fingerprint"))
