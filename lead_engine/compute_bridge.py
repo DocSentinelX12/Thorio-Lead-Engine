@@ -122,11 +122,64 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
     if limit <= 0:
         raise ValueError("limit must be positive")
     worker_id = f"{REMOTE_WORKER_PREFIX}{client.worker_id}"
-    current_pending = {
-        str(task.get("task_id")): task
-        for task in _read_pending_for_bridge(db, "publication")
-        if isinstance(task, Mapping) and task.get("task_id")
-    }
+    optimized_queries = callable(getattr(db, "queue_remote_candidates", None)) and callable(
+        getattr(db, "compute_bridge_publications_for_running", None)
+    )
+    if optimized_queries:
+        scan_started = time.monotonic()
+        print("REMOTE COMPUTE BRIDGE: bounded publication queue scan started.", flush=True)
+        try:
+            candidates = db.queue_remote_candidates(REMOTE_SAFE_AGENTS, limit)
+            existing_publications = db.compute_bridge_publications_for_running(REMOTE_WORKER_PREFIX, limit)
+        except sqlite3.OperationalError as error:
+            if not _is_sqlite_lock_error(error):
+                raise
+            return {
+                "status": "degraded",
+                "published_count": 0,
+                "prepared_count": 0,
+                "attempted_count": 0,
+                "errors": [{"task_id": None, "error": f"SQLite lock while scanning publication work: {error}"}],
+                "published": [],
+            }
+        print(
+            f"REMOTE COMPUTE BRIDGE: bounded publication queue scan finished in "
+            f"{time.monotonic() - scan_started:.3f}s; candidates={len(candidates)} "
+            f"existing_publications={len(existing_publications)}.",
+            flush=True,
+        )
+    else:
+        current_pending = {
+            str(task.get("task_id")): task
+            for task in _read_pending_for_bridge(db, "publication")
+            if isinstance(task, Mapping) and task.get("task_id")
+        }
+        existing_publications = []
+        try:
+            for publication in db.compute_bridge_publications():
+                task = current_pending.get(str(publication.get("task_id") or ""))
+                if (
+                    task is not None
+                    and task.get("status") == RUNNING
+                    and task.get("worker_id") == publication.get("worker_id")
+                ):
+                    existing_publications.append(publication)
+        except sqlite3.OperationalError as error:
+            if not _is_sqlite_lock_error(error):
+                raise
+            return {
+                "status": "degraded",
+                "published_count": 0,
+                "prepared_count": 0,
+                "attempted_count": 0,
+                "errors": [{"task_id": None, "error": f"SQLite lock while reading publication records: {error}"}],
+                "published": [],
+            }
+        candidates = [
+            task for task in current_pending.values()
+            if task.get("status") == QUEUED and task.get("agent") in REMOTE_SAFE_AGENTS
+        ]
+
     prepared = 0
     attempted = 0
     published = []
@@ -169,35 +222,10 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
         published.append({"task_id": task_id, "agent": str(payload.get("agent") or "")})
         return True
 
-    # Retry existing publication records first. A coordinator failure must not
-    # cause a coordinator failure to prepare more remote-owned work or scan the queue
-    # once per publication.
-    existing_publications = []
-    try:
-        for publication in db.compute_bridge_publications():
-            task = current_pending.get(str(publication.get("task_id") or ""))
-            if (
-                task is not None
-                and task.get("status") == RUNNING
-                and task.get("worker_id") == publication.get("worker_id")
-            ):
-                existing_publications.append((publication, task))
-    except sqlite3.OperationalError as error:
-        if not _is_sqlite_lock_error(error):
-            raise
-        errors.append({"task_id": None, "error": f"SQLite lock while reading publication records: {error}"})
-        return {
-            "status": "degraded",
-            "published_count": 0,
-            "prepared_count": 0,
-            "attempted_count": 0,
-            "errors": errors,
-            "published": [],
-        }
-
-    for publication, task in existing_publications[:limit]:
+    existing_publications.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("task_id") or "")))
+    for publication in existing_publications[:limit]:
         task_id = str(publication["task_id"])
-        if not publish_one(task_id, str(task["worker_id"]), publication["payload"]):
+        if not publish_one(task_id, str(publication["worker_id"]), publication["payload"]):
             break
     if errors or attempted >= limit:
         return {
@@ -209,10 +237,6 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
             "published": published,
         }
 
-    candidates = [
-        task for task in current_pending.values()
-        if task.get("status") == QUEUED and task.get("agent") in REMOTE_SAFE_AGENTS
-    ]
     candidates.sort(key=lambda item: (-int(item.get("priority", 0)), item.get("created_at", "")))
     for task in candidates:
         if attempted >= limit:
@@ -253,21 +277,31 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
 def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 50, deadline_monotonic: float | None = None) -> Dict[str, Any]:
     if limit <= 0:
         raise ValueError("limit must be positive")
-    local_tasks = []
     completed = []
     retried = []
     errors = []
     attempted = 0
     try:
-        for task in _read_pending_for_bridge(db, "reconciliation"):
-            if (
-                task.get("status") != RUNNING
-                or not str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)
-            ):
-                continue
-            bridge_record = db.compute_bridge_get(task["task_id"])
-            if bridge_record is None or bridge_record.get("status") == "published":
-                local_tasks.append(task)
+        scan_started = time.monotonic()
+        print("REMOTE COMPUTE BRIDGE: reconciliation queue scan started.", flush=True)
+        if callable(getattr(db, "queue_remote_reconciliation_tasks", None)):
+            local_tasks = db.queue_remote_reconciliation_tasks(REMOTE_WORKER_PREFIX, limit)
+        else:
+            local_tasks = []
+            for task in _read_pending_for_bridge(db, "reconciliation"):
+                if (
+                    task.get("status") != RUNNING
+                    or not str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)
+                ):
+                    continue
+                bridge_record = db.compute_bridge_get(task["task_id"])
+                if bridge_record is None or bridge_record.get("status") == "published":
+                    local_tasks.append(task)
+        print(
+            f"REMOTE COMPUTE BRIDGE: reconciliation queue scan finished in "
+            f"{time.monotonic() - scan_started:.3f}s with {len(local_tasks)} eligible remote tasks.",
+            flush=True,
+        )
     except sqlite3.OperationalError as error:
         if not _is_sqlite_lock_error(error):
             raise

@@ -262,3 +262,34 @@ def test_remote_bridge_bounds_sqlite_busy_timeout_for_entire_cycle(tmp_path):
         assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 120000
     finally:
         db.close()
+
+
+def test_remote_bridge_uses_bounded_database_queries_not_full_pending_scan(tmp_path, monkeypatch):
+    db = LeadDB(data_dir=Path(tmp_path))
+    try:
+        for index in range(25):
+            enqueue(
+                db,
+                "company_research",
+                {"lead": {"fingerprint": f"local-{index}", "company": "Local"}},
+                dedupe_key=f"local-research-{index}",
+            )
+        lead = {
+            "fingerprint": "remote-bounded-query",
+            "company": "Example",
+            "signal": "We need an AI development team",
+        }
+        assert db.insert_if_new(lead)
+        enqueue(db, "ai_demand_discovery", {"lead": lead, "evidence_events": []})
+
+        def unexpected_full_scan(_db):
+            raise AssertionError("remote bridge must not call the unbounded pending() scan for SQLite")
+
+        monkeypatch.setattr(compute_bridge_module, "pending", unexpected_full_scan)
+        result = bridge_once(db, FakeRemoteClient(), publish_limit=1, reconcile_limit=1)
+
+        assert result["status"] == "ok"
+        assert result["published_count"] == 1
+        assert result["published"]["published"][0]["agent"] == "ai_demand_discovery"
+    finally:
+        db.close()

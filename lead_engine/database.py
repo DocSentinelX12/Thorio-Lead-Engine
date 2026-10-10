@@ -64,6 +64,7 @@ class LeadDB:
                 raise
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_agent_status_priority ON agent_queue(agent, status, priority DESC, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_dedupe ON agent_queue(agent, dedupe_key, status)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_queue_status_worker_priority ON agent_queue(status, worker_id, priority DESC, created_at)")
         self.conn.execute("""CREATE TABLE IF NOT EXISTS compute_lead_work (
             fingerprint TEXT PRIMARY KEY,
             task_id TEXT,
@@ -605,6 +606,47 @@ class LeadDB:
             return self.queue_pending_all_rows()
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE agent = ? AND status IN ('queued', 'running') ORDER BY priority DESC, created_at", (agent,)).fetchall()
 
+    def queue_remote_reconciliation_tasks(self, worker_prefix, limit=50):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Remote reconciliation limit must be a positive integer.")
+        prefix = str(worker_prefix or "")
+        if not prefix or prefix[-1] == "\uffff":
+            raise ValueError("Remote worker prefix must be non-empty and have a usable upper bound.")
+        prefix_upper = prefix[:-1] + chr(ord(prefix[-1]) + 1)
+        rows = self.conn.execute(
+            """SELECT q.task_id, q.agent, q.queue, q.status, q.priority, q.payload,
+                      q.dedupe_key, q.created_at, q.updated_at, q.attempts,
+                      q.lease_until, q.worker_id, q.last_error, q.result, q.lease_token
+               FROM agent_queue AS q
+               LEFT JOIN compute_bridge_publications AS p ON p.task_id = q.task_id
+               WHERE q.status = 'running'
+                 AND q.worker_id >= ? AND q.worker_id < ?
+                 AND (p.task_id IS NULL OR p.status = 'published')
+               ORDER BY q.priority DESC, q.created_at
+               LIMIT ?""",
+            (prefix, prefix_upper, limit),
+        ).fetchall()
+        return [self._queue_row_to_dict(row) for row in rows]
+
+    def queue_remote_candidates(self, agents, limit=20):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Remote publication limit must be a positive integer.")
+        normalized_agents = sorted({str(agent).strip() for agent in agents if str(agent).strip()})
+        if not normalized_agents:
+            return []
+        placeholders = ",".join("?" for _ in normalized_agents)
+        rows = self.conn.execute(
+            f"""SELECT task_id, agent, queue, status, priority, payload, dedupe_key,
+                       created_at, updated_at, attempts, lease_until, worker_id,
+                       last_error, result, lease_token
+                FROM agent_queue
+                WHERE status = 'queued' AND agent IN ({placeholders})
+                ORDER BY priority DESC, created_at
+                LIMIT ?""",
+            (*normalized_agents, limit),
+        ).fetchall()
+        return [self._queue_row_to_dict(row) for row in rows]
+
     def stats(self):
         return self.conn.execute("SELECT COUNT(*), COALESCE(SUM(synced), 0), COALESCE(SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END), 0) FROM leads").fetchone()
 
@@ -694,6 +736,31 @@ class LeadDB:
             "SELECT task_id,worker_id,payload,status,last_error,created_at,updated_at "
             "FROM compute_bridge_publications WHERE status IN ('prepared','publish_retry') "
             "ORDER BY created_at,task_id"
+        ).fetchall()
+        return [{
+            "task_id": row[0], "worker_id": row[1], "payload": json.loads(row[2]),
+            "status": row[3], "last_error": row[4], "created_at": row[5], "updated_at": row[6]
+        } for row in rows]
+
+    def compute_bridge_publications_for_running(self, worker_prefix, limit=20):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Remote publication limit must be a positive integer.")
+        prefix = str(worker_prefix or "")
+        if not prefix or prefix[-1] == "\uffff":
+            raise ValueError("Remote worker prefix must be non-empty and have a usable upper bound.")
+        prefix_upper = prefix[:-1] + chr(ord(prefix[-1]) + 1)
+        rows = self.conn.execute(
+            """SELECT p.task_id, p.worker_id, p.payload, p.status, p.last_error,
+                      p.created_at, p.updated_at
+               FROM compute_bridge_publications AS p
+               JOIN agent_queue AS q ON q.task_id = p.task_id
+               WHERE p.status IN ('prepared', 'publish_retry')
+                 AND q.status = 'running'
+                 AND q.worker_id = p.worker_id
+                 AND q.worker_id >= ? AND q.worker_id < ?
+               ORDER BY q.priority DESC, q.created_at
+               LIMIT ?""",
+            (prefix, prefix_upper, limit),
         ).fetchall()
         return [{
             "task_id": row[0], "worker_id": row[1], "payload": json.loads(row[2]),
