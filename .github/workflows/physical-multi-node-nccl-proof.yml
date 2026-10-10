@@ -1244,15 +1244,51 @@ jobs:
           import pathlib
 
           root = pathlib.Path("/tmp/thorio-nccl-evidence")
+          discovered = sorted(
+              str(path.relative_to(root))
+              for path in root.rglob("*")
+              if path.is_file()
+          )
+          print("THORIO_NCCL_DOWNLOADED_ARTIFACT_FILES", json.dumps(discovered))
+          expected_artifacts = {"physical-nccl-rank-0", "physical-nccl-rank-1"}
+          actual_artifacts = {path.name for path in root.iterdir() if path.is_dir()}
+          if actual_artifacts != expected_artifacts:
+              raise SystemExit(
+                  "Downloaded rank artifact directories do not match expected artifacts: "
+                  f"expected={sorted(expected_artifacts)}, actual={sorted(actual_artifacts)}"
+              )
+
           records = []
           logs = {}
-          for evidence_path in sorted(root.glob("physical-nccl-rank-*/rank-evidence.json")):
-              records.append(json.loads(evidence_path.read_text(encoding="utf-8")))
-          for log_path in sorted(root.glob("physical-nccl-rank-*/thorio-nccl-rank.log")):
-              logs[log_path.parent.name] = log_path.read_text(encoding="utf-8", errors="replace")
-
-          if len(records) != 2:
-              raise SystemExit(f"Expected exactly two physical rank records, found {len(records)}")
+          for rank in (0, 1):
+              artifact_dir = root / f"physical-nccl-rank-{rank}"
+              evidence_path = artifact_dir / "rank-evidence.json"
+              log_path = artifact_dir / "thorio-nccl-rank.log"
+              if not evidence_path.is_file():
+                  raise SystemExit(
+                      f"Rank {rank} artifact is missing rank-evidence.json; "
+                      f"files={sorted(path.name for path in artifact_dir.iterdir() if path.is_file())}"
+                  )
+              try:
+                  record = json.loads(evidence_path.read_text(encoding="utf-8"))
+              except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                  raise SystemExit(f"Rank {rank} evidence JSON is unreadable: {exc}") from exc
+              if not isinstance(record, dict):
+                  raise SystemExit(f"Rank {rank} evidence JSON must contain an object.")
+              if int(record.get("rank", -1)) != rank:
+                  raise SystemExit(
+                      f"Rank artifact identity mismatch: directory says rank {rank}, "
+                      f"record says {record.get('rank')!r}"
+                  )
+              if record.get("verified") is not True:
+                  raise SystemExit(
+                      f"Rank {rank} physical evidence is unverified: "
+                      f"{record.get('failure_stage') or 'no failure_stage supplied'}"
+                  )
+              if not log_path.is_file() or log_path.stat().st_size == 0:
+                  raise SystemExit(f"Rank {rank} NCCL debug log is missing or empty: {log_path}")
+              records.append(record)
+              logs[rank] = log_path.read_text(encoding="utf-8", errors="replace")
           proof_shas = {str(item.get("proof_sha") or "").strip() for item in records}
           if len(proof_shas) != 1 or "" in proof_shas:
               raise SystemExit(f"Physical rank evidence was not bound to one proof SHA: {sorted(proof_shas)}")
@@ -1303,7 +1339,10 @@ jobs:
                       f"Rank {rank} has no NCCL peer-connection evidence to the other physical rank."
                   )
               if any(
-                  str(edge.get("transport") or "").strip().upper() != aggregate_transport
+                  not (
+                      str(edge.get("transport") or "").strip().upper() == aggregate_transport
+                      or str(edge.get("transport") or "").strip().upper().startswith(aggregate_transport + "/")
+                  )
                   for edge in cross_rank
               ):
                   raise SystemExit(
