@@ -56,6 +56,8 @@ def _recv_exact(sock: socket.socket, size: int) -> bytes:
 def _handle(client: socket.socket) -> None:
     destination = "<unparsed>"
     port = 0
+    header_valid = False
+    acknowledgement_sent = False
     try:
         header = _recv_exact(client, MAX_HEADER)
         if len(header) != MAX_HEADER:
@@ -67,12 +69,17 @@ def _handle(client: socket.socket) -> None:
         destination = socket.inet_ntoa(packed_ip)
         if not _allowed_destination(destination):
             return
+        header_valid = True
         print(
             "THORIO_RELAY_INCOMING "
             + json.dumps({"destination": destination, "port": port}, sort_keys=True),
             flush=True,
         )
+        # A tunnel TCP connection is not proof that the NCCL peer socket accepted.
+        # Acknowledge only after the final destination connection succeeds.
         upstream = socket.create_connection((destination, port), timeout=10)
+        client.sendall(b"\\x00")
+        acknowledgement_sent = True
         print(
             "THORIO_RELAY_UPSTREAM_CONNECTED "
             + json.dumps({"destination": destination, "port": port}, sort_keys=True),
@@ -84,6 +91,11 @@ def _handle(client: socket.socket) -> None:
         t.start()
         _copy(upstream, client)
     except OSError as exc:
+        if header_valid and not acknowledgement_sent:
+            try:
+                client.sendall(b"\\x01")
+            except OSError:
+                pass
         print(
             "THORIO_RELAY_UPSTREAM_CONNECT_FAILED "
             + json.dumps(
