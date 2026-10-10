@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - integration/gpu-main-additive
   workflow_dispatch:
     inputs:
       test_path:
@@ -24,7 +23,7 @@ concurrency:
 jobs:
   test:
     name: Full pytest suite
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/integration/gpu-main-additive'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
