@@ -47,7 +47,7 @@ jobs:
               ;;
           esac
           health_url="${THORIO_COMPUTE_COORDINATOR_URL%/}/health"
-          if ! curl --fail --silent --show-error --max-time "${THORIO_COMPUTE_HTTP_TIMEOUT}" \
+          if ! curl --fail --silent --show-error --max-time "${THORIO_COMPUTE_HTTP_TIMEOUT}" --retry 4 --retry-delay 2 --retry-max-time 30 --retry-connrefused \
             -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" \
             -H "Accept: application/json" \
             "${health_url}" >/tmp/thorio-coordinator-health.json; then
@@ -120,7 +120,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --max-time "${THORIO_COMPUTE_HTTP_TIMEOUT}" \
+          curl --fail --silent --show-error --max-time "${THORIO_COMPUTE_HTTP_TIMEOUT}" --retry 4 --retry-delay 2 --retry-max-time 30 --retry-connrefused \
             -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" \
             -H "Accept: application/json" \
             "${THORIO_COMPUTE_COORDINATOR_URL%/}/health" >/tmp/thorio-coordinator-health.json
