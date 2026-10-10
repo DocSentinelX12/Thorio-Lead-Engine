@@ -192,14 +192,46 @@ def claim_task(db, task_id: str, *, worker_id: str, lease_seconds: int = 300) ->
     if not worker_id: raise ValueError("worker_id is required")
     if lease_seconds <= 0: raise ValueError("lease_seconds must be positive")
     if _queue_db(db):
-        db.queue_recover_stale(_iso(_now()))
-        task = _row_to_task(db.queue_get(task_id))
-        if task is None: raise ValueError(f"Task not found: {task_id}")
-        if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
-        _validate_task_authorization(task["agent"], task.get("payload") or {})
-        now = _now(); changed = db.queue_update(task_id, expected_status=QUEUED, status=RUNNING, worker_id=worker_id, lease_until=_iso(now + timedelta(seconds=lease_seconds)), lease_token=uuid4().hex, attempts=task["attempts"] + 1, updated_at=_iso(now))
-        if changed != 1: raise ValueError(f"Task could not be claimed: {task_id}")
-        return _row_to_task(db.queue_get(task_id))
+        # Claim one requested task under the same retried writer transaction.
+        # Do not run queue_recover_stale() here: that rewrites every expired
+        # lease in the database for every single-task claim, multiplying write
+        # contention across specialist workers. Recovery is scoped to this task.
+        now = _now()
+        now_iso = _iso(now)
+        lease_until = _iso(now + timedelta(seconds=lease_seconds))
+        lease_token = uuid4().hex
+        db._begin_immediate()
+        try:
+            db.conn.execute(
+                """UPDATE agent_queue
+                   SET status = 'queued', worker_id = NULL, lease_until = NULL,
+                       lease_token = NULL, updated_at = ?
+                   WHERE task_id = ? AND status = 'running'
+                     AND lease_until IS NOT NULL AND lease_until <= ?""",
+                (now_iso, task_id, now_iso),
+            )
+            task = _row_to_task(db.queue_get(task_id))
+            if task is None:
+                raise ValueError(f"Task not found: {task_id}")
+            if task.get("status") != QUEUED:
+                raise ValueError(f"Task is not queued: {task_id}")
+            _validate_task_authorization(task["agent"], task.get("payload") or {})
+            cursor = db.conn.execute(
+                """UPDATE agent_queue
+                   SET status = 'running', worker_id = ?, lease_until = ?,
+                       lease_token = ?, attempts = attempts + 1, updated_at = ?
+                   WHERE task_id = ? AND status = 'queued'""",
+                (worker_id, lease_until, lease_token, now_iso, task_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Task could not be claimed: {task_id}")
+            claimed = _row_to_task(db.queue_get(task_id))
+            db.conn.commit()
+            return claimed
+        except Exception:
+            if db.conn.in_transaction:
+                db.conn.rollback()
+            raise
     state = _load(db); _recover_stale(state); task = state["items"].get(task_id)
     if task is None: raise ValueError(f"Task not found: {task_id}")
     if task.get("status") != QUEUED: raise ValueError(f"Task is not queued: {task_id}")
@@ -215,12 +247,19 @@ def claim(db, agent: str, *, worker_id: str, limit: int = 1, lease_seconds: int 
     capacity = min(int(limit), registry[agent].max_concurrency)
     if _queue_db(db):
         now = _now()
-        tasks = [_row_to_task(row) for row in db.queue_claim(agent, worker_id, capacity, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now)) if row is not None]
-        if not tasks:
-            if db.queue_recover_stale(_iso(_now())):
-                now = _now()
-                tasks = [_row_to_task(row) for row in db.queue_claim(agent, worker_id, capacity, capacity, _iso(now + timedelta(seconds=lease_seconds)), _iso(now)) if row is not None]
-        for task in tasks: _validate_task_authorization(task["agent"], task.get("payload") or {})
+        # queue_claim() already recovers expired leases inside its atomic,
+        # retrying BEGIN IMMEDIATE transaction. A second global recovery write
+        # when no task is returned only creates contention among idle workers.
+        tasks = [
+            _row_to_task(row)
+            for row in db.queue_claim(
+                agent, worker_id, capacity, capacity,
+                _iso(now + timedelta(seconds=lease_seconds)), _iso(now)
+            )
+            if row is not None
+        ]
+        for task in tasks:
+            _validate_task_authorization(task["agent"], task.get("payload") or {})
         return tasks
     state = _load(db); changed = _recover_stale(state); active = sum(1 for task in state["items"].values() if task.get("agent") == agent and task.get("status") == RUNNING); available = max(0, capacity - active); candidates = [task for task in state["items"].values() if task.get("agent") == agent and task.get("status") == QUEUED]; candidates.sort(key=lambda item: (-int(item.get("priority", 0)), item.get("created_at", ""))); claimed = []; now = _now(); lease_until = _iso(now + timedelta(seconds=lease_seconds))
     for task in candidates[:available]:
