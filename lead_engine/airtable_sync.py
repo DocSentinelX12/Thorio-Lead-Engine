@@ -1,6 +1,8 @@
+import contextvars
 import json
 import os
 import time
+from contextlib import contextmanager
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,11 +21,48 @@ TABLE_NAME = os.getenv(
 AIRTABLE_MAX_RETRIES = 3
 AIRTABLE_INITIAL_BACKOFF = 1.0
 AIRTABLE_MAX_BACKOFF = 30.0
-AIRTABLE_REQUEST_TIMEOUT = 60.0
+AIRTABLE_REQUEST_TIMEOUT = max(1.0, float(os.getenv("THORIO_AIRTABLE_REQUEST_TIMEOUT", "15")))
 
 
 class AirtableSyncError(Exception):
     """Raised when Airtable synchronization fails."""
+
+
+class AirtableTransientError(AirtableSyncError):
+    """A retryable Airtable/network failure; pending work must be preserved."""
+
+
+_REQUEST_DEADLINE: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
+    "thorio_airtable_request_deadline", default=None
+)
+
+
+@contextmanager
+def bounded_request_deadline(deadline: float):
+    """Bound every Airtable request and retry to one drain-cycle deadline."""
+    token = _REQUEST_DEADLINE.set(float(deadline))
+    try:
+        yield
+    finally:
+        _REQUEST_DEADLINE.reset(token)
+
+
+def _read_response_with_deadline(response: Any, deadline: float) -> bytes:
+    """Read response chunks while shrinking the socket timeout to an absolute deadline."""
+    chunks: list[bytes] = []
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Airtable response exceeded its absolute request deadline")
+        fp = getattr(response, "fp", None)
+        raw = getattr(fp, "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if sock is not None:
+            sock.settimeout(remaining)
+        reader = getattr(response, "read1", None)
+        chunk = reader(65536) if callable(reader) else response.read(65536)
+        if not chunk:
+            return b"".join(chunks)
 
 
 def _require_config() -> None:
@@ -74,133 +113,85 @@ def _request(
     payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     _require_config()
-
-    api_key = os.getenv(
-        "AIRTABLE_API_KEY",
-    )
-
+    api_key = os.getenv("AIRTABLE_API_KEY")
     if not api_key:
-        raise AirtableSyncError(
-            "Missing Airtable API key."
-        )
+        raise AirtableSyncError("Missing Airtable API key.")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-
-    data = None
-
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
     last_error: Optional[AirtableSyncError] = None
+    drain_deadline = _REQUEST_DEADLINE.get()
 
-    for attempt in range(
-        AIRTABLE_MAX_RETRIES + 1
-    ):
-        request = urllib.request.Request(
-            url,
-            data=data,
-            headers=headers,
-            method=method,
-        )
+    for attempt in range(AIRTABLE_MAX_RETRIES + 1):
+        now = time.monotonic()
+        if drain_deadline is not None and now >= drain_deadline:
+            raise AirtableTransientError(
+                "Airtable drain deadline expired; pending records were preserved."
+            )
+        attempt_deadline = now + AIRTABLE_REQUEST_TIMEOUT
+        if drain_deadline is not None:
+            attempt_deadline = min(attempt_deadline, drain_deadline)
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
 
         try:
             with urllib.request.urlopen(
                 request,
-                timeout=AIRTABLE_REQUEST_TIMEOUT,
+                timeout=max(0.1, attempt_deadline - now),
             ) as response:
-                body = response.read().decode(
-                    "utf-8"
-                )
-
+                body = _read_response_with_deadline(response, attempt_deadline).decode("utf-8")
                 if not body:
                     return {}
-
                 try:
                     result = json.loads(body)
-
                 except json.JSONDecodeError as exc:
-                    raise AirtableSyncError(
-                        "Airtable returned invalid JSON."
-                    ) from exc
-
+                    raise AirtableSyncError("Airtable returned invalid JSON.") from exc
                 if not isinstance(result, dict):
-                    raise AirtableSyncError(
-                        "Airtable returned an invalid JSON response."
-                    )
-
+                    raise AirtableSyncError("Airtable returned an invalid JSON response.")
                 return result
 
         except urllib.error.HTTPError as exc:
-            retryable = (
-                exc.code == 429
-                or 500 <= exc.code <= 599
-            )
-
+            retryable = exc.code == 429 or 500 <= exc.code <= 599
             try:
-                body = exc.read().decode(
-                    "utf-8",
-                    errors="replace",
+                body = _read_response_with_deadline(exc, attempt_deadline).decode(
+                    "utf-8", errors="replace"
                 )
-
             except Exception:
-                body = (
-                    "Unable to read Airtable "
-                    "error response."
-                )
-
-            error = AirtableSyncError(
-                f"Airtable API error {exc.code}: {body}"
-            )
-
+                body = "Unable to read Airtable error response within the request deadline."
+            error_type = AirtableTransientError if retryable else AirtableSyncError
+            error = error_type(f"Airtable API error {exc.code}: {body}")
             if not retryable:
                 raise error from exc
-
             last_error = error
-
-            if attempt >= AIRTABLE_MAX_RETRIES:
-                raise error from exc
-
-            retry_after = exc.headers.get(
-                "Retry-After"
-            )
-
-            time.sleep(
-                _retry_delay(
-                    attempt,
-                    retry_after,
-                )
-            )
-
-        except (
-            urllib.error.URLError,
-            TimeoutError,
-        ) as exc:
-            if isinstance(
-                exc,
-                urllib.error.URLError,
+            if attempt >= AIRTABLE_MAX_RETRIES or (
+                drain_deadline is not None and time.monotonic() >= drain_deadline
             ):
-                reason = exc.reason
-
-                error = AirtableSyncError(
-                    f"Airtable connection failed: {reason}"
-                )
-
-            else:
-                error = AirtableSyncError(
-                    "Airtable request timed out."
-                )
-
-            last_error = error
-
-            if attempt >= AIRTABLE_MAX_RETRIES:
                 raise error from exc
+            delay = _retry_delay(attempt, exc.headers.get("Retry-After"))
+            if drain_deadline is not None:
+                delay = min(delay, max(0.0, drain_deadline - time.monotonic()))
+            if delay:
+                time.sleep(delay)
 
-            time.sleep(
-                _retry_delay(attempt)
-            )
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if isinstance(exc, urllib.error.URLError):
+                error = AirtableTransientError(f"Airtable connection failed: {exc.reason}")
+            else:
+                error = AirtableTransientError(
+                    "Airtable request exceeded its absolute deadline."
+                )
+            last_error = error
+            if attempt >= AIRTABLE_MAX_RETRIES or (
+                drain_deadline is not None and time.monotonic() >= drain_deadline
+            ):
+                raise error from exc
+            delay = _retry_delay(attempt)
+            if drain_deadline is not None:
+                delay = min(delay, max(0.0, drain_deadline - time.monotonic()))
+            if delay:
+                time.sleep(delay)
 
         except UnicodeDecodeError as exc:
             raise AirtableSyncError(
@@ -208,26 +199,21 @@ def _request(
             ) from exc
 
         except OSError as exc:
-            error = AirtableSyncError(
-                f"Airtable request failed: {exc}"
-            )
-
+            error = AirtableTransientError(f"Airtable request failed: {exc}")
             last_error = error
-
-            if attempt >= AIRTABLE_MAX_RETRIES:
+            if attempt >= AIRTABLE_MAX_RETRIES or (
+                drain_deadline is not None and time.monotonic() >= drain_deadline
+            ):
                 raise error from exc
-
-            time.sleep(
-                _retry_delay(attempt)
-            )
+            delay = _retry_delay(attempt)
+            if drain_deadline is not None:
+                delay = min(delay, max(0.0, drain_deadline - time.monotonic()))
+            if delay:
+                time.sleep(delay)
 
     if last_error is not None:
         raise last_error
-
-    raise AirtableSyncError(
-        "Airtable request failed unexpectedly."
-    )
-
+    raise AirtableSyncError("Airtable request failed unexpectedly.")
 
 def _table_url() -> str:
     base_id = os.getenv(
