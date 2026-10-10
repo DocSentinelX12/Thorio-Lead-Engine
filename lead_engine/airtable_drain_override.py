@@ -25,8 +25,8 @@ def drain_pending(
     This function owns repetition, bounded runtime, failure stopping, and
     durable backlog preservation for continuous production operation.
     """
+    from . import batch_delivery
     if sync_batch is None:
-        from . import batch_delivery
         sync_batch = batch_delivery.sync_pending_batched
 
     try:
