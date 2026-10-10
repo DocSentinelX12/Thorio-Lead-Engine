@@ -228,6 +228,62 @@ def test_queue_claim_retries_transient_sqlite_writer_contention(tmp_path):
     assert claimed[0]["status"] == RUNNING
 
 
+def test_single_task_claim_retries_transient_sqlite_writer_contention(tmp_path):
+    import sqlite3
+
+    from .agent_queue import claim_task
+
+    db = _db(tmp_path)
+    task = enqueue(db, "x_signal", {"source_id": "single-claim-busy-once"})
+
+    class BusyOnceConnection:
+        def __init__(self, connection):
+            self._connection = connection
+            self._busy_once = True
+
+        def execute(self, sql, *args):
+            if sql == "BEGIN IMMEDIATE" and self._busy_once:
+                self._busy_once = False
+                raise sqlite3.OperationalError("database is locked")
+            return self._connection.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+    db.conn = BusyOnceConnection(db.conn)
+    claimed = claim_task(db, task["task_id"], worker_id="single-claim-retry")
+
+    assert claimed["task_id"] == task["task_id"]
+    assert claimed["status"] == RUNNING
+    assert claimed["worker_id"] == "single-claim-retry"
+    assert claimed["attempts"] == 1
+
+
+def test_single_task_claim_recovers_only_the_requested_expired_lease(tmp_path):
+    from .agent_queue import claim_task
+
+    db = _db(tmp_path)
+    target = enqueue(db, "x_signal", {"source_id": "target-expired"})
+    unrelated = enqueue(db, "paxus_research", {"source_id": "unrelated-running"})
+    old_target = claim(db, "x_signal", worker_id="old-target")[0]
+    old_unrelated = claim(db, "paxus_research", worker_id="old-unrelated")[0]
+    expired = "2000-01-01T00:00:00+00:00"
+    db.conn.execute(
+        "UPDATE agent_queue SET lease_until = ?, updated_at = ? WHERE task_id = ?",
+        (expired, expired, target["task_id"]),
+    )
+    db.conn.commit()
+
+    reclaimed = claim_task(db, target["task_id"], worker_id="new-target")
+
+    assert reclaimed["status"] == RUNNING
+    assert reclaimed["worker_id"] == "new-target"
+    assert reclaimed["attempts"] == old_target["attempts"] + 1
+    still_owned = db.queue_get(unrelated["task_id"])
+    assert still_owned[3] == RUNNING
+    assert still_owned[11] == old_unrelated["worker_id"]
+
+
 def test_concurrent_queue_claim_handles_high_worker_contention(tmp_path):
     db = _db(tmp_path)
     task_count = 64
