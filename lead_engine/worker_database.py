@@ -22,7 +22,12 @@ class WorkerLeadDB(LeadDB):
         self.path = self.data_dir / "leads.sqlite3"
         self.recovered_corrupt_database = False
         self._batch_write_depth = 0
-        self.conn = sqlite3.connect(self.path, timeout=30)
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        # LeadDB initializes WAL mode once before specialist execution starts.
+        # Reissuing journal_mode=WAL from every concurrent worker connection
+        # takes an unnecessary database-level lock and can collide with writers.
+        # Match the primary connection's bounded lock wait without changing the
+        # shared journal mode during worker startup.
+        self.conn = sqlite3.connect(self.path, timeout=120)
+        self.conn.execute("PRAGMA busy_timeout=120000")
         self.conn.execute("PRAGMA synchronous=FULL")
         self.conn.execute("PRAGMA foreign_keys=ON")
