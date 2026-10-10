@@ -1,0 +1,52 @@
+name: Retire reviewed obsolete GPU branches
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/retire-reviewed-obsolete-gpu-branches.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  retire-reviewed-branches:
+    if: github.event.head_commit.message == 'Retire reviewed obsolete GPU branches'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v5
+
+      - name: Dispatch production verification and retire only reviewed refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits?sha=main&per_page=1" --jq '.[0].sha')"
+          test -n "$target_sha"
+          test "$target_sha" != "null"
+          gh workflow run python-app.yml --repo "$GITHUB_REPOSITORY" --ref main
+          echo "PRODUCTION VERIFICATION DISPATCHED target_sha=$target_sha"
+
+          while IFS='|' read -r branch expected_sha; do
+            [ -z "$branch" ] && continue
+            actual_sha="$(git ls-remote --heads origin "refs/heads/$branch" | awk '{print $1}')"
+            if [ -z "$actual_sha" ]; then
+              echo "BRANCH ALREADY ABSENT: $branch"
+              continue
+            fi
+            if [ "$actual_sha" != "$expected_sha" ]; then
+              echo "::error::Refusing to delete $branch because it advanced after audit. Expected $expected_sha, found $actual_sha."
+              exit 1
+            fi
+            git push origin --delete "$branch"
+            echo "OBSOLETE BRANCH DELETED: $branch"
+          done <<'BRANCHES'
+          feature/gpu-fabric-foundation|7fabefc928823e3f23b92644a9ba91d8c6075304
+          integration/gpu-main-additive|a9d9c71783c52b0c6cebdaaa5d9e0e440bea2eee
+          BRANCHES
