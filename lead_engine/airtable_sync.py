@@ -71,9 +71,9 @@ def _read_response_with_deadline(response: Any, deadline: float) -> bytes:
             try:
                 chunk = response.read(65536)
             except TypeError:
-                # Simple file-like test doubles and some wrappers expose read()
-                # without a size parameter; preserve their supported contract.
-                chunk = response.read()
+                # Some file-like wrappers expose only read() without a size.
+                # That call consumes the remaining body, so return it once.
+                return b"".join(chunks) + response.read()
         if not chunk:
             return b"".join(chunks)
         chunks.append(chunk)
