@@ -27,8 +27,8 @@ def test_relay_is_authenticated_and_framed():
 
 def test_relay_acknowledges_only_after_upstream_connect():
     relay = Path("lead_engine/nccl_tcp_relay.py").read_text()
-    assert 'client.sendall(b"\x00")' in relay
-    assert 'client.sendall(b"\x01")' in relay
+    assert r'client.sendall(b"\x00")' in relay
+    assert r'client.sendall(b"\x01")' in relay
     assert "acknowledgement_sent" in relay
 
 
@@ -42,4 +42,4 @@ def test_connect_proxy_requires_upstream_acknowledgement():
 def test_tcpstore_forwarder_consumes_relay_acknowledgement():
     source = Path("lead_engine/nccl_all_reduce_probe.py").read_text()
     assert 'acknowledgement = upstream.recv(1)' in source
-    assert 'acknowledgement != b"\x00"' in source
+    assert r'acknowledgement != b"\x00"' in source
