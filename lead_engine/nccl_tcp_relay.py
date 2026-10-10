@@ -78,7 +78,7 @@ def _handle(client: socket.socket) -> None:
         # A tunnel TCP connection is not proof that the NCCL peer socket accepted.
         # Acknowledge only after the final destination connection succeeds.
         upstream = socket.create_connection((destination, port), timeout=10)
-        client.sendall(b"\\x00")
+        client.sendall(b"\x00")
         acknowledgement_sent = True
         print(
             "THORIO_RELAY_UPSTREAM_CONNECTED "
@@ -93,7 +93,7 @@ def _handle(client: socket.socket) -> None:
     except OSError as exc:
         if header_valid and not acknowledgement_sent:
             try:
-                client.sendall(b"\\x01")
+                client.sendall(b"\x01")
             except OSError:
                 pass
         print(
