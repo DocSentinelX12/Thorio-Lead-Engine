@@ -71,3 +71,33 @@ def test_drain_accepts_the_scheduler_supplied_batch_delivery_callable(tmp_path, 
     assert result["deferred_research_count"] == 1
     assert result["drain_complete"] is False
     assert len(db.pending(limit=10)) == 1
+
+
+ 
+def test_transient_airtable_failure_does_not_fan_out_into_single_record_retries(tmp_path, monkeypatch):
+    from .airtable_sync import AirtableTransientError
+
+    db = LeadDB(data_dir=tmp_path)
+    fingerprint = "transient-airtable-failure"
+    lead = {
+        "fingerprint": fingerprint,
+        "company": "Example Corp",
+        "source": "test",
+        "source_id": fingerprint,
+        "url": "https://example.com/jobs/role",
+        "signal": "Current technology hiring signal",
+        "evidence": "Observed public hiring signal",
+        "potential_routes": ["Thorio"],
+        "qualified": False,
+    }
+    assert db.insert_if_new(lead)
+    monkeypatch.setenv("THORIO_AIRTABLE_DRAIN_SECONDS", "2")
+
+    with patch("lead_engine.batch_delivery._run_batch_high_volume_sync", side_effect=AirtableTransientError("Airtable request exceeded its absolute deadline")), patch(
+        "lead_engine.sync_worker.sync_one", side_effect=AssertionError("transient failure must not trigger per-record fallback")
+    ):
+        result = drain_pending(db)
+
+    assert result["failed_count"] == 1
+    assert result["failed"][0]["lead"]["fingerprint"] == fingerprint
+    assert len(db.pending(limit=10)) == 1
