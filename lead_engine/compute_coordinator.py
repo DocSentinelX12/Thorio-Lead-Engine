@@ -3590,8 +3590,8 @@ class ComputeCoordinator:
         # It must not take the global coordinator lock or trigger full reconciliation,
         # fleet intelligence scans, or acquisition status aggregation.
         with self._connect() as connection:
-            connection.execute(\"SELECT 1\").fetchone()
-        return {\"ok\": True, \"free_only\": True, \"paid_capacity_allowed\": False}
+            connection.execute("SELECT 1").fetchone()
+        return {"ok": True, "free_only": True, "paid_capacity_allowed": False}
 
     def health(self) -> Dict[str, Any]:
         with self._lock:
