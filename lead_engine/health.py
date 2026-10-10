@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, Iterable
 
 from .database import LeadDB
@@ -102,6 +103,8 @@ def check_airtable_configuration(
         "airtable_table",
         "",
     )
+    api_key = os.getenv("AIRTABLE_API_KEY", "").strip()
+    sync_enabled = getattr(config, "sync_enabled", True)
 
     if not base_id:
         return {
@@ -117,6 +120,22 @@ def check_airtable_configuration(
             "status": "unhealthy",
             "ok": False,
             "error": "Airtable table is not configured",
+        }
+
+    if not api_key:
+        return {
+            "name": "airtable_configuration",
+            "status": "unhealthy",
+            "ok": False,
+            "error": "AIRTABLE_API_KEY is not configured",
+        }
+
+    if sync_enabled is not True:
+        return {
+            "name": "airtable_configuration",
+            "status": "unhealthy",
+            "ok": False,
+            "error": "Airtable synchronization is disabled",
         }
 
     return {
