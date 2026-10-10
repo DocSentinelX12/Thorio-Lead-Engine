@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -200,3 +201,35 @@ def test_remote_bridge_enforces_one_aggregate_deadline_for_sequential_status_req
         assert result["deadline_exceeded"] is True
         assert result["elapsed_seconds"] >= 1.0
         assert any("deadline exceeded" in item["error"] for item in result["reconciled"]["errors"])
+
+
+def test_remote_bridge_degrades_quickly_when_sqlite_writer_lock_persists(tmp_path):
+    db = LeadDB(data_dir=Path(tmp_path))
+    blocker = None
+    try:
+        lead = {
+            "fingerprint": "bridge-sqlite-lock",
+            "company": "Example",
+            "signal": "We need an AI development team",
+        }
+        assert db.insert_if_new(lead)
+        task = enqueue(db, "ai_demand_discovery", {"lead": lead, "evidence_events": []})
+        db.conn.execute("PRAGMA busy_timeout=100")
+        blocker = sqlite3.connect(str(db.path), timeout=0.1)
+        blocker.execute("BEGIN IMMEDIATE")
+
+        started = compute_bridge_module.time.monotonic()
+        result = bridge_once(db, FakeRemoteClient(), publish_limit=10, reconcile_limit=10, budget_seconds=10.0)
+        elapsed = compute_bridge_module.time.monotonic() - started
+
+        assert result["status"] == "degraded"
+        assert elapsed < 5.5
+        assert result["published"]["published_count"] == 0
+        assert result["published"]["errors"]
+        assert pending(db, "ai_demand_discovery")[0]["status"] == "queued"
+        assert db.compute_bridge_get(task["task_id"]) is None
+    finally:
+        if blocker is not None:
+            blocker.rollback()
+            blocker.close()
+        db.close()

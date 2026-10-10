@@ -127,20 +127,37 @@ class LeadDB:
                 source.replace(destination)
 
     def _begin_immediate(self) -> None:
-        """Acquire SQLite's single writer lock without failing on transient contention."""
+        """Acquire SQLite's writer lock with bounded waits and explicit retries.
+
+        A long connection busy_timeout otherwise makes this retry loop wait up
+        to two minutes on its first attempt, defeating the retry policy.
+        """
+        original_timeout = int(self.conn.execute("PRAGMA busy_timeout").fetchone()[0])
+        retry_timeout = min(original_timeout, 250)
+        self.conn.execute(f"PRAGMA busy_timeout={retry_timeout}")
         delay = 0.05
-        for attempt in range(8):
-            try:
-                self.conn.execute("BEGIN IMMEDIATE")
-                return
-            except sqlite3.OperationalError as exc:
-                message = str(exc).lower()
-                if "database is locked" not in message and "database table is locked" not in message:
-                    raise
-                if attempt == 7:
-                    raise
-                time.sleep(delay)
-                delay = min(delay * 2, 1.0)
+        try:
+            for attempt in range(8):
+                try:
+                    self.conn.execute("BEGIN IMMEDIATE")
+                    return
+                except sqlite3.OperationalError as exc:
+                    message = str(exc).lower()
+                    if "database is locked" not in message and "database table is locked" not in message:
+                        raise
+                    if attempt == 7:
+                        raise
+                    time.sleep(delay)
+                    delay = min(delay * 2, 1.0)
+        finally:
+            self.conn.execute(f"PRAGMA busy_timeout={original_timeout}")
+
+    def _begin_write_transaction_if_needed(self) -> bool:
+        """Start a bounded writer transaction when this method owns the write."""
+        if self._batch_write_depth == 0 and not self.conn.in_transaction:
+            self._begin_immediate()
+            return True
+        return False
 
     @contextmanager
     def batch_writes(self):
@@ -512,10 +529,16 @@ class LeadDB:
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue WHERE task_id = ?", (task_id,)).fetchone()
 
     def queue_recover_stale(self, now_iso):
-        cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, lease_token = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
-        if self._batch_write_depth == 0:
-            self.conn.commit()
-        return cursor.rowcount > 0
+        owns_transaction = self._begin_write_transaction_if_needed()
+        try:
+            cursor = self.conn.execute("UPDATE agent_queue SET status = 'queued', worker_id = NULL, lease_until = NULL, lease_token = NULL, updated_at = ? WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until <= ?", (now_iso, now_iso))
+            if self._batch_write_depth == 0:
+                self.conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            if owns_transaction and self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def queue_claim(self, agent, worker_id, limit, capacity, lease_until, now_iso):
         if limit <= 0 or capacity <= 0:
@@ -560,10 +583,16 @@ class LeadDB:
             conditions.append("worker_id = ?")
             values.append(expected_worker_id)
         assignments = ", ".join(f"{field} = ?" for field in updates)
-        cursor = self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE {' AND '.join(conditions)}", values)
-        if self._batch_write_depth == 0:
-            self.conn.commit()
-        return cursor.rowcount
+        owns_transaction = self._begin_write_transaction_if_needed()
+        try:
+            cursor = self.conn.execute(f"UPDATE agent_queue SET {assignments} WHERE {' AND '.join(conditions)}", values)
+            if self._batch_write_depth == 0:
+                self.conn.commit()
+            return cursor.rowcount
+        except Exception:
+            if owns_transaction and self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def queue_all_rows(self):
         return self.conn.execute("SELECT task_id, agent, queue, status, priority, payload, dedupe_key, created_at, updated_at, attempts, lease_until, worker_id, last_error, result, lease_token FROM agent_queue ORDER BY priority DESC, created_at").fetchall()
@@ -643,16 +672,22 @@ class LeadDB:
         return cursor.rowcount == 1
 
     def compute_bridge_prepare(self, task_id, worker_id, payload, now_iso):
-        self.conn.execute(
-            """INSERT INTO compute_bridge_publications
-               (task_id, worker_id, payload, status, last_error, created_at, updated_at)
-               VALUES (?, ?, ?, 'prepared', '', ?, ?)
-               ON CONFLICT(task_id) DO UPDATE SET
-               worker_id=excluded.worker_id, payload=excluded.payload,
-               updated_at=excluded.updated_at""",
-            (str(task_id), str(worker_id), json.dumps(payload, ensure_ascii=False), now_iso, now_iso),
-        )
-        self.conn.commit()
+        owns_transaction = self._begin_write_transaction_if_needed()
+        try:
+            self.conn.execute(
+                """INSERT INTO compute_bridge_publications
+                   (task_id, worker_id, payload, status, last_error, created_at, updated_at)
+                   VALUES (?, ?, ?, 'prepared', '', ?, ?)
+                   ON CONFLICT(task_id) DO UPDATE SET
+                   worker_id=excluded.worker_id, payload=excluded.payload,
+                   updated_at=excluded.updated_at""",
+                (str(task_id), str(worker_id), json.dumps(payload, ensure_ascii=False), now_iso, now_iso),
+            )
+            self.conn.commit()
+        except Exception:
+            if owns_transaction and self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def compute_bridge_publications(self):
         rows = self.conn.execute(
@@ -666,18 +701,30 @@ class LeadDB:
         } for row in rows]
 
     def compute_bridge_mark_published(self, task_id, now_iso):
-        self.conn.execute(
-            "UPDATE compute_bridge_publications SET status='published',last_error='',updated_at=? WHERE task_id=?",
-            (now_iso, str(task_id)),
-        )
-        self.conn.commit()
+        owns_transaction = self._begin_write_transaction_if_needed()
+        try:
+            self.conn.execute(
+                "UPDATE compute_bridge_publications SET status='published',last_error='',updated_at=? WHERE task_id=?",
+                (now_iso, str(task_id)),
+            )
+            self.conn.commit()
+        except Exception:
+            if owns_transaction and self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def compute_bridge_mark_retry(self, task_id, error, now_iso):
-        self.conn.execute(
-            "UPDATE compute_bridge_publications SET status='publish_retry',last_error=?,updated_at=? WHERE task_id=?",
-            (str(error)[:4000], now_iso, str(task_id)),
-        )
-        self.conn.commit()
+        owns_transaction = self._begin_write_transaction_if_needed()
+        try:
+            self.conn.execute(
+                "UPDATE compute_bridge_publications SET status='publish_retry',last_error=?,updated_at=? WHERE task_id=?",
+                (str(error)[:4000], now_iso, str(task_id)),
+            )
+            self.conn.commit()
+        except Exception:
+            if owns_transaction and self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def compute_bridge_get(self, task_id):
         row = self.conn.execute(

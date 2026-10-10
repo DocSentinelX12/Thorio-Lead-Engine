@@ -240,11 +240,14 @@ def test_single_task_claim_retries_transient_sqlite_writer_contention(tmp_path):
         def __init__(self, connection):
             self._connection = connection
             self._busy_once = True
+            self.begin_timeouts = []
 
         def execute(self, sql, *args):
-            if sql == "BEGIN IMMEDIATE" and self._busy_once:
-                self._busy_once = False
-                raise sqlite3.OperationalError("database is locked")
+            if sql == "BEGIN IMMEDIATE":
+                self.begin_timeouts.append(self._connection.execute("PRAGMA busy_timeout").fetchone()[0])
+                if self._busy_once:
+                    self._busy_once = False
+                    raise sqlite3.OperationalError("database is locked")
             return self._connection.execute(sql, *args)
 
         def __getattr__(self, name):
@@ -253,6 +256,8 @@ def test_single_task_claim_retries_transient_sqlite_writer_contention(tmp_path):
     db.conn = BusyOnceConnection(db.conn)
     claimed = claim_task(db, task["task_id"], worker_id="single-claim-retry")
 
+    assert db.conn.begin_timeouts == [250, 250]
+    assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 120000
     assert claimed["task_id"] == task["task_id"]
     assert claimed["status"] == RUNNING
     assert claimed["worker_id"] == "single-claim-retry"

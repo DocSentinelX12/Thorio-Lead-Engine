@@ -333,9 +333,16 @@ def _finish(db, task_id: str, *, worker_id: str, lease_token: str | None, status
 
 
 def pending(db, agent: str | None = None) -> List[Dict[str, Any]]:
-    if _queue_db(db): db.queue_recover_stale(_iso(_now())); return [_row_to_task(row) for row in db.queue_pending(agent) if row is not None]
-    state = _load(db); changed = _recover_stale(state)
-    if changed: _save(db, state)
+    """List active tasks without taking a global write lock to recover leases.
+
+    Lease recovery belongs to atomic claim paths. Queue scans are read-only so
+    reconciliation and idle workers do not contend on a table-wide UPDATE just
+    to inspect pending work.
+    """
+    if _queue_db(db):
+        return [_row_to_task(row) for row in db.queue_pending(agent) if row is not None]
+    state = _load(db)
     tasks = list(state["items"].values())
-    if agent is not None: tasks = [task for task in tasks if task.get("agent") == agent]
+    if agent is not None:
+        tasks = [task for task in tasks if task.get("agent") == agent]
     return [dict(task) for task in tasks if task.get("status") in {QUEUED, RUNNING}]

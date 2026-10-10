@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import math
+import sqlite3
 import time
 from typing import Any, Dict, Mapping
 
@@ -16,6 +17,25 @@ from .compute_lead_persistence import lead_compute_once
 # revenue roles must remain on the authoritative local LeadDB worker path.
 REMOTE_SAFE_AGENTS = frozenset(set(DISCOVERY_TARGETS) | set(SOCIAL_TARGETS))
 REMOTE_WORKER_PREFIX = "remote-compute:"
+
+
+def _is_sqlite_lock_error(error: BaseException) -> bool:
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    message = str(error).lower()
+    return "database is locked" in message or "database table is locked" in message
+
+
+def _read_pending_for_bridge(db: Any, phase: str) -> list[Dict[str, Any]]:
+    started = time.monotonic()
+    print(f"REMOTE COMPUTE BRIDGE: {phase} queue scan started.", flush=True)
+    tasks = pending(db)
+    print(
+        f"REMOTE COMPUTE BRIDGE: {phase} queue scan finished in "
+        f"{time.monotonic() - started:.3f}s with {len(tasks)} active tasks.",
+        flush=True,
+    )
+    return tasks
 
 
 def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> None:
@@ -87,7 +107,7 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
     worker_id = f"{REMOTE_WORKER_PREFIX}{client.worker_id}"
     current_pending = {
         str(task.get("task_id")): task
-        for task in pending(db)
+        for task in _read_pending_for_bridge(db, "publication")
         if isinstance(task, Mapping) and task.get("task_id")
     }
     prepared = 0
@@ -101,31 +121,63 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
         try:
             _call_with_deadline(client, "enqueue", payload, task_id=task_id, deadline_monotonic=deadline_monotonic)
         except Exception as error:
-            db.compute_bridge_mark_retry(task_id, str(error), _now_iso())
             try:
-                retry(db, task_id, worker_id=task_worker_id, error=str(error))
-            except (ValueError, KeyError):
-                # Keep the durable publication error even if a concurrent local
-                # worker already changed the task lease/state.
-                pass
+                db.compute_bridge_mark_retry(task_id, str(error), _now_iso())
+                try:
+                    retry(db, task_id, worker_id=task_worker_id, error=str(error))
+                except (ValueError, KeyError):
+                    # Keep the durable publication error even if a concurrent local
+                    # worker already changed the task lease/state.
+                    pass
+            except sqlite3.OperationalError as db_error:
+                if not _is_sqlite_lock_error(db_error):
+                    raise
+                errors.append({
+                    "task_id": task_id,
+                    "error": f"SQLite lock while recording coordinator enqueue failure ({error}): {db_error}",
+                })
+                return False
             errors.append({"task_id": task_id, "error": str(error)})
             return False
-        db.compute_bridge_mark_published(task_id, _now_iso())
+        try:
+            db.compute_bridge_mark_published(task_id, _now_iso())
+        except sqlite3.OperationalError as error:
+            if not _is_sqlite_lock_error(error):
+                raise
+            errors.append({
+                "task_id": task_id,
+                "error": f"Coordinator accepted task but local SQLite publication update was blocked: {error}",
+            })
+            return False
         published.append({"task_id": task_id, "agent": str(payload.get("agent") or "")})
         return True
 
     # Retry existing publication records first. A coordinator failure must not
-    # cause the bridge to prepare more remote-owned work or scan the whole queue
+    # cause a coordinator failure to prepare more remote-owned work or scan the queue
     # once per publication.
     existing_publications = []
-    for publication in db.compute_bridge_publications():
-        task = current_pending.get(str(publication.get("task_id") or ""))
-        if (
-            task is not None
-            and task.get("status") == RUNNING
-            and task.get("worker_id") == publication.get("worker_id")
-        ):
-            existing_publications.append((publication, task))
+    try:
+        for publication in db.compute_bridge_publications():
+            task = current_pending.get(str(publication.get("task_id") or ""))
+            if (
+                task is not None
+                and task.get("status") == RUNNING
+                and task.get("worker_id") == publication.get("worker_id")
+            ):
+                existing_publications.append((publication, task))
+    except sqlite3.OperationalError as error:
+        if not _is_sqlite_lock_error(error):
+            raise
+        errors.append({"task_id": None, "error": f"SQLite lock while reading publication records: {error}"})
+        return {
+            "status": "degraded",
+            "published_count": 0,
+            "prepared_count": 0,
+            "attempted_count": 0,
+            "errors": errors,
+            "published": [],
+        }
+
     for publication, task in existing_publications[:limit]:
         task_id = str(publication["task_id"])
         if not publish_one(task_id, str(task["worker_id"]), publication["payload"]):
@@ -158,11 +210,16 @@ def publish_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 20
             "payload": task["payload"],
             "compute_requirements": {"workload_class": "cpu_bound", "min_cpu_count": 1, "min_memory_bytes": 1},
         }
-        db.compute_bridge_prepare(task_id, worker_id, payload, _now_iso())
         try:
+            db.compute_bridge_prepare(task_id, worker_id, payload, _now_iso())
             claim_task(db, task_id, worker_id=worker_id, lease_seconds=900)
         except ValueError:
             continue
+        except sqlite3.OperationalError as error:
+            if not _is_sqlite_lock_error(error):
+                raise
+            errors.append({"task_id": task_id, "error": f"SQLite lock while preparing remote work: {error}"})
+            break
         prepared += 1
         if not publish_one(task_id, worker_id, payload):
             break
@@ -180,20 +237,32 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
     if limit <= 0:
         raise ValueError("limit must be positive")
     local_tasks = []
-    for task in pending(db):
-        if (
-            task.get("status") != RUNNING
-            or not str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)
-        ):
-            continue
-        bridge_record = db.compute_bridge_get(task["task_id"])
-        if bridge_record is None or bridge_record.get("status") == "published":
-            local_tasks.append(task)
-
     completed = []
     retried = []
     errors = []
     attempted = 0
+    try:
+        for task in _read_pending_for_bridge(db, "reconciliation"):
+            if (
+                task.get("status") != RUNNING
+                or not str(task.get("worker_id") or "").startswith(REMOTE_WORKER_PREFIX)
+            ):
+                continue
+            bridge_record = db.compute_bridge_get(task["task_id"])
+            if bridge_record is None or bridge_record.get("status") == "published":
+                local_tasks.append(task)
+    except sqlite3.OperationalError as error:
+        if not _is_sqlite_lock_error(error):
+            raise
+        return {
+            "completed_count": 0,
+            "retried_count": 0,
+            "attempted_count": 0,
+            "errors": [{"task_id": None, "error": f"SQLite lock while scanning remote work: {error}"}],
+            "completed": [],
+            "retried": [],
+        }
+
     for task in local_tasks[:limit]:
         attempted += 1
         try:
@@ -209,14 +278,26 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
                 break
             agent = str(remote.get("payload", {}).get("agent") or task.get("agent") or "")
             inner = result.get("result") if isinstance(result.get("result"), Mapping) else result
-            # Local persistence and queue completion are one durable
-            # transaction. Do not downgrade a local integrity failure into a
-            # remote transport warning; let it fail loudly so rollback is tested.
-            _persist_remote_result(db, agent, inner)
-            complete(db, task["task_id"], worker_id=task["worker_id"], result=dict(result))
+            try:
+                # Local persistence and queue completion are one durable
+                # transaction. Do not downgrade a local integrity failure into
+                # a remote transport warning; let it fail loudly so rollback is tested.
+                _persist_remote_result(db, agent, inner)
+                complete(db, task["task_id"], worker_id=task["worker_id"], result=dict(result))
+            except sqlite3.OperationalError as error:
+                if not _is_sqlite_lock_error(error):
+                    raise
+                errors.append({"task_id": task["task_id"], "error": f"SQLite lock while persisting remote result: {error}"})
+                break
             completed.append(task["task_id"])
         elif status == "queued":
-            retry(db, task["task_id"], worker_id=task["worker_id"], error=str(remote.get("error") or "remote task returned to queue"))
+            try:
+                retry(db, task["task_id"], worker_id=task["worker_id"], error=str(remote.get("error") or "remote task returned to queue"))
+            except sqlite3.OperationalError as error:
+                if not _is_sqlite_lock_error(error):
+                    raise
+                errors.append({"task_id": task["task_id"], "error": f"SQLite lock while releasing remote task lease: {error}"})
+                break
             retried.append(task["task_id"])
         elif status == "leased":
             continue
@@ -245,8 +326,16 @@ def bridge_once(
         raise ValueError("budget_seconds must be a finite positive number")
     started_at = time.monotonic()
     deadline_monotonic = started_at + budget_seconds
+    reconcile_started = time.monotonic()
+    print("REMOTE COMPUTE BRIDGE: reconciliation started.", flush=True)
     reconciled = reconcile_remote_work(
         db, client, limit=reconcile_limit, deadline_monotonic=deadline_monotonic
+    )
+    print(
+        f"REMOTE COMPUTE BRIDGE: reconciliation finished in "
+        f"{time.monotonic() - reconcile_started:.3f}s; completed={reconciled['completed_count']} "
+        f"retried={reconciled['retried_count']} errors={len(reconciled['errors'])}.",
+        flush=True,
     )
     if time.monotonic() >= deadline_monotonic and not reconciled["errors"]:
         reconciled["errors"].append({
@@ -265,7 +354,27 @@ def bridge_once(
             "published": [],
         }
     else:
-        published = publish_remote_work(db, client, limit=publish_limit, deadline_monotonic=deadline_monotonic)
+        print("REMOTE COMPUTE BRIDGE: publication started.", flush=True)
+        publish_started = time.monotonic()
+        try:
+            published = publish_remote_work(db, client, limit=publish_limit, deadline_monotonic=deadline_monotonic)
+        except sqlite3.OperationalError as error:
+            if not _is_sqlite_lock_error(error):
+                raise
+            published = {
+                "status": "degraded",
+                "published_count": 0,
+                "prepared_count": 0,
+                "attempted_count": 0,
+                "errors": [{"task_id": None, "error": f"SQLite lock during remote publication: {error}"}],
+                "published": [],
+            }
+        print(
+            f"REMOTE COMPUTE BRIDGE: publication finished in "
+            f"{time.monotonic() - publish_started:.3f}s; published={published['published_count']} "
+            f"errors={len(published.get('errors', []))}.",
+            flush=True,
+        )
     deadline_exceeded = time.monotonic() >= deadline_monotonic
     degraded = bool(reconciled["errors"] or published.get("errors") or deadline_exceeded)
     result = {
