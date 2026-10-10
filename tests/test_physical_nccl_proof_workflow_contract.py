@@ -19,6 +19,8 @@ def test_physical_nccl_workflow_requires_real_cuda_and_nccl_runners():
     assert 'WORLD_SIZE: "2"' in workflow
     assert 'THORIO_EXPECTED_NNODES: "2"' in workflow
     assert "python -m lead_engine.nccl_all_reduce_probe" in workflow
+    assert '"kernels", "output", kernel_ref' in workflow
+    assert '"kernels", "logs", kernel_ref' not in workflow
 
 
 def test_rank_evidence_uses_stable_artifact_directory_layout():
