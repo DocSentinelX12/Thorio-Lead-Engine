@@ -70,7 +70,8 @@ def test_configuration_health_is_healthy(tmp_path):
     assert result["status"] == "healthy"
 
 
-def test_health_report_is_healthy(tmp_path):
+def test_health_report_is_healthy(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
     db = LeadDB(
         data_dir=str(tmp_path)
     )
@@ -94,6 +95,38 @@ def test_health_report_is_healthy(tmp_path):
     assert result["checks"][3]["ok"] is True
 
 
+def test_airtable_health_rejects_missing_api_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIRTABLE_API_KEY", raising=False)
+    config = LeadEngineConfig(
+        database_dir=str(tmp_path),
+        airtable_base_id="appTestHealthFixture",
+    )
+
+    from lead_engine.health import check_airtable_configuration
+
+    result = check_airtable_configuration(config)
+
+    assert result["ok"] is False
+    assert result["status"] == "unhealthy"
+    assert result["error"] == "AIRTABLE_API_KEY is not configured"
+
+
+def test_airtable_health_rejects_disabled_sync(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
+    config = LeadEngineConfig(
+        database_dir=str(tmp_path),
+        airtable_base_id="appTestHealthFixture",
+        sync_enabled=False,
+    )
+
+    from lead_engine.health import check_airtable_configuration
+
+    result = check_airtable_configuration(config)
+
+    assert result["ok"] is False
+    assert result["error"] == "Airtable synchronization is disabled"
+
+
 def test_configuration_health_rejects_invalid_batch_size(
     tmp_path,
 ):
@@ -108,7 +141,8 @@ def test_configuration_health_rejects_invalid_batch_size(
     assert result["status"] == "unhealthy"
 
 
-def test_health_report_is_unhealthy_when_durable_delivery_is_pending(tmp_path):
+def test_health_report_is_unhealthy_when_durable_delivery_is_pending(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
     db = LeadDB(data_dir=str(tmp_path))
     db.insert_if_new({"fingerprint": "health-pending", "company": "Pending Corp"})
 
