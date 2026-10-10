@@ -233,3 +233,32 @@ def test_remote_bridge_degrades_quickly_when_sqlite_writer_lock_persists(tmp_pat
             blocker.rollback()
             blocker.close()
         db.close()
+
+
+def test_remote_bridge_bounds_sqlite_busy_timeout_for_entire_cycle(tmp_path):
+    db = LeadDB(data_dir=Path(tmp_path))
+    try:
+        lead = {
+            "fingerprint": "bridge-busy-timeout-scope",
+            "company": "Example",
+            "signal": "We need an AI development team",
+        }
+        assert db.insert_if_new(lead)
+        enqueue(db, "ai_demand_discovery", {"lead": lead, "evidence_events": []})
+        remote = FakeRemoteClient()
+        observed_timeouts = []
+        original_enqueue = remote.enqueue
+
+        def enqueue_and_observe(payload, task_id=None):
+            observed_timeouts.append(db.conn.execute("PRAGMA busy_timeout").fetchone()[0])
+            return original_enqueue(payload, task_id=task_id)
+
+        remote.enqueue = enqueue_and_observe
+        result = bridge_once(db, remote, publish_limit=10, reconcile_limit=10)
+
+        assert result["status"] == "ok"
+        assert result["published_count"] == 1
+        assert observed_timeouts and all(timeout <= 250 for timeout in observed_timeouts)
+        assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 120000
+    finally:
+        db.close()

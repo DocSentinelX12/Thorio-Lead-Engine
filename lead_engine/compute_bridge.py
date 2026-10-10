@@ -1,6 +1,7 @@
 """Bridge durable local specialist work into the authenticated free coordinator."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import math
 import sqlite3
@@ -36,6 +37,22 @@ def _read_pending_for_bridge(db: Any, phase: str) -> list[Dict[str, Any]]:
         flush=True,
     )
     return tasks
+
+
+@contextmanager
+def _bounded_sqlite_busy_timeout(db: Any, timeout_ms: int = 250):
+    """Keep every SQLite write made during one bridge pass from waiting 120s."""
+    connection = getattr(db, "conn", None)
+    if connection is None or not hasattr(connection, "execute"):
+        yield
+        return
+    original_timeout = int(connection.execute("PRAGMA busy_timeout").fetchone()[0])
+    bounded_timeout = min(original_timeout, timeout_ms)
+    connection.execute(f"PRAGMA busy_timeout={bounded_timeout}")
+    try:
+        yield
+    finally:
+        connection.execute(f"PRAGMA busy_timeout={original_timeout}")
 
 
 def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> None:
@@ -314,6 +331,26 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
     }
 
 def bridge_once(
+    db: Any,
+    client: ComputeWorkerClient,
+    *,
+    publish_limit: int = 20,
+    reconcile_limit: int = 50,
+    include_lead_compute: bool = False,
+    budget_seconds: float = 45.0,
+) -> Dict[str, Any]:
+    with _bounded_sqlite_busy_timeout(db):
+        return _bridge_once(
+            db,
+            client,
+            publish_limit=publish_limit,
+            reconcile_limit=reconcile_limit,
+            include_lead_compute=include_lead_compute,
+            budget_seconds=budget_seconds,
+        )
+
+
+def _bridge_once(
     db: Any,
     client: ComputeWorkerClient,
     *,
