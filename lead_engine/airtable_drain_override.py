@@ -35,6 +35,8 @@ def drain_pending(
         budget_seconds = 120.0
     budget_seconds = max(1.0, budget_seconds)
     batch_limit = max(1, int(limit))
+    deferred_fingerprints: set[str] = set()
+    uses_default_batch_delivery = sync_batch is batch_delivery.sync_pending_batched
     started = time.perf_counter()
 
     aggregate: Dict[str, Any] = {
@@ -51,7 +53,14 @@ def drain_pending(
     }
 
     while True:
-        result = sync_batch(db) if batch_limit == 50 else sync_batch(db, limit=batch_limit)
+        if uses_default_batch_delivery:
+            result = sync_batch(
+                db,
+                limit=batch_limit,
+                exclude_fingerprints=deferred_fingerprints,
+            )
+        else:
+            result = sync_batch(db) if batch_limit == 50 else sync_batch(db, limit=batch_limit)
         if not isinstance(result, dict):
             raise RuntimeError("Airtable sync returned a non-object result")
 
@@ -65,6 +74,17 @@ def drain_pending(
         aggregate["failed_count"] += int(result.get("failed_count", 0) or 0)
         aggregate["deferred_research_count"] += int(result.get("deferred_research_count", 0) or 0)
         aggregate["batches"] += 1
+        deferred_rows = result.get("deferred_research")
+        if isinstance(deferred_rows, list):
+            for deferred in deferred_rows:
+                if not isinstance(deferred, dict):
+                    continue
+                lead = deferred.get("lead")
+                fingerprint = str(deferred.get("fingerprint") or "").strip()
+                if not fingerprint and isinstance(lead, dict):
+                    fingerprint = str(lead.get("fingerprint") or "").strip()
+                if fingerprint:
+                    deferred_fingerprints.add(fingerprint)
 
         processed = (
             int(result.get("synced_count", 0) or 0)
@@ -75,7 +95,9 @@ def drain_pending(
         if int(result.get("failed_count", 0) or 0) > 0:
             break
         if processed < batch_limit:
-            aggregate["drain_complete"] = True
+            # Deferred research records are intentionally still pending. The
+            # drain is complete only when no deferred records remain.
+            aggregate["drain_complete"] = aggregate["deferred_research_count"] == 0
             break
         if time.perf_counter() - started >= budget_seconds:
             break

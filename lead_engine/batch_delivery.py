@@ -183,9 +183,20 @@ def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
         _resilient_batch_upsert("opportunities", "Opportunity", chunk)
 
 
-def sync_pending_batched(db, limit: int = 50) -> Dict[str, Any]:
-    """Synchronize pending leads with batch-first, durable delivery."""
-    rows = db.pending(limit=limit)
+def sync_pending_batched(
+    db,
+    limit: int = 50,
+    exclude_fingerprints: set[str] | frozenset[str] | None = None,
+) -> Dict[str, Any]:
+    """Synchronize pending leads with batch-first, durable delivery.
+
+    Exclusions are scoped to one bounded drain cycle. Deferred leads remain
+    durable and pending, but are not selected repeatedly within that same cycle.
+    """
+    excluded = {str(value).strip() for value in (exclude_fingerprints or ()) if str(value).strip()}
+    rows = db.pending(limit=limit + len(excluded)) if excluded else db.pending(limit=limit)
+    if excluded:
+        rows = [row for row in rows if str(row[0]) not in excluded][:limit]
     valid: List[tuple[str, Dict[str, Any]]] = []
     failed: List[Dict[str, Any]] = []
 
