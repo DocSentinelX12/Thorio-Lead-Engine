@@ -505,6 +505,7 @@ jobs:
       - name: Restore encrypted external browser authentication state
         env:
           GH_TOKEN: ${{ github.token }}
+          THORIO_PREVIOUS_STATE_RUN_ID: ${{ steps.previous_state.outputs.run_id }}
         run: |
           set -euo pipefail
           if [ -z "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ]; then
@@ -512,12 +513,25 @@ jobs:
             exit 0
           fi
           rm -f data/browser-state.json data/browser-state.enc
-          previous_run_id=""
-          while IFS= read -r run_id; do
-            [ -z "$run_id" ] && continue
-            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
-            if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
-          done < <(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId')
+          previous_run_id="${THORIO_PREVIOUS_STATE_RUN_ID:-}"
+          artifact_id=""
+          if [ -n "$previous_run_id" ]; then
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${previous_run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
+            if [ -z "$artifact_id" ]; then
+              echo "EXTERNAL BROWSER STATE: selected engine-state run has no usable browser-state artifact; checking a bounded recent history."
+              previous_run_id=""
+            fi
+          fi
+          if [ -z "$previous_run_id" ]; then
+            checked_runs=0
+            while IFS= read -r run_id; do
+              [ -z "$run_id" ] && continue
+              checked_runs=$((checked_runs + 1))
+              artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
+              if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
+            done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId')
+            echo "EXTERNAL BROWSER STATE: bounded fallback checked ${checked_runs} successful runs."
+          fi
           if [ -n "$previous_run_id" ]; then
             mkdir -p data/browser-state-restore
             gh run download "$previous_run_id" --repo "$GITHUB_REPOSITORY" --name thorio-browser-auth-state --dir data/browser-state-restore
@@ -526,12 +540,12 @@ jobs:
               python infra/external-browser/browser-state.py decrypt data/browser-state.enc data/browser-state.json
               rm -rf data/browser-state-restore
               chmod 600 data/browser-state.json
-              echo "EXTERNAL BROWSER STATE RESTORED: authenticated state recovered from the newest successful production run."
+              echo "EXTERNAL BROWSER STATE RESTORED: authenticated state recovered from the newest usable production run."
             else
               echo "EXTERNAL BROWSER STATE: previous artifact was found but did not contain browser-state.enc; starting without persisted state."
             fi
           else
-            echo "EXTERNAL BROWSER STATE: no previous encrypted state artifact exists; first-run browser state will be created."
+            echo "EXTERNAL BROWSER STATE: no usable encrypted state artifact found in the bounded recent history; starting without persisted state."
           fi
 
       - name: Start external headless browser
