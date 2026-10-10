@@ -445,16 +445,30 @@ def _log_uncaught_exception(exc_type, exc, tb):
 sys.excepthook = _log_uncaught_exception
 
 def run(*args):
+    # Stream bootstrap output to both the durable worker log and Kaggle's live
+    # notebook log. Capturing only to LOG_PATH hid the exact startup phase from
+    # the coordinator while the JIT runner was being installed or registered.
     with LOG_PATH.open("a", encoding="utf-8") as log:
-        result = subprocess.run(
-            list(args), stdout=log, stderr=subprocess.STDOUT, check=False
+        process = subprocess.Popen(
+            list(args),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
-    if result.returncode != 0:
+        if process.stdout is None:
+            raise RuntimeError("Runner bootstrap stdout pipe was not created")
+        for line in process.stdout:
+            log.write(line)
+            log.flush()
+            print(line, end="", file=sys.stdout, flush=True)
+        returncode = process.wait()
+    if returncode != 0:
         try:
             print(LOG_PATH.read_text(encoding="utf-8", errors="replace")[-12000:], file=sys.stderr, flush=True)
         except OSError:
             pass
-        raise subprocess.CalledProcessError(result.returncode, list(args))
+        raise subprocess.CalledProcessError(returncode, list(args))
 
 def get_runner_token():
     dataset_slug = CONFIG["github_runner_jit_token_dataset_slug"]
