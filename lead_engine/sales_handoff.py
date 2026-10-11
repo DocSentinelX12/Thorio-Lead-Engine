@@ -93,8 +93,12 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
     if not isinstance(company_result, Mapping) or not isinstance(company_result.get("record"), Mapping): return False
     company_record = company_result["record"]; company_fields = _record_fields(company_record)
     if not str(company_record.get("id") or "").strip() or str(company_fields.get("Company") or "").strip() != str(lead.get("company") or "").strip(): return False
-    routes = lead.get("potential_routes") or []; expected_routes = {str(route).strip() for route in routes if str(route).strip() in {"Paxus", "Shiftr"}}
     routing_result = lead.get("routing_result")
+    if isinstance(routing_result, Mapping) and "destinations" in routing_result:
+        active_routes = {str(route).strip() for route in (routing_result.get("destinations") or [])}
+    else:
+        active_routes = {str(route).strip() for route in (lead.get("potential_routes") or [])}
+    expected_routes = active_routes & {"Paxus", "Shiftr"}
     destinations = {str(route).strip() for route in (routing_result.get("destinations") or [])} if isinstance(routing_result, Mapping) else set()
     eligible = {str(route).strip() for route in (lead.get("eligible_routes") or [])}
     preserved = {str(route).strip() for route in (lead.get("preserved_routes") or [])}
@@ -110,7 +114,7 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
         if partner not in {"Paxus", "Shiftr"} or partner in observed_routes or partner not in expected_routes or opportunity != expected_key or company != str(lead.get("company") or "").strip(): return False
         observed_routes[partner] = dict(record)
     if set(observed_routes) != expected_routes: return False
-    astrivon_expected = "Astrivon Labs" in {str(route).strip() for route in (lead.get("potential_routes") or [])}
+    astrivon_expected = "Astrivon Labs" in active_routes
     astrivon_result = result.get("astrivon_referral")
     if astrivon_expected:
         if not isinstance(astrivon_result, Mapping) or not isinstance(astrivon_result.get("record"), Mapping): return False
