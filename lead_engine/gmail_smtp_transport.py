@@ -136,6 +136,7 @@ class GmailSMTPTransport:
                 "could not establish Gmail SMTP using STARTTLS port 587 or SSL port 465"
             ) from cause
 
+        try:
             try:
                 refused = client.send_message(message, from_addr=EXPECTED_SENDER, to_addrs=[address])
             except smtplib.SMTPRecipientsRefused as exc:
