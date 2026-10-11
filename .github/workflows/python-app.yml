@@ -571,18 +571,71 @@ jobs:
               raise SystemExit("AIRTABLE RUNTIME CREDENTIAL FAILURE: selected credential was not propagated to the production runtime.")
           print(f"AIRTABLE RUNTIME CREDENTIAL VERIFIED: selected source={source}; secret value is not exposed.")
           PY
+      - name: Audit account credential names without reading secret values
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from lead_engine.account_auth import SUPPORTED_ACCOUNTS, auth_status
+
+          def api_names(endpoint, collection_key):
+              result = subprocess.run(
+                  ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/{endpoint}", "--paginate", "--jq", f".{collection_key}[].name"],
+                  capture_output=True, text=True, timeout=20,
+              )
+              if result.returncode != 0:
+                  return None
+              return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+          secrets = api_names("secrets", "secrets")
+          variables = api_names("variables", "variables")
+          status = auth_status()
+          print("ACCOUNT CREDENTIAL NAME AUDIT (names and presence only; no values are read):")
+          for account in SUPPORTED_ACCOUNTS:
+              prefix = "THORIO_ACCOUNT_" + account.upper()
+              expected = {prefix + "_USERNAME", prefix + "_PASSWORD", prefix + "_STORAGE_STATE_B64"}
+              matching = set()
+              for source in (secrets, variables):
+                  if source is None:
+                      continue
+                  for name in source:
+                      normalized = "".join(character.lower() for character in name if character.isalnum())
+                      aliases = {
+                          "product_hunt": ("producthunt",),
+                          "web_job": ("webjob", "webjobs"),
+                      }.get(account, (account.replace("_", ""),))
+                      if any(alias in normalized for alias in aliases) and ("thorio" in normalized or normalized.startswith(account.replace("_", ""))):
+                          matching.add(name)
+              item = status[account]
+              print(
+                  f"{account}: runtime_configured={item['configured']} "
+                  f"username_present={item['username_configured']} "
+                  f"password_present={item['password_configured']} "
+                  f"storage_state_present={item['storage_state_configured']} "
+                  f"expected_secret_names_present={sorted(expected.intersection(secrets or set())) if secrets is not None else 'unavailable'} "
+                  f"matching_repository_names={sorted(matching) if secrets is not None or variables is not None else 'unavailable'}"
+              )
+          print(
+              "REPOSITORY NAME INVENTORY: "
+              f"secrets_api={'available' if secrets is not None else 'unavailable'} "
+              f"variables_api={'available' if variables is not None else 'unavailable'}"
+          )
+          PY
       - name: Verify account authentication configuration
         run: |
           python - <<'PY'
           from lead_engine.account_auth import SUPPORTED_ACCOUNTS, auth_status
           status = auth_status()
+          for account in SUPPORTED_ACCOUNTS:
+              item = status[account]
+              print(f"{account}: configured={item['configured']} username_configured={item['username_configured']} password_configured={item['password_configured']} storage_state_configured={item['storage_state_configured']} secrets_exposed={item['secrets_exposed']}")
           missing = [account for account in SUPPORTED_ACCOUNTS if not status[account]["configured"]]
           if missing:
               print("ACCOUNT AUTH CONFIGURATION FAILURE: missing credentials for " + ", ".join(missing))
               raise SystemExit(1)
-          for account in SUPPORTED_ACCOUNTS:
-              item = status[account]
-              print(f"{account}: configured={item['configured']} username_configured={item['username_configured']} password_configured={item['password_configured']} storage_state_configured={item['storage_state_configured']} secrets_exposed={item['secrets_exposed']}")
           print("ACCOUNT AUTH CONFIGURATION VERIFIED: all agreed accounts are available to the production runtime without exposing secret values.")
           PY
       - name: Verify complete free source catalog wiring
