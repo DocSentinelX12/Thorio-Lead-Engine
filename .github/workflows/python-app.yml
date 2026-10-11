@@ -401,7 +401,8 @@ jobs:
                   print(f"{label}: write probe failed before HTTP response: {exc}")
                   continue
               if status not in (200, 201):
-                  print(f"{label}: write probe failed with HTTP {status}.")
+                  diagnostic = " ".join(str(body).replace(token, "[REDACTED]").split())[:1200]
+                  print(f"{label}: write probe failed with HTTP {status}: {diagnostic or 'no response body'}")
                   continue
               try:
                   payload = json.loads(body)
