@@ -16,7 +16,7 @@ from .outreach_engine import OutreachContractError, apply_outcome, build_outreac
 from .sales_closer_intelligence import build_commercial_strategy, evaluate_closer_message
 from .revenue_conversation import objection_reply
 from .revenue_execution import RevenueTransportUnavailable, _issue_closer_capability, configured_revenue_transport, execute_outbound
-from .sales_handoff import package_digest, package_is_ready
+from .sales_handoff import package_digest, package_is_ready, verify_persisted_airtable_handoff
 
 class AgentContractError(ValueError): pass
 @dataclass(frozen=True)
@@ -221,6 +221,17 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
     research = lead.get("company_research")
     if not isinstance(research, Mapping) or not research.get("company_verified"): raise AgentContractError("outreach_closer requires verified company research")
     if not research.get("decision_maker") or not research.get("decision_maker_evidence") or str(research.get("decision_maker_verification_status") or "").strip().lower() != "verified": raise AgentContractError("outreach_closer requires verified decision-maker research")
+    handoff_confirmed, handoff_reason = verify_persisted_airtable_handoff(
+        ctx.db, lead, include_downstream_lifecycle=False
+    )
+    if not handoff_confirmed:
+        if str(handoff_reason).startswith(("airtable_readback_failed:", "handoff_state_read_failed:")):
+            raise RevenueTransportUnavailable(
+                f"current Airtable handoff could not be reverified; outreach remains queued: {handoff_reason}"
+            )
+        raise AgentContractError(
+            f"outreach_closer requires exact current Airtable handoff confirmation: {handoff_reason}"
+        )
     try: decision = build_outreach_decision(lead)
     except OutreachContractError as exc: raise AgentContractError(str(exc)) from exc
     route = str(decision.route or "").strip().lower()
