@@ -351,3 +351,50 @@ def test_web_job_discovery_rejects_generic_web_source_without_hiring_evidence():
         assert "not identifiable as a job source" in str(exc)
     else:
         raise AssertionError("generic non-hiring web evidence must remain rejected")
+
+def test_stale_initial_outreach_task_stops_after_opt_out(tmp_path):
+    db = _db(tmp_path)
+    lead = {
+        "fingerprint": "stale-initial-opt-out",
+        "company": "Acme",
+        "sales_eligibility": "eligible",
+        "outreach_state": "opted_out",
+        "revenue_lifecycle_state": "closed_lost",
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "outreach_closer", {"lead": lead})
+    transport = _FakeTransport()
+    register_revenue_transport(transport)
+    try:
+        result = run_worker_once(db, "outreach_closer", worker_id="stale-initial-opt-out")
+    finally:
+        register_revenue_transport(None)
+    assert result["completed_count"] == 1 and result["failed_count"] == 0
+    assert result["results"][0]["action"] == "stop"
+    assert transport.calls == []
+
+
+def test_stale_followup_task_stops_after_opt_out(tmp_path):
+    db = _db(tmp_path)
+    lead = {
+        "fingerprint": "stale-followup-opt-out",
+        "company": "Acme",
+        "sales_eligibility": "eligible",
+        "outreach_state": "opted_out",
+        "revenue_lifecycle_state": "closed_lost",
+        "outreach_history": [{"outcome": "sent"}],
+        "outreach_attempt": 1,
+        "outreach_route": "Thorio",
+    }
+    db.insert_if_new(lead)
+    enqueue(db, "outreach_closer", {"lead": lead, "execution_kind": "follow_up"})
+    transport = _FakeTransport()
+    register_revenue_transport(transport)
+    try:
+        result = run_worker_once(db, "outreach_closer", worker_id="stale-followup-opt-out")
+    finally:
+        register_revenue_transport(None)
+    assert result["completed_count"] == 1 and result["failed_count"] == 0
+    assert result["results"][0]["action"] == "stop"
+    assert transport.calls == []
+
