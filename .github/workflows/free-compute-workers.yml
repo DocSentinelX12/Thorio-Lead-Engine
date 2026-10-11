@@ -70,13 +70,11 @@ jobs:
     needs: coordinator_gate
     if: github.ref == 'refs/heads/main' && needs.coordinator_gate.outputs.enabled == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     strategy:
       fail-fast: false
-      # GitHub's free standard-runner concurrency remains 20.
-      # The matrix provides up to 80 logical worker identities when a real,
-      # reachable coordinator is available. It does not claim 80 simultaneous
-      # GitHub-hosted runners.
+      # Keep the existing worker fan-out, but stagger coordinator health probes
+      # and retry transient 5xx responses before failing a worker closed.
       max-parallel: 20
       matrix:
         worker: [01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80]
@@ -116,21 +114,83 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Recheck coordinator health before worker start
+      - name: Recheck coordinator health with staggered bounded retries
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --max-time "${THORIO_COMPUTE_HTTP_TIMEOUT}" --retry 4 --retry-delay 2 --retry-max-time 30 --retry-connrefused \
-            -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" \
-            -H "Accept: application/json" \
-            "${THORIO_COMPUTE_COORDINATOR_URL%/}/health" >/tmp/thorio-coordinator-health.json
           python - <<'PY'
           import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
           from pathlib import Path
-          payload = json.loads(Path('/tmp/thorio-coordinator-health.json').read_text())
-          if payload.get('ok') is not True or payload.get('free_only') is not True:
-              raise SystemExit('Coordinator health response is not an active free-only coordinator.')
-          print('Coordinator health recheck passed.')
+
+          base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
+          token = os.environ["THORIO_COMPUTE_AUTH_TOKEN"]
+          worker_id = os.environ["THORIO_WORKER_ID"]
+          try:
+              worker_number = int(worker_id.rsplit("-", 1)[-1])
+          except ValueError as exc:
+              raise SystemExit("Worker identity does not have the expected numeric suffix.") from exc
+
+          # Worker jobs can sit in GitHub's queue after the coordinator gate passes.
+          # Spread their first health request to avoid a synchronized cold-start burst.
+          stagger_seconds = ((worker_number - 1) % 20) * 2
+          if stagger_seconds:
+              print(f"COORDINATOR_HEALTH_STAGGER seconds={stagger_seconds}", flush=True)
+              time.sleep(stagger_seconds)
+
+          retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+          payload = None
+          last_failure = "no response"
+          for attempt in range(1, 9):
+              request = urllib.request.Request(
+                  base + "/health",
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/json",
+                      "User-Agent": "Thorio-Free-Compute-Worker/1.0",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      raw = response.read().decode("utf-8", errors="replace")
+                  payload = json.loads(raw)
+                  break
+              except urllib.error.HTTPError as exc:
+                  last_failure = f"HTTP {exc.code} {exc.reason}"
+                  retryable = exc.code in retryable_statuses
+                  print(
+                      f"COORDINATOR_HEALTH_ATTEMPT attempt={attempt}/8 status={exc.code} "
+                      f"retryable={str(retryable).lower()}",
+                      flush=True,
+                  )
+                  if not retryable or attempt == 8:
+                      raise SystemExit(
+                          f"Coordinator health recheck failed after {attempt} attempt(s): {last_failure}"
+                      ) from exc
+              except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                  last_failure = f"{type(exc).__name__}: {exc}"
+                  print(
+                      f"COORDINATOR_HEALTH_ATTEMPT attempt={attempt}/8 error={last_failure}",
+                      flush=True,
+                  )
+                  if attempt == 8:
+                      raise SystemExit(
+                          f"Coordinator health recheck failed after {attempt} attempts: {last_failure}"
+                      ) from exc
+              except json.JSONDecodeError as exc:
+                  raise SystemExit("Coordinator health endpoint returned invalid JSON.") from exc
+
+              if attempt < 8:
+                  delay = min(5 * (2 ** (attempt - 1)), 30) + (worker_number % 5)
+                  print(f"COORDINATOR_HEALTH_RETRY delay_seconds={delay}", flush=True)
+                  time.sleep(delay)
+
+          if not isinstance(payload, dict) or payload.get("ok") is not True or payload.get("free_only") is not True:
+              raise SystemExit("Coordinator health response is not an active free-only coordinator.")
+          print("Coordinator health recheck passed.")
           PY
 
       - name: Run bounded worker and require readiness evidence
