@@ -118,8 +118,8 @@ def test_all_nine_authenticated_account_types_are_supported():
 
 def test_authentication_validation_does_not_require_collection_selectors():
     result = validate_authenticated_browser_configuration(_account_targets(selectors=False))
-    assert result["configured_lane_count"] == 6
-    assert result["authenticated_lane_count"] == 6
+    assert result["configured_lane_count"] == 9
+    assert result["authenticated_lane_count"] == 9
     assert result["secrets_exposed"] is False
 
 
