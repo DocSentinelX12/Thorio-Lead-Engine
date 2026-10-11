@@ -20,7 +20,7 @@ LANES = (
 
 def test_production_runtime_receives_each_discovery_lane_configuration():
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "THORIO_BROWSER_DISCOVERY_TARGETS: ${{ secrets.THORIO_BROWSER_DISCOVERY_TARGETS }}" in workflow
+    assert "THORIO_BROWSER_DISCOVERY_TARGETS: ${{ vars.THORIO_BROWSER_DISCOVERY_TARGETS || secrets.THORIO_BROWSER_DISCOVERY_TARGETS }}" in workflow
     for lane in LANES:
         prefix = f"THORIO_DISCOVERY_{lane}_"
         for field in ("ENABLED", "URL", "TOKEN", "RECORDS_PATH", "TEXT_FIELDS", "COMPANY_FIELDS", "PERSON_FIELDS"):
