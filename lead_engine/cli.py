@@ -225,7 +225,52 @@ def main(argv=None):
             return 1
 
         if result.get("status") != "completed":
-            print("PRODUCTION EXECUTION GATE FAILURE: bounded scheduler execution did not complete without failures.", flush=True)
+            sync_summary = result.get("sync") if isinstance(result.get("sync"), dict) else {}
+            agents_summary = result.get("agents") if isinstance(result.get("agents"), dict) else {}
+            post_agents_summary = result.get("post_sync_agents") if isinstance(result.get("post_sync_agents"), dict) else {}
+            source_failures = result.get("failed") if isinstance(result.get("failed"), list) else []
+            sync_failures = sync_summary.get("failed") if isinstance(sync_summary.get("failed"), list) else []
+            agent_failure_details = []
+            for round_result in agents_summary.get("rounds", []):
+                if not isinstance(round_result, dict):
+                    continue
+                for agent_result in round_result.get("agents", []):
+                    if not isinstance(agent_result, dict) or not int(agent_result.get("failed_count", 0) or 0):
+                        continue
+                    agent_failure_details.append({
+                        "agent": agent_result.get("agent"),
+                        "failed_count": int(agent_result.get("failed_count", 0) or 0),
+                    })
+            failure_summary = {
+                "status": result.get("status"),
+                "source_failed_count": int(result.get("failed_count", 0) or 0),
+                "processing_failed_count": int(result.get("processing_failed_count", 0) or 0),
+                "sync_failed_count": int(result.get("sync_failed_count", 0) or 0),
+                "agent_failed_count": int(result.get("agent_failed_count", 0) or 0),
+                "post_sync_agent_failed_count": int(result.get("post_sync_agent_failed_count", 0) or 0),
+                "source_failures": [
+                    {"source": item.get("source"), "error": str(item.get("error", ""))[:240]}
+                    for item in source_failures[:5] if isinstance(item, dict)
+                ],
+                "sync_failures": [
+                    {"error": str(item.get("error", ""))[:240], "status": item.get("status")}
+                    for item in sync_failures[:5] if isinstance(item, dict)
+                ],
+                "agent_failures": agent_failure_details[:10],
+                "agent_remaining_queue_count": agents_summary.get("remaining_queue_count"),
+                "airtable_drain": {
+                    "batches": sync_summary.get("batches"),
+                    "drain_complete": sync_summary.get("drain_complete"),
+                    "elapsed_seconds": sync_summary.get("elapsed_seconds"),
+                    "drain_budget_seconds": sync_summary.get("drain_budget_seconds"),
+                },
+                "post_sync_agent_remaining_queue_count": post_agents_summary.get("remaining_queue_count"),
+            }
+            print(
+                "PRODUCTION EXECUTION GATE FAILURE: "
+                + json.dumps(failure_summary, ensure_ascii=False, default=str),
+                flush=True,
+            )
             return 1
 
     print(json.dumps(result, indent=2, ensure_ascii=False, default=str), flush=True)
