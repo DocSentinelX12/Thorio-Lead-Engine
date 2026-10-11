@@ -278,25 +278,25 @@ class LeadScheduler:
         else:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=agent_max_rounds)
         remote_after = self._bridge_remote()
-        phase_started = time.monotonic()
+        phase_started = time.perf_counter()
         print("PRODUCTION PHASE: Paxus research queue processing started.", flush=True)
         paxus_research = process_paxus_research_queue(db)
         paxus_summary = paxus_research if isinstance(paxus_research, dict) else {}
         print(
             "PRODUCTION PHASE: Paxus research queue processing finished "
-            f"in {time.monotonic() - phase_started:.1f}s; "
+            f"in {time.perf_counter() - phase_started:.1f}s; "
             f"status={paxus_summary.get('status', 'unknown')} "
             f"processed={len(paxus_summary.get('processed', [])) if isinstance(paxus_summary.get('processed'), list) else 0} "
             f"errors={len(paxus_summary.get('errors', [])) if isinstance(paxus_summary.get('errors'), list) else 0} "
             f"queued_count={paxus_summary.get('queued_count', 'unknown')}.",
             flush=True,
         )
-        phase_started = time.monotonic()
+        phase_started = time.perf_counter()
         print("PRODUCTION PHASE: Airtable pending-delivery drain started.", flush=True)
         sync_result = drain_pending(db, sync_batch=sync_pending)
         print(
             "PRODUCTION PHASE: Airtable pending-delivery drain finished "
-            f"in {time.monotonic() - phase_started:.1f}s; "
+            f"in {time.perf_counter() - phase_started:.1f}s; "
             f"synced={int(sync_result.get('synced_count', 0) or 0)} "
             f"already_exists={int(sync_result.get('already_exists_count', 0) or 0)} "
             f"failed={int(sync_result.get('failed_count', 0) or 0)} "
