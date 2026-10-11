@@ -63,6 +63,8 @@ jobs:
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
+      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
       THORIO_FREE_ONLY: "1"
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
@@ -714,14 +716,43 @@ jobs:
             exit 1
           fi
           echo "PRODUCTION READINESS VERIFIED: live business-intent discovery and an authorized outbound transport are configured."
+      - name: Restore durable Turso engine state
+        id: turso_restore
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          if [ -n "${TURSO_DATABASE_URL:-}" ] || [ -n "${TURSO_AUTH_TOKEN:-}" ]; then
+            python -m lead_engine.turso_state restore --data-dir data > data/turso-restore.log 2>&1 || {
+              cat data/turso-restore.log
+              exit 1
+            }
+            cat data/turso-restore.log
+            restored="$(sed -n 's/^restored=//p' data/turso-restore.log | tail -n 1)"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "restored=${restored:-false}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TURSO STATE DISABLED: both repository secrets are not configured; existing artifact recovery remains active."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Find newest usable engine state
         id: previous_state
         env:
           GH_TOKEN: ${{ github.token }}
+          TURSO_STATE_RESTORED: ${{ steps.turso_restore.outputs.restored }}
         run: |
           set -euo pipefail
           previous_run_id=""
           prior_production_run_id=""
+          if [ "${TURSO_STATE_RESTORED:-false}" = "true" ]; then
+            echo "ENGINE STATE RECOVERY: complete state restored from Turso; artifact recovery is not needed for SQLite databases."
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           production_runs="$(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')"
           while IFS= read -r run_id; do
             [ -z "$run_id" ] && continue
@@ -749,7 +780,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.previous_state.outputs.run_id }}
       - name: Validate restored Lead Engine state integrity
-        if: steps.previous_state.outputs.run_id != ''
+        if: steps.turso_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -874,6 +905,7 @@ jobs:
           exit 1
 
       - name: Run Lead Engine for one bounded production cycle
+        id: engine_run
         run: |
           set -o pipefail
           set +e
@@ -894,6 +926,15 @@ jobs:
           fi
           rm -f data/browser-worker.pid
           exit "$engine_status"
+      - name: Persist durable Turso engine state
+        if: always() && steps.turso_restore.outputs.enabled == 'true' && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m lead_engine.turso_state snapshot --data-dir data
+
       - name: Verify active collection and Airtable delivery
         run: |
           python - <<'PY'
