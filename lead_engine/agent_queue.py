@@ -105,9 +105,16 @@ def enqueue_many(db, tasks: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
         _validate_task_authorization(str(agent), payload)
 
     if _queue_db(db):
-        own_transaction = getattr(db, "_batch_write_depth", 0) == 0
+        own_transaction = (
+            getattr(db, "_batch_write_depth", 0) == 0
+            and not getattr(db.conn, "in_transaction", False)
+        )
         if own_transaction:
-            db.conn.execute("BEGIN IMMEDIATE")
+            begin_immediate = getattr(db, "_begin_immediate", None)
+            if callable(begin_immediate):
+                begin_immediate()
+            else:
+                db.conn.execute("BEGIN IMMEDIATE")
         try:
             now = _iso(_now())
             created: List[Dict[str, Any]] = []
