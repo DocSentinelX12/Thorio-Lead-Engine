@@ -77,7 +77,11 @@ def _opportunity_need(lead: Dict[str, Any], route: str) -> str:
     if any(term in combined for term in ("saas", "product")): return "SaaS / Product"
     if any(term in combined for term in ("staff augmentation", "augmentation")): return "Staff Augmentation"
     if any(term in combined for term in ("software", "development", "build", "custom")): return "Software Development"
-    if any(term in combined for term in ("b2b", "sales", "lead generation", "outreach")): return "B2B Outreach / Lead Generation"
+    # The Airtable Opportunities.Need single-select currently has no
+    # B2B Outreach / Lead Generation choice. Preserve the detailed need in
+    # Research and use the schema-supported catch-all rather than failing the
+    # entire lead handoff with an invalid select option.
+    if any(term in combined for term in ("b2b", "sales", "lead generation", "outreach")): return "Other"
     return "Other"
 def _opportunity_fields(lead: Dict[str, Any], route: str) -> Dict[str, Any]:
     fingerprint = _text(lead.get("fingerprint")); company = _text(lead.get("company"))
