@@ -6,7 +6,7 @@ from .master_tracker_sync import (
 )
 
 
-def test_astrivon_referral_sync_uses_independent_partner_identity():
+def test_astrivon_referral_is_review_only_until_airtable_partner_schema_supports_it():
     lead = {
         "fingerprint": "fp-astrivon",
         "company": "Acme",
@@ -18,22 +18,16 @@ def test_astrivon_referral_sync_uses_independent_partner_identity():
         },
     }
     with patch(
-        "lead_engine.master_tracker_sync.find_master_records",
-        return_value=[],
-    ), patch(
         "lead_engine.master_tracker_sync.atomic_upsert_master_record",
         return_value={"records": [{"id": "rec-ref"}]},
     ) as upsert:
         result = sync_astrivon_referral(lead)
 
-    assert result["status"] == "created"
-    fields = upsert.call_args.args[2]
-    assert fields["Partner"] == "Astrivon Labs"
-    assert fields["Referral"] == "fp-astrivon:Astrivon Labs"
-    assert fields["Commission Rate"] == 0.20
+    assert result is None
+    upsert.assert_not_called()
 
 
-def test_astrivon_commissions_are_recorded_per_received_payment_event():
+def test_astrivon_commissions_are_not_written_until_airtable_partner_schema_supports_them():
     lead = {
         "fingerprint": "fp-astrivon",
         "company": "Acme",
@@ -41,31 +35,15 @@ def test_astrivon_commissions_are_recorded_per_received_payment_event():
         "astrivon_status": "active",
         "astrivon_partner_confirmed": True,
         "astrivon_payment_events": [
-            {
-                "event_id": "payment-001",
-                "received_at": "2026-09-26T12:00:00+00:00",
-                "revenue_amount": 1000,
-            },
-            {
-                "event_id": "payment-002",
-                "received_at": "2026-10-26T12:00:00+00:00",
-                "revenue_amount": 500,
-            },
+            {"event_id": "payment-001", "received_at": "2026-09-26T12:00:00+00:00", "revenue_amount": 1000},
+            {"event_id": "payment-002", "received_at": "2026-10-26T12:00:00+00:00", "revenue_amount": 500},
         ],
     }
     with patch(
-        "lead_engine.master_tracker_sync.find_master_records",
-        return_value=[],
-    ), patch(
         "lead_engine.master_tracker_sync.atomic_upsert_master_record",
         return_value={"records": [{"id": "rec-commission"}]},
     ) as upsert:
         results = sync_astrivon_commissions(lead)
 
-    assert len(results) == 2
-    first_fields = upsert.call_args_list[0].args[2]
-    second_fields = upsert.call_args_list[1].args[2]
-    assert first_fields["Partner"] == "Astrivon Labs"
-    assert first_fields["Expected Commission"] == 200.0
-    assert second_fields["Expected Commission"] == 100.0
-    assert first_fields["Referral"] != second_fields["Referral"]
+    assert results == []
+    upsert.assert_not_called()
