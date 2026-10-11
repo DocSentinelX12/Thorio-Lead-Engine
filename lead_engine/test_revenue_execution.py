@@ -65,7 +65,7 @@ def test_production_closer_sends_and_marks_outreach_sent(tmp_path, monkeypatch):
     finally: register_revenue_transport(None)
 
 
-def test_closer_does_not_wait_for_airtable_handoff(tmp_path):
+def test_closer_blocks_outreach_without_confirmed_airtable_handoff(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead("nonblocking-airtable-test")
     lead["sales_eligibility"] = "eligible"
@@ -75,9 +75,9 @@ def test_closer_does_not_wait_for_airtable_handoff(tmp_path):
     register_revenue_transport(transport)
     try:
         result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
-        assert result["completed_count"] == 1, result["results"]
-        assert result["failed_count"] == 0, result["results"]
-        assert len(transport.calls) == 1
+        assert result["completed_count"] == 0, result["results"]
+        assert result["failed_count"] == 1, result["results"]
+        assert transport.calls == []
     finally:
         register_revenue_transport(None)
 
