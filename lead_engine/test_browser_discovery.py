@@ -160,4 +160,4 @@ def test_browser_authentication_can_be_configured_before_collection():
     )
     result = validate_authenticated_browser_configuration(targets)
     assert result["configured_accounts"] == list(SUPPORTED_ACCOUNTS)
-    assert result["configured_lane_count"] == 9
+    assert result["configured_lane_count"] == 10
