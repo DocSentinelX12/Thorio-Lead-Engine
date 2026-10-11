@@ -292,8 +292,29 @@ class LeadScheduler:
             flush=True,
         )
         phase_started = time.perf_counter()
-        print("PRODUCTION PHASE: Airtable pending-delivery drain started.", flush=True)
-        sync_result = drain_pending(db, sync_batch=sync_pending)
+        sync_enabled = getattr(getattr(self.runner, "pipeline", None), "sync_enabled", True) is True
+        if sync_enabled:
+            print("PRODUCTION PHASE: Airtable pending-delivery drain started.", flush=True)
+            sync_result = drain_pending(db, sync_batch=sync_pending)
+        else:
+            sync_result = {
+                "status": "disabled",
+                "reason": "airtable_sync_disabled",
+                "synced": [],
+                "already_exists": [],
+                "failed": [],
+                "synced_count": 0,
+                "already_exists_count": 0,
+                "failed_count": 0,
+                "deferred_research_count": 0,
+                "batches": 0,
+                "drain_complete": False,
+            }
+            print(
+                "PRODUCTION PHASE: Airtable pending-delivery drain skipped because sync is disabled; "
+                "local leads and pending delivery state remain durable.",
+                flush=True,
+            )
         print(
             "PRODUCTION PHASE: Airtable pending-delivery drain finished "
             f"in {time.perf_counter() - phase_started:.1f}s; "
@@ -348,6 +369,7 @@ class LeadScheduler:
         sync_state = db.get_state("sync_observability") if hasattr(db, "get_state") else {}
         sync_state = dict(sync_state) if isinstance(sync_state, dict) else {}
         sync_failed = int(sync_result.get("failed_count", 0) or 0)
+        sync_disabled = str(sync_result.get("status") or "").strip().lower() == "disabled"
         sync_successes = int(sync_result.get("synced_count", 0) or 0) + int(sync_result.get("already_exists_count", 0) or 0)
         failed_items = sync_result.get("failed")
         failed_items = failed_items if isinstance(failed_items, list) else []
@@ -357,11 +379,11 @@ class LeadScheduler:
             {
                 **sync_state,
                 "sync_runs": int(sync_state.get("sync_runs", 0) or 0) + 1,
-                "successful_sync_runs": int(sync_state.get("successful_sync_runs", 0) or 0) + (1 if sync_failed == 0 else 0),
+                "successful_sync_runs": int(sync_state.get("successful_sync_runs", 0) or 0) + (1 if not sync_disabled and sync_failed == 0 else 0),
                 "failed_sync_runs": int(sync_state.get("failed_sync_runs", 0) or 0) + (1 if sync_failed > 0 else 0),
                 "last_sync_started_at": sync_started_at,
                 "last_sync_completed_at": checked_at,
-                "last_successful_sync": checked_at if sync_failed == 0 else sync_state.get("last_successful_sync"),
+                "last_successful_sync": checked_at if not sync_disabled and sync_failed == 0 else sync_state.get("last_successful_sync"),
                 "last_sync_failure": checked_at if sync_failed > 0 else sync_state.get("last_sync_failure"),
                 "last_sync_error": first_sync_error if sync_failed > 0 else None,
                 "last_sync_processed_count": int(sync_result.get("synced_count", 0) or 0) + int(sync_result.get("already_exists_count", 0) or 0) + int(sync_result.get("failed_count", 0) or 0) + int(sync_result.get("deferred_research_count", 0) or 0),

@@ -35,3 +35,31 @@ def test_scheduler_defers_airtable_until_after_bounded_specialist_pass(tmp_path)
     ]
     assert pipeline.sync_enabled is True
     db.close()
+
+
+def test_scheduler_skips_airtable_drain_when_sync_is_disabled(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    pipeline = LeadPipeline(db=db, sync_enabled=False)
+    runner = LeadEngineRunner(pipeline=pipeline)
+    scheduler = LeadScheduler(runner=runner)
+    scheduler.agent_orchestrator = MagicMock()
+    scheduler.agent_orchestrator.run_all_once.return_value = {"processed_count": 0}
+    scheduler._bridge_remote = lambda **kwargs: {
+        "status": "disabled",
+        "published_count": 0,
+        "completed_count": 0,
+        "retried_count": 0,
+    }
+
+    with patch("lead_engine.scheduler.drain_pending", side_effect=AssertionError("Airtable drain must not run while sync is disabled")), patch(
+        "lead_engine.scheduler.process_paxus_research_queue",
+        return_value={"processed": 0, "failed": 0},
+    ):
+        result = scheduler.run([StaticLeadSource([])], agent_max_rounds=1)
+
+    assert result["sync"]["status"] == "disabled"
+    assert result["sync"]["failed_count"] == 0
+    observability = db.get_state("sync_observability")
+    assert observability["successful_sync_runs"] == 0
+    assert observability["last_successful_sync"] is None
+    db.close()

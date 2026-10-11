@@ -468,11 +468,15 @@ jobs:
 
           if selected is None:
               if capacity_blocked:
-                  raise SystemExit(
-                      "AIRTABLE WRITE CAPACITY BLOCKER: a configured credential reached Airtable, "
-                      "but Airtable rejected the probe because the base is at its record limit. "
-                      "No records were deleted; resolve capacity without bypassing the production gate."
+                  with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+                      env_file.write("LEAD_ENGINE_SYNC_ENABLED=false\n")
+                      env_file.write("AIRTABLE_SYNC_BLOCK_REASON=record_capacity\n")
+                  print(
+                      "AIRTABLE SYNC PAUSED: the configured credential reached Airtable, but the base "
+                      "record limit blocks writes. Continuing local source collection with durable SQLite "
+                      "state; no Airtable records will be deleted and no new handoff will be treated as synced."
                   )
+                  raise SystemExit(0)
               raise SystemExit(
                   "AIRTABLE AUTHORIZATION/WRITE FAILURE: no configured credential could complete "
                   "the real Thorio route write probe. Review the per-credential HTTP diagnostics above."
@@ -500,6 +504,12 @@ jobs:
           token = os.environ.get("AIRTABLE_API_KEY", "").strip()
           source = os.environ.get("AIRTABLE_CREDENTIAL_SOURCE", "").strip()
           if not token or not source:
+              if os.environ.get("AIRTABLE_SYNC_BLOCK_REASON", "").strip() == "record_capacity":
+                  print(
+                      "AIRTABLE RUNTIME SYNC DISABLED: confirmed base-capacity blocker; "
+                      "local collection remains enabled and durable."
+                  )
+                  raise SystemExit(0)
               raise SystemExit("AIRTABLE RUNTIME CREDENTIAL FAILURE: selected credential was not propagated to the production runtime.")
           print(f"AIRTABLE RUNTIME CREDENTIAL VERIFIED: selected source={source}; secret value is not exposed.")
           PY
@@ -709,8 +719,10 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           import pathlib
           import sys
+          airtable_capacity_blocked = os.environ.get("AIRTABLE_SYNC_BLOCK_REASON", "").strip() == "record_capacity"
           path = pathlib.Path("data/scheduled-run-output.txt")
           if not path.exists():
               print("PRODUCTION COLLECTION FAILURE: scheduled run output was not created.")
@@ -805,7 +817,7 @@ jobs:
               failed_items = sync.get("failed", [])
               if isinstance(failed_items, list):
                   failures.extend(item for item in failed_items if isinstance(item, dict))
-          if not sync_evidence_found:
+          if not sync_evidence_found and not airtable_capacity_blocked:
               print("AIRTABLE DELIVERY FAILURE: Lead Engine result did not contain synchronization evidence.")
               sys.exit(1)
           inbound_failures = []
@@ -821,6 +833,18 @@ jobs:
               print(f"REVENUE INBOUND OBSERVATION FAILURE: {len(inbound_failures)} configured revenue conversation observation operation(s) failed; follow-ups were blocked.")
               for index, item in enumerate(inbound_failures[:20], 1):
                   print(f"INBOUND FAILURE {index}: opportunity_id={item.get('opportunity_id', '')} channel={item.get('channel', '')} error={item.get('error', '')}")
+              sys.exit(1)
+
+          if airtable_capacity_blocked:
+              print(
+                  f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, "
+                  f"accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}"
+              )
+              print(
+                  "AIRTABLE DELIVERY BLOCKED: the base record limit prevented synchronization. "
+                  "Local SQLite state and the pending backlog will be persisted for recovery; "
+                  "no records were deleted and this run will remain failed until sync capacity is restored."
+              )
               sys.exit(1)
 
           if sync_failed > 0:
