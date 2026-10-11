@@ -334,13 +334,18 @@ jobs:
 
           http_ready = url_configured and token_configured
           browser_state_key_configured = bool(os.environ.get("THORIO_BROWSER_STATE_ENCRYPTION_KEY", "").strip())
+          gmail_username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip().lower()
+          gmail_password_configured = bool(os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip())
+          gmail_ready = gmail_username == "thorio.partners@gmail.com" and gmail_password_configured
           browser_ready = bool(targets) and not target_error and browser_state_key_configured
           if mode == "http":
               ready = http_ready
           elif mode == "browser":
               ready = browser_ready
-          elif mode == "":
-              ready = http_ready or browser_ready
+          elif mode == "gmail_smtp":
+              ready = gmail_ready
+          elif mode in {"", "auto"}:
+              ready = http_ready or browser_ready or gmail_ready
           else:
               ready = False
 
@@ -351,7 +356,9 @@ jobs:
               f"http_token_configured={str(token_configured).lower()} "
               f"browser_target_count={len(targets)} "
               f"browser_target_config_invalid={str(target_error).lower()} "
-              f"browser_state_key_configured={str(browser_state_key_configured).lower()}"
+              f"browser_state_key_configured={str(browser_state_key_configured).lower()} "
+              f"gmail_sender_configured={str(gmail_username == 'thorio.partners@gmail.com').lower()} "
+              f"gmail_password_configured={str(gmail_password_configured).lower()}"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"ready={str(ready).lower()}\n")
