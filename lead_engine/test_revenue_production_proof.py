@@ -4,8 +4,9 @@ from .agent_queue import pending
 from .database import LeadDB
 from .revenue_conversation import record_inbound_event
 from .revenue_execution import register_revenue_transport
-from . import advanced_agent_logic
+from . import advanced_agent_logic, active_processing, sales_handoff
 from .research_intelligence import build_research_intelligence
+from .sales_handoff import package_digest, package_is_ready
 
 class FakeTransport:
     def __init__(self): self.calls = []
@@ -40,6 +41,28 @@ def _failed_drain_results(drain):
 def test_complete_production_revenue_lifecycle_has_no_orphaned_qualified_opportunity(tmp_path, monkeypatch):
     monkeypatch.setenv("THORIO_AGENT_EXECUTION_WORKERS", "1")
     monkeypatch.setattr(advanced_agent_logic, "research_public_web", lambda value: {"status": "evidence_found", "researched_at": "2026-09-14T00:00:00+00:00", "pages_attempted": 1, "pages_collected": 1, "sources": [{"url": "https://acme.example/", "observed_at": "2026-09-14T00:00:00+00:00", "status": "collected"}], "facts": {"company": [{"url": "https://acme.example/", "evidence": "Acme public company page"}], "hiring": [], "product": [], "decision_maker": [], "business_need": [], "commercial": []}, "raw_pages": [{"url": "https://acme.example/", "status": "collected", "facts": [{"field": "page_text", "value": "Acme public company page", "evidence_url": "https://acme.example/"}]}], "fabricated_fields": []})
+    original_airtable_integrity = active_processing._airtable_integrity
+    def confirm_test_handoff(agent, payload, ctx):
+        candidate = payload.get("lead", payload)
+        fingerprint = str(candidate.get("fingerprint") or "") if isinstance(candidate, dict) else ""
+        stored = ctx.db.get(fingerprint) if fingerprint else None
+        if isinstance(stored, dict) and package_is_ready(stored) and not ctx.db.get_airtable_handoff(fingerprint):
+            digest = package_digest(stored)
+            ctx.db.record_airtable_handoff(
+                fingerprint, digest, "recLead", "recResearch", ["recCompany"],
+                datetime.now(timezone.utc).isoformat()
+            )
+            ctx.db.mark_synced(fingerprint)
+        return original_airtable_integrity(agent, payload, ctx)
+    monkeypatch.setattr(active_processing, "_airtable_integrity", confirm_test_handoff)
+    monkeypatch.setattr(
+        sales_handoff, "verify_persisted_airtable_handoff",
+        lambda database, candidate, include_downstream_lifecycle=True: (True, package_digest(candidate))
+    )
+    monkeypatch.setattr(
+        "lead_engine.agent_workers.verify_persisted_airtable_handoff",
+        lambda database, candidate, include_downstream_lifecycle=True: (True, package_digest(candidate))
+    )
     db = LeadDB(data_dir=tmp_path); lead = _lead(); lead["eligible_routes"] = ["Thorio"]; lead["preserved_routes"] = ["Thorio"]; lead["routing_result"] = {"destinations": ["Thorio"], "review_required": False, "multi_route": False}; assert db.insert_if_new(lead) is True; transport = FakeTransport(); register_revenue_transport(transport)
     try:
         orchestrator = AgentOrchestrator(db, worker_prefix="production-proof"); orchestrator.dispatch_discovery("linkedin_signal", lead, priority=10); first = _drain(orchestrator); stored = db.get(lead["fingerprint"]); assert stored is not None; assert first["failed_count"] == 0, {"failed_results": _failed_drain_results(first), "pending": pending(db)}; assert stored["qualified"] is True; assert stored.get("sales_eligibility") == "eligible", _proof_debug(db, stored, first, transport); assert stored["revenue_lifecycle_state"] == "outreach_sent", _proof_debug(db, stored, first, transport); assert stored["outreach_state"] == "awaiting_response"; assert len(transport.calls) == 1; assert not any(task.get("agent") == "outreach_closer" and task.get("status") == "queued" for task in pending(db))
