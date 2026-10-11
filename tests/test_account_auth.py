@@ -166,6 +166,9 @@ def test_only_collection_accounts_remain_in_collection_auth_registry():
         "facebook",
         "hacker_news",
         "indie_hackers",
+        "reddit",
+        "instagram",
+        "product_hunt",
     )
     assert "email" not in SUPPORTED_ACCOUNTS
     assert "gmail" not in SUPPORTED_ACCOUNTS

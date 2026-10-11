@@ -262,12 +262,40 @@ jobs:
       THORIO_ACCOUNT_INDIE_HACKERS_USERNAME_SELECTOR: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_USERNAME_SELECTOR }}
       THORIO_ACCOUNT_INDIE_HACKERS_PASSWORD_SELECTOR: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_PASSWORD_SELECTOR }}
       THORIO_ACCOUNT_INDIE_HACKERS_SUBMIT_SELECTOR: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_SUBMIT_SELECTOR }}
+      THORIO_ACCOUNT_REDDIT_USERNAME: ${{ secrets.THORIO_ACCOUNT_REDDIT_USERNAME }}
+      THORIO_ACCOUNT_REDDIT_PASSWORD: ${{ secrets.THORIO_ACCOUNT_REDDIT_PASSWORD }}
+      THORIO_ACCOUNT_REDDIT_LOGIN_URL: ${{ secrets.THORIO_ACCOUNT_REDDIT_LOGIN_URL }}
+      THORIO_ACCOUNT_REDDIT_USERNAME_SELECTOR: ${{ secrets.THORIO_ACCOUNT_REDDIT_USERNAME_SELECTOR }}
+      THORIO_ACCOUNT_REDDIT_PASSWORD_SELECTOR: ${{ secrets.THORIO_ACCOUNT_REDDIT_PASSWORD_SELECTOR }}
+      THORIO_ACCOUNT_REDDIT_SUBMIT_SELECTOR: ${{ secrets.THORIO_ACCOUNT_REDDIT_SUBMIT_SELECTOR }}
+      THORIO_ACCOUNT_INSTAGRAM_USERNAME: ${{ secrets.THORIO_ACCOUNT_INSTAGRAM_USERNAME }}
+      THORIO_ACCOUNT_INSTAGRAM_PASSWORD: ${{ secrets.THORIO_ACCOUNT_INSTAGRAM_PASSWORD }}
+      THORIO_ACCOUNT_INSTAGRAM_LOGIN_URL: ${{ secrets.THORIO_ACCOUNT_INSTAGRAM_LOGIN_URL }}
+      THORIO_ACCOUNT_INSTAGRAM_USERNAME_SELECTOR: ${{ secrets.THORIO_ACCOUNT_INSTAGRAM_USERNAME_SELECTOR }}
+      THORIO_ACCOUNT_INSTAGRAM_PASSWORD_SELECTOR: ${{ secrets.THORIO_ACCOUNT_INSTAGRAM_PASSWORD_SELECTOR }}
+      THORIO_ACCOUNT_INSTAGRAM_SUBMIT_SELECTOR: ${{ secrets.THORIO_ACCOUNT_INSTAGRAM_SUBMIT_SELECTOR }}
+      THORIO_ACCOUNT_PRODUCT_HUNT_USERNAME: ${{ secrets.THORIO_ACCOUNT_PRODUCT_HUNT_USERNAME }}
+      THORIO_ACCOUNT_PRODUCT_HUNT_PASSWORD: ${{ secrets.THORIO_ACCOUNT_PRODUCT_HUNT_PASSWORD }}
+      THORIO_ACCOUNT_PRODUCT_HUNT_LOGIN_URL: ${{ secrets.THORIO_ACCOUNT_PRODUCT_HUNT_LOGIN_URL }}
+      THORIO_ACCOUNT_PRODUCT_HUNT_USERNAME_SELECTOR: ${{ secrets.THORIO_ACCOUNT_PRODUCT_HUNT_USERNAME_SELECTOR }}
+      THORIO_ACCOUNT_PRODUCT_HUNT_PASSWORD_SELECTOR: ${{ secrets.THORIO_ACCOUNT_PRODUCT_HUNT_PASSWORD_SELECTOR }}
+      THORIO_ACCOUNT_PRODUCT_HUNT_SUBMIT_SELECTOR: ${{ secrets.THORIO_ACCOUNT_PRODUCT_HUNT_SUBMIT_SELECTOR }}
+      THORIO_ACCOUNT_LINKEDIN_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_X_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_X_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_THREADS_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_THREADS_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_FACEBOOK_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_FACEBOOK_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_HACKER_NEWS_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_HACKER_NEWS_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_INDIE_HACKERS_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_INDIE_HACKERS_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_REDDIT_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_REDDIT_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_INSTAGRAM_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_INSTAGRAM_STORAGE_STATE_B64 }}
+      THORIO_ACCOUNT_PRODUCT_HUNT_STORAGE_STATE_B64: ${{ secrets.THORIO_ACCOUNT_PRODUCT_HUNT_STORAGE_STATE_B64 }}
       THORIO_ACCOUNT_GMAIL_USERNAME: ${{ secrets.THORIO_ACCOUNT_GMAIL_USERNAME }}
       THORIO_ACCOUNT_GMAIL_PASSWORD: ${{ secrets.THORIO_ACCOUNT_GMAIL_PASSWORD }}
       THORIO_REVENUE_TRANSPORT_MODE: ${{ secrets.THORIO_REVENUE_TRANSPORT_MODE }}
       THORIO_REVENUE_TRANSPORT_URL: ${{ secrets.THORIO_REVENUE_TRANSPORT_URL }}
       THORIO_REVENUE_TRANSPORT_TOKEN: ${{ secrets.THORIO_REVENUE_TRANSPORT_TOKEN }}
       THORIO_REVENUE_BROWSER_TARGETS: ${{ secrets.THORIO_REVENUE_BROWSER_TARGETS }}
+      THORIO_REVENUE_BROWSER_INBOUND_TARGETS: ${{ secrets.THORIO_REVENUE_BROWSER_INBOUND_TARGETS }}
       THORIO_BROWSER_PROFILE_DIR: ${{ secrets.THORIO_BROWSER_PROFILE_DIR }}
       THORIO_BROWSER_HEADLESS: ${{ secrets.THORIO_BROWSER_HEADLESS }}
       THORIO_BROWSER_NAVIGATION_TIMEOUT: ${{ secrets.THORIO_BROWSER_NAVIGATION_TIMEOUT }}
@@ -393,6 +421,7 @@ jobs:
           probe_id = f"__THORIO_CREDENTIAL_PROBE__{int(time.time())}"
           probe_fields = {"Lead": probe_id, "Applicable Routes": ["Thorio"]}
           selected = None
+          capacity_blocked = False
 
           for label, token in candidates:
               if not token:
@@ -416,7 +445,16 @@ jobs:
                   continue
               if status not in (200, 201):
                   diagnostic = " ".join(str(body).replace(token, "[REDACTED]").split())[:1200]
-                  print(f"{label}: write probe failed with HTTP {status}: {diagnostic or 'no response body'}")
+                  if status == 422 and "TOO_MANY_RECORDS_IN_BASE" in body:
+                      capacity_blocked = True
+                      print(
+                          f"{label}: Airtable accepted the request but rejected the write because "
+                          "the base record limit has been reached (HTTP 422 TOO_MANY_RECORDS_IN_BASE)."
+                      )
+                  elif status in (401, 403):
+                      print(f"{label}: Airtable authentication/authorization failed with HTTP {status}: {diagnostic or 'no response body'}")
+                  else:
+                      print(f"{label}: Airtable write probe failed with HTTP {status}: {diagnostic or 'no response body'}")
                   continue
               try:
                   payload = json.loads(body)
@@ -432,7 +470,16 @@ jobs:
               break
 
           if selected is None:
-              raise SystemExit("AIRTABLE CREDENTIAL FAILURE: no configured credential could perform the real Thorio route write probe.")
+              if capacity_blocked:
+                  raise SystemExit(
+                      "AIRTABLE WRITE CAPACITY BLOCKER: a configured credential reached Airtable, "
+                      "but Airtable rejected the probe because the base is at its record limit. "
+                      "No records were deleted; resolve capacity without bypassing the production gate."
+                  )
+              raise SystemExit(
+                  "AIRTABLE AUTHORIZATION/WRITE FAILURE: no configured credential could complete "
+                  "the real Thorio route write probe. Review the per-credential HTTP diagnostics above."
+              )
 
           label, token, record_id = selected
           delete_url = f"{url}/{urllib.parse.quote(record_id, safe='')}"

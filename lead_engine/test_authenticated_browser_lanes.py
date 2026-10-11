@@ -21,12 +21,12 @@ def _target(account):
     )
 
 
-def test_all_six_authenticated_account_types_are_supported():
+def test_all_nine_authenticated_account_types_are_supported():
     targets = tuple(_target(account) for account in SUPPORTED_ACCOUNTS)
     status = authenticated_browser_lane_status(targets)
-    assert status["configured_lane_count"] == 6
-    assert status["authenticated_lane_count"] == 6
-    assert status["all_six_account_types_supported"] is True
+    assert status["configured_lane_count"] == 9
+    assert status["authenticated_lane_count"] == 9
+    assert status["all_supported_account_types_configured"] is True
     assert set(status["configured_accounts"]) == set(SUPPORTED_ACCOUNTS)
 
 

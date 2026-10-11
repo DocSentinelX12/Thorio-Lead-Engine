@@ -37,6 +37,9 @@ SUPPORTED_ACCOUNTS = (
     "facebook",
     "hacker_news",
     "indie_hackers",
+    "reddit",
+    "instagram",
+    "product_hunt",
 )
 
 # Gmail is an outreach channel only. Keep it out of the collection account
