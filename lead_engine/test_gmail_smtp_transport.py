@@ -105,3 +105,27 @@ def test_gmail_smtp_rejects_missing_recipient_before_network(monkeypatch):
             body="Hello",
             idempotency_key="outreach:lead-3:conversation-3:1",
         )
+
+def test_runtime_selects_gmail_smtp_from_existing_gmail_credentials(monkeypatch):
+    from .revenue_execution import configured_revenue_transport
+    from .gmail_smtp_transport import GmailSMTPTransport
+
+    monkeypatch.delenv("THORIO_REVENUE_TRANSPORT_MODE", raising=False)
+    monkeypatch.delenv("THORIO_REVENUE_TRANSPORT_URL", raising=False)
+    monkeypatch.delenv("THORIO_REVENUE_TRANSPORT_TOKEN", raising=False)
+    monkeypatch.delenv("THORIO_REVENUE_BROWSER_TARGETS", raising=False)
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "test-app-password")
+
+    assert isinstance(configured_revenue_transport(), GmailSMTPTransport)
+
+
+def test_explicit_http_mode_does_not_silently_disable_transport(monkeypatch):
+    from .revenue_execution import configured_revenue_transport
+
+    monkeypatch.setenv("THORIO_REVENUE_TRANSPORT_MODE", "http")
+    monkeypatch.delenv("THORIO_REVENUE_TRANSPORT_URL", raising=False)
+    monkeypatch.delenv("THORIO_REVENUE_TRANSPORT_TOKEN", raising=False)
+    with pytest.raises(RevenueTransportUnavailable, match="HTTP revenue transport mode requires"):
+        configured_revenue_transport()
+
