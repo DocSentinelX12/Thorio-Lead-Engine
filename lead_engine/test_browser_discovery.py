@@ -93,7 +93,7 @@ def test_browser_navigation_timeout_is_bounded_and_configurable(monkeypatch):
     assert _browser_navigation_timeout() == 30_000
 
 
-def _six_targets(*, selectors=True):
+def _account_targets(*, selectors=True):
     return tuple(
         BrowserDiscoveryTarget(
             lane=f"{account}_signals",
@@ -108,16 +108,16 @@ def _six_targets(*, selectors=True):
     )
 
 
-def test_all_six_authenticated_account_types_are_supported():
-    status = authenticated_browser_lane_status(_six_targets())
-    assert status["configured_lane_count"] == 6
-    assert status["authenticated_lane_count"] == 6
-    assert status["all_six_account_types_supported"] is True
+def test_all_nine_authenticated_account_types_are_supported():
+    status = authenticated_browser_lane_status(_account_targets())
+    assert status["configured_lane_count"] == 9
+    assert status["authenticated_lane_count"] == 9
+    assert status["all_supported_account_types_configured"] is True
     assert set(status["configured_accounts"]) == set(SUPPORTED_ACCOUNTS)
 
 
 def test_authentication_validation_does_not_require_collection_selectors():
-    result = validate_authenticated_browser_configuration(_six_targets(selectors=False))
+    result = validate_authenticated_browser_configuration(_account_targets(selectors=False))
     assert result["configured_lane_count"] == 6
     assert result["authenticated_lane_count"] == 6
     assert result["secrets_exposed"] is False
@@ -125,16 +125,16 @@ def test_authentication_validation_does_not_require_collection_selectors():
 
 def test_collection_validation_is_separate_from_authentication():
     with pytest.raises(BrowserDiscoveryConfigurationError, match="item_selector"):
-        validate_browser_collection_configuration(_six_targets(selectors=False))
+        validate_browser_collection_configuration(_account_targets(selectors=False))
 
 
-def test_complete_six_lane_configuration_rejects_missing_account():
-    targets = _six_targets()[:-1]
+def test_complete_account_configuration_rejects_missing_account():
+    targets = _account_targets()[:-1]
     with pytest.raises(BrowserDiscoveryConfigurationError, match="Missing authenticated browser lanes"):
         validate_authenticated_browser_configuration(targets)
 
 
-def test_complete_six_lane_configuration_can_use_storage_state_without_collection_selectors(monkeypatch):
+def test_complete_account_configuration_can_use_storage_state_without_collection_selectors(monkeypatch):
     state = {"cookies": [{"name": "session", "value": "opaque"}], "origins": []}
     encoded = base64.b64encode(json.dumps(state).encode()).decode()
     for account in SUPPORTED_ACCOUNTS:
@@ -144,7 +144,7 @@ def test_complete_six_lane_configuration_can_use_storage_state_without_collectio
     monkeypatch.setenv("THORIO_ACCOUNT_LINKEDIN_STORAGE_STATE_B64", encoded)
     with pytest.raises(BrowserDiscoveryConfigurationError, match="credentials or storage state"):
         validate_authenticated_browser_configuration(
-            _six_targets(selectors=False), require_credentials_or_storage=True
+            _account_targets(selectors=False), require_credentials_or_storage=True
         )
 
 
@@ -160,3 +160,4 @@ def test_browser_authentication_can_be_configured_before_collection():
     )
     result = validate_authenticated_browser_configuration(targets)
     assert result["configured_accounts"] == list(SUPPORTED_ACCOUNTS)
+    assert result["configured_lane_count"] == 9
