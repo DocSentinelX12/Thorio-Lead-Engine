@@ -21,8 +21,9 @@ def _lead(fingerprint="browser-retry-boundary"):
     lead["research_intelligence"] = build_research_intelligence(lead)
     return lead
 
-def test_browser_unavailable_is_a_retryable_revenue_transport_failure(tmp_path):
+def test_browser_unavailable_is_a_retryable_revenue_transport_failure(tmp_path, monkeypatch):
     assert issubclass(BrowserRevenueUnavailable, RevenueTransportUnavailable)
+    monkeypatch.setattr("lead_engine.agent_workers.verify_persisted_airtable_handoff", lambda database, candidate, include_downstream_lifecycle=True: (True, package_digest(candidate)))
     db = LeadDB(data_dir=tmp_path); lead = _lead(); db.insert_if_new(lead); db.record_airtable_handoff(lead["fingerprint"], package_digest(lead), "recLead", "recResearch", ["recCompany"], "2026-09-18T00:00:00+00:00"); enqueue(db, "outreach_closer", {"lead": lead}); register_revenue_transport(_BrowserUnavailableTransport())
     try: result = run_worker_once(db, "outreach_closer", worker_id="browser-retry-worker")
     finally: register_revenue_transport(None)
