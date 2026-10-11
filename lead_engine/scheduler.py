@@ -268,7 +268,7 @@ class LeadScheduler:
             self._run_sources_sequential(due_sources, results, failed)
 
         db = self.runner.pipeline.db
-        sync_enabled = getattr(getattr(self.runner, "pipeline", None), "sync_enabled", True) is True
+        sync_enabled = getattr(getattr(self.runner, "pipeline", None), "sync_enabled", True) is not False
         sync_started_at = datetime.now(timezone.utc).isoformat()
         disabled_remote = {
             "status": "disabled",
