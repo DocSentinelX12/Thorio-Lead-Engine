@@ -20,12 +20,23 @@ def _upsert(table_key: str, lookup_field: str, lookup_value: Any, fields: Dict[s
     if record is None: raise AirtableSyncError(f"Airtable returned no upserted record for {table_key}.")
     return {"status": "created", "record": record}
 def _routes(lead: Dict[str, Any]) -> List[str]:
-    value = lead.get("potential_routes", [])
-    if isinstance(value, str): value = [value]
-    allowed = {"Paxus", "Shiftr", "Thorio", "Astrivon Labs"}
+    routing_result = lead.get("routing_result")
+    if isinstance(routing_result, dict) and "destinations" in routing_result:
+        value = routing_result.get("destinations") or []
+    else:
+        value = lead.get("potential_routes", [])
+    if isinstance(value, str):
+        value = [value]
+    # The connected Airtable base currently supports downstream Partner
+    # records for Paxus and Shiftr, while Thorio is handled through Lead Radar.
+    # Astrivon Labs remains visible as a potential lead route but is review-only
+    # until its Partner select options exist in Opportunities, Referrals, and
+    # Commissions. Never submit a value the live schema cannot represent.
+    allowed = {"Paxus", "Shiftr", "Thorio"}
     if isinstance(value, (list, tuple, set)):
         routes = list(dict.fromkeys(_text(route) for route in value if _text(route) in allowed))
-        if routes: return routes
+        if routes or (isinstance(routing_result, dict) and "destinations" in routing_result):
+            return routes
     route = _text(lead.get("route"))
     return [route] if route in allowed else []
 def _company_source(lead: Dict[str, Any]) -> str:
