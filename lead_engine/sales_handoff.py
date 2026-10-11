@@ -97,7 +97,11 @@ def verify_master_tracker(result: Mapping[str, Any], lead: Mapping[str, Any]) ->
     if isinstance(routing_result, Mapping) and "destinations" in routing_result:
         active_routes = {str(route).strip() for route in (routing_result.get("destinations") or [])}
     else:
-        active_routes = {str(route).strip() for route in (lead.get("potential_routes") or [])}
+        active_routes = {
+            str(route).strip()
+            for route in (lead.get("potential_routes") or [])
+            if str(route).strip() in {"Paxus", "Shiftr", "Thorio"}
+        }
     expected_routes = active_routes & {"Paxus", "Shiftr"}
     destinations = {str(route).strip() for route in (routing_result.get("destinations") or [])} if isinstance(routing_result, Mapping) else set()
     eligible = {str(route).strip() for route in (lead.get("eligible_routes") or [])}
