@@ -342,8 +342,19 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
                 break
             completed.append(task["task_id"])
         elif status == "queued":
+            remote_payload = remote.get("payload") if isinstance(remote.get("payload"), Mapping) else {}
+            remote_error = str(remote.get("error") or "").strip()
+            remote_agent = str(remote_payload.get("agent") or task.get("agent") or "unknown").strip()
+            remote_worker = str(remote.get("worker_id") or "").strip() or "unreported"
+            remote_attempts = remote.get("attempts", "unreported")
+            print(
+                "REMOTE COMPUTE BRIDGE: remote task returned to queue "
+                f"task_id={task['task_id']} agent={remote_agent} worker={remote_worker} "
+                f"attempts={remote_attempts} error={(remote_error or 'none reported')[:1200]}",
+                flush=True,
+            )
             try:
-                retry(db, task["task_id"], worker_id=task["worker_id"], error=str(remote.get("error") or "remote task returned to queue"))
+                retry(db, task["task_id"], worker_id=task["worker_id"], error=remote_error or "remote task returned to queue")
             except sqlite3.OperationalError as error:
                 if not _is_sqlite_lock_error(error):
                     raise

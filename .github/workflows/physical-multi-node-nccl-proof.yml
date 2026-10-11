@@ -91,32 +91,95 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import time
           import urllib.error
           import urllib.request
 
           base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
-          request = urllib.request.Request(
-              base + "/health",
-              headers={
-                  "Authorization": f"Bearer {os.environ['THORIO_COMPUTE_AUTH_TOKEN']}",
-                  "Accept": "application/json",
-                  "User-Agent": "Thorio-GPU-preflight/1.0",
-              },
-          )
-          try:
-              with urllib.request.urlopen(request, timeout=15) as response:
-                  payload = json.loads(response.read().decode("utf-8"))
-          except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-              raise SystemExit(
-                  f"Coordinator preflight failed before GPU acquisition: {type(exc).__name__}: {exc}"
-              ) from exc
+          token = os.environ["THORIO_COMPUTE_AUTH_TOKEN"]
+          last_failure = "no response"
+          payload = None
+          retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+
+          for attempt in range(1, 6):
+              request = urllib.request.Request(
+                  base + "/health",
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/json",
+                      "User-Agent": "Thorio-GPU-preflight/1.1",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=15) as response:
+                      raw_body = response.read().decode("utf-8", errors="replace")
+                  payload = json.loads(raw_body)
+                  break
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace").strip()
+                  if token:
+                      body = body.replace(token, "[redacted]")
+                  retryable = exc.code in retryable_statuses
+                  last_failure = f"HTTP {exc.code} {exc.reason}"
+                  print(
+                      "THORIO_COORDINATOR_PREFLIGHT_ATTEMPT "
+                      f"attempt={attempt}/5 status={exc.code} retryable={str(retryable).lower()} "
+                      f"response_body={body[:500]!r}",
+                      flush=True,
+                  )
+                  if not retryable or attempt == 5:
+                      raise SystemExit(
+                          f"Coordinator preflight failed before GPU acquisition after {attempt} attempt(s): {last_failure}"
+                      ) from exc
+              except urllib.error.URLError as exc:
+                  last_failure = f"network error: {getattr(exc, 'reason', exc)}"
+                  print(
+                      f"THORIO_COORDINATOR_PREFLIGHT_ATTEMPT attempt={attempt}/5 error={last_failure}",
+                      flush=True,
+                  )
+                  if attempt == 5:
+                      raise SystemExit(
+                          f"Coordinator preflight failed before GPU acquisition after {attempt} attempts: {last_failure}"
+                      ) from exc
+              except TimeoutError as exc:
+                  last_failure = f"timeout: {exc}"
+                  print(
+                      f"THORIO_COORDINATOR_PREFLIGHT_ATTEMPT attempt={attempt}/5 error={last_failure}",
+                      flush=True,
+                  )
+                  if attempt == 5:
+                      raise SystemExit(
+                          f"Coordinator preflight failed before GPU acquisition after {attempt} attempts: {last_failure}"
+                      ) from exc
+              except json.JSONDecodeError as exc:
+                  last_failure = f"invalid JSON response: {exc}"
+                  excerpt = raw_body[:500] if "raw_body" in locals() else ""
+                  if token:
+                      excerpt = excerpt.replace(token, "[redacted]")
+                  print(
+                      f"THORIO_COORDINATOR_PREFLIGHT_ATTEMPT attempt={attempt}/5 error={last_failure} "
+                      f"response_body={excerpt!r}",
+                      flush=True,
+                  )
+                  if attempt == 5:
+                      raise SystemExit(
+                          f"Coordinator preflight failed before GPU acquisition after {attempt} attempts: {last_failure}"
+                      ) from exc
+              if attempt < 5:
+                  delay = min(2 ** (attempt - 1), 8)
+                  print(f"THORIO_COORDINATOR_PREFLIGHT_RETRY delay_seconds={delay}", flush=True)
+                  time.sleep(delay)
+
           if (
               not isinstance(payload, dict)
               or payload.get("ok") is not True
               or payload.get("free_only") is not True
               or payload.get("paid_capacity_allowed") is not False
           ):
-              raise SystemExit("Coordinator preflight returned an unhealthy or non-free-only response.")
+              raise SystemExit(
+                  "Coordinator preflight returned an unhealthy or non-free-only response "
+                  "after a successful HTTP response; refusing GPU acquisition."
+              )
           print("THORIO_COORDINATOR_PREFLIGHT_OK free_only=true paid_capacity_allowed=false")
           PY
           echo "Free GPU acquisition credentials verified."

@@ -50,3 +50,41 @@ def test_failed_heartbeat_never_emits_success_marker(capsys):
     output = capsys.readouterr().out
     assert "THORIO_WORKER_REGISTERED worker_id=github-test" in output
     assert "THORIO_WORKER_HEARTBEAT_OK" not in output
+
+
+
+def test_worker_logs_coordinator_errors_before_retry(capsys):
+    class FailedClaimClient(ReadyClient):
+        def claim(self):
+            raise ComputeWorkerError("coordinator HTTP 503: temporary outage")
+
+    run_worker(FailedClaimClient(), idle_seconds=0.01, heartbeat_seconds=0.01, stop_event=StopAfterFirstWait())
+    output = capsys.readouterr().out
+    assert "THORIO_WORKER_COORDINATOR_ERROR worker_id=github-test" in output
+    assert "coordinator HTTP 503: temporary outage" in output
+
+
+def test_worker_logs_task_failure_and_failed_release(capsys):
+    class FailedTaskClient(ReadyClient):
+        def __init__(self):
+            super().__init__()
+            self.claimed = False
+
+        def claim(self):
+            if self.claimed:
+                return None
+            self.claimed = True
+            return {
+                "task_id": "task-failed",
+                "lease_token": "lease-token",
+                "payload": {"kind": "unsupported-kind"},
+            }
+
+        def release(self, task_id, lease_token, error):
+            raise ComputeWorkerError("coordinator rejected release")
+
+    run_worker(FailedTaskClient(), idle_seconds=0.01, heartbeat_seconds=999, stop_event=StopAfterFirstWait())
+    output = capsys.readouterr().out
+    assert "THORIO_WORKER_TASK_FAILED worker_id=github-test task_id=task-failed" in output
+    assert "unsupported-kind" in output
+    assert "THORIO_WORKER_TASK_RELEASE_FAILED worker_id=github-test task_id=task-failed" in output

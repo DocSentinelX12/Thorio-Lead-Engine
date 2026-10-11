@@ -293,3 +293,46 @@ def test_remote_bridge_uses_bounded_database_queries_not_full_pending_scan(tmp_p
         assert result["published"]["published"][0]["agent"] == "ai_demand_discovery"
     finally:
         db.close()
+
+
+
+def test_remote_queued_task_logs_coordinator_failure_reason(tmp_path, capsys):
+    with tempfile.TemporaryDirectory() as directory:
+        db = LeadDB(data_dir=Path(directory))
+        lead = {
+            "fingerprint": "remote-queued-diagnostic",
+            "company": "Example",
+            "signal": "We need an AI development team",
+        }
+        assert db.insert_if_new(lead)
+        task = enqueue(db, "ai_demand_discovery", {"lead": lead, "evidence_events": []})
+        worker_id = "remote-compute:worker-1"
+        db.compute_bridge_prepare(
+            task["task_id"],
+            worker_id,
+            {
+                "kind": "agent_task",
+                "agent": "ai_demand_discovery",
+                "payload": {"lead": lead},
+            },
+            "2026-10-10T00:00:00+00:00",
+        )
+        claim_task(db, task["task_id"], worker_id=worker_id, lease_seconds=900)
+        db.compute_bridge_mark_published(task["task_id"], "2026-10-10T00:00:00+00:00")
+
+        class QueuedWithErrorClient(FakeRemoteClient):
+            def __init__(self):
+                super().__init__()
+                self.tasks[task["task_id"]] = {
+                    "status": "queued",
+                    "payload": {"kind": "agent_task", "agent": "ai_demand_discovery"},
+                    "result": None,
+                    "error": "physical allocation unavailable: no eligible CPU resource",
+                }
+
+        result = bridge_once(db, QueuedWithErrorClient(), publish_limit=10, reconcile_limit=10)
+        output = capsys.readouterr().out
+        assert result["reconciled"]["retried_count"] == 1
+        assert "remote task returned to queue" in output
+        assert "task_id=" + task["task_id"] in output
+        assert "physical allocation unavailable: no eligible CPU resource" in output

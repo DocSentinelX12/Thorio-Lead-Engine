@@ -588,7 +588,13 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                             if stop_event.wait(idle_seconds): break
                 backoff=1.0; continue
             task=client.claim(); backoff=1.0
-        except ComputeWorkerError:
+        except ComputeWorkerError as error:
+            print(
+                "THORIO_WORKER_COORDINATOR_ERROR "
+                f"worker_id={client.worker_id} error_type={type(error).__name__} "
+                f"error={str(error)[:1200]}",
+                flush=True,
+            )
             client._registered=False
             if stop_event.wait(backoff): break
             backoff=min(30.0,backoff*2.0); continue
@@ -606,8 +612,24 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                 result=execute_checkpointed_lead_prepare(client,task["task_id"],task["lease_token"],payload) if kind=="lead_prepare" else execute_compute_task(payload, client)
             client.complete(task["task_id"],task["lease_token"],result)
         except Exception as error:
-            try: client.release(task["task_id"],task["lease_token"],str(error))
-            except ComputeWorkerError: client._registered=False
+            task_payload = task.get("payload")
+            task_kind = str(task_payload.get("kind") or "<missing>") if isinstance(task_payload, Mapping) else "<invalid>"
+            print(
+                "THORIO_WORKER_TASK_FAILED "
+                f"worker_id={client.worker_id} task_id={task.get('task_id', '<missing>')} "
+                f"kind={task_kind} error_type={type(error).__name__} error={str(error)[:1200]}",
+                flush=True,
+            )
+            try:
+                client.release(task["task_id"],task["lease_token"],str(error))
+            except ComputeWorkerError as release_error:
+                print(
+                    "THORIO_WORKER_TASK_RELEASE_FAILED "
+                    f"worker_id={client.worker_id} task_id={task.get('task_id', '<missing>')} "
+                    f"error={str(release_error)[:1200]}",
+                    flush=True,
+                )
+                client._registered=False
         finally: client._active_task=None
 
 
