@@ -1409,7 +1409,6 @@ def _work_queue(
         "🟣 Shiftr Verification",
         "🔵 Paxus Verification",
         "🟦 Thorio Sales",
-        "🟩 Astrivon Referral",
         "📬 Follow Up",
         "🔎 Research",
         "💰 Revenue / Referral",
@@ -1433,7 +1432,10 @@ def _work_queue(
     if "Thorio" in routes:
         return "🟦 Thorio Sales"
     if "Astrivon Labs" in routes:
-        return "🟩 Astrivon Referral"
+        # The live Work Queue select has no Astrivon-specific choice. Keep
+        # this as a revenue/referral work item without emitting an invalid
+        # single-select value.
+        return "💰 Revenue / Referral"
 
     return "🔎 Research"
 
