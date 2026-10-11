@@ -722,6 +722,7 @@ jobs:
           set -euo pipefail
           previous_run_id=""
           prior_production_run_id=""
+          production_runs="$(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')"
           while IFS= read -r run_id; do
             [ -z "$run_id" ] && continue
             if [ -z "$prior_production_run_id" ]; then
@@ -729,7 +730,7 @@ jobs:
             fi
             artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
             if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
-          done < <(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
+          done <<< "$production_runs"
           if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ]; then
             echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
             exit 1
