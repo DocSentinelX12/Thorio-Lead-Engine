@@ -28,6 +28,11 @@ def test_production_runtime_reports_missing_public_discovery_without_exposing_se
     assert "Report public discovery source readiness" in workflow
     assert "PUBLIC DISCOVERY READINESS:" in workflow
     assert "PUBLIC DISCOVERY BLOCKER:" in workflow
+    assert "PUBLIC DISCOVERY SIGNAL PATH VERIFIED:" in workflow
+    assert "from lead_engine.free_sources import HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS" in workflow
+    assert "from lead_engine.source_registry import _free_sources_enabled, _load_free_source_catalog, configured_sources" in workflow
+    assert "wired_signal_source_count >= 40" in workflow
+    assert "free_signal_ready" in workflow
     assert workflow.index("Report outbound revenue transport readiness") < workflow.index("Select and verify Airtable production credential")
     assert workflow.index("Report public discovery source readiness") < workflow.index("Select and verify Airtable production credential")
 
@@ -36,4 +41,3 @@ def test_removed_low_confidence_discovery_lanes_are_not_wired_to_production():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     for lane in ("REDDIT_SIGNAL", "INSTAGRAM_SIGNAL", "PRODUCT_HUNT_SIGNAL", "WEB_JOB_SIGNAL"):
         assert f"THORIO_DISCOVERY_{lane}_" not in workflow
-
