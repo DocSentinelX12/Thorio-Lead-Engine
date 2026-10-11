@@ -156,7 +156,7 @@ def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
         with ctx.db.batch_writes():
             stored = ctx.db.update_payload(lead["fingerprint"], stored) or stored
             enqueue(ctx.db, "airtable_integrity", {"lead": stored, "routing_result": dict(result)}, priority=6, dedupe_key=f"airtable_integrity:{lead['fingerprint']}")
-    result["handoff"] = "airtable_integrity" if result.get("destinations") else "review_required"
+    result["handoff"] = "airtable_integrity" if result.get("destinations") and not result.get("review_required") else "review_required"
     return result
 
 
