@@ -442,26 +442,62 @@ jobs:
               username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip()
               password = os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
               imap_client = None
-              try:
-                  with smtplib.SMTP_SSL(
-                      "smtp.gmail.com", 465, timeout=15,
-                      context=ssl.create_default_context(),
-                  ) as smtp_client:
+              smtp_ready = False
+              smtp_method = ""
+              smtp_failures = []
+              for method, port in (("starttls", 587), ("ssl", 465)):
+                  smtp_client = None
+                  stage = f"{method}_connect"
+                  try:
+                      if method == "starttls":
+                          smtp_client = smtplib.SMTP("smtp.gmail.com", port, timeout=15)
+                          stage = "smtp_starttls"
+                          smtp_client.ehlo()
+                          smtp_client.starttls(context=ssl.create_default_context())
+                          smtp_client.ehlo()
+                      else:
+                          smtp_client = smtplib.SMTP_SSL(
+                              "smtp.gmail.com", port, timeout=15,
+                              context=ssl.create_default_context(),
+                          )
+                      stage = f"{method}_login"
                       smtp_client.login(username, password)
+                      smtp_ready = True
+                      smtp_method = f"{method}:{port}"
+                      break
+                  except smtplib.SMTPAuthenticationError as exc:
+                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
+                      break
+                  except Exception as exc:
+                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
+                  finally:
+                      if smtp_client is not None:
+                          try:
+                              smtp_client.quit()
+                          except Exception:
+                              pass
+              try:
+                  if not smtp_ready:
+                      raise RuntimeError("Gmail SMTP auth failed on both supported connection modes")
+                  stage = "imap_connect"
                   imap_client = imaplib.IMAP4_SSL(
                       "imap.gmail.com", 993,
                       ssl_context=ssl.create_default_context(), timeout=15,
                   )
+                  stage = "imap_login"
                   login_status, _ = imap_client.login(username, password)
                   if login_status != "OK":
                       raise RuntimeError("Gmail IMAP login was not accepted")
+                  stage = "imap_select"
                   select_status, _ = imap_client.select("INBOX", readonly=True)
                   if select_status != "OK":
                       raise RuntimeError("Gmail IMAP inbox could not be selected")
                   gmail_ready = True
-                  print("GMAIL SMTP/IMAP LIVE AUTH VERIFIED: no email was sent.")
+                  print(f"GMAIL SMTP/IMAP LIVE AUTH VERIFIED via {smtp_method}; no email was sent.")
               except Exception as exc:
-                  print(f"GMAIL SMTP/IMAP LIVE AUTH FAILED: {type(exc).__name__}; no email was sent.")
+                  detail = "; ".join(smtp_failures)
+                  suffix = f"; SMTP attempts={detail}" if detail else ""
+                  print(f"GMAIL SMTP/IMAP LIVE AUTH FAILED at {stage}: {type(exc).__name__}{suffix}; no email was sent.")
                   gmail_ready = False
               finally:
                   if imap_client is not None:

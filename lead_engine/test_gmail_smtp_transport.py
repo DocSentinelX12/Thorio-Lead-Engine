@@ -1,4 +1,4 @@
-from email.message import EmailMessage
+import smtplib
 
 import pytest
 
@@ -14,10 +14,16 @@ class FakeSMTP:
         self.sent = []
         self.closed = False
 
+    def ehlo(self):
+        return 250, b"ok"
+
+    def starttls(self, context=None):
+        return 220, b"ready"
+
     def login(self, username, password):
         self.logged_in = (username, password)
         if password == "reject":
-            raise RuntimeError("authentication rejected")
+            raise smtplib.SMTPAuthenticationError(535, b"authentication rejected")
 
     def send_message(self, message, *, from_addr, to_addrs):
         self.sent.append((message, from_addr, to_addrs))
@@ -33,6 +39,7 @@ def test_gmail_smtp_uses_thorio_sender_and_stable_message_id(monkeypatch):
     fake = FakeSMTP()
     monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
     monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "test-app-password")
+    monkeypatch.setattr(smtplib, "SMTP", lambda *args, **kwargs: fake)
     monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *args, **kwargs: fake)
 
     transport = GmailSMTPTransport()
@@ -56,6 +63,7 @@ def test_gmail_smtp_uses_thorio_sender_and_stable_message_id(monkeypatch):
     assert first["recipient"] == "recruiter@example.test"
     assert first["message_id"] == second["message_id"]
     assert fake.logged_in == (EXPECTED_SENDER, "test-app-password")
+    assert fake.args[1] == 587
     assert len(fake.sent) == 2
     assert fake.sent[0][0]["From"] == EXPECTED_SENDER
     assert fake.sent[0][2] == ["recruiter@example.test"]
@@ -79,6 +87,7 @@ def test_gmail_smtp_authentication_failure_is_retryable_not_sent(monkeypatch):
     fake = FakeSMTP()
     monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
     monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "reject")
+    monkeypatch.setattr(smtplib, "SMTP", lambda *args, **kwargs: fake)
     monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *args, **kwargs: fake)
 
     transport = GmailSMTPTransport()
@@ -129,3 +138,26 @@ def test_explicit_http_mode_does_not_silently_disable_transport(monkeypatch):
     with pytest.raises(RevenueTransportUnavailable, match="HTTP revenue transport mode requires"):
         configured_revenue_transport()
 
+
+
+def test_gmail_smtp_falls_back_to_ssl_when_starttls_connection_disconnects(monkeypatch):
+    import smtplib
+
+    fake = FakeSMTP()
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "test-app-password")
+
+    def disconnected(*args, **kwargs):
+        raise smtplib.SMTPServerDisconnected("connection closed before greeting")
+
+    monkeypatch.setattr(smtplib, "SMTP", disconnected)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *args, **kwargs: fake)
+    result = GmailSMTPTransport().send(
+        channel="email",
+        recipient={"email": "recruiter@example.test"},
+        subject="Hiring question",
+        body="Hello",
+        idempotency_key="outreach:lead-fallback:conversation:1",
+    )
+    assert result["accepted"] is True
+    assert fake.sent

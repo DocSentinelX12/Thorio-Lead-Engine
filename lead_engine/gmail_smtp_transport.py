@@ -19,7 +19,8 @@ from .revenue_execution import RevenueTransportUnavailable
 
 EXPECTED_SENDER = "thorio.partners@gmail.com"
 SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 465
+SMTP_PORT = 587
+SMTP_SSL_PORT = 465
 
 
 class GmailSMTPTransport:
@@ -75,23 +76,65 @@ class GmailSMTPTransport:
         message["X-Thorio-Idempotency-Key"] = hashlib.sha256(str(idempotency_key).encode("utf-8")).hexdigest()
         message.set_content(str(body))
 
-        try:
-            client = smtplib.SMTP_SSL(
-                SMTP_HOST,
-                SMTP_PORT,
-                timeout=self.timeout_seconds,
-                context=ssl.create_default_context(),
-            )
-        except Exception as exc:
-            raise RevenueTransportUnavailable("could not connect to Gmail's authenticated SMTP endpoint") from exc
-
-        try:
+        client = None
+        connection_errors = []
+        for mode, port in (("starttls", SMTP_PORT), ("ssl", SMTP_SSL_PORT)):
+            candidate = None
             try:
-                client.login(self.username, self.password)
+                if mode == "starttls":
+                    candidate = smtplib.SMTP(SMTP_HOST, port, timeout=self.timeout_seconds)
+                    candidate.ehlo()
+                    candidate.starttls(context=ssl.create_default_context())
+                    candidate.ehlo()
+                else:
+                    candidate = smtplib.SMTP_SSL(
+                        SMTP_HOST,
+                        port,
+                        timeout=self.timeout_seconds,
+                        context=ssl.create_default_context(),
+                    )
             except Exception as exc:
+                connection_errors.append((mode, exc))
+                if candidate is not None:
+                    try:
+                        candidate.quit()
+                    except Exception:
+                        pass
+                continue
+
+            try:
+                candidate.login(self.username, self.password)
+                client = candidate
+                break
+            except smtplib.SMTPAuthenticationError as exc:
+                try:
+                    candidate.quit()
+                except Exception:
+                    pass
                 raise RevenueTransportUnavailable(
                     "Gmail SMTP authentication failed; verify the stored Gmail credential is an accepted app password"
                 ) from exc
+            except (smtplib.SMTPServerDisconnected, OSError, TimeoutError) as exc:
+                connection_errors.append((mode, exc))
+                try:
+                    candidate.quit()
+                except Exception:
+                    pass
+                continue
+            except Exception as exc:
+                try:
+                    candidate.quit()
+                except Exception:
+                    pass
+                raise RevenueTransportUnavailable(
+                    "Gmail SMTP authentication failed before message submission"
+                ) from exc
+
+        if client is None:
+            cause = connection_errors[-1][1] if connection_errors else None
+            raise RevenueTransportUnavailable(
+                "could not establish Gmail SMTP using STARTTLS port 587 or SSL port 465"
+            ) from cause
 
             try:
                 refused = client.send_message(message, from_addr=EXPECTED_SENDER, to_addrs=[address])

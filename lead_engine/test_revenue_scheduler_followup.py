@@ -17,7 +17,6 @@ def test_scheduler_enqueues_due_revenue_followups_before_specialist_drain():
 
 
 def test_inbound_observation_failure_blocks_followup_enqueue_and_persists_health(monkeypatch):
-    from datetime import datetime, timezone
     from lead_engine.revenue_conversation import enqueue_due_followups
 
     class DB:
@@ -30,7 +29,7 @@ def test_inbound_observation_failure_blocks_followup_enqueue_and_persists_health
                 "fingerprint": "lead-1",
                 "follow_up_due": True,
                 "outreach_state": "awaiting_response",
-                "next_follow_up_at": datetime.now(timezone.utc).isoformat(),
+                "next_follow_up_at": "2020-01-01T00:00:00+00:00",
             }]
 
         def set_state(self, key, value):
@@ -61,7 +60,6 @@ def test_inbound_observation_failure_blocks_followup_enqueue_and_persists_health
 
 
 def test_followup_blocks_when_due_conversation_was_not_in_observer_batch(monkeypatch):
-    from datetime import datetime, timezone
     from lead_engine.revenue_conversation import enqueue_due_followups
 
     class DB:
@@ -76,7 +74,7 @@ def test_followup_blocks_when_due_conversation_was_not_in_observer_batch(monkeyp
                 "outreach_channel": "linkedin",
                 "outreach_state": "awaiting_response",
                 "follow_up_due": True,
-                "next_follow_up_at": datetime.now(timezone.utc).isoformat(),
+                "next_follow_up_at": "2020-01-01T00:00:00+00:00",
                 "outreach_history": [{
                     "provider_result": {"thread_url": "https://example.invalid/thread/lead-unobserved"}
                 }],
@@ -111,7 +109,6 @@ def test_followup_blocks_when_due_conversation_was_not_in_observer_batch(monkeyp
 
 def test_followup_queues_only_when_browser_observer_checked_that_lead(monkeypatch):
     import json
-    from datetime import datetime, timezone
     from lead_engine.revenue_conversation import enqueue_due_followups
 
     target = {
@@ -137,7 +134,7 @@ def test_followup_queues_only_when_browser_observer_checked_that_lead(monkeypatc
                 "outreach_channel": "linkedin",
                 "outreach_state": "awaiting_response",
                 "follow_up_due": True,
-                "next_follow_up_at": datetime.now(timezone.utc).isoformat(),
+                "next_follow_up_at": "2020-01-01T00:00:00+00:00",
                 "outreach_history": [{
                     "provider_result": {"thread_url": "https://example.invalid/thread/lead-observed"}
                 }],
@@ -155,6 +152,124 @@ def test_followup_queues_only_when_browser_observer_checked_that_lead(monkeypatc
             "status": "completed", "observed_count": 1, "recorded_count": 0,
             "failed_count": 0, "failures": [],
             "observed_opportunity_ids": ["lead-observed"],
+        },
+    )
+    db = DB()
+    monkeypatch.setattr(
+        "lead_engine.revenue_conversation.enqueue",
+        lambda *args, **kwargs: db.enqueued.append((args, kwargs)),
+    )
+
+    assert enqueue_due_followups(db) == 1
+    assert len(db.enqueued) == 1
+    assert db.get_state("revenue_inbound_health")["status"] == "completed"
+
+
+def test_gmail_followup_blocks_if_any_outbound_message_was_not_observed(monkeypatch):
+    from lead_engine.revenue_conversation import enqueue_due_followups
+
+    class DB:
+        def __init__(self):
+            self.state = {}
+            self.enqueued = []
+
+        def all_leads(self):
+            return [{
+                "fingerprint": "gmail-lead",
+                "conversation_id": "gmail-conversation",
+                "outreach_channel": "email",
+                "outreach_state": "awaiting_response",
+                "follow_up_due": True,
+                "next_follow_up_at": "2020-01-01T00:00:00+00:00",
+                "outreach_history": [{
+                    "provider_result": {
+                        "provider": "gmail_smtp", "accepted": True,
+                        "message_id": "<message-1@thorio.co>",
+                    }
+                }],
+            }]
+
+        def set_state(self, key, value):
+            self.state[key] = value
+
+        def get_state(self, key):
+            return self.state.get(key)
+
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "test-app-password")
+    monkeypatch.delenv("THORIO_REVENUE_BROWSER_INBOUND_TARGETS", raising=False)
+    monkeypatch.setattr(
+        "lead_engine.browser_revenue_inbound.poll_browser_revenue_inbound",
+        lambda db, limit=100: {
+            "status": "disabled", "observed_count": 0, "recorded_count": 0,
+            "failed_count": 0, "failures": [], "observed_opportunity_ids": [],
+        },
+    )
+    monkeypatch.setattr(
+        "lead_engine.gmail_imap_inbound.poll_gmail_revenue_inbound",
+        lambda db, limit=100: {
+            "status": "completed", "observer": "gmail_imap", "observed_count": 0,
+            "recorded_count": 0, "failed_count": 0, "failures": [],
+            "observed_message_ids": [],
+        },
+    )
+    db = DB()
+    monkeypatch.setattr(
+        "lead_engine.revenue_conversation.enqueue",
+        lambda *args, **kwargs: db.enqueued.append((args, kwargs)),
+    )
+
+    assert enqueue_due_followups(db) == 0
+    assert db.enqueued == []
+    assert db.get_state("revenue_inbound_health")["status"] == "blocked_unobserved"
+
+
+def test_gmail_followup_queues_only_after_all_outbound_messages_were_observed(monkeypatch):
+    from lead_engine.revenue_conversation import enqueue_due_followups
+
+    class DB:
+        def __init__(self):
+            self.state = {}
+            self.enqueued = []
+
+        def all_leads(self):
+            return [{
+                "fingerprint": "gmail-lead-observed",
+                "conversation_id": "gmail-conversation-observed",
+                "outreach_channel": "email",
+                "outreach_state": "awaiting_response",
+                "follow_up_due": True,
+                "next_follow_up_at": "2020-01-01T00:00:00+00:00",
+                "outreach_history": [{
+                    "provider_result": {
+                        "provider": "gmail_smtp", "accepted": True,
+                        "message_id": "<message-1@thorio.co>",
+                    }
+                }],
+            }]
+
+        def set_state(self, key, value):
+            self.state[key] = value
+
+        def get_state(self, key):
+            return self.state.get(key)
+
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "test-app-password")
+    monkeypatch.delenv("THORIO_REVENUE_BROWSER_INBOUND_TARGETS", raising=False)
+    monkeypatch.setattr(
+        "lead_engine.browser_revenue_inbound.poll_browser_revenue_inbound",
+        lambda db, limit=100: {
+            "status": "disabled", "observed_count": 0, "recorded_count": 0,
+            "failed_count": 0, "failures": [], "observed_opportunity_ids": [],
+        },
+    )
+    monkeypatch.setattr(
+        "lead_engine.gmail_imap_inbound.poll_gmail_revenue_inbound",
+        lambda db, limit=100: {
+            "status": "completed", "observer": "gmail_imap", "observed_count": 1,
+            "recorded_count": 0, "failed_count": 0, "failures": [],
+            "observed_message_ids": ["message-1@thorio.co"],
         },
     )
     db = DB()
