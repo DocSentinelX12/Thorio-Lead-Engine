@@ -182,8 +182,21 @@ def _sales_eligibility(lead: Mapping[str, Any], routing_result: Mapping[str, Any
         return False, "runtime_database_required"
     if not package_is_ready(lead):
         return False, "research_package_not_ready"
-    # Airtable is an asynchronous operational record and audit sink. It must
-    # never become a human approval or timing gate for revenue outreach.
+    try:
+        handoff = db.get_airtable_handoff(str(lead.get("fingerprint") or "").strip())
+    except Exception:
+        return False, "airtable_handoff_state_unavailable"
+    if not isinstance(handoff, Mapping):
+        return False, "airtable_handoff_missing"
+    try:
+        current_digest = package_digest(lead)
+    except (TypeError, ValueError, KeyError):
+        return False, "research_package_not_ready"
+    if str(handoff.get("package_digest") or "").strip() != current_digest:
+        return False, "airtable_handoff_digest_mismatch"
+    # Sales eligibility is not an Airtable approval workflow. It does, however,
+    # require durable proof that this exact current research package was
+    # confirmed in Airtable before it can be queued for outreach.
     return True, "eligible"
 
 
