@@ -719,12 +719,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           previous_run_id=""
+          prior_production_run_id=""
           while IFS= read -r run_id; do
             [ -z "$run_id" ] && continue
+            if [ -z "$prior_production_run_id" ]; then
+              prior_production_run_id="$run_id"
+            fi
             artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
             if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
           done < <(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')
+          if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ]; then
+            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
+            exit 1
+          fi
+          if [ -z "$previous_run_id" ]; then
+            echo "ENGINE STATE BOOTSTRAP: no completed prior production run exists; first-run initialization is permitted."
+          fi
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
       - name: Download previous Lead Engine state
         if: steps.previous_state.outputs.run_id != ''
@@ -764,9 +776,27 @@ jobs:
                   raise SystemExit(f"RESTORED ENGINE STATE INVALID: missing required tables {missing}")
               lead_count = connection.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
               checkpoint_count = connection.execute("SELECT COUNT(*) FROM checkpoints").fetchone()[0]
+          validated_databases = [database]
+          for candidate in sorted(pathlib.Path("data").rglob("*")):
+              if not candidate.is_file() or candidate == database:
+                  continue
+              if candidate.suffix.lower() not in {".sqlite", ".sqlite3", ".db"}:
+                  continue
+              if candidate.stat().st_size == 0:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite database is empty: {candidate}")
+              candidate_uri = f"file:{candidate.resolve()}?mode=ro"
+              try:
+                  with sqlite3.connect(candidate_uri, uri=True, timeout=30) as connection:
+                      integrity = connection.execute("PRAGMA integrity_check").fetchone()
+              except sqlite3.DatabaseError as exc:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: cannot open SQLite database {candidate}: {exc}") from exc
+              if not integrity or integrity[0] != "ok":
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite integrity_check failed for {candidate}: {integrity!r}")
+              validated_databases.append(candidate)
           print(
               "RESTORED ENGINE STATE VERIFIED: "
-              f"SQLite integrity ok, leads={lead_count}, checkpoints={checkpoint_count}."
+              f"SQLite integrity ok for {len(validated_databases)} database(s), "
+              f"leads={lead_count}, checkpoints={checkpoint_count}."
           )
           PY
       - name: Ensure Lead Engine data directory exists
