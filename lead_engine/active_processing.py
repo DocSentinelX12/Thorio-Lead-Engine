@@ -131,12 +131,24 @@ def verification(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, 
 def routing(agent: str, payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     result = _routing(agent, payload, ctx)
     lead = _lead(payload)
-    if result.get("destinations"):
+    destinations = result.get("destinations")
+    if isinstance(destinations, list) and "Astrivon Labs" in destinations:
+        # The live Airtable Opportunities/Referrals/Commissions Partner
+        # selects do not contain Astrivon Labs. Keep it visible as a potential
+        # route in Lead Radar, but never create invalid downstream records or
+        # authorize outbound outreach until that schema is deliberately aligned.
+        result["unsupported_destinations"] = ["Astrivon Labs"]
+        result["destinations"] = [route for route in destinations if route != "Astrivon Labs"]
+        result["review_required"] = True
+        result["schema_compatibility_blockers"] = [
+            "Airtable Opportunities.Partner, Referrals.Partner, and Commissions.Partner lack the Astrivon Labs option."
+        ]
+    if result.get("destinations") or result.get("review_required") or result.get("unsupported_destinations"):
         stored = dict(lead)
         stored["routing_result"] = dict(result)
-        # A qualified opportunity receives an explicit pre-verification state.
-        # This is a durable state marker only. Airtable synchronization is
-        # asynchronous and never authorizes or blocks outreach.
+        # Qualified leads cannot reach the closer until the current package
+        # has a durable, digest-bound Airtable handoff and every active route
+        # is representable in the live downstream schema.
         if stored.get("qualified") is True and not str(stored.get("sales_eligibility") or "").strip():
             stored["sales_eligibility"] = "blocked"
             stored["sales_eligibility_reason"] = "research_verification_pending"
