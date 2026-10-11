@@ -448,7 +448,7 @@ jobs:
               f"browser_state_key_configured={str(browser_state_key).lower()}"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"ready={str(ready).lower()}\\n")
+              output.write(f"ready={str(ready).lower()}\n")
           if not ready:
               print(
                   "INBOUND REVENUE BLOCKER: no reply observer matches the selected outbound transport. "
