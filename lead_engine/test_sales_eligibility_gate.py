@@ -49,13 +49,13 @@ def test_potential_routes_alone_cannot_enter_sales_execution():
     assert reason == "not_qualified"
 
 
-def test_explicit_qualification_requires_confirmed_airtable_handoff(tmp_path):
+def test_explicit_qualification_without_airtable_handoff_is_blocked(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead(qualified=True)
     db.insert_if_new(lead)
     eligible, reason = _sales_eligibility(lead, _routing(), {}, db)
-    assert eligible is True
-    assert reason == "eligible"
+    assert eligible is False
+    assert reason == "airtable_handoff_missing"
 
 
 def test_exact_airtable_handoff_allows_sales_eligibility(tmp_path):
@@ -68,10 +68,25 @@ def test_exact_airtable_handoff_allows_sales_eligibility(tmp_path):
     assert reason == "eligible"
 
 
-def test_qualified_opportunity_survives_airtable_sync_failure(tmp_path):
+def test_qualified_opportunity_is_blocked_until_airtable_sync_is_confirmed(tmp_path):
     db = LeadDB(data_dir=tmp_path)
     lead = _lead(qualified=True)
     db.insert_if_new(lead)
     eligible, reason = _sales_eligibility(lead, _routing(), {"sync_error_present": True}, db)
-    assert eligible is True
-    assert reason == "eligible"
+    assert eligible is False
+    assert reason == "airtable_handoff_missing"
+
+def test_stale_airtable_package_digest_blocks_sales_eligibility(tmp_path):
+    db = LeadDB(data_dir=tmp_path)
+    lead = _lead(qualified=True)
+    db.insert_if_new(lead)
+    db.record_airtable_handoff(
+        lead["fingerprint"], package_digest(lead), "recLead", "recResearch",
+        ["recCompany"], "2026-09-18T00:00:00+00:00"
+    )
+    changed = dict(lead)
+    changed["business_need"] = "a different current hiring need"
+    eligible, reason = _sales_eligibility(changed, _routing(), {}, db)
+    assert eligible is False
+    assert reason == "airtable_handoff_digest_mismatch"
+
