@@ -284,4 +284,8 @@ def test_cli_bounded_scheduler_failure_returns_nonzero(monkeypatch, capsys):
     result = main(["run-scheduled", "--cycles", "1"])
 
     assert result == 1
-    assert "PRODUCTION EXECUTION GATE FAILURE" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "PRODUCTION EXECUTION GATE FAILURE" in output
+    assert '"source_failed_count": 1' in output
+    assert '"sync_failed_count": 0' in output
+    assert '"agent_failed_count": 0' in output
