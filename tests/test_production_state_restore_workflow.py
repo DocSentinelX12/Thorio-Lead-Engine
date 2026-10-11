@@ -13,6 +13,10 @@ def test_state_selector_preserves_valid_artifacts_from_failed_runs():
     assert '.status == "completed"' in selector
     assert '.conclusion == "success" or .conclusion == "failure"' in selector
     assert "thorio-lead-engine-state" in selector
+    assert 'gh run download "$run_id"' in selector
+    assert "candidate has no non-empty leads.sqlite3" in selector
+    assert "PRAGMA integrity_check" in selector
+    assert "ENGINE STATE CANDIDATE REJECTED" in selector
 
 
 def test_restored_database_is_integrity_checked_before_runtime_starts():
@@ -48,3 +52,17 @@ def test_every_restored_sqlite_database_is_integrity_checked():
     assert '{".sqlite", ".sqlite3", ".db"}' in validation
     assert "RESTORED ENGINE STATE INVALID: cannot open SQLite database" in validation
     assert "SQLite integrity_check failed for" in validation
+
+def test_invalid_preflight_run_cannot_publish_empty_state_artifact():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    persistence = workflow.split("- name: Validate Lead Engine state before artifact persistence", 1)[1]
+    persistence = persistence.split("- name: Persist Lead Engine state", 1)[0]
+    upload = workflow.split("- name: Persist Lead Engine state", 1)[1]
+
+    assert "steps.turso_restore.outcome == 'success'" in persistence
+    assert "steps.previous_state.outcome == 'success'" in persistence
+    assert "steps.engine_run.outcome != 'skipped'" in persistence
+    assert "data/leads.sqlite3 is missing or empty" in persistence
+    assert "PRAGMA integrity_check" in persistence
+    assert "steps.persist_state_validation.outcome == 'success'" in upload
+
