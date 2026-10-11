@@ -185,6 +185,9 @@ class LeadDB:
         if not fingerprint:
             raise ValueError("Lead payload must contain a fingerprint.")
         validate_opportunity_identity(payload)
+        if self._batch_write_depth == 0 and not self.conn.in_transaction:
+            with self.batch_writes():
+                return self.insert_if_new(payload)
         cursor = self.conn.execute("INSERT OR IGNORE INTO leads (fingerprint, payload) VALUES (?, ?)", (str(fingerprint), json.dumps(payload, ensure_ascii=False)))
         if cursor.rowcount == 1:
             self.conn.execute(
@@ -216,6 +219,12 @@ class LeadDB:
     def update_payload(self, fingerprint: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not isinstance(updates, dict):
             raise ValueError("Lead updates must be a dictionary.")
+        # Serialize the read/merge/write as one retryable transaction. Without
+        # this, concurrent specialists can collide at UPDATE or overwrite a
+        # newer payload assembled by another worker from a stale read.
+        if self._batch_write_depth == 0 and not self.conn.in_transaction:
+            with self.batch_writes():
+                return self.update_payload(fingerprint, updates)
         current = self.get(fingerprint)
         if current is None:
             return None
@@ -350,6 +359,12 @@ class LeadDB:
         values = (str(fingerprint).strip(), str(package_digest).strip(), str(lead_radar_record_id).strip(), str(research_record_id).strip(), json.dumps([str(value) for value in master_tracker_record_ids], ensure_ascii=False), str(confirmed_at).strip())
         if not all(values[:4]) or not values[5]:
             raise ValueError("Airtable handoff confirmation requires fingerprint, package digest, record IDs, and confirmation time.")
+        if self._batch_write_depth == 0 and not self.conn.in_transaction:
+            with self.batch_writes():
+                return self.record_airtable_handoff(
+                    fingerprint, package_digest, lead_radar_record_id,
+                    research_record_id, master_tracker_record_ids, confirmed_at
+                )
         self.conn.execute("INSERT INTO airtable_handoffs (fingerprint, package_digest, lead_radar_record_id, research_record_id, master_tracker_record_ids, confirmed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(fingerprint) DO UPDATE SET package_digest = excluded.package_digest, lead_radar_record_id = excluded.lead_radar_record_id, research_record_id = excluded.research_record_id, master_tracker_record_ids = excluded.master_tracker_record_ids, confirmed_at = excluded.confirmed_at, updated_at = CURRENT_TIMESTAMP", values)
         if self._batch_write_depth == 0:
             self.conn.commit()
@@ -443,6 +458,9 @@ class LeadDB:
             raise ValueError("State key is required.")
         if not isinstance(value, dict):
             raise ValueError("State value must be an object.")
+        if self._batch_write_depth == 0 and not self.conn.in_transaction:
+            with self.batch_writes():
+                return self.set_state(key, value)
         self.conn.execute("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP", (key, json.dumps(value, ensure_ascii=False)))
         if self._batch_write_depth == 0:
             self.conn.commit()
@@ -459,7 +477,7 @@ class LeadDB:
         if not isinstance(action, dict):
             raise ValueError("Revenue action must be an object.")
 
-        self.conn.execute("BEGIN IMMEDIATE")
+        self._begin_immediate()
         try:
             row = self.conn.execute("SELECT value FROM state WHERE key = ?", ("revenue_execution",)).fetchone()
             state: Dict[str, Any] = {}
@@ -706,12 +724,19 @@ class LeadDB:
         assignments = ", ".join(f"{field} = ?" for field in updates)
         now_iso = datetime.now(timezone.utc).isoformat()
         values = list(updates.values()) + [task_id, expected_worker_id, expected_lease_token, now_iso]
-        cursor = self.conn.execute(
-            f"UPDATE agent_queue SET {assignments} WHERE task_id = ? AND status = 'running' AND worker_id = ? AND lease_token = ? AND lease_until IS NOT NULL AND lease_until > ?",
-            values,
-        )
-        self.conn.commit()
-        return cursor.rowcount == 1
+        owns_transaction = self._begin_write_transaction_if_needed()
+        try:
+            cursor = self.conn.execute(
+                f"UPDATE agent_queue SET {assignments} WHERE task_id = ? AND status = 'running' AND worker_id = ? AND lease_token = ? AND lease_until IS NOT NULL AND lease_until > ?",
+                values,
+            )
+            if self._batch_write_depth == 0:
+                self.conn.commit()
+            return cursor.rowcount == 1
+        except Exception:
+            if owns_transaction and self.conn.in_transaction:
+                self.conn.rollback()
+            raise
 
     def compute_bridge_prepare(self, task_id, worker_id, payload, now_iso):
         owns_transaction = self._begin_write_transaction_if_needed()
