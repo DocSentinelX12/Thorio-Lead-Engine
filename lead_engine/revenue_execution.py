@@ -133,7 +133,10 @@ def configured_revenue_transport() -> RevenueTransport | None:
     if mode == "browser":
         from .browser_revenue_transport import BrowserRevenueTransport
         return BrowserRevenueTransport()
-    if mode not in {"", "http"}:
+    if mode == "gmail_smtp":
+        from .gmail_smtp_transport import GmailSMTPTransport
+        return GmailSMTPTransport()
+    if mode not in {"", "auto", "http"}:
         raise RevenueTransportUnavailable(
             f"unsupported THORIO_REVENUE_TRANSPORT_MODE: {mode}"
         )
@@ -144,10 +147,18 @@ def configured_revenue_transport() -> RevenueTransport | None:
         if not url or not token:
             raise RevenueTransportUnavailable("THORIO_REVENUE_TRANSPORT_URL and THORIO_REVENUE_TRANSPORT_TOKEN must both be configured")
         return HttpRevenueTransport(url, token)
+    if mode == "http":
+        raise RevenueTransportUnavailable("HTTP revenue transport mode requires both THORIO_REVENUE_TRANSPORT_URL and THORIO_REVENUE_TRANSPORT_TOKEN")
 
-    if mode == "" and os.getenv("THORIO_REVENUE_BROWSER_TARGETS", "").strip():
+    if os.getenv("THORIO_REVENUE_BROWSER_TARGETS", "").strip():
         from .browser_revenue_transport import BrowserRevenueTransport
         return BrowserRevenueTransport()
+
+    gmail_username = os.getenv("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip()
+    gmail_password = os.getenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
+    if gmail_username and gmail_password:
+        from .gmail_smtp_transport import GmailSMTPTransport
+        return GmailSMTPTransport()
     return None
 
 
