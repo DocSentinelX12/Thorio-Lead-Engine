@@ -48,7 +48,7 @@ jobs:
     if: ${{ inputs.kaggle_jit_secret_configured }}
     name: Provision two real free external GPU runners
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     env:
       THORIO_KAGGLE_ENABLED: "1"
       THORIO_KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
@@ -59,7 +59,7 @@ jobs:
       THORIO_KAGGLE_REPOSITORY_REF: main
       THORIO_KAGGLE_GITHUB_REPOSITORY: DocSentinelX12/Thorio-Lead-Engine
       THORIO_KAGGLE_GITHUB_RUNNER_LABELS: self-hosted,thorio-free-gpu,cuda
-      THORIO_KAGGLE_ACQUISITION_READY_TIMEOUT_SECONDS: "300"
+      THORIO_KAGGLE_ACQUISITION_READY_TIMEOUT_SECONDS: "600"
       GITHUB_RUNNER_JIT_TOKEN: ${{ secrets.THORIO_GITHUB_RUNNER_JIT_TOKEN }}
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
