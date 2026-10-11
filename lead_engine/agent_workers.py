@@ -168,6 +168,17 @@ def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], 
             "action_id": lead.get("last_outreach_action_id"),
             "conversation_id": lead.get("conversation_id"),
         }
+    handoff_confirmed, handoff_reason = verify_persisted_airtable_handoff(
+        ctx.db, lead, include_downstream_lifecycle=False
+    )
+    if not handoff_confirmed:
+        if str(handoff_reason).startswith(("airtable_readback_failed:", "handoff_state_read_failed:")):
+            raise RevenueTransportUnavailable(
+                f"current Airtable handoff could not be reverified; follow-up remains queued: {handoff_reason}"
+            )
+        raise AgentContractError(
+            f"outreach_closer follow-up requires exact current Airtable handoff confirmation: {handoff_reason}"
+        )
     research = lead.get("company_research")
     if not isinstance(research, Mapping): raise AgentContractError("outreach_closer follow-up requires company research")
     contact_name = str(research.get("decision_maker") or lead.get("contact_name") or "").strip(); contact_email = str(research.get("decision_maker_email") or research.get("contact_email") or lead.get("contact_email") or "").strip()
