@@ -329,7 +329,7 @@ jobs:
               f"browser_state_key_configured={str(browser_state_key_configured).lower()}"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"ready={str(ready).lower()}\\n")
+              output.write(f"ready={str(ready).lower()}\n")
           if not ready:
               print(
                   "OUTBOUND REVENUE BLOCKER: no usable explicitly configured transport "
@@ -360,7 +360,7 @@ jobs:
               f"browser_state_key_configured={str(browser_state_key_configured).lower()}"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"ready={str(ready).lower()}\\n")
+              output.write(f"ready={str(ready).lower()}\n")
           if not api_configs and not browser_sources:
               print(
                   "PUBLIC DISCOVERY BLOCKER: no API-backed or authenticated-browser "
@@ -508,7 +508,7 @@ jobs:
             missing+=("API-backed or authenticated-browser business-intent discovery")
           fi
           if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'PRODUCTION READINESS BLOCKED: missing %s. Configure the real runtime integration and rerun; no outreach will be reported as ready.\\n' "${missing[*]}"
+            printf 'PRODUCTION READINESS BLOCKED: missing %s. Configure the real runtime integration and rerun; no outreach will be reported as ready.\n' "${missing[*]}"
             exit 1
           fi
           echo "PRODUCTION READINESS VERIFIED: live business-intent discovery and an authorized outbound transport are configured."
