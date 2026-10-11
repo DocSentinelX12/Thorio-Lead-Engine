@@ -234,6 +234,28 @@ def test_physical_nccl_workflow_uses_dedicated_rendezvous_route():
     )
     assert "Require Kaggle JIT secret confirmation before GPU acquisition" in text
     assert '"--search", "thorio-"' not in text
+    assert 'timeout-minutes: 25' in text
+    assert 'THORIO_KAGGLE_ACQUISITION_READY_TIMEOUT_SECONDS: "600"' in text
+
+
+def test_free_compute_workers_retry_transient_coordinator_health_failures():
+    workflow = Path(__file__).parents[1] / ".github" / "workflows" / "free-compute-workers.yml"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "Recheck coordinator health with staggered bounded retries" in text
+    assert "stagger_seconds = ((worker_number - 1) % 20) * 2" in text
+    assert "retryable_statuses = {408, 425, 429, 500, 502, 503, 504}" in text
+    assert "for attempt in range(1, 9)" in text
+    assert "timeout-minutes: 15" in text
+    assert "max-parallel: 20" in text
+
+
+def test_external_kaggle_runner_has_explicit_bounded_acquisition_timeout():
+    workflow = Path(__file__).parents[1] / ".github" / "workflows" / "free-external-gpu-runner.yml"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "timeout-minutes: 20" in text
+    assert 'THORIO_KAGGLE_ACQUISITION_READY_TIMEOUT_SECONDS: "600"' in text
 
 
 def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_slug():
@@ -249,6 +271,8 @@ def test_physical_external_gpu_proof_has_canonical_dispatch_and_matching_kaggle_
     assert '"is_private": false' in workflow
     assert "delete-kaggle-owned-resource.sh kernels" in workflow
     assert "failing fast rather than consuming the full proof timeout" in workflow
+    assert "timeout-minutes: 20" in workflow
+    assert "deadline=$((SECONDS + 900))" in workflow
     assert "physical-external-gpu-proof.yml" in controller
     assert "physical-external-gpu-proof-run.yml" not in controller
     assert "autonomous-gpu-capacity-broker.yml" in controller
