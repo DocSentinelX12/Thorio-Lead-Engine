@@ -205,7 +205,7 @@ def test_normalize_routes_and_partner_projection_support_astrivon():
     fields = _normalize_lead({"company": "Astrivon Prospect", "source": "linkedin", "signal": "Looking for a dev agency", "evidence": "Need an MVP built.", "potential_routes": ["Astrivon Labs"]})
     assert fields["Applicable Routes"] == ["Astrivon Labs"]
     assert fields["Recommended Partner"] == "Astrivon Labs"
-    assert fields["Work Queue"] == "🟩 Astrivon Referral"
+    assert fields["Work Queue"] == "💰 Revenue / Referral"
 
 
 def test_atomic_master_upsert_uses_duplicate_key_field(monkeypatch):
