@@ -99,8 +99,9 @@ def test_outreach_worker_revalidates_exact_airtable_handoff_before_sending(tmp_p
         return
     assert result["completed_count"] == 1 and result["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_outreach"; assert output["route"] in {"thorio", "shiftr"}; assert "Acme" in output["body"] and "remote software engineer" in output["body"] and "Hi Taylor" in output["body"]; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["revenue_lifecycle_state"] == "outreach_sent" and stored["last_outreach_action_id"]
 
-def test_follow_up_is_autonomous_after_observed_outcome(tmp_path, monkeypatch):
-    monkeypatch.setattr("lead_engine.agent_workers.verify_persisted_airtable_handoff", lambda database, candidate, include_downstream_lifecycle=True: (True, "verified"))
+@pytest.mark.parametrize("handoff_confirmed", [True, False])
+def test_follow_up_is_autonomous_after_observed_outcome(tmp_path, monkeypatch, handoff_confirmed):
+    monkeypatch.setattr("lead_engine.agent_workers.verify_persisted_airtable_handoff", lambda database, candidate, include_downstream_lifecycle=True: (handoff_confirmed, "verified" if handoff_confirmed else "handoff_digest_mismatch"))
     db = _db(tmp_path); now = _recent(); lead = {"fingerprint": "follow-up-persistence-test", "company": "Acme", "qualified": True, "sales_eligibility": "eligible", "signal": "Acme is hiring a remote software engineer", "business_need": "remote software engineer hiring", "research_status": "complete", "research_verified_fields": ["current_intent_research", "route_research"], "company_research": {"company_verified": True, "decision_maker": "Taylor", "decision_maker_evidence": "https://example.com/taylor", "decision_maker_email": "taylor@example.com", "decision_maker_verification_status": "verified"}, "current_intent_research": {"verified": True, "verification_status": "verified", "current_need": "remote software engineer hiring", "observed_at": now, "evidence_url": "https://example.com/need"}, "route_research": {"verified": True, "verification_status": "verified", "routes": {"Thorio": {"verified": True, "verification_status": "verified", "evidence": "Current software engineering hiring need."}}}, "qualification_results": {"Thorio": {"qualified": True, "route_research": {"verified": True, "evidence": "Current software engineering hiring need."}}}, "outreach_route": "Thorio", "outreach_state": "awaiting_response", "outreach_history": [{"at": _recent(), "outcome": "sent"}], "outreach_attempt": 1, "conversation_id": "conversation:follow-up-persistence-test:thorio", "contact_email": "taylor@example.com"}; db.insert_if_new(lead); enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True, "authorized": True, "authorized_by_role": "high_ticket_sales_closer"}); transport = _FakeTransport(); register_revenue_transport(transport)
     try:
         result = run_worker_once(db, "follow_up", worker_id="follow-up-worker")
@@ -108,7 +109,12 @@ def test_follow_up_is_autonomous_after_observed_outcome(tmp_path, monkeypatch):
         assert result["results"][0]["action"] == "handoff_to_closer"
         closer = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
     finally: register_revenue_transport(None)
-    output = closer["results"][0]; stored = db.get(lead["fingerprint"]); assert closer["completed_count"] == 1 and closer["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_follow_up"; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["outreach_attempt"] == 2 and stored["next_follow_up_at"] is not None and stored["follow_up_due"] is True and len(stored["outreach_history"]) == 3 and stored["outreach_history"][-2]["outcome"] == "no_response" and stored["outreach_history"][-1]["kind"] == "follow_up" and stored["outreach_history"][-1]["status"] == "sent"
+    output = closer["results"][0]; stored = db.get(lead["fingerprint"])
+    if not handoff_confirmed:
+        assert closer["completed_count"] == 0 and closer["failed_count"] == 1
+        assert transport.calls == []
+        return
+    assert closer["completed_count"] == 1 and closer["failed_count"] == 0; assert output["autonomous"] is True and output["approval_required"] is False and output["action"] == "send_follow_up"; assert len(transport.calls) == 1; assert stored["outreach_state"] == "awaiting_response" and stored["outreach_attempt"] == 2 and stored["next_follow_up_at"] is not None and stored["follow_up_due"] is True and len(stored["outreach_history"]) == 3 and stored["outreach_history"][-2]["outcome"] == "no_response" and stored["outreach_history"][-1]["kind"] == "follow_up" and stored["outreach_history"][-1]["status"] == "sent"
 
 def test_follow_up_closer_persists_message_quality_strategy(tmp_path, monkeypatch):
     monkeypatch.setattr("lead_engine.agent_workers.verify_persisted_airtable_handoff", lambda database, candidate, include_downstream_lifecycle=True: (True, "verified"))
