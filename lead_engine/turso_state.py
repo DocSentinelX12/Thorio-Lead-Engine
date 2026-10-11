@@ -167,6 +167,10 @@ def restore(data_dir: Path) -> bool:
             primary = root / "leads.sqlite3"
             _validate_primary_database(primary)
             data_dir.mkdir(parents=True, exist_ok=True)
+            staged_names = {name for name, _ in staged}
+            for existing_name, existing_path in _sqlite_files(data_dir):
+                if existing_name not in staged_names:
+                    existing_path.unlink()
             for name, source in staged:
                 destination = data_dir.joinpath(*PurePosixPath(name).parts)
                 destination.parent.mkdir(parents=True, exist_ok=True)
