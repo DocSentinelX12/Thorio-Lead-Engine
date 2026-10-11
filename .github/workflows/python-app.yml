@@ -760,7 +760,49 @@ jobs:
               prior_production_run_id="$run_id"
             fi
             artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
-            if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
+            [ -z "$artifact_id" ] && continue
+
+            candidate_dir="$(mktemp -d)"
+            if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name thorio-lead-engine-state --dir "$candidate_dir"; then
+              rm -rf "$candidate_dir"
+              echo "ENGINE STATE RECOVERY BLOCKED: artifact $artifact_id from run $run_id was listed but could not be downloaded; refusing to guess or start empty." >&2
+              exit 1
+            fi
+            if python - "$candidate_dir" <<'PY'
+          import pathlib
+          import sqlite3
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          primary = root / "leads.sqlite3"
+          if not primary.is_file() or primary.stat().st_size == 0:
+              raise SystemExit("candidate has no non-empty leads.sqlite3")
+          databases = [primary] + [
+              path for path in sorted(root.rglob("*"))
+              if path.is_file() and path != primary and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+          ]
+          for database in databases:
+              if database.stat().st_size == 0:
+                  raise SystemExit(f"candidate database is empty: {database}")
+              with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=30) as connection:
+                  result = connection.execute("PRAGMA integrity_check").fetchone()
+                  if not result or result[0] != "ok":
+                      raise SystemExit(f"candidate database failed integrity_check: {database}: {result!r}")
+                  if database == primary:
+                      tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                      missing = sorted({"leads", "checkpoints"} - tables)
+                      if missing:
+                          raise SystemExit(f"candidate primary database is missing required tables: {missing}")
+          PY
+            then
+              rm -rf "$candidate_dir"
+              previous_run_id="$run_id"
+              echo "ENGINE STATE CANDIDATE VERIFIED: run=$run_id artifact_id=$artifact_id."
+              break
+            else
+              echo "ENGINE STATE CANDIDATE REJECTED: run=$run_id artifact_id=$artifact_id is not a complete valid SQLite state; checking the next older candidate." >&2
+              rm -rf "$candidate_dir"
+            fi
           done <<< "$production_runs"
           if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ]; then
             echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
@@ -1091,8 +1133,39 @@ jobs:
           retention-days: 90
           compression-level: 6
           overwrite: true
+      - name: Validate Lead Engine state before artifact persistence
+        id: persist_state_validation
+        if: always() && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          import sqlite3
+
+          root = pathlib.Path("data")
+          primary = root / "leads.sqlite3"
+          if not primary.is_file() or primary.stat().st_size == 0:
+              raise SystemExit("STATE ARTIFACT BLOCKED: data/leads.sqlite3 is missing or empty; refusing to publish an unusable recovery artifact.")
+          databases = [primary] + [
+              path for path in sorted(root.rglob("*"))
+              if path.is_file() and path != primary and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+          ]
+          for database in databases:
+              if database.stat().st_size == 0:
+                  raise SystemExit(f"STATE ARTIFACT BLOCKED: empty SQLite database: {database}")
+              with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=30) as connection:
+                  integrity = connection.execute("PRAGMA integrity_check").fetchone()
+                  if not integrity or integrity[0] != "ok":
+                      raise SystemExit(f"STATE ARTIFACT BLOCKED: SQLite integrity check failed for {database}: {integrity!r}")
+                  if database == primary:
+                      tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                      missing = sorted({"leads", "checkpoints"} - tables)
+                      if missing:
+                          raise SystemExit(f"STATE ARTIFACT BLOCKED: primary database missing required tables: {missing}")
+          print(f"STATE ARTIFACT SAFE TO PERSIST: validated {len(databases)} SQLite database(s).")
+          PY
       - name: Persist Lead Engine state
-        if: always()
+        if: always() && steps.persist_state_validation.outcome == 'success'
         uses: actions/upload-artifact@v6
         with:
           name: thorio-lead-engine-state
