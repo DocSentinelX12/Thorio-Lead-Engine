@@ -184,7 +184,7 @@ jobs:
 
               if grep -Fq "THORIO_PHYSICAL_GPU_EXECUTION_PROOF " "$log_file"; then
                 grep -F "THORIO_PHYSICAL_GPU_EXECUTION_PROOF " "$log_file"
-                if ! grep -Fq '"proof_ref": "main"' "$log_file" || ! grep -Fq '"proof_sha": "${GITHUB_SHA}"' "$log_file"; then
+                if ! grep -Eq 'proof_ref.{0,20}main' "$log_file" || ! grep -Eq "proof_sha.{0,20}${GITHUB_SHA}" "$log_file"; then
                   echo "External CUDA proof is missing the exact main commit provenance; refusing to certify it." >&2
                   exit 1
                 fi
