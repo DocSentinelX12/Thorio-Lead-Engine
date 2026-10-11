@@ -7,14 +7,10 @@ WORKFLOW = Path(__file__).parents[1] / ".github" / "workflows" / "python-app.yml
 LANES = (
     "X_SIGNAL",
     "THREADS_SIGNAL",
-    "REDDIT_SIGNAL",
     "LINKEDIN_SIGNAL",
     "FACEBOOK_SIGNAL",
-    "INSTAGRAM_SIGNAL",
     "HACKER_NEWS_SIGNAL",
     "INDIE_HACKERS_SIGNAL",
-    "PRODUCT_HUNT_SIGNAL",
-    "WEB_JOB_SIGNAL",
 )
 
 
@@ -34,3 +30,10 @@ def test_production_runtime_reports_missing_public_discovery_without_exposing_se
     assert "PUBLIC DISCOVERY BLOCKER:" in workflow
     assert workflow.index("Report outbound revenue transport readiness") < workflow.index("Select and verify Airtable production credential")
     assert workflow.index("Report public discovery source readiness") < workflow.index("Select and verify Airtable production credential")
+
+
+def test_removed_low_confidence_discovery_lanes_are_not_wired_to_production():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    for lane in ("REDDIT_SIGNAL", "INSTAGRAM_SIGNAL", "PRODUCT_HUNT_SIGNAL", "WEB_JOB_SIGNAL"):
+        assert f"THORIO_DISCOVERY_{lane}_" not in workflow
+

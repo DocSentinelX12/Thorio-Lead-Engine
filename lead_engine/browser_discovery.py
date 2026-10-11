@@ -79,6 +79,14 @@ def _required_profile() -> Path:
     return path
 
 
+_REMOVED_PRODUCTION_DISCOVERY_LANES = frozenset({
+    "reddit_signal",
+    "instagram_signal",
+    "product_hunt_signal",
+    "web_job_signal",
+})
+
+
 def _targets_from_environment() -> tuple[BrowserDiscoveryTarget, ...]:
     raw = _env("THORIO_BROWSER_DISCOVERY_TARGETS")
     if not raw:
@@ -96,6 +104,8 @@ def _targets_from_environment() -> tuple[BrowserDiscoveryTarget, ...]:
         if not isinstance(item, Mapping):
             raise BrowserDiscoveryConfigurationError(f"Browser target {index} must be an object")
         lane = str(item.get("lane", "")).strip()
+        if normalize_account(lane) in _REMOVED_PRODUCTION_DISCOVERY_LANES:
+            continue
         name = str(item.get("name", "")).strip()
         url = str(item.get("url", "")).strip()
         if not lane or not name or not url.startswith(("https://", "http://")):

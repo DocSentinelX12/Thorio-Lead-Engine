@@ -161,3 +161,17 @@ def test_browser_authentication_can_be_configured_before_collection():
     result = validate_authenticated_browser_configuration(targets)
     assert result["configured_accounts"] == list(SUPPORTED_ACCOUNTS)
     assert result["configured_lane_count"] == 10
+
+
+def test_removed_discovery_targets_are_ignored_before_validation(monkeypatch):
+    from .browser_discovery import _targets_from_environment
+
+    monkeypatch.setenv("THORIO_BROWSER_DISCOVERY_TARGETS", json.dumps([
+        {"lane": "reddit_signal", "name": "Reddit", "url": "https://www.reddit.com", "account": "reddit"},
+        {"lane": "instagram_signal", "name": "Instagram", "url": "https://www.instagram.com", "account": "instagram"},
+        {"lane": "product_hunt_signal", "name": "Product Hunt", "url": "https://www.producthunt.com", "account": "product_hunt"},
+        {"lane": "web_job_signal", "name": "Web jobs", "url": "https://example.com/jobs"},
+        {"lane": "threads_signal", "name": "Threads", "url": "https://www.threads.net"},
+    ]))
+    targets = _targets_from_environment()
+    assert [target.lane for target in targets] == ["threads_signal"]
