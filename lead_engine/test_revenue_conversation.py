@@ -30,7 +30,7 @@ def test_inbound_response_is_durable_and_idempotent(tmp_path):
 
 def test_objection_follow_up_is_executed_by_closer_and_persisted(tmp_path, monkeypatch):
     from .sales_handoff import package_digest
-    monkeypatch.setattr("lead_engine.agent_workers.verify_persisted_airtable_handoff", lambda database, candidate, include_downstream_lifecycle=True: (True, package_digest(candidate)))
+    monkeypatch.setattr("lead_engine.agent_workers.verify_persisted_airtable_handoff", lambda database, candidate, include_downstream_lifecycle=True: (True, "verified"))
     db = LeadDB(data_dir=tmp_path); lead = _lead("objection-test"); db.insert_if_new(lead); transport = FakeTransport(); register_revenue_transport(transport)
     try:
         record_inbound_event(db, opportunity_id=lead["fingerprint"], conversation_id=lead["conversation_id"], event_id="evt-2", text="What does this cost?", outcome="objection", objection="What does this cost?"); follow_up_result = run_worker_once(db, "follow_up", worker_id="followup-worker"); closer_result = run_worker_once(db, "outreach_closer", worker_id="closer-worker")
