@@ -239,23 +239,94 @@ def due_followups(db, *, now: Optional[datetime] = None, limit: int = 100) -> li
     return due
 
 def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int = 100) -> int:
-    from .browser_revenue_inbound import poll_browser_revenue_inbound
-    inbound_result = poll_browser_revenue_inbound(db, limit=limit)
-    if not isinstance(inbound_result, Mapping):
-        raise RuntimeError("revenue inbound observer returned an invalid result")
-    health = dict(inbound_result)
-    health["status"] = "failed" if int(inbound_result.get("failed_count", 0) or 0) > 0 else str(inbound_result.get("status") or "completed")
-    health["checked_at"] = _now()
+    from .browser_revenue_inbound import (
+        configured_browser_revenue_inbound_targets,
+        poll_browser_revenue_inbound,
+        _thread_url_from_lead,
+    )
+    from .gmail_imap_inbound import gmail_imap_configured, poll_gmail_revenue_inbound
+
+    browser_result = poll_browser_revenue_inbound(db, limit=limit)
+    if not isinstance(browser_result, Mapping):
+        raise RuntimeError("browser revenue inbound observer returned an invalid result")
+    results = []
+    if str(browser_result.get("status") or "") != "disabled":
+        results.append(dict(browser_result))
+
+    gmail_configured = gmail_imap_configured()
+    if gmail_configured:
+        gmail_result = poll_gmail_revenue_inbound(db, limit=limit)
+        if not isinstance(gmail_result, Mapping):
+            raise RuntimeError("Gmail revenue inbound observer returned an invalid result")
+        results.append(dict(gmail_result))
+
+    health = {
+        "status": "disabled" if not results else (
+            "failed" if any(
+                int(result.get("failed_count", 0) or 0) > 0
+                or str(result.get("status") or "") not in {"completed"}
+                for result in results
+            ) else "completed"
+        ),
+        "observers": [str(result.get("observer") or "browser") for result in results],
+        "observed_count": sum(int(result.get("observed_count", 0) or 0) for result in results),
+        "recorded_count": sum(int(result.get("recorded_count", 0) or 0) for result in results),
+        "failed_count": sum(int(result.get("failed_count", 0) or 0) for result in results),
+        "failures": [failure for result in results for failure in (result.get("failures") or [])],
+        "checked_at": _now(),
+    }
     if hasattr(db, "set_state"):
         db.set_state("revenue_inbound_health", health)
-    if int(inbound_result.get("failed_count", 0) or 0) > 0:
+    if health["status"] != "completed" or health["failed_count"] > 0:
         return 0
+
+    browser_targets = configured_browser_revenue_inbound_targets()
+    due = due_followups(db, now=now, limit=limit)
+    unobserved = []
+    for lead in due:
+        channel = str(lead.get("outreach_channel") or "").strip().lower()
+        history = lead.get("outreach_history")
+        gmail_thread = False
+        if gmail_configured and channel in {"email", "gmail", "gmail_smtp"} and isinstance(history, list):
+            gmail_thread = any(
+                isinstance(item, Mapping)
+                and isinstance(item.get("provider_result"), Mapping)
+                and item["provider_result"].get("provider") == "gmail_smtp"
+                and item["provider_result"].get("accepted") is True
+                and bool(str(item["provider_result"].get("message_id") or "").strip())
+                for item in history
+            )
+        browser_thread = (
+            channel in browser_targets
+            and bool(_thread_url_from_lead(lead))
+        )
+        if not (gmail_thread or browser_thread):
+            unobserved.append({
+                "opportunity_id": str(lead.get("fingerprint") or ""),
+                "channel": channel or "unknown",
+            })
+    if unobserved:
+        health["status"] = "blocked_unobserved"
+        health["unobserved_count"] = len(unobserved)
+        health["unobserved"] = unobserved
+        if hasattr(db, "set_state"):
+            db.set_state("revenue_inbound_health", health)
+        return 0
+
     queued = 0
-    for lead in due_followups(db, now=now, limit=limit):
+    for lead in due:
         fingerprint = str(lead.get("fingerprint") or "").strip()
-        if not fingerprint: continue
+        if not fingerprint:
+            continue
         due_at = str(lead.get("next_follow_up_at") or "").strip()
-        enqueue(db, "follow_up", {"lead": lead, "outcome": "no_response", "execute": True}, priority=10, dedupe_key=f"scheduled_followup:{fingerprint}:{due_at}"); queued += 1
+        enqueue(
+            db,
+            "follow_up",
+            {"lead": lead, "outcome": "no_response", "execute": True},
+            priority=10,
+            dedupe_key=f"scheduled_followup:{fingerprint}:{due_at}",
+        )
+        queued += 1
     return queued
 
 def objection_reply(text: str, route: str) -> str:
