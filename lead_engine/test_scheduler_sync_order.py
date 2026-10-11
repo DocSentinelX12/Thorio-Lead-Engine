@@ -43,8 +43,13 @@ def test_scheduler_skips_airtable_drain_when_sync_is_disabled(tmp_path):
     runner = LeadEngineRunner(pipeline=pipeline)
     scheduler = LeadScheduler(runner=runner)
     scheduler.agent_orchestrator = MagicMock()
-    scheduler.agent_orchestrator.run_all_once.return_value = {"processed_count": 0}
-    scheduler._bridge_remote = lambda **kwargs: {
+    scheduler.agent_orchestrator._queue_health.return_value = {
+        "queued_count": 0,
+        "running_count": 0,
+        "failed_count": 0,
+    }
+    bridge_calls = []
+    scheduler._bridge_remote = lambda **kwargs: bridge_calls.append(True) or {
         "status": "disabled",
         "published_count": 0,
         "completed_count": 0,
@@ -53,12 +58,18 @@ def test_scheduler_skips_airtable_drain_when_sync_is_disabled(tmp_path):
 
     with patch("lead_engine.scheduler.drain_pending", side_effect=AssertionError("Airtable drain must not run while sync is disabled")), patch(
         "lead_engine.scheduler.process_paxus_research_queue",
-        return_value={"processed": 0, "failed": 0},
+        side_effect=AssertionError("Paxus research must be deferred while sync is disabled"),
     ):
         result = scheduler.run([StaticLeadSource([])], agent_max_rounds=1)
+        bounded = scheduler.run_bounded([StaticLeadSource([])], interval_seconds=0, max_cycles=1)
 
     assert result["sync"]["status"] == "disabled"
     assert result["sync"]["failed_count"] == 0
+    assert result["agents"]["status"] == "deferred"
+    assert result["agents"]["drain_complete"] is True
+    assert scheduler.agent_orchestrator.run_all_once.call_count == 0
+    assert bridge_calls == []
+    assert bounded["status"] == "sync_disabled"
     observability = db.get_state("sync_observability")
     assert observability["successful_sync_runs"] == 0
     assert observability["last_successful_sync"] is None

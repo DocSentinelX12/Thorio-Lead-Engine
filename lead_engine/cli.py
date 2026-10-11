@@ -224,7 +224,7 @@ def main(argv=None):
             print(str(exc), flush=True)
             return 1
 
-        if result.get("status") != "completed":
+        if result.get("status") not in {"completed", "sync_disabled"}:
             sync_summary = result.get("sync") if isinstance(result.get("sync"), dict) else {}
             agents_summary = result.get("agents") if isinstance(result.get("agents"), dict) else {}
             post_agents_summary = result.get("post_sync_agents") if isinstance(result.get("post_sync_agents"), dict) else {}

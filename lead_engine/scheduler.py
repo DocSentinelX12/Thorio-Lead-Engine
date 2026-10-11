@@ -268,31 +268,63 @@ class LeadScheduler:
             self._run_sources_sequential(due_sources, results, failed)
 
         db = self.runner.pipeline.db
+        sync_enabled = getattr(getattr(self.runner, "pipeline", None), "sync_enabled", True) is True
         sync_started_at = datetime.now(timezone.utc).isoformat()
-        remote_before = self._bridge_remote()
+        disabled_remote = {
+            "status": "disabled",
+            "reason": "airtable_sync_disabled",
+            "published_count": 0,
+            "completed_count": 0,
+            "retried_count": 0,
+        }
+        remote_before = self._bridge_remote() if sync_enabled else dict(disabled_remote)
         due_followups = enqueue_due_followups(db)
         revenue_inbound_health = db.get_state("revenue_inbound_health") if hasattr(db, "get_state") else None
         handoff_recovery = recover_processing_handoffs(db)
-        if agent_max_rounds is None:
-            agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
+        if sync_enabled:
+            if agent_max_rounds is None:
+                agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit())
+            else:
+                agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=agent_max_rounds)
         else:
-            agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=agent_max_rounds)
-        remote_after = self._bridge_remote()
+            queue_health = self.agent_orchestrator._queue_health()
+            remaining_count = int(queue_health.get("queued_count", 0) or 0) + int(queue_health.get("running_count", 0) or 0)
+            agent_result = {
+                "status": "deferred",
+                "reason": "airtable_sync_disabled",
+                "processed_count": 0,
+                "failed_count": int(queue_health.get("failed_count", 0) or 0),
+                "round_count": 0,
+                "drain_complete": remaining_count == 0,
+                "remaining_queue_count": remaining_count,
+                "queue_health": queue_health,
+                "rounds": [],
+                "agents": [],
+            }
+            print(
+                "PRODUCTION PHASE: specialist and revenue work deferred because Airtable sync is disabled; "
+                "durable tasks remain queued and no new outreach is executed.",
+                flush=True,
+            )
+        remote_after = self._bridge_remote() if sync_enabled else dict(disabled_remote)
         phase_started = time.perf_counter()
-        print("PRODUCTION PHASE: Paxus research queue processing started.", flush=True)
-        paxus_research = process_paxus_research_queue(db)
-        paxus_summary = paxus_research if isinstance(paxus_research, dict) else {}
-        print(
-            "PRODUCTION PHASE: Paxus research queue processing finished "
-            f"in {time.perf_counter() - phase_started:.1f}s; "
-            f"status={paxus_summary.get('status', 'unknown')} "
-            f"processed={len(paxus_summary.get('processed', [])) if isinstance(paxus_summary.get('processed'), list) else 0} "
-            f"errors={len(paxus_summary.get('errors', [])) if isinstance(paxus_summary.get('errors'), list) else 0} "
-            f"queued_count={paxus_summary.get('queued_count', 'unknown')}.",
-            flush=True,
-        )
+        if sync_enabled:
+            print("PRODUCTION PHASE: Paxus research queue processing started.", flush=True)
+            paxus_research = process_paxus_research_queue(db)
+            paxus_summary = paxus_research if isinstance(paxus_research, dict) else {}
+            print(
+                "PRODUCTION PHASE: Paxus research queue processing finished "
+                f"in {time.perf_counter() - phase_started:.1f}s; "
+                f"status={paxus_summary.get('status', 'unknown')} "
+                f"processed={len(paxus_summary.get('processed', [])) if isinstance(paxus_summary.get('processed'), list) else 0} "
+                f"errors={len(paxus_summary.get('errors', [])) if isinstance(paxus_summary.get('errors'), list) else 0} "
+                f"queued_count={paxus_summary.get('queued_count', 'unknown')}.",
+                flush=True,
+            )
+        else:
+            paxus_research = {"status": "deferred", "reason": "airtable_sync_disabled", "processed": [], "errors": []}
+            print("PRODUCTION PHASE: Paxus research queue processing deferred because Airtable sync is disabled.", flush=True)
         phase_started = time.perf_counter()
-        sync_enabled = getattr(getattr(self.runner, "pipeline", None), "sync_enabled", True) is True
         if sync_enabled:
             print("PRODUCTION PHASE: Airtable pending-delivery drain started.", flush=True)
             sync_result = drain_pending(db, sync_batch=sync_pending)
@@ -455,6 +487,11 @@ class LeadScheduler:
         result["sync_failed_count"] = sync_failures
         result["agent_failed_count"] = agent_failures
         result["post_sync_agent_failed_count"] = post_sync_agent_failures
+        sync_disabled = any(
+            isinstance(cycle.get("sync"), dict)
+            and str(cycle["sync"].get("status") or "").strip().lower() == "disabled"
+            for cycle in cycle_results
+        )
         result["status"] = (
             "failed"
             if int(result.get("failed_count", 0) or 0)
@@ -462,7 +499,7 @@ class LeadScheduler:
             or sync_failures
             or agent_failures
             or post_sync_agent_failures
-            else "completed"
+            else "sync_disabled" if sync_disabled else "completed"
         )
         result["cycles"] = max_cycles
         return result
@@ -492,4 +529,6 @@ class LeadScheduler:
                 failed = True
             if max_cycles is None or cycles < max_cycles:
                 time.sleep(interval_seconds)
-        return {"status": "failed" if failed else "completed", "cycles": cycles}
+        sync = last_result.get("sync") if isinstance(last_result, dict) else None
+        sync_disabled = isinstance(sync, dict) and str(sync.get("status") or "").strip().lower() == "disabled"
+        return {"status": "failed" if failed else ("sync_disabled" if sync_disabled else "completed"), "cycles": cycles}
