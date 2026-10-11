@@ -23,7 +23,7 @@ jobs:
   physical-external-gpu-proof:
     name: Run real CUDA proof on external Kaggle GPU
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       KAGGLE_USERNAME: ${{ secrets.THORIO_KAGGLE_USERNAME }}
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
@@ -155,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           kernel_ref="${KAGGLE_USERNAME}/${THORIO_KAGGLE_KERNEL_SLUG}"
-          deadline=$((SECONDS + 600))
+          deadline=$((SECONDS + 900))
 
           while [ "$SECONDS" -lt "$deadline" ]; do
             status_output="$(kaggle kernels status "$kernel_ref" 2>&1)" || {
