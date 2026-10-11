@@ -40,6 +40,7 @@ SUPPORTED_ACCOUNTS = (
     "reddit",
     "instagram",
     "product_hunt",
+    "web_job",
 )
 
 # Gmail is an outreach channel only. Keep it out of the collection account
