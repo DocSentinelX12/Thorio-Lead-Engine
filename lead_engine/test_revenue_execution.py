@@ -56,7 +56,8 @@ def test_provider_acceptance_is_reconciled_without_duplicate_send(tmp_path):
     with pytest.raises(RuntimeError): execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key)
     result = execute_outbound(db, worker_capability=_issue_closer_capability(task_id="unit-test", worker_id="unit-test"), opportunity_id="crash-safe", conversation_id="conversation-1", channel="email", recipient={"email": "taylor@example.com"}, subject="Hello", body="Hello Taylor", transport=transport, idempotency_key=key); assert result.status == "sent" and len(transport.calls) == 1 and db.get_state("revenue_execution")["actions"][key]["status"] == "sent"
 
-def test_production_closer_sends_and_marks_outreach_sent(tmp_path):
+def test_production_closer_sends_and_marks_outreach_sent(tmp_path, monkeypatch):
+    monkeypatch.setattr("lead_engine.agent_workers.verify_persisted_airtable_handoff", lambda database, candidate, include_downstream_lifecycle=True: (True, package_digest(candidate)))
     db = LeadDB(data_dir=tmp_path); lead = _lead("production-closer-test"); db.insert_if_new(lead); _confirm_handoff(db, lead); transport = FakeTransport(); register_revenue_transport(transport)
     try:
         airtable_integrity("airtable_integrity", {"lead": lead, "routing_result": {"destinations": ["Thorio", "Shiftr"], "review_required": False, "multi_route": True}}, type("Ctx", (), {"db": db})()); result = run_worker_once(db, "outreach_closer", worker_id="closer-worker"); assert result["completed_count"] == 1 and result["failed_count"] == 0 and len(transport.calls) == 1, result["results"]
