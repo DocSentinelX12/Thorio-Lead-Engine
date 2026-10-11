@@ -410,6 +410,8 @@ def _verify_downstream_lifecycle_records(lead: Mapping[str, Any]) -> tuple[bool,
 def verify_persisted_airtable_handoff(
     db: Any,
     lead: Mapping[str, Any],
+    *,
+    include_downstream_lifecycle: bool = True,
 ) -> tuple[bool, str]:
     """Independently reverify the durable Airtable handoff after recovery.
 
@@ -498,9 +500,13 @@ def verify_persisted_airtable_handoff(
         ):
             return False, f"opportunity_not_confirmed:{route}"
 
-    downstream_ok, downstream_reason = _verify_downstream_lifecycle_records(lead)
-    if not downstream_ok:
-        return False, downstream_reason
+    # Before first outreach, the core research package must be confirmed,
+    # but the Outreach/Follow-up records do not exist yet. After outreach,
+    # recovery verification also checks those downstream lifecycle records.
+    if include_downstream_lifecycle:
+        downstream_ok, downstream_reason = _verify_downstream_lifecycle_records(lead)
+        if not downstream_ok:
+            return False, downstream_reason
 
     return True, digest
 
