@@ -100,6 +100,7 @@ def test_poll_records_real_observer_events_before_followup_logic(monkeypatch):
     )
     result = poll_browser_revenue_inbound(_DB(), observer=Observer())
     assert result["observed_count"] == 1
+    assert result["observed_opportunity_ids"] == ["lead-1"]
     assert result["recorded_count"] == 1
     assert result["failed_count"] == 0
     assert recorded[0]["opportunity_id"] == "lead-1"

@@ -184,7 +184,7 @@ class GmailIMAPObserver:
 
 def poll_gmail_revenue_inbound(db: Any, *, observer: GmailIMAPObserver | None = None, limit: int = 100) -> dict[str, Any]:
     if observer is None and not gmail_imap_configured():
-        return {"status": "disabled", "observer": "gmail_imap", "observed_count": 0, "recorded_count": 0, "failed_count": 0, "failures": []}
+        return {"status": "disabled", "observer": "gmail_imap", "observed_count": 0, "recorded_count": 0, "failed_count": 0, "failures": [], "observed_message_ids": []}
     try:
         outbound = _outbound_message_index(db, limit=limit)
         observer = observer or GmailIMAPObserver()
@@ -203,6 +203,16 @@ def poll_gmail_revenue_inbound(db: Any, *, observer: GmailIMAPObserver | None = 
                 text=reply["body"],
             )
             recorded += 1 if result else 0
-        return {"status": "completed", "observer": "gmail_imap", "observed_count": len(outbound), "recorded_count": recorded, "failed_count": 0, "failures": []}
+        return {
+            "status": "completed", "observer": "gmail_imap",
+            "observed_count": len(outbound), "recorded_count": recorded,
+            "failed_count": 0, "failures": [],
+            "observed_message_ids": list(outbound.keys()),
+        }
     except Exception as exc:
-        return {"status": "failed", "observer": "gmail_imap", "observed_count": 0, "recorded_count": 0, "failed_count": 1, "failures": [{"observer": "gmail_imap", "error": str(exc)}]}
+        return {
+            "status": "failed", "observer": "gmail_imap",
+            "observed_count": 0, "recorded_count": 0, "failed_count": 1,
+            "failures": [{"observer": "gmail_imap", "error": str(exc)}],
+            "observed_message_ids": [],
+        }

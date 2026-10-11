@@ -97,3 +97,29 @@ def test_imap_observer_correlates_real_reply_headers_without_sending(monkeypatch
     assert replies[0]["event_id"] == "gmail:reply-1@example.com"
     assert replies[0]["in_reply_to"] == "abc123@thorio.co"
     assert replies[0]["body"] == "Yes, let's discuss."
+
+
+def test_gmail_poll_reports_exact_outbound_message_ids_checked(monkeypatch):
+    class DB:
+        def all_leads(self):
+            return [{
+                "fingerprint": "lead-1",
+                "conversation_id": "conversation-1",
+                "revenue_lifecycle_state": "conversation_active",
+                "outreach_history": [{
+                    "provider_result": {
+                        "provider": "gmail_smtp", "accepted": True,
+                        "message_id": "<abc123@thorio.co>",
+                        "recipient": "buyer@example.com",
+                    }
+                }],
+            }]
+
+    class Observer:
+        def observe_replies(self, outbound):
+            assert set(outbound) == {"abc123@thorio.co"}
+            return []
+
+    result = inbound.poll_gmail_revenue_inbound(DB(), observer=Observer())
+    assert result["status"] == "completed"
+    assert result["observed_message_ids"] == ["abc123@thorio.co"]

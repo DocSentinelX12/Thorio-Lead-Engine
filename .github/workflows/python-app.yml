@@ -23,6 +23,7 @@ concurrency:
 permissions:
   contents: read
   actions: write
+  administration: read
 
 jobs:
   test:
@@ -629,45 +630,67 @@ jobs:
           from lead_engine.account_auth import SUPPORTED_ACCOUNTS, auth_status
 
           def api_names(endpoint, collection_key):
-              result = subprocess.run(
-                  ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/{endpoint}", "--paginate", "--jq", f".{collection_key}[].name"],
-                  capture_output=True, text=True, timeout=20,
-              )
+              try:
+                  result = subprocess.run(
+                      ["gh", "api", endpoint, "--paginate", "--jq", f".{collection_key}[].name"],
+                      capture_output=True, text=True, timeout=20,
+                  )
+              except (OSError, subprocess.TimeoutExpired):
+                  return None
               if result.returncode != 0:
                   return None
               return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
-          secrets = api_names("secrets", "secrets")
-          variables = api_names("variables", "variables")
+          repo_prefix = f"repos/{os.environ['GITHUB_REPOSITORY']}"
+          secrets = api_names(f"{repo_prefix}/actions/secrets", "secrets")
+          variables = api_names(f"{repo_prefix}/actions/variables", "variables")
+          environment_names = api_names(f"{repo_prefix}/environments", "environments")
+          environment_scopes = {}
+          for environment_name in sorted(environment_names or ()):
+              safe_name = __import__("urllib.parse", fromlist=["quote"]).quote(environment_name, safe="")
+              env_secrets = api_names(f"{repo_prefix}/environments/{safe_name}/secrets", "secrets")
+              env_variables = api_names(f"{repo_prefix}/environments/{safe_name}/variables", "variables")
+              environment_scopes[environment_name] = (env_secrets, env_variables)
+
           status = auth_status()
           print("ACCOUNT CREDENTIAL NAME AUDIT (names and presence only; no values are read):")
           for account in SUPPORTED_ACCOUNTS:
               prefix = "THORIO_ACCOUNT_" + account.upper()
               expected = {prefix + "_USERNAME", prefix + "_PASSWORD", prefix + "_STORAGE_STATE_B64"}
-              matching = set()
-              for source in (secrets, variables):
-                  if source is None:
+              matching = []
+              sources = [("repository_secret", secrets), ("repository_variable", variables)]
+              sources.extend(
+                  (f"environment_secret:{env_name}", pair[0])
+                  for env_name, pair in environment_scopes.items()
+              )
+              sources.extend(
+                  (f"environment_variable:{env_name}", pair[1])
+                  for env_name, pair in environment_scopes.items()
+              )
+              for scope, names in sources:
+                  if names is None:
                       continue
-                  for name in source:
+                  for name in names:
                       normalized = "".join(character.lower() for character in name if character.isalnum())
                       aliases = {
                           "product_hunt": ("producthunt",),
                           "web_job": ("webjob", "webjobs"),
                       }.get(account, (account.replace("_", ""),))
                       if any(alias in normalized for alias in aliases) and ("thorio" in normalized or normalized.startswith(account.replace("_", ""))):
-                          matching.add(name)
+                          matching.append(f"{scope}:{name}")
               item = status[account]
               print(
                   f"{account}: runtime_configured={item['configured']} "
                   f"username_present={item['username_configured']} "
                   f"password_present={item['password_configured']} "
                   f"storage_state_present={item['storage_state_configured']} "
-                  f"expected_secret_names_present={sorted(expected.intersection(secrets or set())) if secrets is not None else 'unavailable'} "
-                  f"matching_repository_names={sorted(matching) if secrets is not None or variables is not None else 'unavailable'}"
+                  f"expected_repository_secret_names_present={sorted(expected.intersection(secrets or set())) if secrets is not None else 'unavailable'} "
+                  f"matching_names={sorted(matching) if any(source is not None for _, source in sources) else 'unavailable'}"
               )
-          repository_names = set(secrets or ()) | set(variables or ())
+          all_names = [("repository", secrets), ("repository", variables)]
+          all_names.extend((f"environment:{env_name}", names) for env_name, pair in environment_scopes.items() for names in pair)
           discovery_names = sorted(
-              name for name in repository_names
+              f"{scope}:{name}" for scope, names in all_names if names is not None for name in names
               if any(marker in name.upper() for marker in (
                   "THORIO_DISCOVERY_", "THORIO_BROWSER_DISCOVERY_TARGETS",
                   "THORIO_REVENUE_BROWSER_TARGETS", "THORIO_REVENUE_BROWSER_INBOUND_TARGETS",
@@ -676,9 +699,11 @@ jobs:
           )
           print("DISCOVERY/INBOUND CONFIG NAMES PRESENT: " + json.dumps(discovery_names))
           print(
-              "REPOSITORY NAME INVENTORY: "
-              f"secrets_api={'available' if secrets is not None else 'unavailable'} "
-              f"variables_api={'available' if variables is not None else 'unavailable'}"
+              "CONFIG NAME INVENTORY: "
+              f"repository_secrets_api={'available' if secrets is not None else 'unavailable'} "
+              f"repository_variables_api={'available' if variables is not None else 'unavailable'} "
+              f"environment_names_api={'available' if environment_names is not None else 'unavailable'} "
+              f"environment_count={len(environment_names or ())}"
           )
           PY
       - name: Verify account authentication configuration

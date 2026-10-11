@@ -303,11 +303,15 @@ def _thread_url_from_lead(lead: Mapping[str, Any]) -> str:
 def poll_browser_revenue_inbound(db: Any, *, observer: BrowserRevenueInboundObserver | None = None, limit: int = 100) -> dict[str, Any]:
     targets = configured_browser_revenue_inbound_targets()
     if not targets:
-        return {"status": "disabled", "observed_count": 0, "recorded_count": 0, "failed_count": 0, "failures": []}
+        return {
+            "status": "disabled", "observed_count": 0, "recorded_count": 0,
+            "failed_count": 0, "failures": [], "observed_opportunity_ids": [],
+        }
     observer = observer or BrowserRevenueInboundObserver(targets)
     observed = 0
     recorded = 0
     failures: list[dict[str, str]] = []
+    observed_opportunity_ids: list[str] = []
     for lead in db.all_leads():
         if observed >= limit:
             break
@@ -322,6 +326,9 @@ def poll_browser_revenue_inbound(db: Any, *, observer: BrowserRevenueInboundObse
         try:
             events = observer.observe(channel=channel, thread_url=thread_url)
             observed += 1
+            opportunity_id = str(lead.get("fingerprint") or "").strip()
+            if opportunity_id:
+                observed_opportunity_ids.append(opportunity_id)
             for event in events:
                 result = record_inbound_event(
                     db,
@@ -343,4 +350,5 @@ def poll_browser_revenue_inbound(db: Any, *, observer: BrowserRevenueInboundObse
         "recorded_count": recorded,
         "failed_count": len(failures),
         "failures": failures,
+        "observed_opportunity_ids": observed_opportunity_ids,
     }

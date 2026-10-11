@@ -249,15 +249,25 @@ def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int
     browser_result = poll_browser_revenue_inbound(db, limit=limit)
     if not isinstance(browser_result, Mapping):
         raise RuntimeError("browser revenue inbound observer returned an invalid result")
+    browser_observed_ids = {
+        str(value).strip() for value in browser_result.get("observed_opportunity_ids", [])
+        if str(value).strip()
+    }
     results = []
     if str(browser_result.get("status") or "") != "disabled":
         results.append(dict(browser_result))
 
     gmail_configured = gmail_imap_configured()
+    gmail_observed_ids: set[str] = set()
     if gmail_configured:
         gmail_result = poll_gmail_revenue_inbound(db, limit=limit)
         if not isinstance(gmail_result, Mapping):
             raise RuntimeError("Gmail revenue inbound observer returned an invalid result")
+        gmail_observed_ids = {
+            str(value).strip().strip("<>").lower()
+            for value in gmail_result.get("observed_message_ids", [])
+            if str(value).strip()
+        }
         results.append(dict(gmail_result))
 
     health = {
@@ -284,25 +294,35 @@ def enqueue_due_followups(db: Any, *, now: Optional[datetime] = None, limit: int
     due = due_followups(db, now=now, limit=limit)
     unobserved = []
     for lead in due:
+        fingerprint = str(lead.get("fingerprint") or "").strip()
         channel = str(lead.get("outreach_channel") or "").strip().lower()
         history = lead.get("outreach_history")
-        gmail_thread = False
-        if gmail_configured and channel in {"email", "gmail", "gmail_smtp"} and isinstance(history, list):
-            gmail_thread = any(
-                isinstance(item, Mapping)
-                and isinstance(item.get("provider_result"), Mapping)
-                and item["provider_result"].get("provider") == "gmail_smtp"
-                and item["provider_result"].get("accepted") is True
-                and bool(str(item["provider_result"].get("message_id") or "").strip())
-                for item in history
-            )
+        gmail_message_ids = set()
+        if isinstance(history, list):
+            for item in history:
+                if not isinstance(item, Mapping):
+                    continue
+                result = item.get("provider_result")
+                if not isinstance(result, Mapping):
+                    continue
+                if result.get("provider") == "gmail_smtp" and result.get("accepted") is True:
+                    message_id = str(result.get("message_id") or "").strip().strip("<>").lower()
+                    if message_id:
+                        gmail_message_ids.add(message_id)
+        gmail_thread = (
+            gmail_configured
+            and channel in {"email", "gmail", "gmail_smtp"}
+            and bool(gmail_message_ids)
+            and gmail_message_ids.issubset(gmail_observed_ids)
+        )
         browser_thread = (
-            channel in browser_targets
+            fingerprint in browser_observed_ids
+            and channel in browser_targets
             and bool(_thread_url_from_lead(lead))
         )
         if not (gmail_thread or browser_thread):
             unobserved.append({
-                "opportunity_id": str(lead.get("fingerprint") or ""),
+                "opportunity_id": fingerprint,
                 "channel": channel or "unknown",
             })
     if unobserved:
