@@ -29,6 +29,7 @@ jobs:
       KAGGLE_API_TOKEN: ${{ secrets.THORIO_KAGGLE_KEY }}
       THORIO_KAGGLE_KERNEL_SLUG: thorio-physical-gpu-proof-${{ github.run_id }}
       THORIO_PROOF_REF: main
+      THORIO_PROOF_SHA: ${{ github.sha }}
     steps:
       - name: Require the canonical production ref
         run: test "$GITHUB_REF" = "refs/heads/main"
@@ -36,7 +37,7 @@ jobs:
       - name: Check out main proof source
         uses: actions/checkout@v5
         with:
-          ref: main
+          ref: ${{ github.sha }}
 
       - name: Install Kaggle CLI
         run: |
@@ -135,7 +136,10 @@ jobs:
               "cuda_version": str(torch.version.cuda or ""),
               "checksum": checksum,
               "elapsed_ms": elapsed_ms,
-              "proof_ref": os.environ.get("THORIO_PROOF_REF", ""),
+              # Kaggle kernels do not inherit the GitHub Actions job environment.
+              # Embed the triggering main commit so the external evidence is provenance-bound.
+              "proof_ref": "main",
+              "proof_sha": "${{ github.sha }}",
               "nvidia_smi": nvidia.stdout.strip(),
           }
 
@@ -180,7 +184,11 @@ jobs:
 
               if grep -Fq "THORIO_PHYSICAL_GPU_EXECUTION_PROOF " "$log_file"; then
                 grep -F "THORIO_PHYSICAL_GPU_EXECUTION_PROOF " "$log_file"
-                echo "PHYSICAL EXTERNAL GPU PROOF VERIFIED"
+                if ! grep -Fq '"proof_ref": "main"' "$log_file" || ! grep -Fq '"proof_sha": "${GITHUB_SHA}"' "$log_file"; then
+                  echo "External CUDA proof is missing the exact main commit provenance; refusing to certify it." >&2
+                  exit 1
+                fi
+                echo "PHYSICAL EXTERNAL GPU PROOF VERIFIED FOR ${GITHUB_SHA}"
                 exit 0
               fi
 
