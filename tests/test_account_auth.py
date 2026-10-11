@@ -166,10 +166,13 @@ def test_only_collection_accounts_remain_in_collection_auth_registry():
         "facebook",
         "hacker_news",
         "indie_hackers",
-        "reddit",
-        "instagram",
-        "product_hunt",
-        "web_job",
     )
     assert "email" not in SUPPORTED_ACCOUNTS
     assert "gmail" not in SUPPORTED_ACCOUNTS
+
+
+@pytest.mark.parametrize("removed_account", ["reddit", "instagram", "product_hunt", "web_job"])
+def test_removed_low-confidence_accounts_are_not_supported(removed_account):
+    assert removed_account not in SUPPORTED_ACCOUNTS
+    with pytest.raises(AccountAuthConfigurationError, match="unsupported account"):
+        credentials_for(removed_account)

@@ -176,8 +176,8 @@ def authenticated_browser_lane_status(targets: Iterable[BrowserDiscoveryTarget])
         "configured_lane_count": len(target_list),
         "authenticated_lane_count": sum(1 for target in target_list if target.account),
         "all_supported_account_types_configured": set(SUPPORTED_ACCOUNTS) == target_accounts,
-        # Backwards-compatible field for older status consumers. The registry
-        # now includes ten account-backed platforms, not only the original six.
+        # Backwards-compatible field for older status consumers. It reflects
+        # the active six-account registry.
         "all_six_account_types_supported": set(SUPPORTED_ACCOUNTS) == target_accounts,
     }
 
