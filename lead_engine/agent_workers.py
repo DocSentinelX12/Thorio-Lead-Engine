@@ -152,10 +152,22 @@ def _priority(_: str, payload: Mapping[str, Any], ctx: AgentExecutionContext) ->
     enqueue(ctx.db, "verification", {"lead": lead, "evidence_events": payload.get("evidence_events", [])}, priority=8, dedupe_key=f"verification:{fingerprint}")
     return {"role": "priority", "priority_score": score, "lead": lead, "research_ready": research_ready, "decision_maker_ready": decision_maker_ready, "actionability": "ready" if research_ready and decision_maker_ready else "research_required", "inputs_used": ["evidence", "qualification", "freshness", "research", "decision_maker"], "handoff": "verification"}
 
-def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
-    terminal_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
+def _outreach_stop_reason(lead: Mapping[str, Any]) -> str:
     lifecycle_state = str(lead.get("revenue_lifecycle_state") or "").strip().lower()
-    if lifecycle_state in terminal_states:
+    outreach_state = str(lead.get("outreach_state") or "").strip().lower()
+    terminal_lifecycle_states = {"converted", "referred", "closed_lost", "disqualified", "stopped"}
+    terminal_outreach_states = {"converted", "referred", "closed_lost", "disqualified", "stopped", "declined", "opted_out", "irrelevant", "exhausted"}
+    if lifecycle_state in terminal_lifecycle_states:
+        return lifecycle_state
+    if outreach_state in terminal_outreach_states:
+        return outreach_state
+    return ""
+
+
+def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], ctx: AgentExecutionContext) -> Dict[str, Any]:
+    lifecycle_state = str(lead.get("revenue_lifecycle_state") or "").strip().lower()
+    stop_reason = _outreach_stop_reason(lead)
+    if stop_reason:
         return {
             "role": "outreach_closer",
             "lead": dict(lead),
@@ -163,7 +175,7 @@ def _send_follow_up_as_closer(lead: Dict[str, Any], payload: Mapping[str, Any], 
             "approval_required": False,
             "action": "stop",
             "outcome_recorded": False,
-            "stop_reason": lifecycle_state,
+            "stop_reason": stop_reason,
             "delivery": {},
             "action_id": lead.get("last_outreach_action_id"),
             "conversation_id": lead.get("conversation_id"),
@@ -224,8 +236,15 @@ def _outreach_closer(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCont
     current = ctx.db.get(fingerprint)
     if isinstance(current, Mapping):
         current = dict(current)
+        stop_reason = _outreach_stop_reason(current)
+        if stop_reason:
+            return {"role": "outreach_closer", "lead": current, "autonomous": True, "approval_required": False, "action": "stop", "stop_reason": stop_reason, "delivery": {}, "action_id": current.get("last_outreach_action_id"), "conversation_id": current.get("conversation_id")}
         if current.get("last_outreach_action_id") or str(current.get("outreach_state") or "").lower() == "awaiting_response": return {"role": "outreach_closer", "lead": current, "autonomous": True, "approval_required": False, "action": "already_active", "delivery": dict(current.get("last_outreach_delivery") or {}), "action_id": current.get("last_outreach_action_id"), "conversation_id": current.get("conversation_id"), "next_state": current.get("outreach_state")}
         lead = current
+    else:
+        stop_reason = _outreach_stop_reason(lead)
+        if stop_reason:
+            return {"role": "outreach_closer", "lead": dict(lead), "autonomous": True, "approval_required": False, "action": "stop", "stop_reason": stop_reason, "delivery": {}, "action_id": lead.get("last_outreach_action_id"), "conversation_id": lead.get("conversation_id")}
     if str(lead.get("sales_eligibility") or "").strip().lower() != "eligible": raise AgentContractError("outreach_closer requires a sales-eligible opportunity")
     if not package_is_ready(lead): raise AgentContractError("outreach_closer requires a complete verified research package")
     if str(lead.get("research_status") or "").strip().lower() not in {"complete", "research_complete"}: raise AgentContractError("outreach_closer requires completed company research")
