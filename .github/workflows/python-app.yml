@@ -405,6 +405,57 @@ jobs:
           PY
 
 
+      - name: Report inbound revenue observation readiness
+        id: revenue_inbound_readiness
+        run: |
+          python - <<'PY'
+          import os
+          from lead_engine.browser_revenue_inbound import configured_browser_revenue_inbound_targets
+          from lead_engine.gmail_imap_inbound import gmail_imap_configured
+
+          mode = os.environ.get("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
+          http_url = bool(os.environ.get("THORIO_REVENUE_TRANSPORT_URL", "").strip())
+          http_token = bool(os.environ.get("THORIO_REVENUE_TRANSPORT_TOKEN", "").strip())
+          browser_outbound_configured = bool(os.environ.get("THORIO_REVENUE_BROWSER_TARGETS", "").strip())
+          browser_state_key = bool(os.environ.get("THORIO_BROWSER_STATE_ENCRYPTION_KEY", "").strip())
+          try:
+              browser_targets = configured_browser_revenue_inbound_targets()
+              browser_config_valid = True
+          except Exception as exc:
+              browser_targets = {}
+              browser_config_valid = False
+              print(f"INBOUND BROWSER CONFIGURATION INVALID: {type(exc).__name__}")
+          gmail_transport_selected = (
+              mode == "gmail_smtp"
+              or (
+                  mode in {"", "auto"}
+                  and not http_url
+                  and not http_token
+                  and not browser_outbound_configured
+              )
+          )
+          gmail_ready = gmail_transport_selected and gmail_imap_configured()
+          browser_ready = bool(browser_targets) and browser_config_valid and browser_state_key and (
+              mode in {"browser", "http"}
+              or (mode in {"", "auto"} and browser_outbound_configured)
+          )
+          ready = gmail_ready or browser_ready
+          print(
+              "INBOUND REVENUE OBSERVATION READINESS: "
+              f"configured={str(ready).lower()} "
+              f"gmail_imap_ready={str(gmail_ready).lower()} "
+              f"browser_target_count={len(browser_targets)} "
+              f"browser_state_key_configured={str(browser_state_key).lower()}"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"ready={str(ready).lower()}\\n")
+          if not ready:
+              print(
+                  "INBOUND REVENUE BLOCKER: no reply observer matches the selected outbound transport. "
+                  "Scheduled follow-ups remain fail-closed until real inbox observation is configured."
+              )
+          PY
+
       - name: Select and verify Airtable production credential
         run: |
           python - <<'PY'
@@ -559,11 +610,15 @@ jobs:
       - name: Enforce end-to-end production readiness
         env:
           REVENUE_TRANSPORT_READY: ${{ steps.revenue_transport_readiness.outputs.ready }}
+          REVENUE_INBOUND_READY: ${{ steps.revenue_inbound_readiness.outputs.ready }}
           PUBLIC_DISCOVERY_READY: ${{ steps.public_discovery_readiness.outputs.ready }}
         run: |
           missing=()
           if [ "${REVENUE_TRANSPORT_READY:-false}" != "true" ]; then
             missing+=("authorized outbound revenue transport")
+          fi
+          if [ "${REVENUE_INBOUND_READY:-false}" != "true" ]; then
+            missing+=("authenticated inbound reply observation")
           fi
           if [ "${PUBLIC_DISCOVERY_READY:-false}" != "true" ]; then
             missing+=("API-backed or authenticated-browser business-intent discovery")
