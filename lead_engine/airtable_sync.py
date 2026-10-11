@@ -126,6 +126,15 @@ def _request(
     url: str,
     payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    method = str(method or "").strip().upper()
+    read_only = (
+        os.getenv("AIRTABLE_READ_ONLY_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+        or os.getenv("AIRTABLE_SYNC_BLOCK_REASON", "").strip().lower() == "record_capacity"
+    )
+    if method != "GET" and read_only:
+        raise AirtableSyncError(
+            "Airtable mutation blocked: runtime is read-only because the base record capacity is exhausted."
+        )
     _require_config()
     api_key = os.getenv("AIRTABLE_API_KEY")
     if not api_key:

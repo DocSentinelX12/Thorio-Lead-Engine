@@ -409,7 +409,10 @@ jobs:
         id: revenue_inbound_readiness
         run: |
           python - <<'PY'
+          import imaplib
           import os
+          import smtplib
+          import ssl
           from lead_engine.browser_revenue_inbound import configured_browser_revenue_inbound_targets
           from lead_engine.gmail_imap_inbound import gmail_imap_configured
 
@@ -434,7 +437,38 @@ jobs:
                   and not browser_outbound_configured
               )
           )
-          gmail_ready = gmail_transport_selected and gmail_imap_configured()
+          gmail_ready = False
+          if gmail_transport_selected and gmail_imap_configured():
+              username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip()
+              password = os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
+              imap_client = None
+              try:
+                  with smtplib.SMTP_SSL(
+                      "smtp.gmail.com", 465, timeout=15,
+                      context=ssl.create_default_context(),
+                  ) as smtp_client:
+                      smtp_client.login(username, password)
+                  imap_client = imaplib.IMAP4_SSL(
+                      "imap.gmail.com", 993,
+                      ssl_context=ssl.create_default_context(), timeout=15,
+                  )
+                  login_status, _ = imap_client.login(username, password)
+                  if login_status != "OK":
+                      raise RuntimeError("Gmail IMAP login was not accepted")
+                  select_status, _ = imap_client.select("INBOX", readonly=True)
+                  if select_status != "OK":
+                      raise RuntimeError("Gmail IMAP inbox could not be selected")
+                  gmail_ready = True
+                  print("GMAIL SMTP/IMAP LIVE AUTH VERIFIED: no email was sent.")
+              except Exception as exc:
+                  print(f"GMAIL SMTP/IMAP LIVE AUTH FAILED: {type(exc).__name__}; no email was sent.")
+                  gmail_ready = False
+              finally:
+                  if imap_client is not None:
+                      try:
+                          imap_client.logout()
+                      except Exception:
+                          pass
           browser_ready = bool(browser_targets) and browser_config_valid and browser_state_key and (
               mode in {"browser", "http"}
               or (mode in {"", "auto"} and browser_outbound_configured)
@@ -477,6 +511,7 @@ jobs:
           probe_fields = {"Lead": probe_id, "Applicable Routes": ["Thorio"]}
           selected = None
           capacity_blocked = False
+          capacity_credential = None
 
           for label, token in candidates:
               if not token:
@@ -502,10 +537,13 @@ jobs:
                   diagnostic = " ".join(str(body).replace(token, "[REDACTED]").split())[:1200]
                   if status == 422 and "TOO_MANY_RECORDS_IN_BASE" in body:
                       capacity_blocked = True
+                      capacity_credential = (label, token)
                       print(
                           f"{label}: Airtable accepted the request but rejected the write because "
                           "the base record limit has been reached (HTTP 422 TOO_MANY_RECORDS_IN_BASE)."
                       )
+                      # Capacity is a base-level constraint; another token cannot fix it.
+                      break
                   elif status in (401, 403):
                       print(f"{label}: Airtable authentication/authorization failed with HTTP {status}: {diagnostic or 'no response body'}")
                   else:
@@ -529,10 +567,16 @@ jobs:
                   with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
                       env_file.write("LEAD_ENGINE_SYNC_ENABLED=false\n")
                       env_file.write("AIRTABLE_SYNC_BLOCK_REASON=record_capacity\n")
+                      env_file.write("AIRTABLE_READ_ONLY_MODE=true\n")
+                      if capacity_credential:
+                          capacity_label, capacity_token = capacity_credential
+                          env_file.write(f"AIRTABLE_API_KEY={capacity_token}\n")
+                          env_file.write(f"AIRTABLE_CREDENTIAL_SOURCE={capacity_label}\n")
                   print(
-                      "AIRTABLE SYNC PAUSED: the configured credential reached Airtable, but the base "
-                      "record limit blocks writes. Continuing local source collection with durable SQLite "
-                      "state; no Airtable records will be deleted and no new handoff will be treated as synced."
+                      "AIRTABLE SYNC PAUSED: the base record limit blocks all writes. The valid "
+                      "credential remains available for read-only source/research access; all Airtable "
+                      "mutations are blocked in the runtime. Local SQLite state is preserved and no "
+                      "records are deleted."
                   )
                   raise SystemExit(0)
               raise SystemExit(
@@ -569,7 +613,10 @@ jobs:
                   )
                   raise SystemExit(0)
               raise SystemExit("AIRTABLE RUNTIME CREDENTIAL FAILURE: selected credential was not propagated to the production runtime.")
-          print(f"AIRTABLE RUNTIME CREDENTIAL VERIFIED: selected source={source}; secret value is not exposed.")
+          if os.environ.get("AIRTABLE_READ_ONLY_MODE", "").strip().lower() == "true":
+              print(f"AIRTABLE RUNTIME CREDENTIAL VERIFIED FOR READS ONLY: selected source={source}; writes remain blocked.")
+          else:
+              print(f"AIRTABLE RUNTIME CREDENTIAL VERIFIED: selected source={source}; secret value is not exposed.")
           PY
       - name: Audit account credential names without reading secret values
         env:
@@ -618,6 +665,16 @@ jobs:
                   f"expected_secret_names_present={sorted(expected.intersection(secrets or set())) if secrets is not None else 'unavailable'} "
                   f"matching_repository_names={sorted(matching) if secrets is not None or variables is not None else 'unavailable'}"
               )
+          repository_names = set(secrets or ()) | set(variables or ())
+          discovery_names = sorted(
+              name for name in repository_names
+              if any(marker in name.upper() for marker in (
+                  "THORIO_DISCOVERY_", "THORIO_BROWSER_DISCOVERY_TARGETS",
+                  "THORIO_REVENUE_BROWSER_TARGETS", "THORIO_REVENUE_BROWSER_INBOUND_TARGETS",
+                  "THORIO_REVENUE_TRANSPORT_MODE", "THORIO_REVENUE_TRANSPORT_URL",
+              ))
+          )
+          print("DISCOVERY/INBOUND CONFIG NAMES PRESENT: " + json.dumps(discovery_names))
           print(
               "REPOSITORY NAME INVENTORY: "
               f"secrets_api={'available' if secrets is not None else 'unavailable'} "

@@ -46,3 +46,54 @@ def test_unconfigured_gmail_observer_is_disabled(monkeypatch):
     result = inbound.poll_gmail_revenue_inbound(DB())
     assert result["status"] == "disabled"
     assert result["observer"] == "gmail_imap"
+
+
+def test_imap_observer_correlates_real_reply_headers_without_sending(monkeypatch):
+    raw = (
+        b"From: buyer@example.com\r\n"
+        b"Message-ID: <reply-1@example.com>\r\n"
+        b"In-Reply-To: <abc123@thorio.co>\r\n"
+        b"Subject: Re: Hiring\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        b"Yes, let's discuss.\r\n\r\n> original message\r\n"
+    )
+
+    class FakeIMAP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login(self, username, password):
+            assert username == "thorio.partners@gmail.com"
+            assert password == "app-password"
+            return "OK", []
+
+        def select(self, mailbox, readonly=False):
+            assert mailbox == "INBOX" and readonly is True
+            return "OK", [b"1"]
+
+        def search(self, charset, *criteria):
+            assert "In-Reply-To" in criteria
+            return "OK", [b"1"]
+
+        def fetch(self, sequence_id, query):
+            return "OK", [(b"1 (RFC822)", raw), b")"]
+
+        def logout(self):
+            return "BYE", []
+
+    monkeypatch.setattr(inbound.imaplib, "IMAP4_SSL", FakeIMAP)
+    observer = inbound.GmailIMAPObserver(
+        username="thorio.partners@gmail.com",
+        password="app-password",
+    )
+    replies = observer.observe_replies({
+        "abc123@thorio.co": {
+            "opportunity_id": "lead-1",
+            "conversation_id": "conversation-1",
+            "recipient": "buyer@example.com",
+        }
+    })
+    assert len(replies) == 1
+    assert replies[0]["event_id"] == "gmail:reply-1@example.com"
+    assert replies[0]["in_reply_to"] == "abc123@thorio.co"
+    assert replies[0]["body"] == "Yes, let's discuss."
