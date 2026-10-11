@@ -285,6 +285,7 @@ jobs:
           pip install playwright cryptography
           python -m playwright install --with-deps chromium
       - name: Report outbound revenue transport readiness
+        id: revenue_transport_readiness
         run: |
           python - <<'PY'
           import json
@@ -307,7 +308,8 @@ jobs:
                   target_error = True
 
           http_ready = url_configured and token_configured
-          browser_ready = bool(targets) and not target_error
+          browser_state_key_configured = bool(os.environ.get("THORIO_BROWSER_STATE_ENCRYPTION_KEY", "").strip())
+          browser_ready = bool(targets) and not target_error and browser_state_key_configured
           if mode == "http":
               ready = http_ready
           elif mode == "browser":
@@ -323,8 +325,11 @@ jobs:
               f"http_url_configured={str(url_configured).lower()} "
               f"http_token_configured={str(token_configured).lower()} "
               f"browser_target_count={len(targets)} "
-              f"browser_target_config_invalid={str(target_error).lower()}"
+              f"browser_target_config_invalid={str(target_error).lower()} "
+              f"browser_state_key_configured={str(browser_state_key_configured).lower()}"
           )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"ready={str(ready).lower()}\\n")
           if not ready:
               print(
                   "OUTBOUND REVENUE BLOCKER: no usable explicitly configured transport "
@@ -335,20 +340,27 @@ jobs:
 
 
       - name: Report public discovery source readiness
+        id: public_discovery_readiness
         run: |
           python - <<'PY'
+          import os
           from lead_engine.browser_discovery import configured_browser_discovery_sources
           from lead_engine.discovery_collectors import load_authorized_discovery_configs
 
           api_configs = load_authorized_discovery_configs(required=False)
           browser_sources = configured_browser_discovery_sources()
+          browser_state_key_configured = bool(os.environ.get("THORIO_BROWSER_STATE_ENCRYPTION_KEY", "").strip())
           api_lanes = sorted({item.lane for item in api_configs})
           browser_lanes = sorted({item.lane for item in browser_sources})
+          ready = bool(api_configs) or (bool(browser_sources) and browser_state_key_configured)
           print(
               "PUBLIC DISCOVERY READINESS: "
               f"api_lane_count={len(api_lanes)} api_lanes={api_lanes} "
-              f"browser_target_count={len(browser_sources)} browser_lanes={browser_lanes}"
+              f"browser_target_count={len(browser_sources)} browser_lanes={browser_lanes} "
+              f"browser_state_key_configured={str(browser_state_key_configured).lower()}"
           )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"ready={str(ready).lower()}\\n")
           if not api_configs and not browser_sources:
               print(
                   "PUBLIC DISCOVERY BLOCKER: no API-backed or authenticated-browser "
@@ -356,6 +368,8 @@ jobs:
                   "The 40-source public job catalog can still collect jobs, but it "
                   "does not replace public business-intent discovery for outreach."
               )
+          elif browser_sources and not browser_state_key_configured:
+              print("PUBLIC DISCOVERY BLOCKER: authenticated-browser discovery is configured, but THORIO_BROWSER_STATE_ENCRYPTION_KEY is missing; the browser worker cannot be started safely.")
           PY
 
 
@@ -481,6 +495,23 @@ jobs:
               raise SystemExit(1)
           print("FREE SOURCE WIRING VERIFIED: the complete enabled public catalog is handed to the runtime source registry in addition to discovery account layers.")
           PY
+      - name: Enforce end-to-end production readiness
+        env:
+          REVENUE_TRANSPORT_READY: ${{ steps.revenue_transport_readiness.outputs.ready }}
+          PUBLIC_DISCOVERY_READY: ${{ steps.public_discovery_readiness.outputs.ready }}
+        run: |
+          missing=()
+          if [ "${REVENUE_TRANSPORT_READY:-false}" != "true" ]; then
+            missing+=("authorized outbound revenue transport")
+          fi
+          if [ "${PUBLIC_DISCOVERY_READY:-false}" != "true" ]; then
+            missing+=("API-backed or authenticated-browser business-intent discovery")
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'PRODUCTION READINESS BLOCKED: missing %s. Configure the real runtime integration and rerun; no outreach will be reported as ready.\\n' "${missing[*]}"
+            exit 1
+          fi
+          echo "PRODUCTION READINESS VERIFIED: live business-intent discovery and an authorized outbound transport are configured."
       - name: Find newest usable engine state
         id: previous_state
         env:
@@ -760,6 +791,8 @@ jobs:
           print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
           print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
           PY
+      - name: Verify production revenue lifecycle and outreach
+        run: python -m lead_engine.production_lifecycle_audit --database data/leads.sqlite3
       - name: Persist encrypted external browser authentication state
         if: ${{ always() }}
         uses: actions/upload-artifact@v6
