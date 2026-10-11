@@ -129,6 +129,9 @@ def _multi_route_master_tracker(lead):
 def test_master_tracker_verification_requires_exact_route_bound_opportunities():
     lead = _ready_lead()
     lead["potential_routes"] = ["Paxus", "Shiftr", "Thorio"]
+    lead["eligible_routes"] = ["Paxus", "Shiftr", "Thorio"]
+    lead["preserved_routes"] = ["Paxus", "Shiftr", "Thorio"]
+    lead["routing_result"] = {"destinations": ["Paxus", "Shiftr", "Thorio"], "review_required": False}
     result = _multi_route_master_tracker(lead)
     assert verify_airtable_handoff(
         {"airtable_record": _records(lead)[0], "research_record": _records(lead)[1], "master_tracker": result},
