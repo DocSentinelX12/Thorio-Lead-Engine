@@ -278,8 +278,29 @@ class LeadScheduler:
         else:
             agent_result = self.agent_orchestrator.run_all_once(limit_per_agent=self._agent_batch_limit(), max_rounds=agent_max_rounds)
         remote_after = self._bridge_remote()
+        phase_started = time.monotonic()
+        print("PRODUCTION PHASE: Paxus research queue processing started.", flush=True)
         paxus_research = process_paxus_research_queue(db)
+        print(
+            "PRODUCTION PHASE: Paxus research queue processing finished "
+            f"in {time.monotonic() - phase_started:.1f}s; "
+            f"result_type={type(paxus_research).__name__}.",
+            flush=True,
+        )
+        phase_started = time.monotonic()
+        print("PRODUCTION PHASE: Airtable pending-delivery drain started.", flush=True)
         sync_result = drain_pending(db, sync_batch=sync_pending)
+        print(
+            "PRODUCTION PHASE: Airtable pending-delivery drain finished "
+            f"in {time.monotonic() - phase_started:.1f}s; "
+            f"synced={int(sync_result.get('synced_count', 0) or 0)} "
+            f"already_exists={int(sync_result.get('already_exists_count', 0) or 0)} "
+            f"failed={int(sync_result.get('failed_count', 0) or 0)} "
+            f"deferred_research={int(sync_result.get('deferred_research_count', 0) or 0)} "
+            f"batches={int(sync_result.get('batches', 0) or 0)} "
+            f"drain_complete={sync_result.get('drain_complete')}.",
+            flush=True,
+        )
         post_sync_agents = None
         if int(sync_result.get("synced_count", 0) or 0) or int(sync_result.get("already_exists_count", 0) or 0):
             if agent_max_rounds is None:
