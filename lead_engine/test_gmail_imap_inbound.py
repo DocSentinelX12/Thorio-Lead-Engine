@@ -123,3 +123,11 @@ def test_gmail_poll_reports_exact_outbound_message_ids_checked(monkeypatch):
     result = inbound.poll_gmail_revenue_inbound(DB(), observer=Observer())
     assert result["status"] == "completed"
     assert result["observed_message_ids"] == ["abc123@thorio.co"]
+
+
+def test_gmail_imap_password_normalizes_grouped_app_password(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "abcd efgh\nijkl mnop")
+    assert inbound.gmail_imap_configured() is True
+    observer = inbound.GmailIMAPObserver()
+    assert observer.password == "abcdefghijklmnop"
