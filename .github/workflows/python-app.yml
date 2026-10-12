@@ -207,6 +207,9 @@ jobs:
       THORIO_ACCOUNT_INDIE_HACKERS_SUBMIT_SELECTOR: ${{ vars.THORIO_ACCOUNT_INDIE_HACKERS_SUBMIT_SELECTOR || secrets.THORIO_ACCOUNT_INDIE_HACKERS_SUBMIT_SELECTOR }}
       THORIO_ACCOUNT_GMAIL_USERNAME: ${{ secrets.THORIO_ACCOUNT_GMAIL_USERNAME }}
       THORIO_ACCOUNT_GMAIL_PASSWORD: ${{ secrets.THORIO_ACCOUNT_GMAIL_PASSWORD }}
+      THORIO_GMAIL_OAUTH_CLIENT_ID: ${{ secrets.THORIO_GMAIL_OAUTH_CLIENT_ID }}
+      THORIO_GMAIL_OAUTH_CLIENT_SECRET: ${{ secrets.THORIO_GMAIL_OAUTH_CLIENT_SECRET }}
+      THORIO_GMAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.THORIO_GMAIL_OAUTH_REFRESH_TOKEN }}
       THORIO_REVENUE_TRANSPORT_MODE: ${{ vars.THORIO_REVENUE_TRANSPORT_MODE || secrets.THORIO_REVENUE_TRANSPORT_MODE }}
       THORIO_REVENUE_TRANSPORT_URL: ${{ vars.THORIO_REVENUE_TRANSPORT_URL || secrets.THORIO_REVENUE_TRANSPORT_URL }}
       THORIO_REVENUE_TRANSPORT_TOKEN: ${{ secrets.THORIO_REVENUE_TRANSPORT_TOKEN }}
@@ -236,6 +239,7 @@ jobs:
           import os
           import smtplib
           import ssl
+          from lead_engine.gmail_oauth import gmail_oauth_configured, refresh_gmail_access_token, xoauth2_payload
 
           mode = os.environ.get("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
           url_configured = bool(os.environ.get("THORIO_REVENUE_TRANSPORT_URL", "").strip())
@@ -258,7 +262,18 @@ jobs:
           gmail_username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip().lower()
           # Google displays app passwords in groups; normalize pasted whitespace.
           gmail_password = "".join(os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").split())
-          gmail_credentials_ready = gmail_username == "thorio.partners@gmail.com" and bool(gmail_password)
+          oauth_values = (
+              os.environ.get("THORIO_GMAIL_OAUTH_CLIENT_ID", "").strip(),
+              os.environ.get("THORIO_GMAIL_OAUTH_CLIENT_SECRET", "").strip(),
+              os.environ.get("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", "").strip(),
+          )
+          oauth_partial = any(oauth_values) and not all(oauth_values)
+          oauth_configured = gmail_oauth_configured()
+          gmail_credentials_ready = (
+              gmail_username == "thorio.partners@gmail.com"
+              and not oauth_partial
+              and (oauth_configured or bool(gmail_password))
+          )
           browser_ready = bool(targets) and not target_error and browser_state_key_configured
           gmail_selected = (
               mode == "gmail_smtp"
@@ -267,7 +282,11 @@ jobs:
           gmail_ready = False
           def safe_provider_detail(exc):
               detail = " ".join(str(exc).split())
-              for secret in (gmail_username, gmail_password):
+              for secret in (
+                  gmail_username, gmail_password,
+                  os.environ.get("THORIO_GMAIL_OAUTH_CLIENT_SECRET", ""),
+                  os.environ.get("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", ""),
+              ):
                   if secret:
                       detail = detail.replace(secret, "[REDACTED]")
               return detail[:240] if detail else "provider returned no detail"
@@ -275,7 +294,14 @@ jobs:
           smtp_failures = []
           smtp_method = ""
           if gmail_selected and gmail_credentials_ready:
-              for method, port in (("starttls", 587), ("ssl", 465)):
+              access_token = ""
+              if oauth_configured:
+                  try:
+                      stage = "oauth_refresh"
+                      access_token = refresh_gmail_access_token(timeout_seconds=15)
+                  except Exception as exc:
+                      smtp_failures.append(f"oauth_refresh:{type(exc).__name__}:{safe_provider_detail(exc)}")
+              for method, port in ((("starttls", 587), ("ssl", 465)) if not oauth_configured or access_token else ()):
                   client = None
                   stage = f"{method}_connect"
                   try:
@@ -289,8 +315,14 @@ jobs:
                               "smtp.gmail.com", port, timeout=15,
                               context=ssl.create_default_context(),
                           )
-                      stage = f"{method}_login"
-                      client.login(gmail_username, gmail_password)
+                      stage = f"{method}_oauth_auth" if oauth_configured else f"{method}_login"
+                      if oauth_configured:
+                          client.auth(
+                              "XOAUTH2",
+                              lambda challenge: xoauth2_payload(gmail_username, access_token),
+                          )
+                      else:
+                          client.login(gmail_username, gmail_password)
                       gmail_ready = True
                       smtp_method = f"{method}:{port}"
                       break
@@ -418,6 +450,7 @@ jobs:
           import ssl
           from lead_engine.browser_revenue_inbound import configured_browser_revenue_inbound_targets
           from lead_engine.gmail_imap_inbound import gmail_imap_configured
+          from lead_engine.gmail_oauth import gmail_oauth_configured, refresh_gmail_access_token, xoauth2_payload
 
           mode = os.environ.get("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
           http_url = bool(os.environ.get("THORIO_REVENUE_TRANSPORT_URL", "").strip())
@@ -443,8 +476,9 @@ jobs:
           gmail_ready = False
           if gmail_transport_selected and gmail_imap_configured():
               username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip()
-              # Use the same app-password normalization for inbound authentication.
+              # Prefer OAuth XOAUTH2 when a complete OAuth credential set is configured.
               password = "".join(os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").split())
+              oauth_configured = gmail_oauth_configured()
               imap_client = None
               stage = "imap_connect"
               try:
@@ -452,8 +486,17 @@ jobs:
                       "imap.gmail.com", 993,
                       ssl_context=ssl.create_default_context(), timeout=20,
                   )
-                  stage = "imap_login"
-                  login_status, _ = imap_client.login(username, password)
+                  if oauth_configured:
+                      stage = "imap_oauth_refresh"
+                      access_token = refresh_gmail_access_token(timeout_seconds=20)
+                      stage = "imap_oauth_auth"
+                      login_status, _ = imap_client.authenticate(
+                          "XOAUTH2",
+                          lambda challenge: xoauth2_payload(username, access_token),
+                      )
+                  else:
+                      stage = "imap_login"
+                      login_status, _ = imap_client.login(username, password)
                   if login_status != "OK":
                       raise RuntimeError("Gmail IMAP login was not accepted")
                   stage = "imap_select"
@@ -464,7 +507,11 @@ jobs:
                   print("GMAIL IMAP LIVE AUTH VERIFIED; no email was sent.")
               except Exception as exc:
                   detail = " ".join(str(exc).split())
-                  for secret in (username, password):
+                  for secret in (
+                      username, password,
+                      os.environ.get("THORIO_GMAIL_OAUTH_CLIENT_SECRET", ""),
+                      os.environ.get("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", ""),
+                  ):
                       if secret:
                           detail = detail.replace(secret, "[REDACTED]")
                   detail = detail[:240] if detail else "provider returned no detail"
