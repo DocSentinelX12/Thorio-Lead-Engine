@@ -877,12 +877,27 @@ run("bash", str(runner_script))
         except Exception as exc:
             cleanup_errors = []
             diagnostics = self._capture_kernel_failure_output(kernel_ref)
-            try:
-                self._delete_kernel_if_listed(kernel_ref)
-            except KaggleFreeComputeError as cleanup_exc:
-                if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
-                    cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
-            if dataset_owned:
+            preserve_for_diagnostics = (
+                os.environ.get("THORIO_KAGGLE_PRESERVE_FAILED_KERNEL_FOR_DIAGNOSTICS", "")
+                .strip().lower() in {"1", "true", "yes", "on"}
+                and "before timeout: queued" in str(exc).lower()
+            )
+            if preserve_for_diagnostics:
+                # The workflow has a dedicated diagnostic job followed by an
+                # unconditional owner-verified cleanup job. Deleting here would
+                # make that diagnostic job query a kernel that no longer exists.
+                print(
+                    "THORIO_KAGGLE_QUEUED_KERNEL_PRESERVED_FOR_DIAGNOSTICS "
+                    f"kernel_ref={kernel_ref}",
+                    flush=True,
+                )
+            else:
+                try:
+                    self._delete_kernel_if_listed(kernel_ref)
+                except KaggleFreeComputeError as cleanup_exc:
+                    if "not found" not in str(cleanup_exc).lower() and "404" not in str(cleanup_exc).lower():
+                        cleanup_errors.append(f"kernel cleanup failed: {cleanup_exc}")
+            if dataset_owned and not preserve_for_diagnostics:
                 try:
                     self._delete_private_runner_credential_dataset(dataset_slug)
                 except Exception as cleanup_exc:

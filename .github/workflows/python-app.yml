@@ -233,6 +233,8 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import smtplib
+          import ssl
 
           mode = os.environ.get("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
           url_configured = bool(os.environ.get("THORIO_REVENUE_TRANSPORT_URL", "").strip())
@@ -253,9 +255,54 @@ jobs:
           http_ready = url_configured and token_configured
           browser_state_key_configured = bool(os.environ.get("THORIO_BROWSER_STATE_ENCRYPTION_KEY", "").strip())
           gmail_username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip().lower()
-          gmail_password_configured = bool(os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip())
-          gmail_ready = gmail_username == "thorio.partners@gmail.com" and gmail_password_configured
+          gmail_password = os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
+          gmail_credentials_ready = gmail_username == "thorio.partners@gmail.com" and bool(gmail_password)
           browser_ready = bool(targets) and not target_error and browser_state_key_configured
+          gmail_selected = (
+              mode == "gmail_smtp"
+              or (mode in {"", "auto"} and not http_ready and not browser_ready)
+          )
+          gmail_ready = False
+          smtp_failures = []
+          smtp_method = ""
+          if gmail_selected and gmail_credentials_ready:
+              for method, port in (("starttls", 587), ("ssl", 465)):
+                  client = None
+                  stage = f"{method}_connect"
+                  try:
+                      if method == "starttls":
+                          client = smtplib.SMTP("smtp.gmail.com", port, timeout=15)
+                          client.ehlo()
+                          client.starttls(context=ssl.create_default_context())
+                          client.ehlo()
+                      else:
+                          client = smtplib.SMTP_SSL(
+                              "smtp.gmail.com", port, timeout=15,
+                              context=ssl.create_default_context(),
+                          )
+                      stage = f"{method}_login"
+                      client.login(gmail_username, gmail_password)
+                      gmail_ready = True
+                      smtp_method = f"{method}:{port}"
+                      break
+                  except smtplib.SMTPAuthenticationError as exc:
+                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
+                      break
+                  except Exception as exc:
+                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
+                  finally:
+                      if client is not None:
+                          try:
+                              client.quit()
+                          except Exception:
+                              pass
+          if gmail_selected:
+              print(
+                  f"GMAIL SMTP LIVE AUTH {'VERIFIED' if gmail_ready else 'FAILED'} "
+                  f"method={smtp_method or 'none'} "
+                  f"failure_stages={','.join(smtp_failures) or 'none'}; no email was sent."
+              )
+
           if mode == "http":
               ready = http_ready
           elif mode == "browser":
@@ -276,18 +323,17 @@ jobs:
               f"browser_target_config_invalid={str(target_error).lower()} "
               f"browser_state_key_configured={str(browser_state_key_configured).lower()} "
               f"gmail_sender_configured={str(gmail_username == 'thorio.partners@gmail.com').lower()} "
-              f"gmail_password_configured={str(gmail_password_configured).lower()}"
+              f"gmail_password_configured={str(bool(gmail_password)).lower()}"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"ready={str(ready).lower()}\n")
           if not ready:
               print(
-                  "OUTBOUND REVENUE BLOCKER: no usable explicitly configured transport "
+                  "OUTBOUND REVENUE BLOCKER: no live-authorized explicitly configured transport "
                   "is available to the production runtime; collection can continue, "
                   "but external outreach is not ready."
               )
           PY
-
 
       - name: Report public discovery source readiness
         id: public_discovery_readiness
@@ -360,7 +406,6 @@ jobs:
           python - <<'PY'
           import imaplib
           import os
-          import smtplib
           import ssl
           from lead_engine.browser_revenue_inbound import configured_browser_revenue_inbound_targets
           from lead_engine.gmail_imap_inbound import gmail_imap_configured
@@ -391,47 +436,11 @@ jobs:
               username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip()
               password = os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
               imap_client = None
-              smtp_ready = False
-              smtp_method = ""
-              smtp_failures = []
-              for method, port in (("starttls", 587), ("ssl", 465)):
-                  smtp_client = None
-                  stage = f"{method}_connect"
-                  try:
-                      if method == "starttls":
-                          smtp_client = smtplib.SMTP("smtp.gmail.com", port, timeout=15)
-                          stage = "smtp_starttls"
-                          smtp_client.ehlo()
-                          smtp_client.starttls(context=ssl.create_default_context())
-                          smtp_client.ehlo()
-                      else:
-                          smtp_client = smtplib.SMTP_SSL(
-                              "smtp.gmail.com", port, timeout=15,
-                              context=ssl.create_default_context(),
-                          )
-                      stage = f"{method}_login"
-                      smtp_client.login(username, password)
-                      smtp_ready = True
-                      smtp_method = f"{method}:{port}"
-                      break
-                  except smtplib.SMTPAuthenticationError as exc:
-                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
-                      break
-                  except Exception as exc:
-                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
-                  finally:
-                      if smtp_client is not None:
-                          try:
-                              smtp_client.quit()
-                          except Exception:
-                              pass
+              stage = "imap_connect"
               try:
-                  if not smtp_ready:
-                      raise RuntimeError("Gmail SMTP auth failed on both supported connection modes")
-                  stage = "imap_connect"
                   imap_client = imaplib.IMAP4_SSL(
                       "imap.gmail.com", 993,
-                      ssl_context=ssl.create_default_context(), timeout=15,
+                      ssl_context=ssl.create_default_context(), timeout=20,
                   )
                   stage = "imap_login"
                   login_status, _ = imap_client.login(username, password)
@@ -442,11 +451,9 @@ jobs:
                   if select_status != "OK":
                       raise RuntimeError("Gmail IMAP inbox could not be selected")
                   gmail_ready = True
-                  print(f"GMAIL SMTP/IMAP LIVE AUTH VERIFIED via {smtp_method}; no email was sent.")
+                  print("GMAIL IMAP LIVE AUTH VERIFIED; no email was sent.")
               except Exception as exc:
-                  detail = "; ".join(smtp_failures)
-                  suffix = f"; SMTP attempts={detail}" if detail else ""
-                  print(f"GMAIL SMTP/IMAP LIVE AUTH FAILED at {stage}: {type(exc).__name__}{suffix}; no email was sent.")
+                  print(f"GMAIL IMAP LIVE AUTH FAILED at {stage}: {type(exc).__name__}; no email was sent.")
                   gmail_ready = False
               finally:
                   if imap_client is not None:
@@ -470,8 +477,9 @@ jobs:
               output.write(f"ready={str(ready).lower()}\n")
           if not ready:
               print(
-                  "INBOUND REVENUE BLOCKER: no reply observer matches the selected outbound transport. "
-                  "Scheduled follow-ups remain fail-closed until real inbox observation is configured."
+                  "INBOUND REVENUE BLOCKER: no live-authenticated inbox observer matches "
+                  "the selected outbound transport. Scheduled follow-ups remain fail-closed "
+                  "until real inbox observation is configured."
               )
           PY
 

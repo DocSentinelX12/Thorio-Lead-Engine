@@ -169,6 +169,24 @@ def test_dataset_cleanup_skips_delete_when_owner_inventory_proves_absent():
     assert any(command[1:3] == ["datasets", "list"] and "--search" not in command for command in calls)
 
 
+def test_queued_timeout_preserves_kernel_until_workflow_diagnostics_and_cleanup(monkeypatch):
+    monkeypatch.setenv("THORIO_KAGGLE_PRESERVE_FAILED_KERNEL_FOR_DIAGNOSTICS", "1")
+    runner, calls = _runner_factory()
+    provider = _provider(runner)
+    offer = provider.discover_free()[0]
+    now = [1_700_000_000.0]
+    provider._clock = lambda: now[0]
+    provider._sleeper = lambda seconds: now.__setitem__(0, now[0] + seconds)
+    provider._runner_bootstrap_script = lambda: "echo runner"
+    provider._kernel_status = lambda _kernel_ref: "queued"
+
+    with pytest.raises(KaggleFreeComputeError, match="before timeout: queued"):
+        provider.acquire_free(offer)
+
+    assert any(command[1:3] == ["kernels", "push"] for command in calls)
+    assert not any(command[1:3] == ["kernels", "delete"] for command in calls)
+
+
 def test_failed_kernel_output_is_captured_before_cleanup_and_secrets_are_redacted(monkeypatch):
     from pathlib import Path
 
