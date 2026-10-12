@@ -28,7 +28,7 @@ class GmailSMTPTransport:
 
     def __init__(self, *, username: str | None = None, password: str | None = None, timeout_seconds: float = 30.0):
         self.username = (username if username is not None else os.getenv("THORIO_ACCOUNT_GMAIL_USERNAME", "")).strip()
-        self.password = (password if password is not None else os.getenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "")).strip()
+        self.password = "".join((password if password is not None else os.getenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "")).split())
         self.timeout_seconds = max(5.0, min(float(timeout_seconds), 120.0))
         if self.username.lower() != EXPECTED_SENDER:
             raise RevenueTransportUnavailable(
