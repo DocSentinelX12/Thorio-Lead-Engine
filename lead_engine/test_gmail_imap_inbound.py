@@ -38,6 +38,9 @@ def test_outbound_index_only_contains_accepted_gmail_messages():
 def test_unconfigured_gmail_observer_is_disabled(monkeypatch):
     monkeypatch.delenv("THORIO_ACCOUNT_GMAIL_USERNAME", raising=False)
     monkeypatch.delenv("THORIO_ACCOUNT_GMAIL_PASSWORD", raising=False)
+    monkeypatch.delenv("THORIO_GMAIL_OAUTH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("THORIO_GMAIL_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", raising=False)
 
     class DB:
         def all_leads(self):
@@ -131,3 +134,56 @@ def test_gmail_imap_password_normalizes_grouped_app_password(monkeypatch):
     assert inbound.gmail_imap_configured() is True
     observer = inbound.GmailIMAPObserver()
     assert observer.password == "abcdefghijklmnop"
+
+def test_imap_observer_uses_oauth_xoauth2_when_configured(monkeypatch):
+    raw = (
+        b"From: buyer@example.com\\r\\n"
+        b"Message-ID: <reply-oauth@example.com>\\r\\n"
+        b"In-Reply-To: <abc123@thorio.co>\\r\\n"
+        b"Subject: Re: Hiring\\r\\n"
+        b"Content-Type: text/plain; charset=utf-8\\r\\n\\r\\n"
+        b"Yes, let's discuss.\\r\\n"
+    )
+
+    class FakeIMAP:
+        def __init__(self, *args, **kwargs):
+            self.authenticated = None
+
+        def authenticate(self, mechanism, authobject):
+            self.authenticated = (mechanism, authobject(None))
+            assert self.authenticated == (
+                "XOAUTH2",
+                b"user=thorio.partners@gmail.com\\x01auth=Bearer access-token\\x01\\x01",
+            )
+            return "OK", [b"authenticated"]
+
+        def select(self, mailbox, readonly=False):
+            return "OK", [b"1"]
+
+        def search(self, charset, *criteria):
+            return "OK", [b"1"]
+
+        def fetch(self, sequence_id, query):
+            return "OK", [(b"1 (RFC822)", raw), b")"]
+
+        def logout(self):
+            return "BYE", []
+
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.delenv("THORIO_ACCOUNT_GMAIL_PASSWORD", raising=False)
+    monkeypatch.setenv("THORIO_GMAIL_OAUTH_CLIENT_ID", "client-id")
+    monkeypatch.setenv("THORIO_GMAIL_OAUTH_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", "refresh-token")
+    monkeypatch.setattr(inbound, "refresh_gmail_access_token", lambda **kwargs: "access-token")
+    monkeypatch.setattr(inbound.imaplib, "IMAP4_SSL", FakeIMAP)
+
+    observer = inbound.GmailIMAPObserver()
+    replies = observer.observe_replies({
+        "abc123@thorio.co": {
+            "opportunity_id": "lead-1",
+            "conversation_id": "conversation-1",
+            "recipient": "buyer@example.com",
+        }
+    })
+    assert replies[0]["event_id"] == "gmail:reply-oauth@example.com"
+    assert replies[0]["body"] == "Yes, let's discuss."
