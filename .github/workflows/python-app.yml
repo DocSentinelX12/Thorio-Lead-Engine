@@ -55,7 +55,8 @@ jobs:
     env:
       AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
       AIRTABLE_API_KEY_CANDIDATE: ${{ secrets.AIRTABLE_API_KEY }}
-      AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
+      AIRTABLE_BASE_ID: appoEHF48vTHjCcWF
+      # Historical master tracker remains intact; operational writes use the dedicated active base.
       AIRTABLE_LEAD_TABLE: Lead Radar
       LEAD_ENGINE_FREE_SOURCES_ENABLED: "true"
       LEAD_ENGINE_FREE_SOURCE_TIMEOUT: "5"
