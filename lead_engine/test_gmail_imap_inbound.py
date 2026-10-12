@@ -153,7 +153,7 @@ def test_imap_observer_uses_oauth_xoauth2_when_configured(monkeypatch):
             self.authenticated = (mechanism, authobject(None))
             assert self.authenticated == (
                 "XOAUTH2",
-                b"user=thorio.partners@gmail.com\\x01auth=Bearer access-token\\x01\\x01",
+                b"user=thorio.partners@gmail.com\x01auth=Bearer access-token\x01\x01",
             )
             return "OK", [b"authenticated"]
 
