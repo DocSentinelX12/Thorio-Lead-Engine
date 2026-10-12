@@ -11,6 +11,7 @@ class FakeSMTP:
         self.args = args
         self.kwargs = kwargs
         self.logged_in = None
+        self.authenticated = None
         self.sent = []
         self.closed = False
 
@@ -24,6 +25,10 @@ class FakeSMTP:
         self.logged_in = (username, password)
         if password == "reject":
             raise smtplib.SMTPAuthenticationError(535, b"authentication rejected")
+
+    def auth(self, mechanism, authobject):
+        self.authenticated = (mechanism, authobject(None))
+        return 235, b"authenticated"
 
     def send_message(self, message, *, from_addr, to_addrs):
         self.sent.append((message, from_addr, to_addrs))
@@ -162,3 +167,39 @@ def test_gmail_smtp_falls_back_to_ssl_when_starttls_connection_disconnects(monke
     )
     assert result["accepted"] is True
     assert fake.sent
+
+def test_gmail_smtp_prefers_oauth_xoauth2_when_configured(monkeypatch):
+    import smtplib
+    from . import gmail_oauth
+
+    fake = FakeSMTP()
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
+    monkeypatch.delenv("THORIO_ACCOUNT_GMAIL_PASSWORD", raising=False)
+    monkeypatch.setenv("THORIO_GMAIL_OAUTH_CLIENT_ID", "client-id")
+    monkeypatch.setenv("THORIO_GMAIL_OAUTH_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", "refresh-token")
+    monkeypatch.setattr(gmail_oauth, "refresh_gmail_access_token", lambda **kwargs: "access-token")
+    monkeypatch.setattr(smtplib, "SMTP", lambda *args, **kwargs: fake)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *args, **kwargs: fake)
+
+    result = GmailSMTPTransport().send(
+        channel="email",
+        recipient={"email": "recruiter@example.test"},
+        subject="Hiring question",
+        body="Hello",
+        idempotency_key="oauth:lead-1:conversation-1:1",
+    )
+    assert result["accepted"] is True
+    assert fake.authenticated == ("XOAUTH2", b"user=thorio.partners@gmail.com\x01auth=Bearer access-token\x01\x01")
+    assert fake.logged_in is None
+    assert len(fake.sent) == 1
+
+
+def test_gmail_smtp_rejects_partial_oauth_configuration(monkeypatch):
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "existing-app-password")
+    monkeypatch.setenv("THORIO_GMAIL_OAUTH_CLIENT_ID", "client-id")
+    monkeypatch.delenv("THORIO_GMAIL_OAUTH_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", raising=False)
+    with pytest.raises(RevenueTransportUnavailable, match="partially configured"):
+        GmailSMTPTransport()
