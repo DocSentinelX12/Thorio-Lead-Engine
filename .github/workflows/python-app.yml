@@ -263,6 +263,13 @@ jobs:
               or (mode in {"", "auto"} and not http_ready and not browser_ready)
           )
           gmail_ready = False
+          def safe_provider_detail(exc):
+              detail = " ".join(str(exc).split())
+              for secret in (gmail_username, gmail_password):
+                  if secret:
+                      detail = detail.replace(secret, "[REDACTED]")
+              return detail[:240] if detail else "provider returned no detail"
+
           smtp_failures = []
           smtp_method = ""
           if gmail_selected and gmail_credentials_ready:
@@ -286,10 +293,10 @@ jobs:
                       smtp_method = f"{method}:{port}"
                       break
                   except smtplib.SMTPAuthenticationError as exc:
-                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
+                      smtp_failures.append(f"{stage}:{type(exc).__name__}:{safe_provider_detail(exc)}")
                       break
                   except Exception as exc:
-                      smtp_failures.append(f"{stage}:{type(exc).__name__}")
+                      smtp_failures.append(f"{stage}:{type(exc).__name__}:{safe_provider_detail(exc)}")
                   finally:
                       if client is not None:
                           try:
@@ -300,7 +307,7 @@ jobs:
               print(
                   f"GMAIL SMTP LIVE AUTH {'VERIFIED' if gmail_ready else 'FAILED'} "
                   f"method={smtp_method or 'none'} "
-                  f"failure_stages={','.join(smtp_failures) or 'none'}; no email was sent."
+                  f"failure_stages={'; '.join(smtp_failures) or 'none'}; no email was sent."
               )
 
           if mode == "http":
@@ -453,7 +460,12 @@ jobs:
                   gmail_ready = True
                   print("GMAIL IMAP LIVE AUTH VERIFIED; no email was sent.")
               except Exception as exc:
-                  print(f"GMAIL IMAP LIVE AUTH FAILED at {stage}: {type(exc).__name__}; no email was sent.")
+                  detail = " ".join(str(exc).split())
+                  for secret in (username, password):
+                      if secret:
+                          detail = detail.replace(secret, "[REDACTED]")
+                  detail = detail[:240] if detail else "provider returned no detail"
+                  print(f"GMAIL IMAP LIVE AUTH FAILED at {stage}: {type(exc).__name__}: {detail}; no email was sent.")
                   gmail_ready = False
               finally:
                   if imap_client is not None:
