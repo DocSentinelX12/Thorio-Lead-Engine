@@ -39,7 +39,7 @@ def test_gmail_smtp_uses_thorio_sender_and_stable_message_id(monkeypatch):
     fake = FakeSMTP()
     smtp_calls = []
     monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
-    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "test-app-password")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "test app-password\n")
     monkeypatch.setattr(smtplib, "SMTP", lambda *args, **kwargs: (smtp_calls.append((args, kwargs)) or fake))
     monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *args, **kwargs: fake)
 
@@ -63,7 +63,7 @@ def test_gmail_smtp_uses_thorio_sender_and_stable_message_id(monkeypatch):
     assert first["sender"] == EXPECTED_SENDER
     assert first["recipient"] == "recruiter@example.test"
     assert first["message_id"] == second["message_id"]
-    assert fake.logged_in == (EXPECTED_SENDER, "test-app-password")
+    assert fake.logged_in == (EXPECTED_SENDER, "testapp-password")
     assert smtp_calls[0][0][1] == 587
     assert len(fake.sent) == 2
     assert fake.sent[0][0]["From"] == EXPECTED_SENDER
