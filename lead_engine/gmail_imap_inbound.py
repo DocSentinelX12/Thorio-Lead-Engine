@@ -17,6 +17,7 @@ from email.parser import BytesParser
 from email.utils import parseaddr
 from typing import Any, Mapping
 
+from .gmail_oauth import GmailOAuthUnavailable, gmail_oauth_configured, refresh_gmail_access_token, xoauth2_payload
 from .revenue_conversation import record_inbound_event
 
 EXPECTED_SENDER = "thorio.partners@gmail.com"
@@ -33,10 +34,15 @@ def _env(name: str) -> str:
 
 
 def gmail_imap_configured() -> bool:
-    return (
-        _env("THORIO_ACCOUNT_GMAIL_USERNAME").lower() == EXPECTED_SENDER
-        and bool("".join(_env("THORIO_ACCOUNT_GMAIL_PASSWORD").split()))
+    username_ready = _env("THORIO_ACCOUNT_GMAIL_USERNAME").lower() == EXPECTED_SENDER
+    oauth_values = (
+        _env("THORIO_GMAIL_OAUTH_CLIENT_ID"),
+        _env("THORIO_GMAIL_OAUTH_CLIENT_SECRET"),
+        _env("THORIO_GMAIL_OAUTH_REFRESH_TOKEN"),
     )
+    oauth_partial = any(oauth_values) and not all(oauth_values)
+    password_ready = bool("".join(_env("THORIO_ACCOUNT_GMAIL_PASSWORD").split()))
+    return username_ready and not oauth_partial and (gmail_oauth_configured() or password_ready)
 
 
 def _normalize_message_id(value: str) -> str:
@@ -110,9 +116,20 @@ class GmailIMAPObserver:
     def __init__(self, *, username: str | None = None, password: str | None = None, timeout_seconds: float = 30.0):
         self.username = (username if username is not None else _env("THORIO_ACCOUNT_GMAIL_USERNAME")).strip()
         self.password = "".join((password if password is not None else _env("THORIO_ACCOUNT_GMAIL_PASSWORD")).split())
+        self.oauth_configured = gmail_oauth_configured()
+        oauth_values = (
+            _env("THORIO_GMAIL_OAUTH_CLIENT_ID"),
+            _env("THORIO_GMAIL_OAUTH_CLIENT_SECRET"),
+            _env("THORIO_GMAIL_OAUTH_REFRESH_TOKEN"),
+        )
+        self.oauth_partially_configured = any(oauth_values) and not all(oauth_values)
         self.timeout_seconds = max(5.0, min(float(timeout_seconds), 120.0))
-        if self.username.lower() != EXPECTED_SENDER or not self.password:
-            raise GmailIMAPUnavailable("Gmail inbound observation requires the configured Thorio Gmail username and password")
+        if self.username.lower() != EXPECTED_SENDER:
+            raise GmailIMAPUnavailable("Gmail inbound observation requires the configured Thorio Gmail username")
+        if self.oauth_partially_configured:
+            raise GmailIMAPUnavailable("Gmail OAuth is partially configured; all three THORIO_GMAIL_OAUTH_* secrets are required")
+        if not self.password and not self.oauth_configured:
+            raise GmailIMAPUnavailable("Gmail inbound observation requires either an app password or all three THORIO_GMAIL_OAUTH_* secrets")
 
     def observe_replies(self, outbound: Mapping[str, Mapping[str, str]]) -> list[dict[str, str]]:
         if not outbound:
@@ -125,7 +142,17 @@ class GmailIMAPObserver:
                 ssl_context=ssl.create_default_context(),
                 timeout=self.timeout_seconds,
             )
-            client.login(self.username, self.password)
+            if self.oauth_configured:
+                try:
+                    access_token = refresh_gmail_access_token(timeout_seconds=self.timeout_seconds)
+                except GmailOAuthUnavailable as exc:
+                    raise GmailIMAPUnavailable(str(exc)) from exc
+                client.authenticate(
+                    "XOAUTH2",
+                    lambda challenge: xoauth2_payload(self.username, access_token),
+                )
+            else:
+                client.login(self.username, self.password)
             status, _ = client.select("INBOX", readonly=True)
             if status != "OK":
                 raise GmailIMAPUnavailable("Gmail IMAP could not select the inbox")
