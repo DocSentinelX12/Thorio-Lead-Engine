@@ -14,6 +14,7 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Any, Mapping
 
+from .gmail_oauth import GmailOAuthUnavailable, gmail_oauth_configured, refresh_gmail_access_token, xoauth2_payload
 from .revenue_execution import RevenueTransportUnavailable
 
 
@@ -29,13 +30,26 @@ class GmailSMTPTransport:
     def __init__(self, *, username: str | None = None, password: str | None = None, timeout_seconds: float = 30.0):
         self.username = (username if username is not None else os.getenv("THORIO_ACCOUNT_GMAIL_USERNAME", "")).strip()
         self.password = "".join((password if password is not None else os.getenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "")).split())
+        self.oauth_configured = gmail_oauth_configured()
+        oauth_values = (
+            os.getenv("THORIO_GMAIL_OAUTH_CLIENT_ID", "").strip(),
+            os.getenv("THORIO_GMAIL_OAUTH_CLIENT_SECRET", "").strip(),
+            os.getenv("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", "").strip(),
+        )
+        self.oauth_partially_configured = any(oauth_values) and not all(oauth_values)
         self.timeout_seconds = max(5.0, min(float(timeout_seconds), 120.0))
         if self.username.lower() != EXPECTED_SENDER:
             raise RevenueTransportUnavailable(
                 f"Gmail SMTP sender must be the configured Thorio contact address {EXPECTED_SENDER}"
             )
-        if not self.password:
-            raise RevenueTransportUnavailable("THORIO_ACCOUNT_GMAIL_PASSWORD is required for Gmail SMTP")
+        if self.oauth_partially_configured:
+            raise RevenueTransportUnavailable(
+                "Gmail OAuth is partially configured; all three THORIO_GMAIL_OAUTH_* secrets are required"
+            )
+        if not self.password and not self.oauth_configured:
+            raise RevenueTransportUnavailable(
+                "Gmail requires either the configured app password or all three THORIO_GMAIL_OAUTH_* secrets"
+            )
 
     @staticmethod
     def _recipient_address(recipient: Mapping[str, Any]) -> str:
@@ -78,6 +92,12 @@ class GmailSMTPTransport:
 
         client = None
         connection_errors = []
+        access_token = ""
+        if self.oauth_configured:
+            try:
+                access_token = refresh_gmail_access_token(timeout_seconds=self.timeout_seconds)
+            except GmailOAuthUnavailable as exc:
+                raise RevenueTransportUnavailable(str(exc)) from exc
         for mode, port in (("starttls", SMTP_PORT), ("ssl", SMTP_SSL_PORT)):
             candidate = None
             try:
@@ -103,7 +123,13 @@ class GmailSMTPTransport:
                 continue
 
             try:
-                candidate.login(self.username, self.password)
+                if self.oauth_configured:
+                    candidate.auth(
+                        "XOAUTH2",
+                        lambda challenge: xoauth2_payload(self.username, access_token),
+                    )
+                else:
+                    candidate.login(self.username, self.password)
                 client = candidate
                 break
             except smtplib.SMTPAuthenticationError as exc:
