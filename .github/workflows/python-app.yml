@@ -255,7 +255,8 @@ jobs:
           http_ready = url_configured and token_configured
           browser_state_key_configured = bool(os.environ.get("THORIO_BROWSER_STATE_ENCRYPTION_KEY", "").strip())
           gmail_username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip().lower()
-          gmail_password = os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
+          # Google displays app passwords in groups; normalize pasted whitespace.
+          gmail_password = "".join(os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").split())
           gmail_credentials_ready = gmail_username == "thorio.partners@gmail.com" and bool(gmail_password)
           browser_ready = bool(targets) and not target_error and browser_state_key_configured
           gmail_selected = (
@@ -441,7 +442,8 @@ jobs:
           gmail_ready = False
           if gmail_transport_selected and gmail_imap_configured():
               username = os.environ.get("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip()
-              password = os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
+              # Use the same app-password normalization for inbound authentication.
+              password = "".join(os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").split())
               imap_client = None
               stage = "imap_connect"
               try:
