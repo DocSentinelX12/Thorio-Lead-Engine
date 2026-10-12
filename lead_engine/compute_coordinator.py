@@ -35,14 +35,6 @@ from .distributed_execution_contract import validate_launch_plan
 from .execution_fabric_runtime import ProductionExecutionFabric
 from .execution_fabric_contract import ExecutionMode
 from .execution_work_units import build_gpu_workload_payload, build_independent_work_units
-from .zerogpu_execution import ZeroGPUExecutionProvider
-from .openhydra_execution import OpenHydraExecutionProvider
-from .joule_execution import JouleExecutionProvider
-from .bothy_execution import BothyExecutionProvider
-from .swarmllm_execution import SwarmLLMExecutionProvider
-from .viiwork_execution import ViiworkExecutionProvider
-from .moregpu_execution import MoreGPUExecutionProvider
-from .llama_cpp_rpc_execution import LlamaCppRpcExecutionProvider
 
 
 class ComputeCoordinator:
@@ -3858,20 +3850,28 @@ def coordinator_from_environment() -> ComputeCoordinator:
         from .kaggle_free_compute import KaggleFreeComputeProvider
         coordinator.register_free_compute_provider(KaggleFreeComputeProvider.from_environment())
     if os.environ.get("THORIO_OPENHYDRA_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .openhydra_execution import OpenHydraExecutionProvider
         coordinator.register_openhydra_execution(OpenHydraExecutionProvider.from_environment())
     if os.environ.get("THORIO_JOULE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .joule_execution import JouleExecutionProvider
         coordinator.register_joule_execution(JouleExecutionProvider.from_environment())
     if os.environ.get("THORIO_BOTHY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .bothy_execution import BothyExecutionProvider
         coordinator.register_bothy_execution(BothyExecutionProvider.from_environment())
     if os.environ.get("THORIO_SWARMLLM_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .swarmllm_execution import SwarmLLMExecutionProvider
         coordinator.register_swarmllm_execution(SwarmLLMExecutionProvider.from_environment())
     if os.environ.get("THORIO_VIIWORK_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .viiwork_execution import ViiworkExecutionProvider
         coordinator.register_viiwork_execution(ViiworkExecutionProvider.from_environment())
     if os.environ.get("THORIO_MOREGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .moregpu_execution import MoreGPUExecutionProvider
         coordinator.register_moregpu_execution(MoreGPUExecutionProvider.from_environment())
     if os.environ.get("THORIO_LLAMA_CPP_RPC_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .llama_cpp_rpc_execution import LlamaCppRpcExecutionProvider
         coordinator.register_llama_cpp_rpc_execution(LlamaCppRpcExecutionProvider.from_environment())
     if os.environ.get("THORIO_ZEROGPU_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        from .zerogpu_execution import ZeroGPUExecutionProvider
         coordinator.register_zerogpu_execution(ZeroGPUExecutionProvider.from_environment())
     return coordinator
 

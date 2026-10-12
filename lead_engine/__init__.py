@@ -1,59 +1,65 @@
 __version__ = "0.1.0"
 
-# Install the conservative HTML fallback after the existing adapter module
-# has loaded. This preserves the established JSON-LD path and only runs the
-# fallback when an HTML source returned no records.
-from .html_fallback import install as _install_html_fallback
-_install_html_fallback()
-del _install_html_fallback
+# The standalone compute coordinator does not need application-level monkeypatch installers.
+# Avoid importing the full lead-generation stack into the memory-limited coordinator service.
+import os as _os
 
-# Install explicit source corrections only after the registry is available.
-# This layer is intentionally source-specific so healthy sources remain untouched.
-from .source_overrides import install as _install_source_overrides
-_install_source_overrides()
-del _install_source_overrides
+if _os.environ.get("THORIO_COMPUTE_COORDINATOR_STANDALONE", "").strip().lower() not in {"1", "true", "yes", "on"}:
 
-# Install collectors only for the remaining dynamic sources whose current
-# public interfaces cannot be collected by the generic adapter.
-from .source_specific_collectors import install as _install_source_specific
-_install_source_specific()
-del _install_source_specific
+    # Install the conservative HTML fallback after the existing adapter module
+    # has loaded. This preserves the established JSON-LD path and only runs the
+    # fallback when an HTML source returned no records.
+    from .html_fallback import install as _install_html_fallback
+    _install_html_fallback()
+    del _install_html_fallback
 
-# Install the research identity gate before research workers import the
-# public research function. Discovery URLs remain provenance; only evidence
-# tied to the target lead's company may be promoted into research facts.
-from .research_integrity import install as _install_research_integrity
-_install_research_integrity()
-del _install_research_integrity
+    # Install explicit source corrections only after the registry is available.
+    # This layer is intentionally source-specific so healthy sources remain untouched.
+    from .source_overrides import install as _install_source_overrides
+    _install_source_overrides()
+    del _install_source_overrides
 
-# Preserve previously verified company and decision-maker facts when a real
-# public-web refresh cannot re-verify them during the current bounded pass.
-from .research_refresh_preservation import install as _install_research_refresh_preservation
-_install_research_refresh_preservation()
-del _install_research_refresh_preservation
+    # Install collectors only for the remaining dynamic sources whose current
+    # public interfaces cannot be collected by the generic adapter.
+    from .source_specific_collectors import install as _install_source_specific
+    _install_source_specific()
+    del _install_source_specific
 
-# The company-research queue is stateful and must use the durable canonical
-# handoff handler. The advanced registry also exposes a stateless research
-# handler, so install the explicit precedence rule after agent_workers loads.
-from .company_research_handler_override import install as _install_company_research_override
-_install_company_research_override()
-del _install_company_research_override
+    # Install the research identity gate before research workers import the
+    # public research function. Discovery URLs remain provenance; only evidence
+    # tied to the target lead's company may be promoted into research facts.
+    from .research_integrity import install as _install_research_integrity
+    _install_research_integrity()
+    del _install_research_integrity
 
-# Airtable's configured batch size is intentionally only the size of one
-# durable API batch. Production callers use the explicit drain orchestration
-# function, while sync_pending_batched remains a single-batch operation.
-from .airtable_drain_override import install as _install_airtable_drain_override
-_install_airtable_drain_override()
-del _install_airtable_drain_override
+    # Preserve previously verified company and decision-maker facts when a real
+    # public-web refresh cannot re-verify them during the current bounded pass.
+    from .research_refresh_preservation import install as _install_research_refresh_preservation
+    _install_research_refresh_preservation()
+    del _install_research_refresh_preservation
 
-# Production uses the same durable specialist roles but needs enough dependency
-# rounds for real network research to advance in the same bounded cycle.
-from .production_throughput_override import install as _install_production_throughput_override
-_install_production_throughput_override()
-del _install_production_throughput_override
+    # The company-research queue is stateful and must use the durable canonical
+    # handoff handler. The advanced registry also exposes a stateless research
+    # handler, so install the explicit precedence rule after agent_workers loads.
+    from .company_research_handler_override import install as _install_company_research_override
+    _install_company_research_override()
+    del _install_company_research_override
 
-# Normalize only already-researched structured evidence at the semantic
-# boundaries. This never creates evidence, verification, or readiness.
-from .research_semantics_overrides import install as _install_research_semantics_overrides
-_install_research_semantics_overrides()
-del _install_research_semantics_overrides
+    # Airtable's configured batch size is intentionally only the size of one
+    # durable API batch. Production callers use the explicit drain orchestration
+    # function, while sync_pending_batched remains a single-batch operation.
+    from .airtable_drain_override import install as _install_airtable_drain_override
+    _install_airtable_drain_override()
+    del _install_airtable_drain_override
+
+    # Production uses the same durable specialist roles but needs enough dependency
+    # rounds for real network research to advance in the same bounded cycle.
+    from .production_throughput_override import install as _install_production_throughput_override
+    _install_production_throughput_override()
+    del _install_production_throughput_override
+
+    # Normalize only already-researched structured evidence at the semantic
+    # boundaries. This never creates evidence, verification, or readiness.
+    from .research_semantics_overrides import install as _install_research_semantics_overrides
+    _install_research_semantics_overrides()
+    del _install_research_semantics_overrides
