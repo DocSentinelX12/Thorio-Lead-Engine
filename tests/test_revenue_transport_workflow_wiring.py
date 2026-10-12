@@ -15,6 +15,8 @@ def test_production_runtime_receives_supported_revenue_transport_configuration()
         'elif mode == "gmail_smtp":',
         "gmail_credentials_ready = gmail_username == \"thorio.partners@gmail.com\" and bool(gmail_password)",
         "GMAIL SMTP LIVE AUTH",
+        'gmail_password = "".join(os.environ.get("THORIO_ACCOUNT_GMAIL_PASSWORD", "").split())',
+        "safe_provider_detail(exc)",
         "THORIO_REVENUE_TRANSPORT_URL:",
         "THORIO_REVENUE_TRANSPORT_TOKEN:",
         "THORIO_REVENUE_BROWSER_TARGETS:",
