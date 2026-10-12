@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AIRTABLE_PAT: ${{ secrets.AIRTABLE_PAT }}
-      AIRTABLE_BASE_ID: appxz89RYpxIOpdMD
+      AIRTABLE_BASE_ID: appoEHF48vTHjCcWF
 
     steps:
       - name: Validate GitHub secret injection and Airtable authentication
