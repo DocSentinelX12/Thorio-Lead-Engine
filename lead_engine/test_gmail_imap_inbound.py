@@ -137,12 +137,12 @@ def test_gmail_imap_password_normalizes_grouped_app_password(monkeypatch):
 
 def test_imap_observer_uses_oauth_xoauth2_when_configured(monkeypatch):
     raw = (
-        b"From: buyer@example.com\\r\\n"
-        b"Message-ID: <reply-oauth@example.com>\\r\\n"
-        b"In-Reply-To: <abc123@thorio.co>\\r\\n"
-        b"Subject: Re: Hiring\\r\\n"
-        b"Content-Type: text/plain; charset=utf-8\\r\\n\\r\\n"
-        b"Yes, let's discuss.\\r\\n"
+        b"From: buyer@example.com\r\n"
+        b"Message-ID: <reply-oauth@example.com>\r\n"
+        b"In-Reply-To: <abc123@thorio.co>\r\n"
+        b"Subject: Re: Hiring\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        b"Yes, let's discuss.\r\n"
     )
 
     class FakeIMAP:
