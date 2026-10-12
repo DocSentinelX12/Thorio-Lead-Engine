@@ -170,7 +170,7 @@ def test_gmail_smtp_falls_back_to_ssl_when_starttls_connection_disconnects(monke
 
 def test_gmail_smtp_prefers_oauth_xoauth2_when_configured(monkeypatch):
     import smtplib
-    from . import gmail_oauth
+    from . import gmail_smtp_transport
 
     fake = FakeSMTP()
     monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", EXPECTED_SENDER)
@@ -178,7 +178,7 @@ def test_gmail_smtp_prefers_oauth_xoauth2_when_configured(monkeypatch):
     monkeypatch.setenv("THORIO_GMAIL_OAUTH_CLIENT_ID", "client-id")
     monkeypatch.setenv("THORIO_GMAIL_OAUTH_CLIENT_SECRET", "client-secret")
     monkeypatch.setenv("THORIO_GMAIL_OAUTH_REFRESH_TOKEN", "refresh-token")
-    monkeypatch.setattr(gmail_oauth, "refresh_gmail_access_token", lambda **kwargs: "access-token")
+    monkeypatch.setattr(gmail_smtp_transport, "refresh_gmail_access_token", lambda **kwargs: "access-token")
     monkeypatch.setattr(smtplib, "SMTP", lambda *args, **kwargs: fake)
     monkeypatch.setattr(smtplib, "SMTP_SSL", lambda *args, **kwargs: fake)
 
