@@ -48,7 +48,7 @@ class GmailSMTPTransport:
             )
         if not self.password and not self.oauth_configured:
             raise RevenueTransportUnavailable(
-                "Gmail requires either the configured app password or all three THORIO_GMAIL_OAUTH_* secrets"
+                "THORIO_ACCOUNT_GMAIL_PASSWORD is required unless all three THORIO_GMAIL_OAUTH_* secrets are configured"
             )
 
     @staticmethod
