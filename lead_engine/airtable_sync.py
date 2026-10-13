@@ -296,20 +296,20 @@ def _configured_tables() -> Dict[str, str]:
 def _table_name(
     table_key: str,
 ) -> str:
+    if table_key == "research":
+        table_name = _text(LeadEngineConfig.from_environment().airtable_research_table)
+        if not table_name:
+            raise AirtableSyncError("No Airtable Research table configured.")
+        return table_name
     if table_key not in MASTER_TRACKER_TABLE_KEYS:
         raise AirtableSyncError(
             f"Unknown Airtable table key: {table_key}"
         )
-
-    table_name = _configured_tables().get(
-        table_key
-    )
-
+    table_name = _configured_tables().get(table_key)
     if not table_name:
         raise AirtableSyncError(
             f"No Airtable table configured for: {table_key}"
         )
-
     return table_name
 
 
