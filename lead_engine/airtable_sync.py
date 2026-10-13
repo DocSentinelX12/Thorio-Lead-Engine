@@ -1734,6 +1734,12 @@ def _normalize_lead(
 def push_lead(
     lead: Dict[str, Any],
 ) -> Dict[str, Any]:
+    from .sales_handoff import package_is_ready
+    if not package_is_ready(lead):
+        raise AirtableSyncError(
+            "Airtable Lead Radar writes require a complete verified research package; "
+            "raw discovery remains in canonical storage."
+        )
     payload = {
         "records": [
             {
@@ -1851,6 +1857,15 @@ def sync_lead_if_missing(
                     else existing[0]
                 ),
             }
+
+    from .sales_handoff import package_is_ready
+    if not package_is_ready(lead):
+        return {
+            "status": "deferred_research",
+            "record": None,
+            "error": None,
+            "reason": "research_verification_pending",
+        }
 
     fields = _normalize_lead(
         lead
