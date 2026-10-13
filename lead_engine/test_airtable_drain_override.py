@@ -72,7 +72,9 @@ def test_drain_accepts_the_scheduler_supplied_batch_delivery_callable(tmp_path, 
 
     assert result["deferred_research_count"] == 1
     assert result["drain_complete"] is False
-    assert len(db.pending(limit=10)) == 1
+    assert len(db.pending(limit=10)) == 0
+    assert db.get_sync_state(fingerprint)["sync_deferred"] is True
+    assert db.get(fingerprint) is not None
 
 
  
