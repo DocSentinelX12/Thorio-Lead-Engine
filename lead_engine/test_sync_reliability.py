@@ -219,7 +219,9 @@ def test_remote_success_before_local_commit_recovers_on_restart(tmp_path):
     lead = {"fingerprint": "remote-before-local-001", "company": "Crash Boundary Corp"}
     assert db.insert_if_new(lead)
     calls = []
-    with patch("lead_engine.sync_worker.sync_one", side_effect=lambda payload, db: calls.append(payload) or {"status": "synced", "lead": payload}):
+    with patch("lead_engine.sync_worker.package_is_ready", return_value=True), patch(
+        "lead_engine.sync_worker.sync_one", side_effect=lambda payload, db: calls.append(payload) or {"status": "synced", "lead": payload}
+    ):
         original_mark_synced = db.mark_synced
         state = {"crashed": False}
         def crash_once(fingerprint):
@@ -232,7 +234,9 @@ def test_remote_success_before_local_commit_recovers_on_restart(tmp_path):
             with pytest.raises(RuntimeError, match="simulated process crash"):
                 sync_pending(db)
     assert db.get_sync_state(lead["fingerprint"])["synced"] is False
-    with patch("lead_engine.sync_worker.sync_one", return_value={"status": "already_exists", "lead": lead}):
+    with patch("lead_engine.sync_worker.package_is_ready", return_value=True), patch(
+        "lead_engine.sync_worker.sync_one", return_value={"status": "already_exists", "lead": lead}
+    ):
         recovered = sync_pending(db)
     assert recovered["already_exists_count"] == 1
     assert db.get_sync_state(lead["fingerprint"])["synced"] is True
