@@ -229,22 +229,6 @@ def sync_one(
         }
 
     try:
-        # Raw discovery stays in canonical SQLite/Turso storage. Do not create
-        # a new Airtable row until the full research package is ready. Existing
-        # legacy rows can still be updated while their research is completed.
-        if not package_is_ready(lead):
-            return {
-                "status": "deferred_research",
-                "lead": lead,
-                "airtable_record": None,
-                "research_record": None,
-                "outreach_record": None,
-                "followup_record": None,
-                "referral_record": None,
-                "master_tracker": None,
-                "error": None,
-                "reason": "research_verification_pending",
-            }
         result = sync_lead_if_missing(
             lead
         )
@@ -627,7 +611,7 @@ def sync_pending(
             try:
                 lead = json.loads(payload_json)
                 if not isinstance(lead, dict):
-                    raise ValueError("Stored lead payload must be an object.")
+                    raise ValueError("expected an object.")
             except (TypeError, ValueError) as exc:
                 invalid_page.append((fingerprint, f"Invalid stored lead payload: {exc}"))
                 continue
