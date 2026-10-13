@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
-from .airtable_sync import AirtableSyncError, _master_table_url, _request
+from .airtable_sync import AirtableSyncError, _configured_base_ids, _master_table_url, _request
 from .free_sources import FreeJobSource
 from .sources import LeadSource
 from . import source_adapters
@@ -134,23 +134,28 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str, Tuple[str, ...
         return tuple()
     try:
         records: List[Dict[str, Any]] = []
-        offset = None
-        while True:
-            params = {"pageSize": "100"}
-            if offset:
-                params["offset"] = offset
-            result = _request("GET", f"{_master_table_url('lead_sources')}?{urllib.parse.urlencode(params)}")
-            page = result.get("records", [])
-            if isinstance(page, list):
-                records.extend(r for r in page if isinstance(r, dict))
-            offset = result.get("offset")
-            if not offset:
-                break
+        for configured_base_id in _configured_base_ids():
+            offset = None
+            while True:
+                params = {"pageSize": "100"}
+                if offset:
+                    params["offset"] = offset
+                result = _request(
+                    "GET",
+                    f"{_master_table_url('lead_sources', configured_base_id)}?{urllib.parse.urlencode(params)}",
+                )
+                page = result.get("records", [])
+                if isinstance(page, list):
+                    records.extend(r for r in page if isinstance(r, dict))
+                offset = result.get("offset")
+                if not offset:
+                    break
     except AirtableSyncError as exc:
         raise RuntimeError(f"Unable to load Airtable Lead Sources: {exc}") from exc
 
     catalog = []
-    seen_names, seen_urls = set(), set()
+    seen_names: Dict[str, tuple[str, str, str, Tuple[str, ...]]] = {}
+    seen_urls: Dict[str, tuple[str, str, str, Tuple[str, ...]]] = {}
     for index, record in enumerate(records):
         fields = record.get("fields", {})
         if not isinstance(fields, dict):
@@ -171,12 +176,23 @@ def _load_airtable_source_catalog() -> Tuple[Tuple[str, str, str, Tuple[str, ...
         if source_type not in SUPPORTED_FREE_SOURCE_TYPES:
             raise RuntimeError(f"Airtable Lead Sources record {index + 1} has unsupported Collector Type: {source_type or '<empty>'}.")
         normalized_name, normalized_url = name.casefold(), url.casefold()
-        if normalized_name in seen_names:
-            raise RuntimeError(f"Duplicate Airtable Lead Source name: {name}")
-        if normalized_url in seen_urls:
-            raise RuntimeError(f"Duplicate Airtable Lead Source URL: {url}")
-        seen_names.add(normalized_name); seen_urls.add(normalized_url)
-        catalog.append((name, url, source_type, signal_keywords))
+        identity = (normalized_name, normalized_url, source_type, signal_keywords)
+        prior_name = seen_names.get(normalized_name)
+        if prior_name is not None:
+            prior_identity = (prior_name[0].casefold(), prior_name[1].casefold(), prior_name[2], prior_name[3])
+            if prior_identity == identity:
+                continue
+            raise RuntimeError(f"Conflicting Airtable Lead Source definitions share the name: {name}")
+        prior_url = seen_urls.get(normalized_url)
+        if prior_url is not None:
+            prior_identity = (prior_url[0].casefold(), prior_url[1].casefold(), prior_url[2], prior_url[3])
+            if prior_identity == identity:
+                continue
+            raise RuntimeError(f"Conflicting Airtable Lead Source definitions share the URL: {url}")
+        definition = (name, url, source_type, signal_keywords)
+        seen_names[normalized_name] = definition
+        seen_urls[normalized_url] = definition
+        catalog.append(definition)
     return tuple(catalog)
 
 
