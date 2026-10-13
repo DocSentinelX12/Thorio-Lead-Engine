@@ -322,15 +322,8 @@ class LeadPipeline:
             }:
                 self.db.mark_synced(fingerprint)
             elif sync_status in {"deferred_research", "deferred_capacity"}:
-                default_reason = (
-                    "airtable_record_capacity"
-                    if sync_status == "deferred_capacity"
-                    else "research_verification_pending"
-                )
-                self.db.defer_sync(
-                    fingerprint,
-                    str(sync_result.get("reason") or default_reason),
-                )
+                # _sync_updated_lead has already persisted the durable defer state.
+                pass
             else:
                 self.db.mark_error(
                     fingerprint,
