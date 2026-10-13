@@ -20,6 +20,12 @@ def test_production_gate_preserves_durable_specialist_backlog_but_fails_terminal
     assert 'SPECIALIST DRAIN FAILURE: specialist backlog remained' not in text
 
 
+def test_production_airtable_workspace_keeps_legacy_bases_readable():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "AIRTABLE_BASE_ID: appBHsCquEQImXmLy" in text
+    assert "AIRTABLE_LEGACY_BASE_IDS: appoEHF48vTHjCcWF,appxz89RYpxIOpdMD" in text
+
+
 def test_airtable_capacity_blocks_new_records_without_discarding_local_collection_state():
     text = WORKFLOW.read_text(encoding="utf-8")
     capacity_gate = text.split("if capacity_blocked:", 1)[1].split("raise SystemExit(", 1)[0]
