@@ -297,6 +297,7 @@ def sync_pending_batched(
                     deferred_research.append({
                         "status": "deferred_research",
                         "fingerprint": fingerprint,
+                        "lead": lead,
                         "company": str(lead.get("company") or ""),
                         "error": None,
                         "reason": "research_verification_pending",
@@ -331,6 +332,7 @@ def sync_pending_batched(
                         deferred_research.append({
                             "status": "deferred_research",
                             "fingerprint": fingerprint,
+                            "lead": lead,
                             "company": str(lead.get("company") or ""),
                             "error": None,
                             "reason": "research_verification_pending",
