@@ -41,6 +41,7 @@ def configure(monkeypatch, **overrides):
         "THORIO_BREVO_SENDER_NAME": "Thorio",
         "THORIO_BREVO_REPLY_TO_EMAIL": "support@thorio.co",
         "THORIO_BREVO_SENDER_VERIFIED": "true",
+        "THORIO_BREVO_DOMAIN_AUTHENTICATED": "true",
     }
     values.update(overrides)
     for name, value in values.items():
