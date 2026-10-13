@@ -32,6 +32,7 @@ def brevo_smtp_configured() -> bool:
         and _env("THORIO_BREVO_SMTP_KEY")
         and _env("THORIO_BREVO_SENDER_EMAIL")
         and _env("THORIO_BREVO_SENDER_VERIFIED").lower() in {"1", "true", "yes", "on"}
+        and _env("THORIO_BREVO_DOMAIN_AUTHENTICATED").lower() in {"1", "true", "yes", "on"}
     )
 
 
@@ -47,6 +48,7 @@ class BrevoSMTPTransport:
         sender_name: str | None = None,
         reply_to_email: str | None = None,
         sender_verified: bool | None = None,
+        domain_authenticated: bool | None = None,
         timeout_seconds: float = 30.0,
     ):
         self.username = (username if username is not None else _env("THORIO_BREVO_SMTP_LOGIN")).strip()
@@ -57,6 +59,10 @@ class BrevoSMTPTransport:
         self.sender_verified = (
             sender_verified if sender_verified is not None
             else _env("THORIO_BREVO_SENDER_VERIFIED").lower() in {"1", "true", "yes", "on"}
+        )
+        self.domain_authenticated = (
+            domain_authenticated if domain_authenticated is not None
+            else _env("THORIO_BREVO_DOMAIN_AUTHENTICATED").lower() in {"1", "true", "yes", "on"}
         )
         self.timeout_seconds = max(5.0, min(float(timeout_seconds), 120.0))
 
@@ -71,6 +77,10 @@ class BrevoSMTPTransport:
         if not self.sender_verified:
             raise RevenueTransportUnavailable(
                 "Brevo sender verification is not confirmed; set THORIO_BREVO_SENDER_VERIFIED=true only after verifying the sender in Brevo"
+            )
+        if not self.domain_authenticated:
+            raise RevenueTransportUnavailable(
+                "Brevo sender domain authentication is not confirmed; set THORIO_BREVO_DOMAIN_AUTHENTICATED=true only after Brevo reports the domain authenticated"
             )
 
     @staticmethod
