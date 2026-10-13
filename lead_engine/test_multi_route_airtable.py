@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from lead_engine.airtable_sync import sync_lead_if_missing
@@ -89,3 +90,8 @@ def test_astrivon_route_is_preserved_as_an_independent_airtable_destination():
     fields = mock_request.call_args.args[2]["records"][0]["fields"]
     assert fields["Applicable Routes"] == ["Astrivon Labs"]
     assert fields["Recommended Partner"] == "Astrivon Labs"
+
+@pytest.fixture(autouse=True)
+def _explicit_test_airtable_base(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+
