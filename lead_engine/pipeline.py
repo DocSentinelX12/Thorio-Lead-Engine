@@ -142,10 +142,15 @@ class LeadPipeline:
             "failed",
         )
 
-        if status == "deferred_research":
+        if status in {"deferred_research", "deferred_capacity"}:
+            default_reason = (
+                "airtable_record_capacity"
+                if status == "deferred_capacity"
+                else "research_verification_pending"
+            )
             self.db.defer_sync(
                 str(lead.get("fingerprint") or ""),
-                str(sync_result.get("reason") or "research_verification_pending"),
+                str(sync_result.get("reason") or default_reason),
             )
             return sync_result
         if status not in {
@@ -316,10 +321,15 @@ class LeadPipeline:
                 "already_exists",
             }:
                 self.db.mark_synced(fingerprint)
-            elif sync_status == "deferred_research":
+            elif sync_status in {"deferred_research", "deferred_capacity"}:
+                default_reason = (
+                    "airtable_record_capacity"
+                    if sync_status == "deferred_capacity"
+                    else "research_verification_pending"
+                )
                 self.db.defer_sync(
                     fingerprint,
-                    str(sync_result.get("reason") or "research_verification_pending"),
+                    str(sync_result.get("reason") or default_reason),
                 )
             else:
                 self.db.mark_error(
