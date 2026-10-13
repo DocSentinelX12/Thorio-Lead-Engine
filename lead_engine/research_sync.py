@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from .airtable_sync import (
     AirtableSyncError,
     _master_table_url,
+    _request,
     _text,
     create_master_record as _create_master_record,
     find_master_records as _find_master_records,
