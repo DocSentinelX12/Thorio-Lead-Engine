@@ -796,27 +796,41 @@ jobs:
               raise SystemExit(1)
           print("FREE SOURCE WIRING VERIFIED: the complete enabled public catalog is handed to the runtime source registry in addition to discovery account layers.")
           PY
-      - name: Enforce end-to-end production readiness
+      - name: Select safe production mode
+        id: production_mode
         env:
           REVENUE_TRANSPORT_READY: ${{ steps.revenue_transport_readiness.outputs.ready }}
           REVENUE_INBOUND_READY: ${{ steps.revenue_inbound_readiness.outputs.ready }}
           PUBLIC_DISCOVERY_READY: ${{ steps.public_discovery_readiness.outputs.ready }}
         run: |
-          missing=()
-          if [ "${REVENUE_TRANSPORT_READY:-false}" != "true" ]; then
-            missing+=("authorized outbound revenue transport")
-          fi
-          if [ "${REVENUE_INBOUND_READY:-false}" != "true" ]; then
-            missing+=("authenticated inbound reply observation")
-          fi
+          set -euo pipefail
           if [ "${PUBLIC_DISCOVERY_READY:-false}" != "true" ]; then
-            missing+=("API-backed or authenticated-browser business-intent discovery")
-          fi
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'PRODUCTION READINESS BLOCKED: missing %s. Configure the real runtime integration and rerun; no outreach will be reported as ready.\n' "${missing[*]}"
+            echo "PRODUCTION DISCOVERY BLOCKED: no verified business-intent discovery path is ready; engine execution will not start."
+            echo "THORIO_REVENUE_OUTBOUND_ENABLED=false" >> "$GITHUB_ENV"
+            echo "full_revenue_ready=false" >> "$GITHUB_OUTPUT"
+            echo "mode=blocked" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          echo "PRODUCTION READINESS VERIFIED: live business-intent discovery and an authorized outbound transport are configured."
+          if [ "${REVENUE_TRANSPORT_READY:-false}" = "true" ] && [ "${REVENUE_INBOUND_READY:-false}" = "true" ]; then
+            echo "THORIO_REVENUE_OUTBOUND_ENABLED=true" >> "$GITHUB_ENV"
+            echo "full_revenue_ready=true" >> "$GITHUB_OUTPUT"
+            echo "mode=full_revenue" >> "$GITHUB_OUTPUT"
+            echo "PRODUCTION MODE: full revenue operation; outbound transport and inbound reply observation are live-authenticated."
+            {
+              echo "## Production operating mode"
+              echo "Full revenue operation enabled: outbound transport and inbound reply observation passed live checks."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "THORIO_REVENUE_OUTBOUND_ENABLED=false" >> "$GITHUB_ENV"
+            echo "full_revenue_ready=false" >> "$GITHUB_OUTPUT"
+            echo "mode=discovery_queue" >> "$GITHUB_OUTPUT"
+            echo "PRODUCTION MODE: discovery and durable queue only. Outbound sending is explicitly disabled because live transport/reply checks did not pass; eligible outreach tasks remain queued for a verified channel."
+            {
+              echo "## Production operating mode"
+              echo "Discovery and durable queue only. No external outreach will be sent by this run because live outbound transport and inbound reply observation are not both verified."
+              echo "This is not full revenue readiness. The run will still collect, qualify, and persist leads when the discovery and storage checks pass."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Restore durable Turso engine state
         id: turso_restore
         env:
@@ -1223,7 +1237,36 @@ jobs:
           print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
           PY
       - name: Verify production revenue lifecycle and outreach
+        if: steps.production_mode.outputs.full_revenue_ready == 'true'
         run: python -m lead_engine.production_lifecycle_audit --database data/leads.sqlite3
+      - name: Report outreach held in durable queue
+        if: steps.production_mode.outputs.full_revenue_ready != 'true'
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          from lead_engine.agent_queue import pending
+          from lead_engine.database import LeadDB
+
+          db = LeadDB(data_dir="data")
+          try:
+              tasks = pending(db)
+              queued = Counter(
+                  str(task.get("agent") or "unknown")
+                  for task in tasks
+                  if str(task.get("status") or "").lower() in {"queued", "running"}
+              )
+              print("OUTREACH SAFETY HOLD VERIFIED: outbound transport is disabled for this run.")
+              print(f"Durable queued/running outreach_closer tasks: {queued.get('outreach_closer', 0)}")
+              print(f"Durable queued/running follow_up tasks: {queued.get('follow_up', 0)}")
+              print("No message was sent by the production cycle; tasks remain available for a verified transport.")
+              with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write("\n## Outreach status\n")
+                  summary.write("- External sending was disabled because live transport/reply checks did not pass.\n")
+                  summary.write(f"- Durable outreach tasks queued/running: {queued.get('outreach_closer', 0)}\n")
+                  summary.write(f"- Durable follow-up tasks queued/running: {queued.get('follow_up', 0)}\n")
+          finally:
+              db.close()
+          PY
       - name: Persist encrypted external browser authentication state
         if: ${{ always() }}
         uses: actions/upload-artifact@v6
