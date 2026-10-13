@@ -36,6 +36,10 @@ class AirtableTransientError(AirtableSyncError):
     """A retryable Airtable/network failure; pending work must be preserved."""
 
 
+class AirtableCapacityDeferred(AirtableSyncError):
+    """Airtable cannot create new records right now; preserve work without retries."""
+
+
 _REQUEST_DEADLINE: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
     "thorio_airtable_request_deadline", default=None
 )
@@ -149,9 +153,9 @@ def _request(
             and "performUpsert" not in payload
         )
         if not update_existing_record:
-            raise AirtableSyncError(
-                "Airtable mutation blocked: base record capacity is exhausted; "
-                "new records and table-level upserts remain queued."
+            raise AirtableCapacityDeferred(
+                "Airtable base record capacity is exhausted; new records and table-level "
+                "upserts remain queued without consuming retry attempts."
             )
     _require_config()
     api_key = os.getenv("AIRTABLE_API_KEY")
