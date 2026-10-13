@@ -169,6 +169,40 @@ def make_data_dir(path: Path, lead_name: str) -> None:
         conn.execute("INSERT OR REPLACE INTO queue(id, payload) VALUES (1, ?)", (lead_name,))
 
 
+class DroppingChunkConnection(PersistentConnection):
+    def __init__(self):
+        super().__init__()
+        self.dropped_chunk = False
+
+    def execute(self, sql, *args, **kwargs):
+        if (
+            "INSERT OR REPLACE INTO thorio_state_chunks" in str(sql)
+            and not self.dropped_chunk
+        ):
+            self.dropped_chunk = True
+            return self.connection.execute("SELECT 1")
+        return self.connection.execute(sql, *args, **kwargs)
+
+
+def test_turso_snapshot_never_marks_missing_remote_chunks_complete(monkeypatch, tmp_path):
+    remote = DroppingChunkConnection()
+    monkeypatch.setattr(turso_state, "_connect", lambda: remote)
+    data_dir = tmp_path / "data"
+    make_data_dir(data_dir, "local-state")
+
+    try:
+        turso_state.snapshot(data_dir)
+    except RuntimeError as exc:
+        assert "read-back failed" in str(exc)
+    else:
+        raise AssertionError("snapshot must reject a generation whose remote chunk is missing")
+
+    statuses = remote.execute(
+        "SELECT status FROM thorio_state_generations"
+    ).fetchall()
+    assert statuses == [("writing",)]
+
+
 def test_turso_snapshot_restores_all_sqlite_state_with_integrity(monkeypatch, tmp_path):
     remote = PersistentConnection()
     monkeypatch.setattr(turso_state, "_connect", lambda: remote)
