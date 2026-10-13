@@ -99,6 +99,17 @@ class _ResilientConnection:
     def __init__(self, connection_factory):
         self._connection_factory = connection_factory
         self._connection = connection_factory()
+        self._last_statement = None
+
+    @staticmethod
+    def _is_idempotent_write(sql: str) -> bool:
+        statement = sql.lstrip().upper()
+        return statement.startswith((
+            "INSERT OR REPLACE",
+            "UPDATE",
+            "DELETE",
+            "CREATE TABLE IF NOT EXISTS",
+        ))
 
     def _reconnect(self) -> None:
         old = self._connection
@@ -109,6 +120,7 @@ class _ResilientConnection:
         self._connection = self._connection_factory()
 
     def execute(self, sql, *args, **kwargs):
+        self._last_statement = (sql, args, kwargs)
         try:
             cursor = self._connection.execute(sql, *args, **kwargs)
         except Exception as exc:
@@ -127,6 +139,14 @@ class _ResilientConnection:
             if not _is_expired_stream_error(exc):
                 raise
             self._reconnect()
+            if not self._last_statement or not self._is_idempotent_write(self._last_statement[0]):
+                raise RuntimeError(
+                    "Turso stream expired during commit and the last statement cannot be replayed safely."
+                ) from exc
+            sql, args, kwargs = self._last_statement
+            # Commit outcomes can be ambiguous. Replaying the same idempotent
+            # write after reconnect handles both rollback and lost acknowledgments.
+            self._connection.execute(sql, *args, **kwargs)
             self._connection.commit()
 
     def close(self) -> None:
