@@ -210,6 +210,7 @@ jobs:
       THORIO_GMAIL_OAUTH_CLIENT_ID: ${{ secrets.THORIO_GMAIL_OAUTH_CLIENT_ID }}
       THORIO_BREVO_SMTP_LOGIN: ${{ secrets.BREVO_SMTP_LOGIN || secrets.THORIO_BREVO_SMTP_LOGIN }}
       THORIO_BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY || secrets.THORIO_BREVO_SMTP_KEY }}
+      THORIO_BREVO_API_KEY: ${{ secrets.BREVO_API_KEY || secrets.THORIO_BREVO_API_KEY }}
       THORIO_BREVO_SENDER_EMAIL: ${{ vars.THORIO_BREVO_SENDER_EMAIL || secrets.THORIO_BREVO_SENDER_EMAIL }}
       THORIO_BREVO_SENDER_NAME: ${{ vars.THORIO_BREVO_SENDER_NAME || secrets.THORIO_BREVO_SENDER_NAME }}
       THORIO_BREVO_REPLY_TO_EMAIL: ${{ vars.THORIO_BREVO_REPLY_TO_EMAIL || secrets.THORIO_BREVO_REPLY_TO_EMAIL }}
@@ -246,6 +247,7 @@ jobs:
           import os
           import smtplib
           import ssl
+          import requests
           from lead_engine.gmail_oauth import gmail_oauth_configured, refresh_gmail_access_token, xoauth2_payload
 
           mode = os.environ.get("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
@@ -285,22 +287,29 @@ jobs:
           gmail_ready = False
           brevo_login = os.environ.get("THORIO_BREVO_SMTP_LOGIN", "").strip()
           brevo_key = os.environ.get("THORIO_BREVO_SMTP_KEY", "").strip()
+          brevo_api_key = os.environ.get("THORIO_BREVO_API_KEY", "").strip()
           brevo_sender = os.environ.get("THORIO_BREVO_SENDER_EMAIL", "").strip()
           brevo_reply_to = os.environ.get("THORIO_BREVO_REPLY_TO_EMAIL", "").strip() or brevo_sender
           brevo_sender_verified = os.environ.get("THORIO_BREVO_SENDER_VERIFIED", "").strip().lower() in {"1", "true", "yes", "on"}
           brevo_domain_authenticated = os.environ.get("THORIO_BREVO_DOMAIN_AUTHENTICATED", "").strip().lower() in {"1", "true", "yes", "on"}
           brevo_credentials_configured = bool(brevo_login and brevo_key)
+          brevo_api_selected = mode == "brevo_api" or (
+              mode in {"", "auto"} and bool(brevo_api_key)
+          )
           brevo_selected = mode == "brevo_smtp" or (
-              mode in {"", "auto"} and brevo_credentials_configured
+              mode in {"", "auto"} and brevo_credentials_configured and not brevo_api_key
           )
           gmail_selected = mode == "gmail_smtp" or (
               mode in {"", "auto"}
               and not http_ready
               and not browser_ready
               and not brevo_credentials_configured
+              and not brevo_api_key
           )
           brevo_ready = False
           brevo_auth_verified = False
+          brevo_api_auth_verified = False
+          brevo_api_failures = []
           brevo_method = ""
           brevo_failures = []
           def safe_provider_detail(exc):
@@ -406,8 +415,38 @@ jobs:
                               client.quit()
                           except Exception:
                               pass
+          if brevo_api_selected and brevo_api_key:
+              try:
+                  response = requests.get(
+                      "https://api.brevo.com/v3/account",
+                      headers={"api-key": brevo_api_key, "accept": "application/json"},
+                      timeout=15,
+                  )
+                  if response.status_code in {401, 403}:
+                      brevo_api_failures.append(f"api_account:HTTP_{response.status_code}:authorization_rejected")
+                  else:
+                      response.raise_for_status()
+                      account = response.json()
+                      if not isinstance(account, dict) or not account.get("email"):
+                          brevo_api_failures.append("api_account:unexpected_response")
+                      else:
+                          brevo_api_auth_verified = True
+              except Exception as exc:
+                  detail = " ".join(str(exc).split())
+                  detail = detail.replace(brevo_api_key, "[REDACTED]")
+                  brevo_api_failures.append(f"api_account:{type(exc).__name__}:{detail[:180]}")
+          if brevo_api_selected:
+              print(
+                  f"BREVO API LIVE AUTH {'VERIFIED' if brevo_api_auth_verified else 'FAILED'} "
+                  f"api_key_configured={str(bool(brevo_api_key)).lower()} "
+                  f"sender_configured={str(bool(brevo_sender)).lower()} "
+                  f"sender_verification_confirmed={str(brevo_sender_verified).lower()} "
+                  f"domain_authentication_confirmed={str(brevo_domain_authenticated).lower()} "
+                  f"failure_stages={'; '.join(brevo_api_failures) or 'none'}; no email was sent."
+              )
+
           brevo_ready = (
-              brevo_auth_verified
+              (brevo_auth_verified or brevo_api_auth_verified)
               and bool(brevo_sender)
               and brevo_sender_verified
               and brevo_domain_authenticated
@@ -431,7 +470,7 @@ jobs:
               ready = browser_ready
           elif mode == "gmail_smtp":
               ready = gmail_ready
-          elif mode == "brevo_smtp":
+          elif mode in {"brevo_smtp", "brevo_api"}:
               ready = brevo_ready
           elif mode in {"", "auto"}:
               ready = http_ready or browser_ready or brevo_ready or gmail_ready
@@ -451,6 +490,9 @@ jobs:
               f"brevo_selected={str(brevo_selected).lower()} "
               f"brevo_login_configured={str(bool(brevo_login)).lower()} "
               f"brevo_smtp_key_configured={str(bool(brevo_key)).lower()} "
+              f"brevo_api_selected={str(brevo_api_selected).lower()} "
+              f"brevo_api_key_configured={str(bool(brevo_api_key)).lower()} "
+              f"brevo_api_auth_verified={str(brevo_api_auth_verified).lower()} "
               f"brevo_sender_configured={str(bool(brevo_sender)).lower()} "
               f"brevo_sender_verified={str(brevo_sender_verified).lower()} "
               f"brevo_domain_authenticated={str(brevo_domain_authenticated).lower()}"
