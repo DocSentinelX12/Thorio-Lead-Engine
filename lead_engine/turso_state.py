@@ -56,12 +56,15 @@ class _ResilientCursor:
         self._sql = sql
         self._args = args
         self._kwargs = kwargs
+        self._consumed = False
 
     def _fetch(self, method: str):
         try:
-            return getattr(self._cursor, method)()
+            result = getattr(self._cursor, method)()
+            self._consumed = True
+            return result
         except Exception as exc:
-            if not _is_expired_stream_error(exc):
+            if not _is_expired_stream_error(exc) or self._consumed:
                 raise
             statement = self._sql.lstrip().upper()
             if not statement.startswith(("SELECT", "PRAGMA", "WITH", "EXPLAIN")):
@@ -70,7 +73,9 @@ class _ResilientCursor:
             self._cursor = self._connection._connection.execute(
                 self._sql, *self._args, **self._kwargs
             )
-            return getattr(self._cursor, method)()
+            result = getattr(self._cursor, method)()
+            self._consumed = True
+            return result
 
     def fetchone(self):
         return self._fetch("fetchone")
@@ -125,7 +130,12 @@ class _ResilientConnection:
             self._connection.commit()
 
     def close(self) -> None:
-        self._connection.close()
+        # Closing an already-expired remote stream is cleanup, not a reason to
+        # turn an otherwise verified snapshot/restore into a failed operation.
+        try:
+            self._connection.close()
+        except Exception:
+            pass
 
 
 def _connect():
