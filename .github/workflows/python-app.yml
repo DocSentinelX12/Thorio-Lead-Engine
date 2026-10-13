@@ -208,6 +208,12 @@ jobs:
       THORIO_ACCOUNT_GMAIL_USERNAME: ${{ secrets.THORIO_ACCOUNT_GMAIL_USERNAME }}
       THORIO_ACCOUNT_GMAIL_PASSWORD: ${{ secrets.THORIO_ACCOUNT_GMAIL_PASSWORD }}
       THORIO_GMAIL_OAUTH_CLIENT_ID: ${{ secrets.THORIO_GMAIL_OAUTH_CLIENT_ID }}
+      THORIO_BREVO_SMTP_LOGIN: ${{ secrets.THORIO_BREVO_SMTP_LOGIN }}
+      THORIO_BREVO_SMTP_KEY: ${{ secrets.THORIO_BREVO_SMTP_KEY }}
+      THORIO_BREVO_SENDER_EMAIL: ${{ vars.THORIO_BREVO_SENDER_EMAIL || secrets.THORIO_BREVO_SENDER_EMAIL }}
+      THORIO_BREVO_SENDER_NAME: ${{ vars.THORIO_BREVO_SENDER_NAME || secrets.THORIO_BREVO_SENDER_NAME }}
+      THORIO_BREVO_REPLY_TO_EMAIL: ${{ vars.THORIO_BREVO_REPLY_TO_EMAIL || secrets.THORIO_BREVO_REPLY_TO_EMAIL }}
+      THORIO_BREVO_SENDER_VERIFIED: ${{ vars.THORIO_BREVO_SENDER_VERIFIED || secrets.THORIO_BREVO_SENDER_VERIFIED }}
       THORIO_GMAIL_OAUTH_CLIENT_SECRET: ${{ secrets.THORIO_GMAIL_OAUTH_CLIENT_SECRET }}
       THORIO_GMAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.THORIO_GMAIL_OAUTH_REFRESH_TOKEN }}
       THORIO_REVENUE_TRANSPORT_MODE: ${{ vars.THORIO_REVENUE_TRANSPORT_MODE || secrets.THORIO_REVENUE_TRANSPORT_MODE }}
@@ -280,6 +286,15 @@ jobs:
               or (mode in {"", "auto"} and not http_ready and not browser_ready)
           )
           gmail_ready = False
+          brevo_login = os.environ.get("THORIO_BREVO_SMTP_LOGIN", "").strip()
+          brevo_key = os.environ.get("THORIO_BREVO_SMTP_KEY", "").strip()
+          brevo_sender = os.environ.get("THORIO_BREVO_SENDER_EMAIL", "").strip()
+          brevo_reply_to = os.environ.get("THORIO_BREVO_REPLY_TO_EMAIL", "").strip() or brevo_sender
+          brevo_sender_verified = os.environ.get("THORIO_BREVO_SENDER_VERIFIED", "").strip().lower() in {"1", "true", "yes", "on"}
+          brevo_selected = mode == "brevo_smtp"
+          brevo_ready = False
+          brevo_method = ""
+          brevo_failures = []
           def safe_provider_detail(exc):
               detail = " ".join(str(exc).split())
               for secret in (
@@ -344,12 +359,62 @@ jobs:
                   f"failure_stages={'; '.join(smtp_failures) or 'none'}; no email was sent."
               )
 
+          if brevo_selected and brevo_login and brevo_key and brevo_sender and brevo_sender_verified:
+              for method, port in (("starttls", 587), ("ssl", 465)):
+                  client = None
+                  stage = f"{method}_connect"
+                  try:
+                      if method == "starttls":
+                          client = smtplib.SMTP("smtp-relay.brevo.com", port, timeout=15)
+                          client.ehlo()
+                          client.starttls(context=ssl.create_default_context())
+                          client.ehlo()
+                      else:
+                          client = smtplib.SMTP_SSL(
+                              "smtp-relay.brevo.com", port, timeout=15,
+                              context=ssl.create_default_context(),
+                          )
+                      stage = f"{method}_login"
+                      client.login(brevo_login, brevo_key)
+                      brevo_ready = True
+                      brevo_method = f"{method}:{port}"
+                      break
+                  except smtplib.SMTPAuthenticationError as exc:
+                      detail = " ".join(str(exc).split())
+                      for secret in (brevo_login, brevo_key):
+                          if secret:
+                              detail = detail.replace(secret, "[REDACTED]")
+                      brevo_failures.append(f"{stage}:{type(exc).__name__}:{detail[:180]}")
+                      break
+                  except Exception as exc:
+                      detail = " ".join(str(exc).split())
+                      for secret in (brevo_login, brevo_key):
+                          if secret:
+                              detail = detail.replace(secret, "[REDACTED]")
+                      brevo_failures.append(f"{stage}:{type(exc).__name__}:{detail[:180]}")
+                  finally:
+                      if client is not None:
+                          try:
+                              client.quit()
+                          except Exception:
+                              pass
+          if brevo_selected:
+              print(
+                  f"BREVO SMTP LIVE AUTH {'VERIFIED' if brevo_ready else 'FAILED'} "
+                  f"method={brevo_method or 'none'} "
+                  f"sender_configured={str(bool(brevo_sender)).lower()} "
+                  f"sender_verification_confirmed={str(brevo_sender_verified).lower()} "
+                  f"failure_stages={'; '.join(brevo_failures) or 'none'}; no email was sent."
+              )
+
           if mode == "http":
               ready = http_ready
           elif mode == "browser":
               ready = browser_ready
           elif mode == "gmail_smtp":
               ready = gmail_ready
+          elif mode == "brevo_smtp":
+              ready = brevo_ready
           elif mode in {"", "auto"}:
               ready = http_ready or browser_ready or gmail_ready
           else:
@@ -364,7 +429,12 @@ jobs:
               f"browser_target_config_invalid={str(target_error).lower()} "
               f"browser_state_key_configured={str(browser_state_key_configured).lower()} "
               f"gmail_sender_configured={str(gmail_username == 'thorio.partners@gmail.com').lower()} "
-              f"gmail_password_configured={str(bool(gmail_password)).lower()}"
+              f"gmail_password_configured={str(bool(gmail_password)).lower()} "
+              f"brevo_selected={str(brevo_selected).lower()} "
+              f"brevo_login_configured={str(bool(brevo_login)).lower()} "
+              f"brevo_smtp_key_configured={str(bool(brevo_key)).lower()} "
+              f"brevo_sender_configured={str(bool(brevo_sender)).lower()} "
+              f"brevo_sender_verified={str(brevo_sender_verified).lower()}"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"ready={str(ready).lower()}\n")
