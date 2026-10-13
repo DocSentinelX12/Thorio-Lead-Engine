@@ -265,9 +265,13 @@ def restore(data_dir: Path) -> bool:
             _validate_primary_database(primary)
             data_dir.mkdir(parents=True, exist_ok=True)
             staged_names = {name for name, _ in staged}
-            for existing_name, existing_path in _sqlite_files(data_dir):
-                if existing_name not in staged_names:
-                    existing_path.unlink()
+            existing_names = {name for name, _ in _sqlite_files(data_dir)}
+            unexpected = sorted(existing_names - staged_names)
+            if unexpected:
+                raise RuntimeError(
+                    "Turso restore would remove local SQLite state absent from the selected generation; "
+                    f"refusing destructive restore and preserving files: {unexpected}"
+                )
             for name, source in staged:
                 destination = data_dir.joinpath(*PurePosixPath(name).parts)
                 destination.parent.mkdir(parents=True, exist_ok=True)
