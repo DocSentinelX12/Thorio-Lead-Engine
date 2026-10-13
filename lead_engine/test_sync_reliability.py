@@ -236,3 +236,53 @@ def test_remote_success_before_local_commit_recovers_on_restart(tmp_path):
         recovered = sync_pending(db)
     assert recovered["already_exists_count"] == 1
     assert db.get_sync_state(lead["fingerprint"])["synced"] is True
+
+def test_research_deferred_sync_leaves_lead_local_and_requeues_when_ready(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {
+        "fingerprint": "deferred-research-001",
+        "company": "Deferred Research Corp",
+        "signal": "remote software engineering need",
+        "evidence": "Observed source evidence",
+    }
+    assert db.insert_if_new(lead) is True
+
+    db.defer_sync("deferred-research-001", "research_verification_pending")
+    assert db.pending() == []
+    assert db.get("deferred-research-001")["_airtable_sync_deferred"] == "research_verification_pending"
+
+    with patch("lead_engine.sales_handoff.package_is_ready", return_value=True):
+        db.update_payload(
+            "deferred-research-001",
+            {"research_status": "complete", "research_completed_at": "2026-10-13T00:00:00+00:00"},
+        )
+
+    pending = db.pending()
+    assert len(pending) == 1
+    assert pending[0][0] == "deferred-research-001"
+    assert "_airtable_sync_deferred" not in db.get("deferred-research-001")
+
+
+def test_existing_database_migrates_sync_deferred_column_without_losing_leads(tmp_path):
+    import sqlite3
+
+    data_dir = tmp_path / "legacy"
+    data_dir.mkdir()
+    db_path = data_dir / "leads.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE leads (fingerprint TEXT PRIMARY KEY, payload TEXT NOT NULL, "
+            "synced INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, "
+            "last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        connection.execute(
+            "INSERT INTO leads(fingerprint, payload) VALUES (?, ?)",
+            ("legacy-preserved-001", json.dumps({"fingerprint": "legacy-preserved-001"})),
+        )
+
+    db = LeadDB(data_dir=str(data_dir))
+    columns = {row[1] for row in db.conn.execute("PRAGMA table_info(leads)").fetchall()}
+    assert "sync_deferred" in columns
+    assert db.get("legacy-preserved-001") == {"fingerprint": "legacy-preserved-001"}
+    assert db.get_sync_state("legacy-preserved-001")["synced"] is False
