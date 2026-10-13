@@ -1016,8 +1016,23 @@ jobs:
             fi
             artifact_info="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | [.id, .created_at] | @tsv' | head -n 1)"
             [ -z "$artifact_info" ] && continue
-            artifact_id="${artifact_info%%
-
+            artifact_id="$(printf '%s' "$artifact_info" | cut -f1)"
+            artifact_created_at="$(printf '%s' "$artifact_info" | cut -f2)"
+            if [ "${TURSO_STATE_RESTORED:-false}" = "true" ] && [ -n "${TURSO_STATE_RESTORED_AT:-}" ]; then
+              if python - "$artifact_created_at" "$TURSO_STATE_RESTORED_AT" <<'PY'
+          from datetime import datetime
+          import sys
+          artifact_at = datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+          turso_at = datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+          raise SystemExit(0 if artifact_at > turso_at else 1)
+          PY
+              then
+                echo "ENGINE STATE RECOVERY: verified artifact from run $run_id is newer than the restored Turso generation; checking artifact integrity before selecting it."
+              else
+                echo "ENGINE STATE RECOVERY: restored Turso generation is at least as new as the newest available artifact; keeping Turso state."
+                break
+              fi
+            fi
             candidate_dir="$(mktemp -d)"
             if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name thorio-lead-engine-state --dir "$candidate_dir"; then
               rm -rf "$candidate_dir"
