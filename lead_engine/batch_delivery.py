@@ -204,30 +204,57 @@ def sync_pending_batched(
     durable and pending, but are not selected repeatedly within that same cycle.
     """
     excluded = {str(value).strip() for value in (exclude_fingerprints or ()) if str(value).strip()}
-    rows = db.pending(limit=limit + len(excluded)) if excluded else db.pending(limit=limit)
-    if excluded:
-        rows = [row for row in rows if str(row[0]) not in excluded][:limit]
     valid: List[tuple[str, Dict[str, Any]]] = []
     failed: List[Dict[str, Any]] = []
+    deferred_research: List[Dict[str, Any]] = []
+    after_rowid = 0
+    page_size = max(100, min(500, limit * 10))
 
-    for fingerprint, payload_json, _attempts in rows:
-        try:
-            lead = json.loads(payload_json)
-        except (TypeError, ValueError) as exc:
-            message = f"Invalid stored lead payload: {exc}"
-            db.mark_error(fingerprint, message)
-            failed.append({"status": "failed", "lead": {}, "error": message})
-            continue
-        if not isinstance(lead, dict):
-            message = "Invalid stored lead payload: expected an object."
-            db.mark_error(fingerprint, message)
-            failed.append({"status": "failed", "lead": {}, "error": message})
-            continue
-        valid.append((fingerprint, lead))
+    # Scan by stable rowid so deferring a page cannot shift offsets and skip
+    # other records. This lets ready leads behind a large raw backlog proceed.
+    while len(valid) < limit:
+        rows = db.pending_scan(after_rowid=after_rowid, limit=page_size)
+        if not rows:
+            break
+        deferred_page: List[tuple[str, Dict[str, Any]]] = []
+        invalid_page: List[tuple[str, str]] = []
+        for rowid, fingerprint, payload_json, _attempts in rows:
+            after_rowid = int(rowid)
+            if fingerprint in excluded:
+                continue
+            try:
+                lead = json.loads(payload_json)
+                if not isinstance(lead, dict):
+                    raise ValueError("Stored lead payload must be an object.")
+            except (TypeError, ValueError) as exc:
+                invalid_page.append((fingerprint, f"Invalid stored lead payload: {exc}"))
+                continue
+            if not package_is_ready(lead):
+                deferred_page.append((fingerprint, lead))
+                deferred_research.append({
+                    "status": "deferred_research",
+                    "lead": lead,
+                    "airtable_record": None,
+                    "research_record": None,
+                    "error": None,
+                    "reason": "research_verification_pending",
+                })
+                continue
+            valid.append((fingerprint, lead))
+            if len(valid) >= limit:
+                break
+        if deferred_page:
+            with db.batch_writes():
+                for fingerprint, _lead in deferred_page:
+                    db.defer_sync(fingerprint, "research_verification_pending")
+        for fingerprint, error in invalid_page:
+            db.mark_error(fingerprint, error)
+            failed.append({"status": "failed", "lead": {}, "error": error})
+        if len(valid) >= limit or len(rows) < page_size:
+            break
 
     synced: List[Dict[str, Any]] = []
     already_exists: List[Dict[str, Any]] = []
-    deferred_research: List[Dict[str, Any]] = []
 
     for start in range(0, len(valid), BATCH_SIZE):
         chunk = valid[start:start + BATCH_SIZE]
