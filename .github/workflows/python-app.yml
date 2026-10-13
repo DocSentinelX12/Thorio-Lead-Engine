@@ -971,14 +971,23 @@ jobs:
           set -euo pipefail
           mkdir -p data
           if [ -n "${TURSO_DATABASE_URL:-}" ] || [ -n "${TURSO_AUTH_TOKEN:-}" ]; then
-            python -m lead_engine.turso_state restore --data-dir data > data/turso-restore.log 2>&1 || {
+            if python -m lead_engine.turso_state restore --data-dir data > data/turso-restore.log 2>&1; then
               cat data/turso-restore.log
-              exit 1
-            }
-            cat data/turso-restore.log
-            restored="$(sed -n 's/^restored=//p' data/turso-restore.log | tail -n 1)"
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "restored=${restored:-false}" >> "$GITHUB_OUTPUT"
+              restored="$(sed -n 's/^restored=//p' data/turso-restore.log | tail -n 1)"
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              echo "restored=${restored:-false}" >> "$GITHUB_OUTPUT"
+            else
+              cat data/turso-restore.log
+              # Restore validates a complete generation before replacing files.
+              # Preserve any failed-attempt workspace for diagnostics, but never
+              # let a possibly partial restore contaminate verified artifact recovery.
+              failed_state_dir="data.turso-restore-failed-${GITHUB_RUN_ID}"
+              mv data "$failed_state_dir"
+              mkdir -p data
+              echo "TURSO RESTORE FAILED: preserved diagnostics at ${failed_state_dir}; falling back to verified GitHub state artifacts."
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              echo "restored=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "TURSO STATE DISABLED: both repository secrets are not configured; existing artifact recovery remains active."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
