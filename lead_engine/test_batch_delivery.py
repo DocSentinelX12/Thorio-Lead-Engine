@@ -144,10 +144,12 @@ def test_batch_delivery_defers_research_required_leads_without_recording_sync_er
     lead = _lead("research-deferred-001")
     assert db.insert_if_new(lead)
 
-    with patch("lead_engine.batch_delivery._run_batch_high_volume_sync"), \
+    with patch("lead_engine.batch_delivery._run_batch_high_volume_sync") as mock_batch, \
          patch("lead_engine.batch_delivery.package_is_ready", return_value=False):
         result = sync_pending_batched(db, limit=10)
 
+    mock_batch.assert_not_called()
+    assert db.pending(limit=10) == []
     assert result["failed_count"] == 0
     assert result["synced_count"] == 0
     assert result["deferred_research_count"] == 1
