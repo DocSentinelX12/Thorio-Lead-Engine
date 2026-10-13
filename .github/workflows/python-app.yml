@@ -214,6 +214,7 @@ jobs:
       THORIO_BREVO_SENDER_NAME: ${{ vars.THORIO_BREVO_SENDER_NAME || secrets.THORIO_BREVO_SENDER_NAME }}
       THORIO_BREVO_REPLY_TO_EMAIL: ${{ vars.THORIO_BREVO_REPLY_TO_EMAIL || secrets.THORIO_BREVO_REPLY_TO_EMAIL }}
       THORIO_BREVO_SENDER_VERIFIED: ${{ vars.THORIO_BREVO_SENDER_VERIFIED || secrets.THORIO_BREVO_SENDER_VERIFIED }}
+      THORIO_BREVO_DOMAIN_AUTHENTICATED: ${{ vars.THORIO_BREVO_DOMAIN_AUTHENTICATED || secrets.THORIO_BREVO_DOMAIN_AUTHENTICATED }}
       THORIO_GMAIL_OAUTH_CLIENT_SECRET: ${{ secrets.THORIO_GMAIL_OAUTH_CLIENT_SECRET }}
       THORIO_GMAIL_OAUTH_REFRESH_TOKEN: ${{ secrets.THORIO_GMAIL_OAUTH_REFRESH_TOKEN }}
       THORIO_REVENUE_TRANSPORT_MODE: ${{ vars.THORIO_REVENUE_TRANSPORT_MODE || secrets.THORIO_REVENUE_TRANSPORT_MODE }}
@@ -291,6 +292,7 @@ jobs:
           brevo_sender = os.environ.get("THORIO_BREVO_SENDER_EMAIL", "").strip()
           brevo_reply_to = os.environ.get("THORIO_BREVO_REPLY_TO_EMAIL", "").strip() or brevo_sender
           brevo_sender_verified = os.environ.get("THORIO_BREVO_SENDER_VERIFIED", "").strip().lower() in {"1", "true", "yes", "on"}
+          brevo_domain_authenticated = os.environ.get("THORIO_BREVO_DOMAIN_AUTHENTICATED", "").strip().lower() in {"1", "true", "yes", "on"}
           brevo_selected = mode == "brevo_smtp"
           brevo_ready = False
           brevo_method = ""
@@ -359,7 +361,7 @@ jobs:
                   f"failure_stages={'; '.join(smtp_failures) or 'none'}; no email was sent."
               )
 
-          if brevo_selected and brevo_login and brevo_key and brevo_sender and brevo_sender_verified:
+          if brevo_selected and brevo_login and brevo_key and brevo_sender and brevo_sender_verified and brevo_domain_authenticated:
               for method, port in (("starttls", 587), ("ssl", 465)):
                   client = None
                   stage = f"{method}_connect"
@@ -404,6 +406,7 @@ jobs:
                   f"method={brevo_method or 'none'} "
                   f"sender_configured={str(bool(brevo_sender)).lower()} "
                   f"sender_verification_confirmed={str(brevo_sender_verified).lower()} "
+                  f"domain_authentication_confirmed={str(brevo_domain_authenticated).lower()} "
                   f"failure_stages={'; '.join(brevo_failures) or 'none'}; no email was sent."
               )
 
@@ -434,7 +437,8 @@ jobs:
               f"brevo_login_configured={str(bool(brevo_login)).lower()} "
               f"brevo_smtp_key_configured={str(bool(brevo_key)).lower()} "
               f"brevo_sender_configured={str(bool(brevo_sender)).lower()} "
-              f"brevo_sender_verified={str(brevo_sender_verified).lower()}"
+              f"brevo_sender_verified={str(brevo_sender_verified).lower()} "
+              f"brevo_domain_authenticated={str(brevo_domain_authenticated).lower()}"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"ready={str(ready).lower()}\n")
