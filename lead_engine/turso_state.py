@@ -252,8 +252,73 @@ def _complete_generations(conn) -> list[tuple]:
     ).fetchall()
 
 
+def _restore_generation(conn, data_dir: Path, generation: tuple) -> bool:
+    """Validate and install one complete generation without deleting local state."""
+    generation_id, generation_created_at, expected_count, expected_manifest = generation
+    rows = conn.execute(
+        "SELECT database_name, chunk_index, chunk_count, compressed_sha256, payload "
+        "FROM thorio_state_chunks WHERE generation_id = ? ORDER BY database_name, chunk_index",
+        (generation_id,),
+    ).fetchall()
+    grouped: dict[str, list[tuple]] = {}
+    for row in rows:
+        grouped.setdefault(str(row[0]), []).append(row)
+    if len(grouped) != int(expected_count):
+        raise RuntimeError("Turso state snapshot is incomplete: database count does not match its manifest.")
+    manifest = []
+    staged: list[tuple[str, Path]] = []
+    with tempfile.TemporaryDirectory(prefix="thorio-state-restore-") as temporary:
+        root = Path(temporary)
+        for name, chunks in sorted(grouped.items()):
+            relative = PurePosixPath(name)
+            if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+                raise RuntimeError(f"Unsafe database path in Turso state manifest: {name!r}")
+            expected_chunks = int(chunks[0][2])
+            if len(chunks) != expected_chunks or [int(item[1]) for item in chunks] != list(range(expected_chunks)):
+                raise RuntimeError(f"Turso state snapshot has missing or out-of-order chunks for {name}.")
+            compressed = b"".join(bytes(item[4]) for item in chunks)
+            digest = hashlib.sha256(compressed).hexdigest()
+            if digest != str(chunks[0][3]):
+                raise RuntimeError(f"Turso state snapshot checksum mismatch for {name}.")
+            target = root.joinpath(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(gzip.decompress(compressed))
+            with sqlite3.connect(f"file:{target.resolve()}?mode=ro", uri=True, timeout=60) as db:
+                check = db.execute("PRAGMA integrity_check").fetchone()
+            if not check or check[0] != "ok":
+                raise RuntimeError(f"Turso restored SQLite integrity check failed for {name}: {check!r}")
+            staged.append((name, target))
+            manifest.append({"name": name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+        actual_manifest = hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if actual_manifest != str(expected_manifest):
+            raise RuntimeError("Turso state snapshot manifest checksum mismatch.")
+        primary = root / "leads.sqlite3"
+        _validate_primary_database(primary)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        staged_names = {name for name, _ in staged}
+        existing_names = {name for name, _ in _sqlite_files(data_dir)}
+        unexpected = sorted(existing_names - staged_names)
+        if unexpected:
+            raise RuntimeError(
+                "Turso restore would remove local SQLite state absent from the selected generation; "
+                f"refusing destructive restore and preserving files: {unexpected}"
+            )
+        for name, source in staged:
+            destination = data_dir.joinpath(*PurePosixPath(name).parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary_target = destination.with_name(destination.name + ".turso-restore")
+            shutil.copy2(source, temporary_target)
+            os.replace(temporary_target, destination)
+
+    print(f"TURSO STATE RESTORED: generation={generation_id}; databases={len(staged)}; SQLite integrity and manifest verified.")
+    print(f"restored_at={generation_created_at}")
+    return True
+
+
 def restore(data_dir: Path) -> bool:
-    """Restore the newest complete remote snapshot. Return False only if none exists."""
+    """Restore the newest valid remote snapshot, falling back to older complete generations."""
     conn = _connect()
     if conn is None:
         print("TURSO STATE: credentials not configured; existing artifact recovery remains active.")
@@ -264,68 +329,29 @@ def restore(data_dir: Path) -> bool:
         if not generations:
             print("TURSO STATE: no complete remote generation exists yet; existing artifact recovery remains active.")
             return False
-        generation_id, generation_created_at, expected_count, expected_manifest = generations[0]
-        rows = conn.execute(
-            "SELECT database_name, chunk_index, chunk_count, compressed_sha256, payload "
-            "FROM thorio_state_chunks WHERE generation_id = ? ORDER BY database_name, chunk_index",
-            (generation_id,),
-        ).fetchall()
-        grouped: dict[str, list[tuple]] = {}
-        for row in rows:
-            grouped.setdefault(str(row[0]), []).append(row)
-        if len(grouped) != int(expected_count):
-            raise RuntimeError("Turso state snapshot is incomplete: database count does not match its manifest.")
-        manifest = []
-        staged: list[tuple[str, Path]] = []
-        with tempfile.TemporaryDirectory(prefix="thorio-state-restore-") as temporary:
-            root = Path(temporary)
-            for name, chunks in sorted(grouped.items()):
-                relative = PurePosixPath(name)
-                if relative.is_absolute() or ".." in relative.parts or not relative.parts:
-                    raise RuntimeError(f"Unsafe database path in Turso state manifest: {name!r}")
-                expected_chunks = int(chunks[0][2])
-                if len(chunks) != expected_chunks or [int(item[1]) for item in chunks] != list(range(expected_chunks)):
-                    raise RuntimeError(f"Turso state snapshot has missing or out-of-order chunks for {name}.")
-                compressed = b"".join(bytes(item[4]) for item in chunks)
-                digest = hashlib.sha256(compressed).hexdigest()
-                if digest != str(chunks[0][3]):
-                    raise RuntimeError(f"Turso state snapshot checksum mismatch for {name}.")
-                target = root.joinpath(*relative.parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(gzip.decompress(compressed))
-                with sqlite3.connect(f"file:{target.resolve()}?mode=ro", uri=True, timeout=60) as db:
-                    check = db.execute("PRAGMA integrity_check").fetchone()
-                if not check or check[0] != "ok":
-                    raise RuntimeError(f"Turso restored SQLite integrity check failed for {name}: {check!r}")
-                staged.append((name, target))
-                manifest.append({"name": name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
-            actual_manifest = hashlib.sha256(
-                json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
-            if actual_manifest != str(expected_manifest):
-                raise RuntimeError("Turso state snapshot manifest checksum mismatch.")
-            primary = root / "leads.sqlite3"
-            _validate_primary_database(primary)
-            data_dir.mkdir(parents=True, exist_ok=True)
-            staged_names = {name for name, _ in staged}
-            existing_names = {name for name, _ in _sqlite_files(data_dir)}
-            unexpected = sorted(existing_names - staged_names)
-            if unexpected:
-                raise RuntimeError(
-                    "Turso restore would remove local SQLite state absent from the selected generation; "
-                    f"refusing destructive restore and preserving files: {unexpected}"
+
+        failures = []
+        for generation in generations:
+            generation_id = str(generation[0])
+            try:
+                return _restore_generation(conn, data_dir, generation)
+            except Exception as exc:
+                message = str(exc)
+                if "refusing destructive restore" in message:
+                    raise
+                failures.append(f"{generation_id}: {message}")
+                print(
+                    f"TURSO STATE GENERATION REJECTED: generation={generation_id}; "
+                    "trying the next older complete generation."
                 )
-            for name, source in staged:
-                destination = data_dir.joinpath(*PurePosixPath(name).parts)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                temporary_target = destination.with_name(destination.name + ".turso-restore")
-                shutil.copy2(source, temporary_target)
-                os.replace(temporary_target, destination)
-        print(f"TURSO STATE RESTORED: generation={generation_id}; databases={len(staged)}; SQLite integrity and manifest verified.")
-        print(f"restored_at={generation_created_at}")
-        return True
+        detail = " | ".join(failures)
+        raise RuntimeError(
+            "No complete Turso state generation passed checksum, SQLite integrity, and restore-safety validation. "
+            f"Generation failures: {detail}"
+        )
     finally:
         conn.close()
+
 
 
 def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dict[str, str]) -> None:
