@@ -47,6 +47,41 @@ def _is_expired_stream_error(exc: BaseException) -> bool:
     )
 
 
+class _ResilientCursor:
+    """Retry a failed read only if its stream expires while fetching results."""
+
+    def __init__(self, connection, cursor, sql, args, kwargs):
+        self._connection = connection
+        self._cursor = cursor
+        self._sql = sql
+        self._args = args
+        self._kwargs = kwargs
+
+    def _fetch(self, method: str):
+        try:
+            return getattr(self._cursor, method)()
+        except Exception as exc:
+            if not _is_expired_stream_error(exc):
+                raise
+            statement = self._sql.lstrip().upper()
+            if not statement.startswith(("SELECT", "PRAGMA", "WITH", "EXPLAIN")):
+                raise
+            self._connection._reconnect()
+            self._cursor = self._connection._connection.execute(
+                self._sql, *self._args, **self._kwargs
+            )
+            return getattr(self._cursor, method)()
+
+    def fetchone(self):
+        return self._fetch("fetchone")
+
+    def fetchall(self):
+        return self._fetch("fetchall")
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
 class _ResilientConnection:
     """Reconnect once after a stale Turso stream; never reuse the failed connection.
 
@@ -70,14 +105,15 @@ class _ResilientConnection:
 
     def execute(self, sql, *args, **kwargs):
         try:
-            return self._connection.execute(sql, *args, **kwargs)
+            cursor = self._connection.execute(sql, *args, **kwargs)
         except Exception as exc:
             if not _is_expired_stream_error(exc):
                 raise
             self._reconnect()
             # A second failure propagates. Do not loop indefinitely or hide a
             # credential, schema, or genuine database error.
-            return self._connection.execute(sql, *args, **kwargs)
+            cursor = self._connection.execute(sql, *args, **kwargs)
+        return _ResilientCursor(self, cursor, sql, args, kwargs)
 
     def commit(self) -> None:
         try:
