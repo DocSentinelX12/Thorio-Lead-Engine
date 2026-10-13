@@ -11,6 +11,12 @@ def test_production_runtime_receives_supported_revenue_transport_configuration()
     required_wiring = (
         "THORIO_ACCOUNT_GMAIL_USERNAME: ${{ secrets.THORIO_ACCOUNT_GMAIL_USERNAME }}",
         "THORIO_ACCOUNT_GMAIL_PASSWORD: ${{ secrets.THORIO_ACCOUNT_GMAIL_PASSWORD }}",
+        "THORIO_BREVO_SMTP_LOGIN: ${{ secrets.THORIO_BREVO_SMTP_LOGIN }}",
+        "THORIO_BREVO_SMTP_KEY: ${{ secrets.THORIO_BREVO_SMTP_KEY }}",
+        "THORIO_BREVO_SENDER_EMAIL:",
+        "THORIO_BREVO_SENDER_VERIFIED:",
+        "BREVO SMTP LIVE AUTH",
+        'elif mode == "brevo_smtp":',
         "THORIO_REVENUE_TRANSPORT_MODE:",
         'elif mode == "gmail_smtp":',
         "oauth_partial = any(oauth_values) and not all(oauth_values)",
