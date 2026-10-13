@@ -370,9 +370,11 @@ class LeadDB:
             raise ValueError("Pending limit must be an integer.")
         if limit <= 0:
             raise ValueError("Pending limit must be greater than zero.")
+        # This method is the durable backlog view. Deferred work remains
+        # visible here; only pending_scan() excludes it from the hot delivery queue.
         return self.conn.execute(
             "SELECT fingerprint, payload, attempts FROM leads "
-            "WHERE synced = 0 AND sync_deferred = 0 AND attempts < ? ORDER BY rowid LIMIT ?",
+            "WHERE synced = 0 AND attempts < ? ORDER BY rowid LIMIT ?",
             (DEFAULT_MAX_ATTEMPTS, limit),
         ).fetchall()
 
