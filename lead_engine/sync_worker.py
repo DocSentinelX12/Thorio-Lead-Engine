@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict, List
 
 from .airtable_sync import (
+    AirtableCapacityDeferred,
     sync_followup,
     sync_lead_if_missing,
     sync_outreach,
@@ -571,6 +572,19 @@ def sync_one(
             "error": None,
         }
 
+    except AirtableCapacityDeferred:
+        return {
+            "status": "deferred_capacity",
+            "lead": lead,
+            "airtable_record": None,
+            "research_record": None,
+            "outreach_record": None,
+            "followup_record": None,
+            "referral_record": None,
+            "master_tracker": None,
+            "error": None,
+            "reason": "airtable_record_capacity",
+        }
     except Exception as exc:
         return {
             "status": "failed",
