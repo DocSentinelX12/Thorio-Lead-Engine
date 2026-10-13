@@ -39,6 +39,10 @@ class LeadDB:
             self.conn.execute(
                 "ALTER TABLE leads ADD COLUMN sync_deferred INTEGER NOT NULL DEFAULT 0"
             )
+        if "sync_deferred_reason" not in lead_columns:
+            self.conn.execute(
+                "ALTER TABLE leads ADD COLUMN sync_deferred_reason TEXT NOT NULL DEFAULT ''"
+            )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_leads_pending_sync "
             "ON leads(synced, sync_deferred, attempts)"
@@ -277,18 +281,21 @@ class LeadDB:
         if current_state in terminal_lifecycle_states and incoming_state and incoming_state != current_state:
             updates = {key: value for key, value in updates.items() if key != "revenue_lifecycle_state"}
         current.update(updates)
-        sync_deferred = 0
-        if current.get("_airtable_sync_deferred"):
+        deferred_reason = str(current.get("_airtable_sync_deferred") or "").strip()
+        sync_deferred = 1 if deferred_reason else 0
+        if deferred_reason == "research_verification_pending":
             try:
                 from .sales_handoff import package_is_ready
                 if package_is_ready(current):
                     current.pop("_airtable_sync_deferred", None)
-                else:
-                    sync_deferred = 1
+                    deferred_reason = ""
+                    sync_deferred = 0
             except Exception:
                 # A readiness-check failure must keep the item deferred rather
                 # than reintroducing it into Airtable's create queue.
                 sync_deferred = 1
+        elif not deferred_reason:
+            current.pop("_airtable_sync_deferred", None)
         if terminal_before:
             for field, value in terminal_before.items():
                 current[field] = value
@@ -346,9 +353,9 @@ class LeadDB:
         if current == before:
             return current
         self.conn.execute(
-            "UPDATE leads SET payload = ?, synced = 0, sync_deferred = ?, last_error = '', "
-            "updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
-            (json.dumps(current, ensure_ascii=False), sync_deferred, fingerprint),
+            "UPDATE leads SET payload = ?, synced = 0, sync_deferred = ?, sync_deferred_reason = ?, "
+            "last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
+            (json.dumps(current, ensure_ascii=False), sync_deferred, deferred_reason, fingerprint),
         )
         if self._batch_write_depth == 0:
             self.conn.commit()
@@ -441,27 +448,57 @@ class LeadDB:
         if payload is None:
             raise ValueError(f"Lead not found: {fingerprint}")
         payload["_airtable_sync_deferred"] = str(reason or "research_verification_pending")
+        deferred_reason = str(reason or "research_verification_pending")
         self.conn.execute(
-            "UPDATE leads SET payload = ?, synced = 0, sync_deferred = 1, last_error = '', "
-            "updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
-            (json.dumps(payload, ensure_ascii=False), fingerprint),
+            "UPDATE leads SET payload = ?, synced = 0, sync_deferred = 1, sync_deferred_reason = ?, "
+            "last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
+            (json.dumps(payload, ensure_ascii=False), deferred_reason, fingerprint),
         )
         if self._batch_write_depth == 0:
             self.conn.commit()
+
+    def requeue_sync_deferred(self, reason: str) -> int:
+        """Requeue capacity-deferred work when the configured active base is writable again."""
+        rows = self.conn.execute(
+            "SELECT fingerprint, payload FROM leads WHERE sync_deferred = 1 AND sync_deferred_reason = ?",
+            (str(reason),),
+        ).fetchall()
+        if not rows:
+            return 0
+        with self.batch_writes():
+            for fingerprint, payload_json in rows:
+                try:
+                    payload = json.loads(payload_json)
+                except (TypeError, ValueError):
+                    # Keep malformed data visible to normal validation; never erase it.
+                    payload = None
+                if isinstance(payload, dict):
+                    payload.pop("_airtable_sync_deferred", None)
+                    encoded = json.dumps(payload, ensure_ascii=False)
+                else:
+                    encoded = payload_json
+                self.conn.execute(
+                    "UPDATE leads SET payload = ?, synced = 0, sync_deferred = 0, "
+                    "sync_deferred_reason = '', last_error = '', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE fingerprint = ?",
+                    (encoded, fingerprint),
+                )
+        return len(rows)
 
     def mark_synced(self, fingerprint):
         payload = self.get(fingerprint)
         if payload is not None and "_airtable_sync_deferred" in payload:
             payload.pop("_airtable_sync_deferred", None)
             self.conn.execute(
-                "UPDATE leads SET payload = ?, synced = 1, sync_deferred = 0, last_error = '', "
-                "updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
+                "UPDATE leads SET payload = ?, synced = 1, sync_deferred = 0, "
+                "sync_deferred_reason = '', last_error = '', updated_at = CURRENT_TIMESTAMP "
+                "WHERE fingerprint = ?",
                 (json.dumps(payload, ensure_ascii=False), fingerprint),
             )
         else:
             self.conn.execute(
-                "UPDATE leads SET synced = 1, sync_deferred = 0, last_error = '', "
-                "updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
+                "UPDATE leads SET synced = 1, sync_deferred = 0, sync_deferred_reason = '', "
+                "last_error = '', updated_at = CURRENT_TIMESTAMP WHERE fingerprint = ?",
                 (fingerprint,),
             )
         self.conn.commit()
