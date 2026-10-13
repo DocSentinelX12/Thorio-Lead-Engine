@@ -20,9 +20,12 @@ def test_production_gate_preserves_durable_specialist_backlog_but_fails_terminal
     assert 'SPECIALIST DRAIN FAILURE: specialist backlog remained' not in text
 
 
-def test_airtable_capacity_blocks_sync_without_discarding_local_collection_state():
+def test_airtable_capacity_blocks_new_records_without_discarding_local_collection_state():
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert 'AIRTABLE_SYNC_BLOCK_REASON=record_capacity' in text
-    assert 'LEAD_ENGINE_SYNC_ENABLED=false' in text
+    capacity_gate = text.split("if capacity_blocked:", 1)[1].split("raise SystemExit(", 1)[0]
+    assert 'AIRTABLE_SYNC_BLOCK_REASON=record_capacity' in capacity_gate
+    assert 'LEAD_ENGINE_SYNC_ENABLED=false' not in capacity_gate
+    assert 'AIRTABLE_READ_ONLY_MODE=true' not in capacity_gate
+    assert 'updates to known existing records may continue' in capacity_gate
     assert 'AIRTABLE DELIVERY BLOCKED: the base record limit prevented synchronization.' in text
     assert 'Local SQLite state and the pending backlog will be persisted for recovery' in text
