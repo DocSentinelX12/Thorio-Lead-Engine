@@ -95,3 +95,18 @@ def test_brevo_api_requires_real_sender_verification(monkeypatch):
     configure(monkeypatch, THORIO_BREVO_SENDER_VERIFIED="false")
     with pytest.raises(RevenueTransportUnavailable, match="sender verification is not confirmed"):
         BrevoAPITransport()
+
+
+
+def test_auto_runtime_prefers_brevo_api_when_api_key_is_configured(monkeypatch):
+    from . import revenue_execution
+
+    configure(monkeypatch)
+    monkeypatch.delenv("THORIO_REVENUE_TRANSPORT_MODE", raising=False)
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "existing-gmail-password")
+    revenue_execution.register_revenue_transport(None)
+    try:
+        assert isinstance(revenue_execution.configured_revenue_transport(), BrevoAPITransport)
+    finally:
+        revenue_execution.register_revenue_transport(None)
