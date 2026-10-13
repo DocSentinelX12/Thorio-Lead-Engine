@@ -182,6 +182,7 @@ def _ensure_schema(conn) -> None:
             manifest_sha256 TEXT NOT NULL
         )"""
     )
+    conn.commit()
     conn.execute(
         """CREATE TABLE IF NOT EXISTS thorio_state_chunks (
             generation_id TEXT NOT NULL,
