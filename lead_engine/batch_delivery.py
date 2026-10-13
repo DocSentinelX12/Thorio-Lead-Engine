@@ -113,9 +113,9 @@ def _resilient_batch_upsert(
     try:
         _batch_upsert(table_key, merge_field, records)
         return
-    except AirtableTransientError:
-        # Transport failures do not indicate bad records. Splitting the batch
-        # would amplify an outage into many requests and exhaust the cycle.
+    except (AirtableTransientError, AirtableCapacityDeferred):
+        # Transport outages and capacity blocks are not record-specific errors.
+        # Splitting either case would amplify work without improving delivery.
         raise
     except Exception:
         if len(records) == 1:
