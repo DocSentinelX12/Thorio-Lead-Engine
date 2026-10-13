@@ -51,7 +51,8 @@ def test_batch_upsert_enables_typecast_for_airtable_select_options():
 def test_high_volume_delivery_uses_airtable_batches():
     leads = [_lead("batch-001"), _lead("batch-002", "Second Corp")]
 
-    with patch("lead_engine.batch_delivery._batch_upsert") as mock_batch:
+    with patch("lead_engine.batch_delivery._batch_upsert") as mock_batch, \
+         patch("lead_engine.batch_delivery.package_is_ready", return_value=True):
         mock_batch.side_effect = lambda table, merge, records: records
         _run_batch_high_volume_sync(leads)
 
@@ -95,6 +96,7 @@ def test_batch_delivery_falls_back_to_single_record_sync_on_batch_failure(tmp_pa
     }
 
     with patch("lead_engine.batch_delivery._run_batch_high_volume_sync", side_effect=RuntimeError("batch rejected")), \
+         patch("lead_engine.batch_delivery.package_is_ready", return_value=True), \
          patch("lead_engine.sync_worker.sync_one", return_value=fallback_result) as mock_single, \
          patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}) as mock_research:
         result = sync_pending_batched(db, limit=10)
