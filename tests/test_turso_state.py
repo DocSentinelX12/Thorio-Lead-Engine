@@ -99,6 +99,30 @@ class ExpiringFetchConnection:
         return None
 
 
+
+def test_resilient_connection_does_not_replay_non_idempotent_insert_after_stream_loss():
+    remote = PersistentConnection()
+    remote.execute("CREATE TABLE unsafe_replay (value TEXT)")
+    remote.commit()
+    connections = []
+
+    def factory():
+        connection = ExpiringConnection(remote) if not connections else remote
+        connections.append(connection)
+        return connection
+
+    connection = turso_state._ResilientConnection(factory)
+    try:
+        connection.execute("INSERT INTO unsafe_replay(value) VALUES ('must-not-be-replayed')")
+    except RuntimeError as exc:
+        assert "cannot be replayed safely" in str(exc)
+    else:
+        raise AssertionError("a non-idempotent statement must not be replayed after an ambiguous stream failure")
+
+    assert len(connections) == 1
+    assert remote.execute("SELECT COUNT(*) FROM unsafe_replay").fetchone()[0] == 0
+
+
 def test_resilient_connection_reopens_stream_that_expires_during_read():
     remote = PersistentConnection()
     connections = []
