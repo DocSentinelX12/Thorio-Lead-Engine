@@ -52,7 +52,9 @@ def test_high_volume_delivery_uses_airtable_batches():
     leads = [_lead("batch-001"), _lead("batch-002", "Second Corp")]
 
     with patch("lead_engine.batch_delivery._batch_upsert") as mock_batch, \
-         patch("lead_engine.batch_delivery.package_is_ready", return_value=True):
+         patch("lead_engine.batch_delivery.package_is_ready", return_value=True), \
+         patch("lead_engine.batch_delivery.find_by_fingerprint", return_value=[]), \
+         patch("lead_engine.batch_delivery.find_master_records", return_value=[]):
         mock_batch.side_effect = lambda table, merge, records: records
         _run_batch_high_volume_sync(leads)
 
