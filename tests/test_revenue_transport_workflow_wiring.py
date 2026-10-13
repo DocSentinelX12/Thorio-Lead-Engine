@@ -43,6 +43,10 @@ def test_production_runtime_receives_supported_revenue_transport_configuration()
     for setting in required_wiring:
         assert setting in workflow, f"production revenue transport setting is not wired: {setting}"
 
+    assert "brevo_credentials_configured = bool(brevo_login and brevo_key)" in workflow
+    assert 'ready = http_ready or browser_ready or brevo_ready or gmail_ready' in workflow
+    assert "BREVO SMTP AUTH" in workflow
+
 
 def test_gmail_inbound_readiness_is_independent_of_smtp_connectivity():
     workflow = WORKFLOW.read_text(encoding="utf-8")
