@@ -127,14 +127,28 @@ def _request(
     payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     method = str(method or "").strip().upper()
-    read_only = (
-        os.getenv("AIRTABLE_READ_ONLY_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
-        or os.getenv("AIRTABLE_SYNC_BLOCK_REASON", "").strip().lower() == "record_capacity"
-    )
-    if method != "GET" and read_only:
+    explicitly_read_only = os.getenv("AIRTABLE_READ_ONLY_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+    capacity_blocked = os.getenv("AIRTABLE_SYNC_BLOCK_REASON", "").strip().lower() == "record_capacity"
+    if method != "GET" and explicitly_read_only:
         raise AirtableSyncError(
-            "Airtable mutation blocked: runtime is read-only because the base record capacity is exhausted."
+            "Airtable mutation blocked: runtime is explicitly configured as read-only."
         )
+    if method != "GET" and capacity_blocked:
+        last_path_segment = urllib.parse.urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
+        # Airtable's record-capacity limit prevents new records, not updates to
+        # an existing record ID. Keep creates, table-level upserts, and deletes
+        # blocked while allowing safe PATCHes to a known existing record.
+        update_existing_record = (
+            method == "PATCH"
+            and last_path_segment.startswith("rec")
+            and isinstance(payload, dict)
+            and "performUpsert" not in payload
+        )
+        if not update_existing_record:
+            raise AirtableSyncError(
+                "Airtable mutation blocked: base record capacity is exhausted; "
+                "new records and table-level upserts remain queued."
+            )
     _require_config()
     api_key = os.getenv("AIRTABLE_API_KEY")
     if not api_key:
