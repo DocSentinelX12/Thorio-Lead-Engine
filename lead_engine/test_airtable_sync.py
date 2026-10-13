@@ -221,3 +221,56 @@ def test_atomic_master_upsert_uses_duplicate_key_field(monkeypatch):
     assert captured["method"] == "PATCH"
     assert captured["payload"]["performUpsert"] == {"fieldsToMergeOn": ["Opportunity"]}
     assert captured["payload"]["records"][0]["fields"]["Opportunity"] == "opp-atomic"
+
+def test_master_lookup_and_update_resolve_records_across_legacy_bases(monkeypatch):
+    from lead_engine import airtable_sync
+
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "appActive")
+    monkeypatch.setenv("AIRTABLE_LEGACY_BASE_IDS", "appLegacyB,appLegacyA")
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
+    calls = []
+
+    def fake_request(method, url, payload=None):
+        calls.append((method, url, payload))
+        if method == "GET" and "/appLegacyB/" in url:
+            return {"records": [{"id": "recLegacyUnique", "fields": {"Duplicate Key": "legacy-key"}}]}
+        if method == "PATCH" and "/appLegacyB/" in url and "recLegacyUnique" in url:
+            return {"id": "recLegacyUnique", "fields": payload["fields"]}
+        if method == "PATCH":
+            raise AssertionError(f"update targeted the wrong base: {url}")
+        return {"records": []}
+
+    monkeypatch.setattr(airtable_sync, "_request", fake_request)
+    records = airtable_sync.find_master_records("lead_radar", "Duplicate Key", "legacy-key")
+
+    assert [record["id"] for record in records] == ["recLegacyUnique"]
+    updated = airtable_sync.update_master_record(
+        "lead_radar", "recLegacyUnique", {"Notes": "preserve legacy record"}
+    )
+    assert updated["records"][0]["id"] == "recLegacyUnique"
+    assert calls[0][1].startswith("https://api.airtable.com/v0/appActive/")
+    assert any(method == "PATCH" and "/appLegacyB/" in url for method, url, _ in calls)
+
+
+def test_read_master_record_falls_back_to_legacy_base(monkeypatch):
+    from lead_engine import airtable_sync
+
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "appActive")
+    monkeypatch.setenv("AIRTABLE_LEGACY_BASE_IDS", "appLegacyB,appLegacyA")
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
+    calls = []
+
+    def fake_request(method, url, payload=None):
+        calls.append(url)
+        if "/appActive/" in url:
+            raise airtable_sync.AirtableSyncError("Airtable API error 404: record not found")
+        if "/appLegacyB/" in url:
+            return {"id": "recLegacyRead", "fields": {"Research Key": "legacy-key"}}
+        raise AssertionError(f"record lookup unexpectedly reached {url}")
+
+    monkeypatch.setattr(airtable_sync, "_request", fake_request)
+    result = airtable_sync.read_master_record("research", "recLegacyRead")
+
+    assert result["id"] == "recLegacyRead"
+    assert calls[0].startswith("https://api.airtable.com/v0/appActive/")
+    assert any("/appLegacyB/" in url for url in calls)
