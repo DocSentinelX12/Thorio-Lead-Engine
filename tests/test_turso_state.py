@@ -245,6 +245,33 @@ def test_turso_snapshot_restores_all_sqlite_state_with_integrity(monkeypatch, tm
         assert conn.execute("SELECT payload FROM queue WHERE id = 1").fetchone()[0] == "remote-version"
 
 
+
+def test_turso_restore_falls_back_to_older_verified_generation(monkeypatch, tmp_path):
+    remote = PersistentConnection()
+    monkeypatch.setattr(turso_state, "_connect", lambda: remote)
+    data_dir = tmp_path / "data"
+    make_data_dir(data_dir, "older-good-state")
+    turso_state.snapshot(data_dir)
+
+    make_data_dir(data_dir, "newer-corrupt-state")
+    turso_state.snapshot(data_dir)
+    newest = remote.execute(
+        "SELECT generation_id FROM thorio_state_generations "
+        "WHERE status = 'complete' ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()[0]
+    remote.execute(
+        "UPDATE thorio_state_chunks SET payload = ? "
+        "WHERE generation_id = ? AND database_name = 'leads.sqlite3' AND chunk_index = 0",
+        (b"corrupt-newest-generation", newest),
+    )
+    remote.commit()
+
+    make_data_dir(data_dir, "local-state-to-recover")
+    assert turso_state.restore(data_dir) is True
+    with sqlite3.connect(data_dir / "leads.sqlite3") as conn:
+        assert conn.execute("SELECT name FROM leads").fetchone()[0] == "older-good-state"
+
+
 def test_turso_restore_refuses_corrupt_or_incomplete_snapshot(monkeypatch, tmp_path):
     remote = PersistentConnection()
     monkeypatch.setattr(turso_state, "_connect", lambda: remote)
