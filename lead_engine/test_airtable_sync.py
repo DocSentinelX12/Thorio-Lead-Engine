@@ -253,6 +253,31 @@ def test_master_lookup_and_update_resolve_records_across_legacy_bases(monkeypatc
     assert any(method == "PATCH" and "/appLegacyB/" in url for method, url, _ in calls)
 
 
+
+def test_grouped_master_lookup_checks_active_and_legacy_bases(monkeypatch):
+    from lead_engine.airtable_sync import find_master_records_by_values
+
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "appActive")
+    monkeypatch.setenv("AIRTABLE_LEGACY_BASE_IDS", "appLegacyB,appLegacyA")
+    monkeypatch.setenv("AIRTABLE_API_KEY", "test-token")
+    calls = []
+    record = {"id": "recLegacyBatch", "fields": {"Duplicate Key": "legacy-fingerprint"}}
+
+    def fake_request(method, url, payload=None):
+        calls.append(url)
+        if "/appLegacyB/" in url:
+            return {"records": [record]}
+        return {"records": []}
+
+    with patch("lead_engine.airtable_sync._request", side_effect=fake_request):
+        records = find_master_records_by_values(
+            "lead_radar", "Duplicate Key", ["legacy-fingerprint", "legacy-fingerprint"]
+        )
+
+    assert [item["id"] for item in records] == ["recLegacyBatch"]
+    assert len(calls) == 3
+    assert all("filterByFormula=" in url for url in calls)
+
 def test_read_master_record_falls_back_to_legacy_base(monkeypatch):
     from lead_engine import airtable_sync
 
