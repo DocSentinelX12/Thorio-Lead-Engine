@@ -139,6 +139,9 @@ def configured_revenue_transport() -> RevenueTransport | None:
     if mode == "gmail_smtp":
         from .gmail_smtp_transport import GmailSMTPTransport
         return GmailSMTPTransport()
+    if mode == "brevo_smtp":
+        from .brevo_smtp_transport import BrevoSMTPTransport
+        return BrevoSMTPTransport()
     if mode not in {"", "auto", "http"}:
         raise RevenueTransportUnavailable(
             f"unsupported THORIO_REVENUE_TRANSPORT_MODE: {mode}"
