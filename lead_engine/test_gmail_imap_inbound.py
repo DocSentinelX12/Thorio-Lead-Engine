@@ -35,6 +35,30 @@ def test_outbound_index_only_contains_accepted_gmail_messages():
     }
 
 
+def test_outbound_index_accepts_brevo_message_ids_for_reply_correlation():
+    class DB:
+        def all_leads(self):
+            return [{
+                "fingerprint": "lead-brevo",
+                "conversation_id": "conversation-brevo",
+                "outreach_history": [{
+                    "provider_result": {
+                        "provider": "brevo_smtp",
+                        "accepted": True,
+                        "message_id": "<brevo123@thorio.co>",
+                        "recipient": "buyer@example.com",
+                    }
+                }],
+            }]
+
+    result = inbound._outbound_message_index(DB(), limit=10)
+    assert result["brevo123@thorio.co"] == {
+        "opportunity_id": "lead-brevo",
+        "conversation_id": "conversation-brevo",
+        "recipient": "buyer@example.com",
+    }
+
+
 def test_unconfigured_gmail_observer_is_disabled(monkeypatch):
     monkeypatch.delenv("THORIO_ACCOUNT_GMAIL_USERNAME", raising=False)
     monkeypatch.delenv("THORIO_ACCOUNT_GMAIL_PASSWORD", raising=False)
