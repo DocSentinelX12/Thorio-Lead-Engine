@@ -33,6 +33,65 @@ def _credentials() -> tuple[str, str] | None:
     return url, token
 
 
+def _is_expired_stream_error(exc: BaseException) -> bool:
+    """Recognize only the Turso/libSQL stream failures safe to recover by reconnecting."""
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "stream not found",
+            "stream expired",
+            "unknown stream",
+            "stream is no longer valid",
+        )
+    )
+
+
+class _ResilientConnection:
+    """Reconnect once after a stale Turso stream; never reuse the failed connection.
+
+    State writes made through this wrapper must be idempotent because a transport
+    failure can happen after the server applied a statement but before its reply
+    reached the client. Snapshot inserts therefore use INSERT OR REPLACE with
+    stable generation/database/chunk keys.
+    """
+
+    def __init__(self, connection_factory):
+        self._connection_factory = connection_factory
+        self._connection = connection_factory()
+
+    def _reconnect(self) -> None:
+        old = self._connection
+        try:
+            old.close()
+        except Exception:
+            pass
+        self._connection = self._connection_factory()
+
+    def execute(self, sql, *args, **kwargs):
+        try:
+            return self._connection.execute(sql, *args, **kwargs)
+        except Exception as exc:
+            if not _is_expired_stream_error(exc):
+                raise
+            self._reconnect()
+            # A second failure propagates. Do not loop indefinitely or hide a
+            # credential, schema, or genuine database error.
+            return self._connection.execute(sql, *args, **kwargs)
+
+    def commit(self) -> None:
+        try:
+            self._connection.commit()
+        except Exception as exc:
+            if not _is_expired_stream_error(exc):
+                raise
+            self._reconnect()
+            self._connection.commit()
+
+    def close(self) -> None:
+        self._connection.close()
+
+
 def _connect():
     credentials = _credentials()
     if credentials is None:
@@ -42,7 +101,9 @@ def _connect():
     except ImportError as exc:
         raise RuntimeError("Turso state storage is configured, but turso_serverless is not installed.") from exc
     url, token = credentials
-    return turso_serverless.connect(url, auth_token=token)
+    return _ResilientConnection(
+        lambda: turso_serverless.connect(url, auth_token=token)
+    )
 
 
 def _ensure_schema(conn) -> None:
@@ -198,7 +259,7 @@ def snapshot(data_dir: Path) -> None:
         generation_id = uuid.uuid4().hex
         created_at = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT INTO thorio_state_generations (generation_id, created_at, status, database_count, manifest_sha256) VALUES (?, ?, 'writing', ?, '')",
+            "INSERT OR REPLACE INTO thorio_state_generations (generation_id, created_at, status, database_count, manifest_sha256) VALUES (?, ?, 'writing', ?, '')",
             (generation_id, created_at, len(files)),
         )
         conn.commit()
@@ -211,9 +272,13 @@ def snapshot(data_dir: Path) -> None:
             for index in range(count):
                 payload = compressed[index * CHUNK_BYTES:(index + 1) * CHUNK_BYTES]
                 conn.execute(
-                    "INSERT INTO thorio_state_chunks (generation_id, database_name, chunk_index, chunk_count, compressed_sha256, payload) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT OR REPLACE INTO thorio_state_chunks (generation_id, database_name, chunk_index, chunk_count, compressed_sha256, payload) VALUES (?, ?, ?, ?, ?, ?)",
                     (generation_id, name, index, count, compressed_hash, payload),
                 )
+                # Commit each idempotent chunk independently. Long interactive
+                # Turso streams can expire during a large snapshot; per-chunk
+                # commits bound the amount of work that must be retried.
+                conn.commit()
             manifest.append({"name": name, "sha256": hashlib.sha256(raw).hexdigest()})
         manifest_hash = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
