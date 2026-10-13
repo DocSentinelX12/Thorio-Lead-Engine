@@ -40,7 +40,9 @@ def test_deferred_leads_are_not_reprocessed_or_dropped_within_one_drain_cycle(tm
     assert result["deferred_research_count"] == total
     assert len(deferred_fingerprints) == total
     assert result["drain_complete"] is False
-    assert len(db.pending(limit=total + 1)) == total
+    assert len(db.pending(limit=total + 1)) == 0
+    assert len(db.all_leads()) == total
+    assert db.conn.execute("SELECT COUNT(*) FROM leads WHERE sync_deferred = 1").fetchone()[0] == total
     assert result["failed_count"] == 0
 
 
@@ -93,7 +95,9 @@ def test_transient_airtable_failure_does_not_fan_out_into_single_record_retries(
     assert db.insert_if_new(lead)
     monkeypatch.setenv("THORIO_AIRTABLE_DRAIN_SECONDS", "2")
 
-    with patch("lead_engine.batch_delivery._run_batch_high_volume_sync", side_effect=AirtableTransientError("Airtable request exceeded its absolute deadline")), patch(
+    with patch("lead_engine.batch_delivery.package_is_ready", return_value=True), patch(
+        "lead_engine.batch_delivery._run_batch_high_volume_sync", side_effect=AirtableTransientError("Airtable request exceeded its absolute deadline")
+    ), patch(
         "lead_engine.sync_worker.sync_one", side_effect=AssertionError("transient failure must not trigger per-record fallback")
     ):
         result = drain_pending(db)
