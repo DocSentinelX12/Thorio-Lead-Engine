@@ -47,6 +47,10 @@ class LeadDB:
             "CREATE INDEX IF NOT EXISTS idx_leads_pending_sync "
             "ON leads(synced, sync_deferred, attempts)"
         )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_leads_deferred_reason "
+            "ON leads(sync_deferred_reason, sync_deferred)"
+        )
         self.conn.execute("""CREATE TABLE IF NOT EXISTS checkpoints (
             collector TEXT PRIMARY KEY,
             checkpoint TEXT NOT NULL,
