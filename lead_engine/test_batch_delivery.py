@@ -150,6 +150,8 @@ def test_batch_delivery_defers_research_required_leads_without_recording_sync_er
 
     mock_batch.assert_not_called()
     assert db.pending(limit=10) == []
+    assert db.get("research-deferred-001") is not None
+    assert db.get_sync_state("research-deferred-001")["sync_deferred"] is True
     assert result["failed_count"] == 0
     assert result["synced_count"] == 0
     assert result["deferred_research_count"] == 1
