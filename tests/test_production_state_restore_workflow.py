@@ -38,7 +38,7 @@ def test_missing_engine_state_artifact_after_prior_production_run_fails_closed()
 
     assert 'prior_production_run_id=""' in selector
     assert "ENGINE STATE RECOVERY BLOCKED" in selector
-    assert 'if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ]; then' in selector
+    assert 'if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ] && [ "${TURSO_STATE_RESTORED:-false}" != "true" ]; then' in selector
     assert "Refusing to start from an empty database" in selector
     assert "ENGINE STATE BOOTSTRAP" in selector
 
