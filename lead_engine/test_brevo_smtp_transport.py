@@ -112,3 +112,17 @@ def test_brevo_smtp_auth_failure_never_submits_message(monkeypatch):
             idempotency_key="lead:auth-fail",
         )
     assert fake.sent == []
+
+
+def test_auto_runtime_selects_fully_configured_brevo_before_gmail(monkeypatch):
+    from . import revenue_execution
+
+    configure(monkeypatch)
+    monkeypatch.delenv("THORIO_REVENUE_TRANSPORT_MODE", raising=False)
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "existing-gmail-password")
+    revenue_execution.register_revenue_transport(None)
+    try:
+        assert isinstance(revenue_execution.configured_revenue_transport(), BrevoSMTPTransport)
+    finally:
+        revenue_execution.register_revenue_transport(None)
