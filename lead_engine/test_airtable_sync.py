@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from lead_engine.airtable_sync import _normalize_lead, _normalize_routes, sync_lead_if_missing
@@ -274,3 +275,8 @@ def test_read_master_record_falls_back_to_legacy_base(monkeypatch):
     assert result["id"] == "recLegacyRead"
     assert calls[0].startswith("https://api.airtable.com/v0/appActive/")
     assert any("/appLegacyB/" in url for url in calls)
+
+@pytest.fixture(autouse=True)
+def _explicit_test_airtable_base(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+
