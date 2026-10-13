@@ -282,10 +282,6 @@ jobs:
               and (oauth_configured or bool(gmail_password))
           )
           browser_ready = bool(targets) and not target_error and browser_state_key_configured
-          gmail_selected = (
-              mode == "gmail_smtp"
-              or (mode in {"", "auto"} and not http_ready and not browser_ready)
-          )
           gmail_ready = False
           brevo_login = os.environ.get("THORIO_BREVO_SMTP_LOGIN", "").strip()
           brevo_key = os.environ.get("THORIO_BREVO_SMTP_KEY", "").strip()
@@ -293,8 +289,18 @@ jobs:
           brevo_reply_to = os.environ.get("THORIO_BREVO_REPLY_TO_EMAIL", "").strip() or brevo_sender
           brevo_sender_verified = os.environ.get("THORIO_BREVO_SENDER_VERIFIED", "").strip().lower() in {"1", "true", "yes", "on"}
           brevo_domain_authenticated = os.environ.get("THORIO_BREVO_DOMAIN_AUTHENTICATED", "").strip().lower() in {"1", "true", "yes", "on"}
-          brevo_selected = mode == "brevo_smtp"
+          brevo_credentials_configured = bool(brevo_login and brevo_key)
+          brevo_selected = mode == "brevo_smtp" or (
+              mode in {"", "auto"} and brevo_credentials_configured
+          )
+          gmail_selected = mode == "gmail_smtp" or (
+              mode in {"", "auto"}
+              and not http_ready
+              and not browser_ready
+              and not brevo_credentials_configured
+          )
           brevo_ready = False
+          brevo_auth_verified = False
           brevo_method = ""
           brevo_failures = []
           def safe_provider_detail(exc):
@@ -361,7 +367,7 @@ jobs:
                   f"failure_stages={'; '.join(smtp_failures) or 'none'}; no email was sent."
               )
 
-          if brevo_selected and brevo_login and brevo_key and brevo_sender and brevo_sender_verified and brevo_domain_authenticated:
+          if brevo_selected and brevo_login and brevo_key:
               for method, port in (("starttls", 587), ("ssl", 465)):
                   client = None
                   stage = f"{method}_connect"
@@ -378,7 +384,7 @@ jobs:
                           )
                       stage = f"{method}_login"
                       client.login(brevo_login, brevo_key)
-                      brevo_ready = True
+                      brevo_auth_verified = True
                       brevo_method = f"{method}:{port}"
                       break
                   except smtplib.SMTPAuthenticationError as exc:
@@ -400,13 +406,22 @@ jobs:
                               client.quit()
                           except Exception:
                               pass
-          if brevo_selected:
+          brevo_ready = (
+              brevo_auth_verified
+              and bool(brevo_sender)
+              and brevo_sender_verified
+              and brevo_domain_authenticated
+          )
+          if brevo_selected or mode == "brevo_smtp":
               print(
-                  f"BREVO SMTP LIVE AUTH {'VERIFIED' if brevo_ready else 'FAILED'} "
+                  f"BREVO SMTP AUTH {'VERIFIED' if brevo_auth_verified else 'FAILED'} "
                   f"method={brevo_method or 'none'} "
+                  f"login_configured={str(bool(brevo_login)).lower()} "
+                  f"smtp_key_configured={str(bool(brevo_key)).lower()} "
                   f"sender_configured={str(bool(brevo_sender)).lower()} "
                   f"sender_verification_confirmed={str(brevo_sender_verified).lower()} "
                   f"domain_authentication_confirmed={str(brevo_domain_authenticated).lower()} "
+                  f"production_transport_ready={str(brevo_ready).lower()} "
                   f"failure_stages={'; '.join(brevo_failures) or 'none'}; no email was sent."
               )
 
@@ -419,7 +434,7 @@ jobs:
           elif mode == "brevo_smtp":
               ready = brevo_ready
           elif mode in {"", "auto"}:
-              ready = http_ready or browser_ready or gmail_ready
+              ready = http_ready or browser_ready or brevo_ready or gmail_ready
           else:
               ready = False
 
