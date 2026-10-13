@@ -11,8 +11,12 @@ def test_production_runtime_receives_supported_revenue_transport_configuration()
     required_wiring = (
         "THORIO_ACCOUNT_GMAIL_USERNAME: ${{ secrets.THORIO_ACCOUNT_GMAIL_USERNAME }}",
         "THORIO_ACCOUNT_GMAIL_PASSWORD: ${{ secrets.THORIO_ACCOUNT_GMAIL_PASSWORD }}",
-        "THORIO_BREVO_SMTP_LOGIN: ${{ secrets.THORIO_BREVO_SMTP_LOGIN }}",
-        "THORIO_BREVO_SMTP_KEY: ${{ secrets.THORIO_BREVO_SMTP_KEY }}",
+        "THORIO_BREVO_SMTP_LOGIN: ${{ secrets.BREVO_SMTP_LOGIN || secrets.THORIO_BREVO_SMTP_LOGIN }}",
+        "THORIO_BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY || secrets.THORIO_BREVO_SMTP_KEY }}",
+        "THORIO_BREVO_API_KEY: ${{ secrets.BREVO_API_KEY || secrets.THORIO_BREVO_API_KEY }}",
+        "https://api.brevo.com/v3/account",
+        "BREVO API LIVE AUTH",
+        'elif mode in {"brevo_smtp", "brevo_api"}:',
         "THORIO_BREVO_SENDER_EMAIL:",
         "THORIO_BREVO_SENDER_VERIFIED:",
         "THORIO_BREVO_DOMAIN_AUTHENTICATED:",
@@ -44,6 +48,8 @@ def test_production_runtime_receives_supported_revenue_transport_configuration()
         assert setting in workflow, f"production revenue transport setting is not wired: {setting}"
 
     assert "brevo_credentials_configured = bool(brevo_login and brevo_key)" in workflow
+    assert 'brevo_api_selected = mode == "brevo_api" or (' in workflow
+    assert 'brevo_api_key = os.environ.get("THORIO_BREVO_API_KEY", "").strip()' in workflow
     assert 'ready = http_ready or browser_ready or brevo_ready or gmail_ready' in workflow
     assert "BREVO SMTP AUTH" in workflow
 
