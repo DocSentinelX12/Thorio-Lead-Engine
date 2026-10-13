@@ -434,10 +434,21 @@ class LeadDB:
         return {"fingerprint": row[0], "package_digest": row[1], "lead_radar_record_id": row[2], "research_record_id": row[3], "master_tracker_record_ids": [str(value) for value in record_ids], "confirmed_at": row[5], "updated_at": row[6]}
 
     def get_sync_state(self, fingerprint: str) -> Dict[str, Any]:
-        row = self.conn.execute("SELECT synced, attempts, last_error, updated_at FROM leads WHERE fingerprint = ?", (fingerprint,)).fetchone()
+        row = self.conn.execute(
+            "SELECT synced, attempts, last_error, updated_at, sync_deferred, sync_deferred_reason "
+            "FROM leads WHERE fingerprint = ?",
+            (fingerprint,),
+        ).fetchone()
         if row is None:
             raise ValueError(f"Lead not found: {fingerprint}")
-        return {"synced": bool(row[0]), "attempts": int(row[1]), "last_error": str(row[2] or ""), "updated_at": row[3]}
+        return {
+            "synced": bool(row[0]),
+            "attempts": int(row[1]),
+            "last_error": str(row[2] or ""),
+            "updated_at": row[3],
+            "sync_deferred": bool(row[4]),
+            "sync_deferred_reason": str(row[5] or ""),
+        }
 
     def defer_sync(self, fingerprint: str, reason: str = "research_verification_pending") -> None:
         """Keep an unready lead durable but out of the Airtable delivery hot loop."""
