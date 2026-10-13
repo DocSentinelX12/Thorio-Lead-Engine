@@ -45,9 +45,15 @@ def build_parser():
 
 def _sync_pending_if_enabled(application):
     config = getattr(application, "config", None)
-    if config is None or not config.sync_enabled:
+    if config is None or getattr(config, "sync_enabled", False) is not True:
         return None
-    return sync_pending(application.db, limit=config.batch_size)
+    batch_size = getattr(config, "batch_size", None)
+    if not isinstance(batch_size, int) or isinstance(batch_size, bool) or batch_size <= 0:
+        batch_size = 50
+    db = getattr(application, "db", None)
+    if db is None:
+        return None
+    return sync_pending(db, limit=batch_size)
 
 
 def _configured_runtime_sources():
