@@ -593,31 +593,43 @@ def sync_pending(
     db: LeadDB,
     limit: int = 50,
 ) -> Dict[str, Any]:
-    """
-    Retry locally stored leads that have not successfully
-    synchronized to the complete Master Tracker.
-    """
-
-    rows = db.pending(
-        limit=limit
-    )
-
+    """Sync ready leads while durably deferring raw research work out of the hot queue."""
     synced: List[Dict[str, Any]] = []
     already_exists: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
+    deferred_count = 0
+    ready_items: List[tuple[str, Dict[str, Any]]] = []
+    after_rowid = 0
+    page_size = max(100, min(500, limit * 10))
 
-    for (
-        fingerprint,
-        payload_json,
-        attempts,
-    ) in rows:
+    while len(ready_items) < limit:
+        rows = db.pending_scan(after_rowid=after_rowid, limit=page_size)
+        if not rows:
+            break
+        deferred_page: List[tuple[str, Dict[str, Any]]] = []
+        invalid_page: List[tuple[str, str]] = []
+        for rowid, fingerprint, payload_json, attempts in rows:
+            after_rowid = int(rowid)
+            try:
+                lead = json.loads(payload_json)
+                if not isinstance(lead, dict):
+                    raise ValueError("Stored lead payload must be an object.")
+            except (TypeError, ValueError) as exc:
+                invalid_page.append((fingerprint, f"Invalid stored lead payload: {exc}"))
+                continue
+            if not package_is_ready(lead):
+                deferred_page.append((fingerprint, lead))
+                deferred_count += 1
+                continue
+            ready_items.append((fingerprint, lead))
+            if len(ready_items) >= limit:
+                break
 
-        try:
-            lead = json.loads(
-                payload_json
-            )
-
-        except (TypeError, ValueError) as exc:
+        if deferred_page:
+            with db.batch_writes():
+                for fingerprint, _lead in deferred_page:
+                    db.defer_sync(fingerprint, "research_verification_pending")
+        for fingerprint, error in invalid_page:
             result = {
                 "status": "failed",
                 "lead": {},
@@ -627,96 +639,38 @@ def sync_pending(
                 "followup_record": None,
                 "referral_record": None,
                 "master_tracker": None,
-                "error": (
-                    "Invalid stored lead payload: "
-                    f"{exc}"
-                ),
+                "error": error,
             }
-
             failed.append(result)
+            db.mark_error(fingerprint, error)
+        if len(ready_items) >= limit or len(rows) < page_size:
+            break
 
-            db.mark_error(
-                fingerprint,
-                result["error"],
-            )
-
-            continue
-
-        if not isinstance(
-            lead,
-            dict,
-        ):
-            result = {
-                "status": "failed",
-                "lead": {},
-                "airtable_record": None,
-                "research_record": None,
-                "outreach_record": None,
-                "followup_record": None,
-                "referral_record": None,
-                "master_tracker": None,
-                "error": (
-                    "Invalid stored lead payload: "
-                    "expected an object."
-                ),
-            }
-
-            failed.append(result)
-
-            db.mark_error(
-                fingerprint,
-                result["error"],
-            )
-
-            continue
-
-        result = sync_one(
-            lead,
-            db=db,
-        )
-
+    for fingerprint, lead in ready_items:
+        result = sync_one(lead, db=db)
         if result["status"] == "deferred_research":
             db.defer_sync(
                 fingerprint,
                 str(result.get("reason") or "research_verification_pending"),
             )
+            deferred_count += 1
             continue
-
-        if result["status"] in {
-            "created",
-            "updated",
-            "synced",
-        }:
-            synced.append(result)
-
-            db.mark_synced(
-                fingerprint
-            )
-
-        elif result["status"] == "already_exists":
-            already_exists.append(result)
-
-            db.mark_synced(
-                fingerprint
-            )
-
+        if result["status"] in {"synced", "already_exists"}:
+            db.mark_synced(fingerprint)
+            if result["status"] == "already_exists":
+                already_exists.append(result)
+            else:
+                synced.append(result)
         else:
             failed.append(result)
-
-            db.mark_error(
-                fingerprint,
-                result["error"],
-            )
+            db.mark_error(fingerprint, result.get("error") or "Synchronization failed.")
 
     return {
         "synced": synced,
         "already_exists": already_exists,
         "failed": failed,
         "synced_count": len(synced),
-        "already_exists_count": len(
-            already_exists
-        ),
-        "failed_count": len(
-            failed
-        ),
+        "already_exists_count": len(already_exists),
+        "failed_count": len(failed),
+        "deferred_research_count": deferred_count,
     }
