@@ -6,7 +6,7 @@ from .agent_queue import pending
 from .agent_workers import run_worker_once
 from .agent_queue import enqueue
 from .database import LeadDB
-from .revenue_execution import RevenueActionInProgress, RevenueAuthorizationError, _issue_closer_capability, execute_outbound, register_revenue_transport
+from .revenue_execution import RevenueActionInProgress, RevenueAuthorizationError, _issue_closer_capability, configured_revenue_transport, execute_outbound, register_revenue_transport
 from .sales_handoff import package_digest
 from .research_intelligence import build_research_intelligence
 from .lead_identity import canonical_opportunity_identity
@@ -178,3 +178,12 @@ def test_uncertain_send_without_provider_reconciliation_never_resends(tmp_path):
         )
 
     assert transport.calls == 1
+
+
+
+def test_queue_only_mode_disables_real_transport_even_when_gmail_secrets_exist(monkeypatch):
+    monkeypatch.setenv("THORIO_REVENUE_OUTBOUND_ENABLED", "false")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_USERNAME", "thorio.partners@gmail.com")
+    monkeypatch.setenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "configured-app-password")
+    register_revenue_transport(None)
+    assert configured_revenue_transport() is None
