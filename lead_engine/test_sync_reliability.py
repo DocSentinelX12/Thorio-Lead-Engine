@@ -286,3 +286,27 @@ def test_existing_database_migrates_sync_deferred_column_without_losing_leads(tm
     assert "sync_deferred" in columns
     assert db.get("legacy-preserved-001") == {"fingerprint": "legacy-preserved-001"}
     assert db.get_sync_state("legacy-preserved-001")["synced"] is False
+
+def test_sync_pending_defers_unresearched_leads_without_creating_airtable_records(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {
+        "fingerprint": "raw-discovery-not-in-airtable-001",
+        "company": "Raw Discovery Corp",
+        "signal": "remote software engineering hiring",
+        "evidence": "Observed public source signal",
+    }
+    assert db.insert_if_new(lead)
+
+    with patch("lead_engine.sync_worker.package_is_ready", return_value=False), \
+         patch("lead_engine.sync_worker.find_by_fingerprint", return_value=[]) as mock_find, \
+         patch("lead_engine.sync_worker.sync_lead_if_missing") as mock_create:
+        result = sync_pending(db)
+
+    assert result["synced_count"] == 0
+    assert result["failed_count"] == 0
+    mock_find.assert_called_once_with("raw-discovery-not-in-airtable-001")
+    mock_create.assert_not_called()
+    assert db.pending(limit=10) == []
+    stored = db.get("raw-discovery-not-in-airtable-001")
+    assert stored is not None
+    assert stored["_airtable_sync_deferred"] == "research_verification_pending"
