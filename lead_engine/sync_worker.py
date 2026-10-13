@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any, Dict, List
 
 from .airtable_sync import (
@@ -608,6 +609,9 @@ def sync_pending(
     already_exists: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
     deferred_count = 0
+    capacity_deferred_count = 0
+    if os.getenv("AIRTABLE_SYNC_BLOCK_REASON", "").strip().lower() != "record_capacity":
+        db.requeue_sync_deferred("airtable_record_capacity")
     ready_items: List[tuple[str, Dict[str, Any]]] = []
     after_rowid = 0
     page_size = max(100, min(500, limit * 10))
@@ -665,6 +669,10 @@ def sync_pending(
             )
             deferred_count += 1
             continue
+        if result["status"] == "deferred_capacity":
+            db.defer_sync(fingerprint, "airtable_record_capacity")
+            capacity_deferred_count += 1
+            continue
         if result["status"] in {"synced", "already_exists"}:
             db.mark_synced(fingerprint)
             if result["status"] == "already_exists":
@@ -683,4 +691,5 @@ def sync_pending(
         "already_exists_count": len(already_exists),
         "failed_count": len(failed),
         "deferred_research_count": deferred_count,
+        "deferred_capacity_count": capacity_deferred_count,
     }
