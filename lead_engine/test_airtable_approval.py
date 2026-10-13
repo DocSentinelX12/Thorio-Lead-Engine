@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from lead_engine.airtable_approval import read_approval
@@ -255,3 +256,8 @@ def test_astrivon_route_is_approved_independently():
     result = build_approved_lead(lead, fields)
     assert result is not None
     assert result["approved_routes"] == ["Astrivon Labs"]
+
+@pytest.fixture(autouse=True)
+def _explicit_test_airtable_base(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+
