@@ -55,6 +55,13 @@ def test_brevo_smtp_requires_explicit_sender_verification(monkeypatch):
         BrevoSMTPTransport()
 
 
+def test_brevo_smtp_requires_domain_authentication(monkeypatch):
+    configure(monkeypatch, THORIO_BREVO_DOMAIN_AUTHENTICATED="false")
+    assert brevo_smtp_configured() is False
+    with pytest.raises(RevenueTransportUnavailable, match="domain authentication is not confirmed"):
+        BrevoSMTPTransport()
+
+
 def test_brevo_smtp_sends_only_after_verified_sender_and_uses_idempotency(monkeypatch):
     configure(monkeypatch)
     import smtplib
