@@ -23,6 +23,10 @@ AIRTABLE_INITIAL_BACKOFF = 1.0
 AIRTABLE_MAX_BACKOFF = 30.0
 AIRTABLE_REQUEST_TIMEOUT = max(1.0, float(os.getenv("THORIO_AIRTABLE_REQUEST_TIMEOUT", "15")))
 
+# Cache record-ID ownership after exact lookups so updates target the base that
+# actually contains the record, including legacy bases retained for history.
+_RECORD_BASE_CACHE: Dict[str, str] = {}
+
 
 class AirtableSyncError(Exception):
     """Raised when Airtable synchronization fails."""
@@ -253,21 +257,7 @@ def _request(
     raise AirtableSyncError("Airtable request failed unexpectedly.")
 
 def _table_url() -> str:
-    base_id = os.getenv(
-        "AIRTABLE_BASE_ID",
-        "",
-    )
-
-    table_name = os.getenv(
-        "AIRTABLE_LEAD_TABLE",
-        "Lead Radar",
-    )
-
-    return (
-        f"{AIRTABLE_API_URL}/"
-        f"{base_id}/"
-        f"{urllib.parse.quote(table_name, safe='')}"
-    )
+    return _master_table_url("lead_radar")
 
 
 def _text(value: Any) -> str:
@@ -323,21 +313,28 @@ def _table_name(
     return table_name
 
 
+def _configured_base_ids() -> List[str]:
+    """Return the active write base followed by intact legacy read/update bases."""
+    active = os.getenv("AIRTABLE_BASE_ID", "").strip()
+    legacy = [
+        item.strip()
+        for item in os.getenv("AIRTABLE_LEGACY_BASE_IDS", "").split(",")
+        if item.strip()
+    ]
+    return list(dict.fromkeys([item for item in [active, *legacy] if item]))
+
+
 def _master_table_url(
     table_key: str,
+    base_id: Optional[str] = None,
 ) -> str:
-    table_name = _table_name(
-        table_key
-    )
-
-    base_id = os.getenv(
-        "AIRTABLE_BASE_ID",
-        "",
-    )
-
+    table_name = _table_name(table_key)
+    selected_base = (base_id or os.getenv("AIRTABLE_BASE_ID", "")).strip()
+    if not selected_base:
+        raise AirtableSyncError("No active Airtable base is configured.")
     return (
         f"{AIRTABLE_API_URL}/"
-        f"{base_id}/"
+        f"{selected_base}/"
         f"{urllib.parse.quote(table_name, safe='')}"
     )
 
@@ -347,76 +344,38 @@ def find_master_records(
     field_name: str,
     value: Any,
 ) -> List[Dict[str, Any]]:
-    """
-    Find Airtable records in a configured master-tracker
-    table by an exact field value.
-
-    All Airtable pagination is followed so the lookup does
-    not silently stop at the first page.
-    """
-
+    """Find exact matches across the active base and preserved legacy bases."""
     if not _text(value):
         return []
-
-    escaped = _text(value).replace(
-        "\\",
-        "\\\\",
-    ).replace(
-        '"',
-        '\\"',
-    )
-
+    escaped = _text(value).replace("\\", "\\\\").replace('"', '\\"')
     escaped_field = _text(field_name)
-
     if not escaped_field:
-        raise ValueError(
-            "Airtable lookup requires a field name."
-        )
-
-    formula = (
-        f'{{{escaped_field}}}="{escaped}"'
-    )
-
+        raise ValueError("Airtable lookup requires a field name.")
+    formula = f'{{{escaped_field}}}="{escaped}"'
     records: List[Dict[str, Any]] = []
-    offset: Optional[str] = None
-
-    while True:
-        params = {
-            "filterByFormula": formula,
-            "pageSize": "100",
-        }
-
-        if offset:
-            params["offset"] = offset
-
-        query = urllib.parse.urlencode(
-            params
-        )
-
-        result = _request(
-            "GET",
-            f"{_master_table_url(table_key)}?{query}",
-        )
-
-        page = result.get(
-            "records",
-            [],
-        )
-
-        if isinstance(page, list):
-            records.extend(
-                record
-                for record in page
-                if isinstance(record, dict)
-            )
-
-        offset = result.get(
-            "offset"
-        )
-
-        if not offset:
-            break
-
+    seen_ids = set()
+    for base_id in _configured_base_ids():
+        offset: Optional[str] = None
+        while True:
+            params = {"filterByFormula": formula, "pageSize": "100"}
+            if offset:
+                params["offset"] = offset
+            query = urllib.parse.urlencode(params)
+            result = _request("GET", f"{_master_table_url(table_key, base_id)}?{query}")
+            page = result.get("records", [])
+            if isinstance(page, list):
+                for record in page:
+                    if not isinstance(record, dict):
+                        continue
+                    record_id = _text(record.get("id"))
+                    if not record_id or record_id in seen_ids:
+                        continue
+                    seen_ids.add(record_id)
+                    _RECORD_BASE_CACHE[record_id] = base_id
+                    records.append(record)
+            offset = result.get("offset")
+            if not offset:
+                break
     return records
 
 
@@ -451,48 +410,81 @@ def update_master_record(
     record_id: str,
     fields: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Update one existing Airtable record.
-
-    The return shape is normalized to contain a records list
-    so callers can use the same result contract for create
-    and update operations.
-    """
-
+    """Update a known record in whichever configured base owns its record ID."""
     record_id = _text(record_id)
-
     if not record_id:
-        raise ValueError(
-            "Airtable update requires a record ID."
-        )
-
+        raise ValueError("Airtable update requires a record ID.")
     if not isinstance(fields, dict):
-        raise ValueError(
-            "Airtable record fields must be a dictionary."
-        )
+        raise ValueError("Airtable record fields must be a dictionary.")
+    encoded_record_id = urllib.parse.quote(record_id, safe="")
+    cached_base = _RECORD_BASE_CACHE.get(record_id)
+    candidate_bases = [cached_base] if cached_base else _configured_base_ids()
+    last_not_found = None
+    for base_id in candidate_bases:
+        try:
+            result = _request(
+                "PATCH",
+                f"{_master_table_url(table_key, base_id)}/{encoded_record_id}",
+                {"fields": fields},
+            )
+        except AirtableSyncError as exc:
+            if "api error 404" in str(exc).lower() or "not found" in str(exc).lower():
+                last_not_found = exc
+                continue
+            raise
+        _RECORD_BASE_CACHE[record_id] = base_id
+        if "records" in result:
+            return result
+        return {"records": [result]}
+    if cached_base:
+        # A cached ownership hint can become stale after a manual Airtable move;
+        # retry the other configured bases once before reporting a missing record.
+        for base_id in [item for item in _configured_base_ids() if item != cached_base]:
+            try:
+                result = _request(
+                    "PATCH",
+                    f"{_master_table_url(table_key, base_id)}/{encoded_record_id}",
+                    {"fields": fields},
+                )
+            except AirtableSyncError as exc:
+                if "api error 404" in str(exc).lower() or "not found" in str(exc).lower():
+                    last_not_found = exc
+                    continue
+                raise
+            _RECORD_BASE_CACHE[record_id] = base_id
+            return result if "records" in result else {"records": [result]}
+    raise AirtableSyncError(
+        f"Existing Airtable record {record_id} was not found in any configured base."
+    ) from last_not_found
 
-    encoded_record_id = urllib.parse.quote(
-        record_id,
-        safe="",
-    )
 
-    result = _request(
-        "PATCH",
-        (
-            f"{_master_table_url(table_key)}/"
-            f"{encoded_record_id}"
-        ),
-        {
-            "fields": fields,
-        },
-    )
-
-    if "records" in result:
+def read_master_record(table_key: str, record_id: str) -> Dict[str, Any]:
+    """Read one known record by ID across the active and legacy bases."""
+    record_id = _text(record_id)
+    if not record_id:
+        raise ValueError("Airtable read requires a record ID.")
+    encoded_record_id = urllib.parse.quote(record_id, safe="")
+    cached_base = _RECORD_BASE_CACHE.get(record_id)
+    candidate_bases = ([cached_base] if cached_base else []) + [
+        item for item in _configured_base_ids() if item != cached_base
+    ]
+    last_not_found = None
+    for base_id in candidate_bases:
+        try:
+            result = _request(
+                "GET",
+                f"{_master_table_url(table_key, base_id)}/{encoded_record_id}",
+            )
+        except AirtableSyncError as exc:
+            if "api error 404" in str(exc).lower() or "not found" in str(exc).lower():
+                last_not_found = exc
+                continue
+            raise
+        _RECORD_BASE_CACHE[record_id] = base_id
         return result
-
-    return {
-        "records": [result],
-    }
+    raise AirtableSyncError(
+        f"Existing Airtable record {record_id} was not found in any configured base."
+    ) from last_not_found
 
 
 def atomic_upsert_master_record(
