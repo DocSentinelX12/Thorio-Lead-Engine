@@ -175,3 +175,26 @@ def test_turso_restore_returns_false_when_no_complete_generation_exists(monkeypa
     remote = PersistentConnection()
     monkeypatch.setattr(turso_state, "_connect", lambda: remote)
     assert turso_state.restore(tmp_path / "data") is False
+
+def test_turso_restore_refuses_to_delete_local_database_missing_from_snapshot(monkeypatch, tmp_path):
+    remote = PersistentConnection()
+    monkeypatch.setattr(turso_state, "_connect", lambda: remote)
+    data_dir = tmp_path / "data"
+    make_data_dir(data_dir, "known-state")
+    turso_state.snapshot(data_dir)
+
+    extra_database = data_dir / "newer-state.sqlite3"
+    with sqlite3.connect(extra_database) as conn:
+        conn.execute("CREATE TABLE preserved (value TEXT)")
+        conn.execute("INSERT INTO preserved(value) VALUES ('must-survive')")
+
+    try:
+        turso_state.restore(data_dir)
+    except RuntimeError as exc:
+        assert "refusing destructive restore" in str(exc)
+    else:
+        raise AssertionError("restore must not delete a local database absent from the selected generation")
+
+    assert extra_database.is_file()
+    with sqlite3.connect(extra_database) as conn:
+        assert conn.execute("SELECT value FROM preserved").fetchone()[0] == "must-survive"
