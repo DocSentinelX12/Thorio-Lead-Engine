@@ -160,6 +160,12 @@ def configured_revenue_transport() -> RevenueTransport | None:
         from .browser_revenue_transport import BrowserRevenueTransport
         return BrowserRevenueTransport()
 
+    # Prefer Brevo automatically when its full production configuration is verified.
+    # This avoids falling back to a known-failing Gmail transport when Brevo is ready.
+    from .brevo_smtp_transport import BrevoSMTPTransport, brevo_smtp_configured
+    if brevo_smtp_configured():
+        return BrevoSMTPTransport()
+
     gmail_username = os.getenv("THORIO_ACCOUNT_GMAIL_USERNAME", "").strip()
     gmail_password = os.getenv("THORIO_ACCOUNT_GMAIL_PASSWORD", "").strip()
     if gmail_username and gmail_password:
