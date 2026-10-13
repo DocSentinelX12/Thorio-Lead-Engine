@@ -119,6 +119,13 @@ class _ResilientConnection:
             pass
         self._connection = self._connection_factory()
 
+    @classmethod
+    def _is_replay_safe(cls, sql: str) -> bool:
+        statement = sql.lstrip().upper()
+        return statement.startswith(
+            ("SELECT", "PRAGMA", "WITH", "EXPLAIN", "INSERT OR REPLACE", "UPDATE", "DELETE", "CREATE TABLE IF NOT EXISTS")
+        )
+
     def execute(self, sql, *args, **kwargs):
         self._last_statement = (sql, args, kwargs)
         try:
@@ -126,9 +133,14 @@ class _ResilientConnection:
         except Exception as exc:
             if not _is_expired_stream_error(exc):
                 raise
+            if not self._is_replay_safe(sql):
+                raise RuntimeError(
+                    "Turso stream expired during a statement that cannot be replayed safely; "
+                    "the previous complete snapshot remains authoritative."
+                ) from exc
             self._reconnect()
-            # A second failure propagates. Do not loop indefinitely or hide a
-            # credential, schema, or genuine database error.
+            # Only read-only statements and explicitly idempotent state writes
+            # may be replayed after an ambiguous transport failure.
             cursor = self._connection.execute(sql, *args, **kwargs)
         return _ResilientCursor(self, cursor, sql, args, kwargs)
 
