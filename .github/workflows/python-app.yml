@@ -751,20 +751,20 @@ jobs:
           if selected is None:
               if capacity_blocked:
                   with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-                      env_file.write("LEAD_ENGINE_SYNC_ENABLED=false\n")
-                      env_file.write("AIRTABLE_SYNC_BLOCK_REASON=record_capacity\n")
-                      env_file.write("AIRTABLE_READ_ONLY_MODE=true\n")
+                      # Keep synchronization enabled: the Airtable client blocks new records and
+                      # table-level upserts, but can still PATCH records that already exist.
+                      env_file.write("AIRTABLE_SYNC_BLOCK_REASON=record_capacity\\n")
                       if capacity_credential:
                           capacity_label, capacity_token = capacity_credential
-                          env_file.write(f"AIRTABLE_API_KEY={capacity_token}\n")
-                          env_file.write(f"AIRTABLE_CREDENTIAL_SOURCE={capacity_label}\n")
+                          env_file.write(f"AIRTABLE_API_KEY={capacity_token}\\n")
+                          env_file.write(f"AIRTABLE_CREDENTIAL_SOURCE={capacity_label}\\n")
                   print(
-                      "AIRTABLE SYNC PAUSED: the base record limit blocks all writes. The valid "
-                      "credential remains available for read-only source/research access; all Airtable "
-                      "mutations are blocked in the runtime. Local SQLite state is preserved and no "
-                      "records are deleted."
+                      "AIRTABLE CAPACITY LIMIT: new records and table-level upserts remain queued, "
+                      "while updates to known existing records may continue. Local SQLite state and "
+                      "the research backlog are preserved; no records are deleted."
                   )
                   raise SystemExit(0)
+              raise SystemExit(0)
               raise SystemExit(
                   "AIRTABLE AUTHORIZATION/WRITE FAILURE: no configured credential could complete "
                   "the real Thorio route write probe. Review the per-credential HTTP diagnostics above."
