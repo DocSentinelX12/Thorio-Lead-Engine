@@ -21,6 +21,46 @@ class PersistentConnection:
         return None
 
 
+class ExpiringConnection:
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.expire_next_execute = True
+
+    def execute(self, *args, **kwargs):
+        if self.expire_next_execute:
+            self.expire_next_execute = False
+            raise RuntimeError("HTTP 404: stream not found")
+        return self.delegate.execute(*args, **kwargs)
+
+    def commit(self):
+        return self.delegate.commit()
+
+    def close(self):
+        return None
+
+
+def test_resilient_connection_reopens_expired_turso_stream():
+    remote = PersistentConnection()
+    connections = []
+
+    def factory():
+        if not connections:
+            connection = ExpiringConnection(remote)
+        else:
+            connection = remote
+        connections.append(connection)
+        return connection
+
+    connection = turso_state._ResilientConnection(factory)
+    connection.execute("CREATE TABLE IF NOT EXISTS stream_recovery (value TEXT)")
+    connection.execute("INSERT OR REPLACE INTO stream_recovery (rowid, value) VALUES (1, 'preserved')")
+    connection.commit()
+
+    row = connection.execute("SELECT value FROM stream_recovery WHERE rowid = 1").fetchone()
+    assert row[0] == "preserved"
+    assert len(connections) == 2
+
+
 def make_data_dir(path: Path, lead_name: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path / "leads.sqlite3") as conn:
