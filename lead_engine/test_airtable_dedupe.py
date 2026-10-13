@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from lead_engine.airtable_sync import sync_lead_if_missing
@@ -86,3 +87,8 @@ def test_empty_lookup_uses_atomic_upsert_to_prevent_check_then_create_race():
     assert method == "PATCH"
     assert payload["performUpsert"]["fieldsToMergeOn"] == ["Duplicate Key"]
     assert payload["records"][0]["fields"]["Duplicate Key"] == lead["fingerprint"]
+
+@pytest.fixture(autouse=True)
+def _explicit_test_airtable_base(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+
