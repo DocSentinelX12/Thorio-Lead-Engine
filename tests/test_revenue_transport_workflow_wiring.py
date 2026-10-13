@@ -20,7 +20,7 @@ def test_production_runtime_receives_supported_revenue_transport_configuration()
         "THORIO_BREVO_SENDER_EMAIL:",
         "THORIO_BREVO_SENDER_VERIFIED:",
         "THORIO_BREVO_DOMAIN_AUTHENTICATED:",
-        "BREVO SMTP LIVE AUTH",
+        "BREVO SMTP AUTH",
         'brevo_selected = mode == "brevo_smtp" or (',
         "THORIO_REVENUE_TRANSPORT_MODE:",
         'elif mode == "gmail_smtp":',
