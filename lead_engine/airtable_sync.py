@@ -383,6 +383,58 @@ def find_master_records(
     return records
 
 
+def find_master_records_by_values(
+    table_key: str,
+    field_name: str,
+    values: List[Any],
+    *,
+    values_per_query: int = 20,
+) -> List[Dict[str, Any]]:
+    """Look up many stable keys with bounded Airtable requests across configured bases."""
+    if not isinstance(values_per_query, int) or isinstance(values_per_query, bool) or values_per_query < 1:
+        raise ValueError("values_per_query must be a positive integer.")
+    field = _text(field_name)
+    if not field:
+        raise ValueError("Airtable lookup requires a field name.")
+    normalized = list(dict.fromkeys(_text(value) for value in values if _text(value)))
+    if not normalized:
+        return []
+    escaped_values = [
+        value.replace("\\", "\\\\").replace('"', '\\"')
+        for value in normalized
+    ]
+    records: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for base_id in _configured_base_ids():
+        for start in range(0, len(escaped_values), values_per_query):
+            clauses = [f'{{{field}}}="{value}"' for value in escaped_values[start:start + values_per_query]]
+            formula = clauses[0] if len(clauses) == 1 else f"OR({','.join(clauses)})"
+            offset: Optional[str] = None
+            while True:
+                params = {"filterByFormula": formula, "pageSize": "100"}
+                if offset:
+                    params["offset"] = offset
+                result = _request(
+                    "GET",
+                    f"{_master_table_url(table_key, base_id)}?{urllib.parse.urlencode(params)}",
+                )
+                page = result.get("records", [])
+                if isinstance(page, list):
+                    for record in page:
+                        if not isinstance(record, dict):
+                            continue
+                        record_id = _text(record.get("id"))
+                        if not record_id or record_id in seen_ids:
+                            continue
+                        seen_ids.add(record_id)
+                        _RECORD_BASE_CACHE[record_id] = base_id
+                        records.append(record)
+                offset = result.get("offset")
+                if not offset:
+                    break
+    return records
+
+
 def create_master_record(
     table_key: str,
     fields: Dict[str, Any],
