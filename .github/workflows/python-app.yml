@@ -974,8 +974,10 @@ jobs:
             if python -m lead_engine.turso_state restore --data-dir data > data/turso-restore.log 2>&1; then
               cat data/turso-restore.log
               restored="$(sed -n 's/^restored=//p' data/turso-restore.log | tail -n 1)"
+              restored_at="$(sed -n 's/^restored_at=//p' data/turso-restore.log | tail -n 1)"
               echo "enabled=true" >> "$GITHUB_OUTPUT"
               echo "restored=${restored:-false}" >> "$GITHUB_OUTPUT"
+              echo "restored_at=${restored_at:-}" >> "$GITHUB_OUTPUT"
             else
               cat data/turso-restore.log
               # Restore validates a complete generation before replacing files.
@@ -987,11 +989,13 @@ jobs:
               echo "TURSO RESTORE FAILED: preserved diagnostics at ${failed_state_dir}; falling back to verified GitHub state artifacts."
               echo "enabled=true" >> "$GITHUB_OUTPUT"
               echo "restored=false" >> "$GITHUB_OUTPUT"
+              echo "restored_at=" >> "$GITHUB_OUTPUT"
             fi
           else
             echo "TURSO STATE DISABLED: both repository secrets are not configured; existing artifact recovery remains active."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "restored=false" >> "$GITHUB_OUTPUT"
+            echo "restored_at=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Find newest usable engine state
@@ -999,23 +1003,928 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TURSO_STATE_RESTORED: ${{ steps.turso_restore.outputs.restored }}
+          TURSO_STATE_RESTORED_AT: ${{ steps.turso_restore.outputs.restored_at }}
         run: |
           set -euo pipefail
           previous_run_id=""
           prior_production_run_id=""
-          if [ "${TURSO_STATE_RESTORED:-false}" = "true" ]; then
-            echo "ENGINE STATE RECOVERY: complete state restored from Turso; artifact recovery is not needed for SQLite databases."
-            echo "run_id=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           production_runs="$(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')"
           while IFS= read -r run_id; do
             [ -z "$run_id" ] && continue
             if [ -z "$prior_production_run_id" ]; then
               prior_production_run_id="$run_id"
             fi
-            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | .id' | head -n 1)"
-            [ -z "$artifact_id" ] && continue
+            artifact_info="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | [.id, .created_at] | @tsv' | head -n 1)"
+            [ -z "$artifact_info" ] && continue
+            artifact_id="${artifact_info%%
+
+            candidate_dir="$(mktemp -d)"
+            if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name thorio-lead-engine-state --dir "$candidate_dir"; then
+              rm -rf "$candidate_dir"
+              echo "ENGINE STATE RECOVERY BLOCKED: artifact $artifact_id from run $run_id was listed but could not be downloaded; refusing to guess or start empty." >&2
+              exit 1
+            fi
+            if python - "$candidate_dir" <<'PY'
+          import pathlib
+          import sqlite3
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          primary = root / "leads.sqlite3"
+          if not primary.is_file() or primary.stat().st_size == 0:
+              raise SystemExit("candidate has no non-empty leads.sqlite3")
+          databases = [primary] + [
+              path for path in sorted(root.rglob("*"))
+              if path.is_file() and path != primary and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+          ]
+          for database in databases:
+              if database.stat().st_size == 0:
+                  raise SystemExit(f"candidate database is empty: {database}")
+              with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=30) as connection:
+                  result = connection.execute("PRAGMA integrity_check").fetchone()
+                  if not result or result[0] != "ok":
+                      raise SystemExit(f"candidate database failed integrity_check: {database}: {result!r}")
+                  if database == primary:
+                      tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                      missing = sorted({"leads", "checkpoints"} - tables)
+                      if missing:
+                          raise SystemExit(f"candidate primary database is missing required tables: {missing}")
+          PY
+            then
+              rm -rf "$candidate_dir"
+              previous_run_id="$run_id"
+              echo "ENGINE STATE CANDIDATE VERIFIED: run=$run_id artifact_id=$artifact_id."
+              break
+            else
+              echo "ENGINE STATE CANDIDATE REJECTED: run=$run_id artifact_id=$artifact_id is not a complete valid SQLite state; checking the next older candidate." >&2
+              rm -rf "$candidate_dir"
+            fi
+          done <<< "$production_runs"
+          if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ] && [ "${TURSO_STATE_RESTORED:-false}" != "true" ]; then
+            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found and Turso did not restore a usable generation. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
+            exit 1
+          fi
+          if [ -z "$previous_run_id" ] && [ -z "$prior_production_run_id" ] && [ "${TURSO_STATE_RESTORED:-false}" != "true" ]; then
+            echo "ENGINE STATE BOOTSTRAP: no completed prior production run exists; first-run initialization is permitted."
+          fi
+          echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
+      - name: Stage newer verified artifact over older Turso state
+        if: steps.previous_state.outputs.run_id != '' && steps.turso_restore.outputs.restored == 'true'
+        run: |
+          set -euo pipefail
+          preserved_dir="data.turso-restored-${GITHUB_RUN_ID}"
+          mv data "$preserved_dir"
+          mkdir -p data
+          echo "ENGINE STATE RECOVERY: preserved the older Turso restore at ${preserved_dir}; the newer artifact will be downloaded into a clean data directory."
+      - name: Download previous Lead Engine state
+        if: steps.previous_state.outputs.run_id != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: thorio-lead-engine-state
+          path: data
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.previous_state.outputs.run_id }}
+      - name: Validate restored Lead Engine state integrity
+        if: steps.turso_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          import sqlite3
+
+          database = pathlib.Path("data/leads.sqlite3")
+          if not database.is_file() or database.stat().st_size == 0:
+              raise SystemExit(
+                  "RESTORED ENGINE STATE INVALID: selected artifact does not contain a non-empty data/leads.sqlite3; "
+                  "refusing to start from an empty database and discard prior state."
+              )
+          uri = f"file:{database.resolve()}?mode=ro"
+          with sqlite3.connect(uri, uri=True, timeout=30) as connection:
+              integrity = connection.execute("PRAGMA integrity_check").fetchone()
+              if not integrity or integrity[0] != "ok":
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite integrity_check returned {integrity!r}")
+              tables = {
+                  row[0]
+                  for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+              }
+              required = {"leads", "checkpoints"}
+              missing = sorted(required - tables)
+              if missing:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: missing required tables {missing}")
+              lead_count = connection.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+              checkpoint_count = connection.execute("SELECT COUNT(*) FROM checkpoints").fetchone()[0]
+          validated_databases = [database]
+          for candidate in sorted(pathlib.Path("data").rglob("*")):
+              if not candidate.is_file() or candidate == database:
+                  continue
+              if candidate.suffix.lower() not in {".sqlite", ".sqlite3", ".db"}:
+                  continue
+              if candidate.stat().st_size == 0:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite database is empty: {candidate}")
+              candidate_uri = f"file:{candidate.resolve()}?mode=ro"
+              try:
+                  with sqlite3.connect(candidate_uri, uri=True, timeout=30) as connection:
+                      integrity = connection.execute("PRAGMA integrity_check").fetchone()
+              except sqlite3.DatabaseError as exc:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: cannot open SQLite database {candidate}: {exc}") from exc
+              if not integrity or integrity[0] != "ok":
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite integrity_check failed for {candidate}: {integrity!r}")
+              validated_databases.append(candidate)
+          print(
+              "RESTORED ENGINE STATE VERIFIED: "
+              f"SQLite integrity ok for {len(validated_databases)} database(s), "
+              f"leads={lead_count}, checkpoints={checkpoint_count}."
+          )
+          PY
+      - name: Ensure Lead Engine data directory exists
+        run: mkdir -p data
+      - name: Restore encrypted external browser authentication state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THORIO_PREVIOUS_STATE_RUN_ID: ${{ steps.previous_state.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ]; then
+            echo "EXTERNAL BROWSER STATE: encryption secret is not configured; external browser integration is disabled for this run."
+            exit 0
+          fi
+          rm -f data/browser-state.json data/browser-state.enc
+          previous_run_id="${THORIO_PREVIOUS_STATE_RUN_ID:-}"
+          artifact_id=""
+          if [ -n "$previous_run_id" ]; then
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${previous_run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
+            if [ -z "$artifact_id" ]; then
+              echo "EXTERNAL BROWSER STATE: selected engine-state run has no usable browser-state artifact; checking a bounded recent history."
+              previous_run_id=""
+            fi
+          fi
+          if [ -z "$previous_run_id" ]; then
+            checked_runs=0
+            while IFS= read -r run_id; do
+              [ -z "$run_id" ] && continue
+              checked_runs=$((checked_runs + 1))
+              artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
+              if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
+            done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId')
+            echo "EXTERNAL BROWSER STATE: bounded fallback checked ${checked_runs} successful runs."
+          fi
+          if [ -n "$previous_run_id" ]; then
+            mkdir -p data/browser-state-restore
+            gh run download "$previous_run_id" --repo "$GITHUB_REPOSITORY" --name thorio-browser-auth-state --dir data/browser-state-restore
+            if [ -f data/browser-state-restore/browser-state.enc ]; then
+              cp data/browser-state-restore/browser-state.enc data/browser-state.enc
+              python infra/external-browser/browser-state.py decrypt data/browser-state.enc data/browser-state.json
+              rm -rf data/browser-state-restore
+              chmod 600 data/browser-state.json
+              echo "EXTERNAL BROWSER STATE RESTORED: authenticated state recovered from the newest usable production run."
+            else
+              echo "EXTERNAL BROWSER STATE: previous artifact was found but did not contain browser-state.enc; starting without persisted state."
+            fi
+          else
+            echo "EXTERNAL BROWSER STATE: no usable encrypted state artifact found in the bounded recent history; starting without persisted state."
+          fi
+
+      - name: Start external headless browser
+        run: |
+          set -euo pipefail
+          if [ -z "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ]; then
+            echo "EXTERNAL BROWSER: encryption secret is not configured; leaving existing production runtime unchanged."
+            exit 0
+          fi
+          python infra/external-browser/browser-worker.py > data/browser-worker.log 2>&1 &
+          echo $! > data/browser-worker.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+              echo "EXTERNAL BROWSER READY: local CDP endpoint is accepting connections."
+              exit 0
+            fi
+            if ! kill -0 "$(cat data/browser-worker.pid)" 2>/dev/null; then
+              echo "EXTERNAL BROWSER FAILURE: browser worker exited before CDP became ready."
+              cat data/browser-worker.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "EXTERNAL BROWSER FAILURE: CDP endpoint did not become ready within 60 seconds."
+          cat data/browser-worker.log
+          exit 1
+
+      - name: Run Lead Engine for one bounded production cycle
+        id: engine_run
+        run: |
+          set -o pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
+          engine_status=${PIPESTATUS[0]}
+          set -e
+          if [ -f data/browser-worker.pid ]; then
+            browser_pid="$(cat data/browser-worker.pid)"
+            if kill -0 "$browser_pid" 2>/dev/null; then
+              kill -TERM "$browser_pid"
+              wait "$browser_pid" || true
+            fi
+          fi
+          if [ -n "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ] && [ -f data/browser-state.json ]; then
+            python infra/external-browser/browser-state.py encrypt data/browser-state.json data/browser-state.enc
+            chmod 600 data/browser-state.enc
+            echo "EXTERNAL BROWSER STATE SAVED: encrypted authentication state is ready for artifact persistence."
+          fi
+          rm -f data/browser-worker.pid
+          exit "$engine_status"
+      - name: Persist durable Turso engine state
+        if: always() && steps.turso_restore.outputs.enabled == 'true' && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m lead_engine.turso_state snapshot --data-dir data
+
+      - name: Verify active collection and Airtable delivery
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+          airtable_capacity_blocked = os.environ.get("AIRTABLE_SYNC_BLOCK_REASON", "").strip() == "record_capacity"
+          path = pathlib.Path("data/scheduled-run-output.txt")
+          if not path.exists():
+              print("PRODUCTION COLLECTION FAILURE: scheduled run output was not created.")
+              sys.exit(1)
+          text = path.read_text(encoding="utf-8")
+          decoder = json.JSONDecoder()
+          results = []
+          position = 0
+          while position < len(text):
+              start = text.find("{", position)
+              if start == -1:
+                  break
+              try:
+                  candidate, end = decoder.raw_decode(text[start:])
+              except json.JSONDecodeError:
+                  position = start + 1
+                  continue
+              if isinstance(candidate, dict):
+                  results.append(candidate)
+              position = start + end
+          if not results:
+              print("PRODUCTION COLLECTION FAILURE: no valid Lead Engine result was found.")
+              print(text)
+              sys.exit(1)
+          discovered_total = sum(int(result.get("discovered_count", 0) or 0) for result in results)
+          accepted_total = sum(int(result.get("accepted_count", 0) or 0) for result in results)
+          source_counts = [int(result.get("source_count", 0) or 0) for result in results]
+          successful_source_counts = [int(result.get("successful_source_count", 0) or 0) for result in results]
+          source_failure_counts = [int(result.get("failed_count", 0) or 0) for result in results]
+          source_skip_counts = [int(result.get("skipped_count", 0) or 0) for result in results]
+          if discovered_total <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no leads were discovered during the production cycle.")
+              sys.exit(1)
+          if not source_counts or not successful_source_counts:
+              print("PRODUCTION COLLECTION FAILURE: source collection metadata was missing from the production result.")
+              sys.exit(1)
+          if any(successful < source_count for successful, source_count in zip(successful_source_counts, source_counts)):
+              print(f"PRODUCTION COLLECTION FAILURE: not every configured source completed successfully. source_counts={source_counts}, successful_source_counts={successful_source_counts}")
+              sys.exit(1)
+          if any(count > 0 for count in source_failure_counts):
+              print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources failed. failed_source_counts={source_failure_counts}")
+              sys.exit(1)
+          if any(count > 0 for count in source_skip_counts):
+              print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources were skipped. skipped_source_counts={source_skip_counts}")
+              sys.exit(1)
+          agents_evidence_found = False
+          agent_drain_complete = []
+          agent_remaining_queue = []
+          for result in results:
+              agents = result.get("agents")
+              if not isinstance(agents, dict):
+                  continue
+              agents_evidence_found = True
+              agent_drain_complete.append(bool(agents.get("drain_complete") is True))
+              agent_remaining_queue.append(int(agents.get("remaining_queue_count", 0) or 0))
+          if not agents_evidence_found:
+              print("SPECIALIST DRAIN FAILURE: Lead Engine result did not contain specialist orchestration evidence.")
+              sys.exit(1)
+          queue_health = []
+          specialist_failed_total = 0
+          for result in results:
+              agents = result.get("agents")
+              if isinstance(agents, dict):
+                  health = agents.get("queue_health")
+                  if isinstance(health, dict):
+                      queue_health.append(health)
+                      specialist_failed_total += int(health.get("failed_count", 0) or 0)
+          if specialist_failed_total > 0:
+              print(f"SPECIALIST EXECUTION FAILURE: {specialist_failed_total} terminal specialist task(s) are failed and require retry or repair.")
+              print(f"SPECIALIST QUEUE HEALTH: {queue_health}")
+              sys.exit(1)
+          if any(not complete for complete in agent_drain_complete):
+              print(f"SPECIALIST DRAIN DEFERRED: bounded production execution left durable specialist work for the next cycle. drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}, queue_health={queue_health}")
+          else:
+              print(f"SPECIALIST DRAIN VERIFIED: drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}, queue_health={queue_health}")
+
+          sync_failed = 0
+          sync_completed = 0
+          sync_already_exists = 0
+          sync_deferred_research = 0
+          failures = []
+          sync_evidence_found = False
+          for result in results:
+              sync = result.get("sync")
+              if not isinstance(sync, dict):
+                  continue
+              sync_evidence_found = True
+              sync_failed += int(sync.get("failed_count", 0) or 0)
+              sync_completed += int(sync.get("synced_count", 0) or 0)
+              sync_already_exists += int(sync.get("already_exists_count", 0) or 0)
+              sync_deferred_research += int(sync.get("deferred_research_count", 0) or 0)
+              failed_items = sync.get("failed", [])
+              if isinstance(failed_items, list):
+                  failures.extend(item for item in failed_items if isinstance(item, dict))
+          if not sync_evidence_found and not airtable_capacity_blocked:
+              print("AIRTABLE DELIVERY FAILURE: Lead Engine result did not contain synchronization evidence.")
+              sys.exit(1)
+          inbound_failures = []
+          inbound_health_evidence = False
+          for result in results:
+              health = result.get("revenue_inbound_health")
+              if not isinstance(health, dict):
+                  continue
+              inbound_health_evidence = True
+              if str(health.get("status") or "").strip().lower() == "failed" or int(health.get("failed_count", 0) or 0) > 0:
+                  inbound_failures.extend(item for item in (health.get("failures") or []) if isinstance(item, dict))
+          if inbound_health_evidence and inbound_failures:
+              print(f"REVENUE INBOUND OBSERVATION FAILURE: {len(inbound_failures)} configured revenue conversation observation operation(s) failed; follow-ups were blocked.")
+              for index, item in enumerate(inbound_failures[:20], 1):
+                  print(f"INBOUND FAILURE {index}: opportunity_id={item.get('opportunity_id', '')} channel={item.get('channel', '')} error={item.get('error', '')}")
+              sys.exit(1)
+
+          if airtable_capacity_blocked:
+              print(
+                  f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, "
+                  f"accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}"
+              )
+              print(
+                  "AIRTABLE DELIVERY BLOCKED: the base record limit prevented synchronization. "
+                  "Local SQLite state and the pending backlog will be persisted for recovery; "
+                  "no records were deleted and this run will remain failed until sync capacity is restored."
+              )
+              sys.exit(1)
+
+          if sync_failed > 0:
+              print(f"AIRTABLE DELIVERY FAILURE: {sync_failed} lead synchronization operation(s) failed and remain undelivered.")
+              for index, item in enumerate(failures[:20], 1):
+                  lead = item.get("lead") if isinstance(item.get("lead"), dict) else {}
+                  print(f"SYNC FAILURE {index}: fingerprint={lead.get('fingerprint', '')} company={lead.get('company', '')} route={lead.get('route', '')} error={item.get('error', '')}")
+              sys.exit(1)
+          if (sync_completed + sync_already_exists + sync_deferred_research) <= 0:
+              print("AIRTABLE DELIVERY FAILURE: the production result contained no completed, already-existing, or explicitly deferred research delivery evidence.")
+              sys.exit(1)
+          print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
+          print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
+          PY
+      - name: Verify production revenue lifecycle and outreach
+        if: steps.production_mode.outputs.full_revenue_ready == 'true'
+        run: python -m lead_engine.production_lifecycle_audit --database data/leads.sqlite3
+      - name: Report outreach held in durable queue
+        if: steps.production_mode.outputs.full_revenue_ready != 'true'
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          from lead_engine.agent_queue import pending
+          from lead_engine.database import LeadDB
+
+          db = LeadDB(data_dir="data")
+          try:
+              tasks = pending(db)
+              queued = Counter(
+                  str(task.get("agent") or "unknown")
+                  for task in tasks
+                  if str(task.get("status") or "").lower() in {"queued", "running"}
+              )
+              print("OUTREACH SAFETY HOLD VERIFIED: outbound transport is disabled for this run.")
+              print(f"Durable queued/running outreach_closer tasks: {queued.get('outreach_closer', 0)}")
+              print(f"Durable queued/running follow_up tasks: {queued.get('follow_up', 0)}")
+              print("No message was sent by the production cycle; tasks remain available for a verified transport.")
+              with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write("\n## Outreach status\n")
+                  summary.write("- External sending was disabled because live transport/reply checks did not pass.\n")
+                  summary.write(f"- Durable outreach tasks queued/running: {queued.get('outreach_closer', 0)}\n")
+                  summary.write(f"- Durable follow-up tasks queued/running: {queued.get('follow_up', 0)}\n")
+          finally:
+              db.close()
+          PY
+      - name: Persist encrypted external browser authentication state
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-browser-auth-state
+          path: data/browser-state.enc
+          if-no-files-found: ignore
+          retention-days: 90
+          compression-level: 6
+          overwrite: true
+      - name: Validate Lead Engine state before artifact persistence
+        id: persist_state_validation
+        if: always() && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          import sqlite3
+
+          root = pathlib.Path("data")
+          primary = root / "leads.sqlite3"
+          if not primary.is_file() or primary.stat().st_size == 0:
+              raise SystemExit("STATE ARTIFACT BLOCKED: data/leads.sqlite3 is missing or empty; refusing to publish an unusable recovery artifact.")
+          databases = [primary] + [
+              path for path in sorted(root.rglob("*"))
+              if path.is_file() and path != primary and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+          ]
+          for database in databases:
+              if database.stat().st_size == 0:
+                  raise SystemExit(f"STATE ARTIFACT BLOCKED: empty SQLite database: {database}")
+              with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=30) as connection:
+                  integrity = connection.execute("PRAGMA integrity_check").fetchone()
+                  if not integrity or integrity[0] != "ok":
+                      raise SystemExit(f"STATE ARTIFACT BLOCKED: SQLite integrity check failed for {database}: {integrity!r}")
+                  if database == primary:
+                      tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                      missing = sorted({"leads", "checkpoints"} - tables)
+                      if missing:
+                          raise SystemExit(f"STATE ARTIFACT BLOCKED: primary database missing required tables: {missing}")
+          print(f"STATE ARTIFACT SAFE TO PERSIST: validated {len(databases)} SQLite database(s).")
+          PY
+      - name: Persist Lead Engine state
+        if: always() && steps.persist_state_validation.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-lead-engine-state
+          path: data
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
+          overwrite: false\t'*}"
+            artifact_created_at="${artifact_info#*
+
+            candidate_dir="$(mktemp -d)"
+            if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name thorio-lead-engine-state --dir "$candidate_dir"; then
+              rm -rf "$candidate_dir"
+              echo "ENGINE STATE RECOVERY BLOCKED: artifact $artifact_id from run $run_id was listed but could not be downloaded; refusing to guess or start empty." >&2
+              exit 1
+            fi
+            if python - "$candidate_dir" <<'PY'
+          import pathlib
+          import sqlite3
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          primary = root / "leads.sqlite3"
+          if not primary.is_file() or primary.stat().st_size == 0:
+              raise SystemExit("candidate has no non-empty leads.sqlite3")
+          databases = [primary] + [
+              path for path in sorted(root.rglob("*"))
+              if path.is_file() and path != primary and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+          ]
+          for database in databases:
+              if database.stat().st_size == 0:
+                  raise SystemExit(f"candidate database is empty: {database}")
+              with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=30) as connection:
+                  result = connection.execute("PRAGMA integrity_check").fetchone()
+                  if not result or result[0] != "ok":
+                      raise SystemExit(f"candidate database failed integrity_check: {database}: {result!r}")
+                  if database == primary:
+                      tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                      missing = sorted({"leads", "checkpoints"} - tables)
+                      if missing:
+                          raise SystemExit(f"candidate primary database is missing required tables: {missing}")
+          PY
+            then
+              rm -rf "$candidate_dir"
+              previous_run_id="$run_id"
+              echo "ENGINE STATE CANDIDATE VERIFIED: run=$run_id artifact_id=$artifact_id."
+              break
+            else
+              echo "ENGINE STATE CANDIDATE REJECTED: run=$run_id artifact_id=$artifact_id is not a complete valid SQLite state; checking the next older candidate." >&2
+              rm -rf "$candidate_dir"
+            fi
+          done <<< "$production_runs"
+          if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ]; then
+            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
+            exit 1
+          fi
+          if [ -z "$previous_run_id" ]; then
+            echo "ENGINE STATE BOOTSTRAP: no completed prior production run exists; first-run initialization is permitted."
+          fi
+          echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
+      - name: Download previous Lead Engine state
+        if: steps.previous_state.outputs.run_id != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: thorio-lead-engine-state
+          path: data
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.previous_state.outputs.run_id }}
+      - name: Validate restored Lead Engine state integrity
+        if: steps.turso_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          import sqlite3
+
+          database = pathlib.Path("data/leads.sqlite3")
+          if not database.is_file() or database.stat().st_size == 0:
+              raise SystemExit(
+                  "RESTORED ENGINE STATE INVALID: selected artifact does not contain a non-empty data/leads.sqlite3; "
+                  "refusing to start from an empty database and discard prior state."
+              )
+          uri = f"file:{database.resolve()}?mode=ro"
+          with sqlite3.connect(uri, uri=True, timeout=30) as connection:
+              integrity = connection.execute("PRAGMA integrity_check").fetchone()
+              if not integrity or integrity[0] != "ok":
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite integrity_check returned {integrity!r}")
+              tables = {
+                  row[0]
+                  for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+              }
+              required = {"leads", "checkpoints"}
+              missing = sorted(required - tables)
+              if missing:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: missing required tables {missing}")
+              lead_count = connection.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+              checkpoint_count = connection.execute("SELECT COUNT(*) FROM checkpoints").fetchone()[0]
+          validated_databases = [database]
+          for candidate in sorted(pathlib.Path("data").rglob("*")):
+              if not candidate.is_file() or candidate == database:
+                  continue
+              if candidate.suffix.lower() not in {".sqlite", ".sqlite3", ".db"}:
+                  continue
+              if candidate.stat().st_size == 0:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite database is empty: {candidate}")
+              candidate_uri = f"file:{candidate.resolve()}?mode=ro"
+              try:
+                  with sqlite3.connect(candidate_uri, uri=True, timeout=30) as connection:
+                      integrity = connection.execute("PRAGMA integrity_check").fetchone()
+              except sqlite3.DatabaseError as exc:
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: cannot open SQLite database {candidate}: {exc}") from exc
+              if not integrity or integrity[0] != "ok":
+                  raise SystemExit(f"RESTORED ENGINE STATE INVALID: SQLite integrity_check failed for {candidate}: {integrity!r}")
+              validated_databases.append(candidate)
+          print(
+              "RESTORED ENGINE STATE VERIFIED: "
+              f"SQLite integrity ok for {len(validated_databases)} database(s), "
+              f"leads={lead_count}, checkpoints={checkpoint_count}."
+          )
+          PY
+      - name: Ensure Lead Engine data directory exists
+        run: mkdir -p data
+      - name: Restore encrypted external browser authentication state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          THORIO_PREVIOUS_STATE_RUN_ID: ${{ steps.previous_state.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ]; then
+            echo "EXTERNAL BROWSER STATE: encryption secret is not configured; external browser integration is disabled for this run."
+            exit 0
+          fi
+          rm -f data/browser-state.json data/browser-state.enc
+          previous_run_id="${THORIO_PREVIOUS_STATE_RUN_ID:-}"
+          artifact_id=""
+          if [ -n "$previous_run_id" ]; then
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${previous_run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
+            if [ -z "$artifact_id" ]; then
+              echo "EXTERNAL BROWSER STATE: selected engine-state run has no usable browser-state artifact; checking a bounded recent history."
+              previous_run_id=""
+            fi
+          fi
+          if [ -z "$previous_run_id" ]; then
+            checked_runs=0
+            while IFS= read -r run_id; do
+              [ -z "$run_id" ] && continue
+              checked_runs=$((checked_runs + 1))
+              artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-browser-auth-state" and .expired == false) | .id' | head -n 1)"
+              if [ -n "$artifact_id" ]; then previous_run_id="$run_id"; break; fi
+            done < <(gh run list --workflow python-app.yml --branch main --limit 50 --json databaseId,status,conclusion --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId')
+            echo "EXTERNAL BROWSER STATE: bounded fallback checked ${checked_runs} successful runs."
+          fi
+          if [ -n "$previous_run_id" ]; then
+            mkdir -p data/browser-state-restore
+            gh run download "$previous_run_id" --repo "$GITHUB_REPOSITORY" --name thorio-browser-auth-state --dir data/browser-state-restore
+            if [ -f data/browser-state-restore/browser-state.enc ]; then
+              cp data/browser-state-restore/browser-state.enc data/browser-state.enc
+              python infra/external-browser/browser-state.py decrypt data/browser-state.enc data/browser-state.json
+              rm -rf data/browser-state-restore
+              chmod 600 data/browser-state.json
+              echo "EXTERNAL BROWSER STATE RESTORED: authenticated state recovered from the newest usable production run."
+            else
+              echo "EXTERNAL BROWSER STATE: previous artifact was found but did not contain browser-state.enc; starting without persisted state."
+            fi
+          else
+            echo "EXTERNAL BROWSER STATE: no usable encrypted state artifact found in the bounded recent history; starting without persisted state."
+          fi
+
+      - name: Start external headless browser
+        run: |
+          set -euo pipefail
+          if [ -z "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ]; then
+            echo "EXTERNAL BROWSER: encryption secret is not configured; leaving existing production runtime unchanged."
+            exit 0
+          fi
+          python infra/external-browser/browser-worker.py > data/browser-worker.log 2>&1 &
+          echo $! > data/browser-worker.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+              echo "EXTERNAL BROWSER READY: local CDP endpoint is accepting connections."
+              exit 0
+            fi
+            if ! kill -0 "$(cat data/browser-worker.pid)" 2>/dev/null; then
+              echo "EXTERNAL BROWSER FAILURE: browser worker exited before CDP became ready."
+              cat data/browser-worker.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "EXTERNAL BROWSER FAILURE: CDP endpoint did not become ready within 60 seconds."
+          cat data/browser-worker.log
+          exit 1
+
+      - name: Run Lead Engine for one bounded production cycle
+        id: engine_run
+        run: |
+          set -o pipefail
+          set +e
+          timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
+          engine_status=${PIPESTATUS[0]}
+          set -e
+          if [ -f data/browser-worker.pid ]; then
+            browser_pid="$(cat data/browser-worker.pid)"
+            if kill -0 "$browser_pid" 2>/dev/null; then
+              kill -TERM "$browser_pid"
+              wait "$browser_pid" || true
+            fi
+          fi
+          if [ -n "${THORIO_BROWSER_STATE_ENCRYPTION_KEY:-}" ] && [ -f data/browser-state.json ]; then
+            python infra/external-browser/browser-state.py encrypt data/browser-state.json data/browser-state.enc
+            chmod 600 data/browser-state.enc
+            echo "EXTERNAL BROWSER STATE SAVED: encrypted authentication state is ready for artifact persistence."
+          fi
+          rm -f data/browser-worker.pid
+          exit "$engine_status"
+      - name: Persist durable Turso engine state
+        if: always() && steps.turso_restore.outputs.enabled == 'true' && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m lead_engine.turso_state snapshot --data-dir data
+
+      - name: Verify active collection and Airtable delivery
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+          airtable_capacity_blocked = os.environ.get("AIRTABLE_SYNC_BLOCK_REASON", "").strip() == "record_capacity"
+          path = pathlib.Path("data/scheduled-run-output.txt")
+          if not path.exists():
+              print("PRODUCTION COLLECTION FAILURE: scheduled run output was not created.")
+              sys.exit(1)
+          text = path.read_text(encoding="utf-8")
+          decoder = json.JSONDecoder()
+          results = []
+          position = 0
+          while position < len(text):
+              start = text.find("{", position)
+              if start == -1:
+                  break
+              try:
+                  candidate, end = decoder.raw_decode(text[start:])
+              except json.JSONDecodeError:
+                  position = start + 1
+                  continue
+              if isinstance(candidate, dict):
+                  results.append(candidate)
+              position = start + end
+          if not results:
+              print("PRODUCTION COLLECTION FAILURE: no valid Lead Engine result was found.")
+              print(text)
+              sys.exit(1)
+          discovered_total = sum(int(result.get("discovered_count", 0) or 0) for result in results)
+          accepted_total = sum(int(result.get("accepted_count", 0) or 0) for result in results)
+          source_counts = [int(result.get("source_count", 0) or 0) for result in results]
+          successful_source_counts = [int(result.get("successful_source_count", 0) or 0) for result in results]
+          source_failure_counts = [int(result.get("failed_count", 0) or 0) for result in results]
+          source_skip_counts = [int(result.get("skipped_count", 0) or 0) for result in results]
+          if discovered_total <= 0:
+              print("PRODUCTION COLLECTION FAILURE: no leads were discovered during the production cycle.")
+              sys.exit(1)
+          if not source_counts or not successful_source_counts:
+              print("PRODUCTION COLLECTION FAILURE: source collection metadata was missing from the production result.")
+              sys.exit(1)
+          if any(successful < source_count for successful, source_count in zip(successful_source_counts, source_counts)):
+              print(f"PRODUCTION COLLECTION FAILURE: not every configured source completed successfully. source_counts={source_counts}, successful_source_counts={successful_source_counts}")
+              sys.exit(1)
+          if any(count > 0 for count in source_failure_counts):
+              print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources failed. failed_source_counts={source_failure_counts}")
+              sys.exit(1)
+          if any(count > 0 for count in source_skip_counts):
+              print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources were skipped. skipped_source_counts={source_skip_counts}")
+              sys.exit(1)
+          agents_evidence_found = False
+          agent_drain_complete = []
+          agent_remaining_queue = []
+          for result in results:
+              agents = result.get("agents")
+              if not isinstance(agents, dict):
+                  continue
+              agents_evidence_found = True
+              agent_drain_complete.append(bool(agents.get("drain_complete") is True))
+              agent_remaining_queue.append(int(agents.get("remaining_queue_count", 0) or 0))
+          if not agents_evidence_found:
+              print("SPECIALIST DRAIN FAILURE: Lead Engine result did not contain specialist orchestration evidence.")
+              sys.exit(1)
+          queue_health = []
+          specialist_failed_total = 0
+          for result in results:
+              agents = result.get("agents")
+              if isinstance(agents, dict):
+                  health = agents.get("queue_health")
+                  if isinstance(health, dict):
+                      queue_health.append(health)
+                      specialist_failed_total += int(health.get("failed_count", 0) or 0)
+          if specialist_failed_total > 0:
+              print(f"SPECIALIST EXECUTION FAILURE: {specialist_failed_total} terminal specialist task(s) are failed and require retry or repair.")
+              print(f"SPECIALIST QUEUE HEALTH: {queue_health}")
+              sys.exit(1)
+          if any(not complete for complete in agent_drain_complete):
+              print(f"SPECIALIST DRAIN DEFERRED: bounded production execution left durable specialist work for the next cycle. drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}, queue_health={queue_health}")
+          else:
+              print(f"SPECIALIST DRAIN VERIFIED: drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}, queue_health={queue_health}")
+
+          sync_failed = 0
+          sync_completed = 0
+          sync_already_exists = 0
+          sync_deferred_research = 0
+          failures = []
+          sync_evidence_found = False
+          for result in results:
+              sync = result.get("sync")
+              if not isinstance(sync, dict):
+                  continue
+              sync_evidence_found = True
+              sync_failed += int(sync.get("failed_count", 0) or 0)
+              sync_completed += int(sync.get("synced_count", 0) or 0)
+              sync_already_exists += int(sync.get("already_exists_count", 0) or 0)
+              sync_deferred_research += int(sync.get("deferred_research_count", 0) or 0)
+              failed_items = sync.get("failed", [])
+              if isinstance(failed_items, list):
+                  failures.extend(item for item in failed_items if isinstance(item, dict))
+          if not sync_evidence_found and not airtable_capacity_blocked:
+              print("AIRTABLE DELIVERY FAILURE: Lead Engine result did not contain synchronization evidence.")
+              sys.exit(1)
+          inbound_failures = []
+          inbound_health_evidence = False
+          for result in results:
+              health = result.get("revenue_inbound_health")
+              if not isinstance(health, dict):
+                  continue
+              inbound_health_evidence = True
+              if str(health.get("status") or "").strip().lower() == "failed" or int(health.get("failed_count", 0) or 0) > 0:
+                  inbound_failures.extend(item for item in (health.get("failures") or []) if isinstance(item, dict))
+          if inbound_health_evidence and inbound_failures:
+              print(f"REVENUE INBOUND OBSERVATION FAILURE: {len(inbound_failures)} configured revenue conversation observation operation(s) failed; follow-ups were blocked.")
+              for index, item in enumerate(inbound_failures[:20], 1):
+                  print(f"INBOUND FAILURE {index}: opportunity_id={item.get('opportunity_id', '')} channel={item.get('channel', '')} error={item.get('error', '')}")
+              sys.exit(1)
+
+          if airtable_capacity_blocked:
+              print(
+                  f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, "
+                  f"accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}"
+              )
+              print(
+                  "AIRTABLE DELIVERY BLOCKED: the base record limit prevented synchronization. "
+                  "Local SQLite state and the pending backlog will be persisted for recovery; "
+                  "no records were deleted and this run will remain failed until sync capacity is restored."
+              )
+              sys.exit(1)
+
+          if sync_failed > 0:
+              print(f"AIRTABLE DELIVERY FAILURE: {sync_failed} lead synchronization operation(s) failed and remain undelivered.")
+              for index, item in enumerate(failures[:20], 1):
+                  lead = item.get("lead") if isinstance(item.get("lead"), dict) else {}
+                  print(f"SYNC FAILURE {index}: fingerprint={lead.get('fingerprint', '')} company={lead.get('company', '')} route={lead.get('route', '')} error={item.get('error', '')}")
+              sys.exit(1)
+          if (sync_completed + sync_already_exists + sync_deferred_research) <= 0:
+              print("AIRTABLE DELIVERY FAILURE: the production result contained no completed, already-existing, or explicitly deferred research delivery evidence.")
+              sys.exit(1)
+          print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
+          print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
+          PY
+      - name: Verify production revenue lifecycle and outreach
+        if: steps.production_mode.outputs.full_revenue_ready == 'true'
+        run: python -m lead_engine.production_lifecycle_audit --database data/leads.sqlite3
+      - name: Report outreach held in durable queue
+        if: steps.production_mode.outputs.full_revenue_ready != 'true'
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          from lead_engine.agent_queue import pending
+          from lead_engine.database import LeadDB
+
+          db = LeadDB(data_dir="data")
+          try:
+              tasks = pending(db)
+              queued = Counter(
+                  str(task.get("agent") or "unknown")
+                  for task in tasks
+                  if str(task.get("status") or "").lower() in {"queued", "running"}
+              )
+              print("OUTREACH SAFETY HOLD VERIFIED: outbound transport is disabled for this run.")
+              print(f"Durable queued/running outreach_closer tasks: {queued.get('outreach_closer', 0)}")
+              print(f"Durable queued/running follow_up tasks: {queued.get('follow_up', 0)}")
+              print("No message was sent by the production cycle; tasks remain available for a verified transport.")
+              with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write("\n## Outreach status\n")
+                  summary.write("- External sending was disabled because live transport/reply checks did not pass.\n")
+                  summary.write(f"- Durable outreach tasks queued/running: {queued.get('outreach_closer', 0)}\n")
+                  summary.write(f"- Durable follow-up tasks queued/running: {queued.get('follow_up', 0)}\n")
+          finally:
+              db.close()
+          PY
+      - name: Persist encrypted external browser authentication state
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-browser-auth-state
+          path: data/browser-state.enc
+          if-no-files-found: ignore
+          retention-days: 90
+          compression-level: 6
+          overwrite: true
+      - name: Validate Lead Engine state before artifact persistence
+        id: persist_state_validation
+        if: always() && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib
+          import sqlite3
+
+          root = pathlib.Path("data")
+          primary = root / "leads.sqlite3"
+          if not primary.is_file() or primary.stat().st_size == 0:
+              raise SystemExit("STATE ARTIFACT BLOCKED: data/leads.sqlite3 is missing or empty; refusing to publish an unusable recovery artifact.")
+          databases = [primary] + [
+              path for path in sorted(root.rglob("*"))
+              if path.is_file() and path != primary and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+          ]
+          for database in databases:
+              if database.stat().st_size == 0:
+                  raise SystemExit(f"STATE ARTIFACT BLOCKED: empty SQLite database: {database}")
+              with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=30) as connection:
+                  integrity = connection.execute("PRAGMA integrity_check").fetchone()
+                  if not integrity or integrity[0] != "ok":
+                      raise SystemExit(f"STATE ARTIFACT BLOCKED: SQLite integrity check failed for {database}: {integrity!r}")
+                  if database == primary:
+                      tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                      missing = sorted({"leads", "checkpoints"} - tables)
+                      if missing:
+                          raise SystemExit(f"STATE ARTIFACT BLOCKED: primary database missing required tables: {missing}")
+          print(f"STATE ARTIFACT SAFE TO PERSIST: validated {len(databases)} SQLite database(s).")
+          PY
+      - name: Persist Lead Engine state
+        if: always() && steps.persist_state_validation.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-lead-engine-state
+          path: data
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
+          overwrite: false\t'}"
+            if [ "${TURSO_STATE_RESTORED:-false}" = "true" ] && [ -n "${TURSO_STATE_RESTORED_AT:-}" ]; then
+              if python - "$artifact_created_at" "$TURSO_STATE_RESTORED_AT" <<'PY'
+          from datetime import datetime
+          import sys
+          artifact_at = datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+          turso_at = datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+          raise SystemExit(0 if artifact_at > turso_at else 1)
+          PY
+              then
+                echo "ENGINE STATE RECOVERY: verified artifact from run $run_id is newer than the restored Turso generation; checking artifact integrity before selecting it."
+              else
+                echo "ENGINE STATE RECOVERY: restored Turso generation is at least as new as the newest available artifact; keeping Turso state."
+                break
+              fi
+            fi
 
             candidate_dir="$(mktemp -d)"
             if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name thorio-lead-engine-state --dir "$candidate_dir"; then
