@@ -175,3 +175,27 @@ def test_batch_delivery_uses_only_an_explicit_company_website():
         "company_website": "https://example.com",
     })
     assert fields["Website"] == "https://example.com"
+
+def test_batch_delivery_scans_past_raw_backlog_to_sync_ready_lead(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    raw = {"fingerprint": "raw-first", "company": "Raw Corp", "signal": "observed hiring signal"}
+    ready = {"fingerprint": "ready-second", "company": "Ready Corp", "signal": "observed hiring signal"}
+    db.insert_if_new(raw)
+    db.insert_if_new(ready)
+    synced_result = {"status": "synced", "lead": ready, "error": None}
+
+    with patch(
+        "lead_engine.batch_delivery.package_is_ready",
+        side_effect=lambda lead: lead.get("fingerprint") == "ready-second",
+    ), patch("lead_engine.batch_delivery._run_batch_high_volume_sync") as batch, patch(
+        "lead_engine.sync_worker.sync_one", return_value=synced_result
+    ) as single:
+        result = sync_pending_batched(db, limit=1)
+
+    batch.assert_called_once_with([ready])
+    single.assert_called_once_with(ready, db=db)
+    assert result["synced_count"] == 1
+    assert result["deferred_research_count"] == 1
+    assert db.pending(limit=10) == []
+    assert db.get("raw-first")["_airtable_sync_deferred"] == "research_verification_pending"
+    assert "_airtable_sync_deferred" not in db.get("ready-second")
