@@ -142,6 +142,12 @@ class LeadPipeline:
             "failed",
         )
 
+        if status == "deferred_research":
+            self.db.defer_sync(
+                str(lead.get("fingerprint") or ""),
+                str(sync_result.get("reason") or "research_verification_pending"),
+            )
+            return sync_result
         if status not in {
             "synced",
             "already_exists",
@@ -150,10 +156,7 @@ class LeadPipeline:
                 sync_result.get("error")
                 or "Synchronization failed."
             )
-
-            raise ValueError(
-                error
-            )
+            raise ValueError(error)
 
         return sync_result
 
@@ -312,14 +315,16 @@ class LeadPipeline:
                 "synced",
                 "already_exists",
             }:
-                self.db.mark_synced(
-                    fingerprint
+                self.db.mark_synced(fingerprint)
+            elif sync_status == "deferred_research":
+                self.db.defer_sync(
+                    fingerprint,
+                    str(sync_result.get("reason") or "research_verification_pending"),
                 )
             else:
                 self.db.mark_error(
                     fingerprint,
-                    sync_error
-                    or "Synchronization failed.",
+                    sync_error or "Synchronization failed.",
                 )
 
             return {
