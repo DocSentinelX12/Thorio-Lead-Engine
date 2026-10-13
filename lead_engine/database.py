@@ -365,6 +365,19 @@ class LeadDB:
             (DEFAULT_MAX_ATTEMPTS, limit),
         ).fetchall()
 
+    def pending_scan(self, after_rowid: int = 0, limit: int = 500):
+        """Keyset-paginate unsynced, non-deferred rows without starving ready work."""
+        if not isinstance(after_rowid, int) or isinstance(after_rowid, bool) or after_rowid < 0:
+            raise ValueError("Pending scan row ID must be a non-negative integer.")
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("Pending scan limit must be a positive integer.")
+        return self.conn.execute(
+            "SELECT rowid, fingerprint, payload, attempts FROM leads "
+            "WHERE synced = 0 AND sync_deferred = 0 AND attempts < ? AND rowid > ? "
+            "ORDER BY rowid LIMIT ?",
+            (DEFAULT_MAX_ATTEMPTS, after_rowid, limit),
+        ).fetchall()
+
     def pending_research(self, limit=50):
         if not isinstance(limit, int) or isinstance(limit, bool):
             raise ValueError("Pending limit must be an integer.")
