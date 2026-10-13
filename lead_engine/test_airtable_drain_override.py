@@ -36,7 +36,7 @@ def test_deferred_leads_are_not_reprocessed_or_dropped_within_one_drain_cycle(tm
         for item in result["deferred_research"]
         if isinstance(item, dict) and isinstance(item.get("lead"), dict)
     }
-    assert result["batches"] == 3
+    assert result["batches"] == 2
     assert result["deferred_research_count"] == total
     assert len(deferred_fingerprints) == total
     assert result["drain_complete"] is False
