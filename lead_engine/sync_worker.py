@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict, List
 
 from .airtable_sync import (
+    find_by_fingerprint,
     sync_followup,
     sync_lead_if_missing,
     sync_outreach,
@@ -227,6 +228,25 @@ def sync_one(
         }
 
     try:
+        # Raw discovery stays in canonical SQLite/Turso storage. Do not create
+        # a new Airtable row until the full research package is ready. Existing
+        # legacy rows can still be updated while their research is completed.
+        if not package_is_ready(lead):
+            fingerprint = _text(lead.get("fingerprint"))
+            existing_records = find_by_fingerprint(fingerprint) if fingerprint else []
+            if not existing_records:
+                return {
+                    "status": "deferred_research",
+                    "lead": lead,
+                    "airtable_record": None,
+                    "research_record": None,
+                    "outreach_record": None,
+                    "followup_record": None,
+                    "referral_record": None,
+                    "master_tracker": None,
+                    "error": None,
+                    "reason": "research_verification_pending",
+                }
         result = sync_lead_if_missing(
             lead
         )
@@ -656,6 +676,10 @@ def sync_pending(
         )
 
         if result["status"] == "deferred_research":
+            db.defer_sync(
+                fingerprint,
+                str(result.get("reason") or "research_verification_pending"),
+            )
             continue
 
         if result["status"] in {
