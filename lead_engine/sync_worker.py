@@ -598,9 +598,11 @@ def sync_pending(
         db.requeue_sync_deferred("airtable_record_capacity")
     ready_items: List[tuple[str, Dict[str, Any]]] = []
     after_rowid = 0
+    scanned_count = 0
     page_size = max(100, min(500, limit * 10))
+    max_scan_count = page_size * 10
 
-    while len(ready_items) < limit:
+    while len(ready_items) < limit and scanned_count < max_scan_count:
         rows = db.pending_scan(after_rowid=after_rowid, limit=page_size)
         if not rows:
             break
@@ -608,6 +610,7 @@ def sync_pending(
         invalid_page: List[tuple[str, str]] = []
         for rowid, fingerprint, payload_json, attempts in rows:
             after_rowid = int(rowid)
+            scanned_count += 1
             try:
                 lead = json.loads(payload_json)
                 if not isinstance(lead, dict):
@@ -641,7 +644,7 @@ def sync_pending(
             }
             failed.append(result)
             db.mark_error(fingerprint, error)
-        if len(ready_items) >= limit or len(rows) < page_size:
+        if len(ready_items) >= limit or len(rows) < page_size or scanned_count >= max_scan_count:
             break
 
     for fingerprint, lead in ready_items:
