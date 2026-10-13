@@ -118,6 +118,44 @@ def test_resilient_connection_reopens_stream_that_expires_during_read():
     assert len(connections) == 2
 
 
+class ExpiringCommitConnection:
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.commit_count = 0
+
+    def execute(self, *args, **kwargs):
+        return self.delegate.execute(*args, **kwargs)
+
+    def commit(self):
+        self.commit_count += 1
+        self.delegate.commit()
+        if self.commit_count == 2:
+            raise RuntimeError("HTTP 404: stream not found")
+
+    def close(self):
+        return None
+
+
+def test_resilient_connection_replays_idempotent_write_after_ambiguous_commit():
+    remote = PersistentConnection()
+    connections = []
+
+    def factory():
+        connection = ExpiringCommitConnection(remote) if not connections else remote
+        connections.append(connection)
+        return connection
+
+    connection = turso_state._ResilientConnection(factory)
+    connection.execute("CREATE TABLE IF NOT EXISTS commit_recovery (value TEXT)")
+    connection.commit()
+    connection.execute("INSERT OR REPLACE INTO commit_recovery (rowid, value) VALUES (1, 'preserved')")
+    connection.commit()
+
+    rows = connection.execute("SELECT value FROM commit_recovery").fetchall()
+    assert rows == [("preserved",)]
+    assert len(connections) == 2
+
+
 def make_data_dir(path: Path, lead_name: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path / "leads.sqlite3") as conn:
