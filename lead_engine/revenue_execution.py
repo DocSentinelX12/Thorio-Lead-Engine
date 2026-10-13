@@ -128,6 +128,9 @@ def configured_revenue_transport() -> RevenueTransport | None:
     """Build the authorized runtime transport from explicit runtime configuration."""
     if _RUNTIME_TRANSPORT is not None:
         return _RUNTIME_TRANSPORT
+    outbound_enabled = os.getenv("THORIO_REVENUE_OUTBOUND_ENABLED", "true").strip().lower()
+    if outbound_enabled in {"0", "false", "no", "off"}:
+        return None
 
     mode = os.getenv("THORIO_REVENUE_TRANSPORT_MODE", "").strip().lower()
     if mode == "browser":
