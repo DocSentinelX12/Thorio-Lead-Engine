@@ -284,6 +284,7 @@ def test_existing_database_migrates_sync_deferred_column_without_losing_leads(tm
     db = LeadDB(data_dir=str(data_dir))
     columns = {row[1] for row in db.conn.execute("PRAGMA table_info(leads)").fetchall()}
     assert "sync_deferred" in columns
+    assert "sync_deferred_reason" in columns
     assert db.get("legacy-preserved-001") == {"fingerprint": "legacy-preserved-001"}
     assert db.get_sync_state("legacy-preserved-001")["synced"] is False
 
@@ -308,3 +309,22 @@ def test_sync_pending_defers_unresearched_leads_without_creating_airtable_record
     stored = db.get("raw-discovery-not-in-airtable-001")
     assert stored is not None
     assert stored["_airtable_sync_deferred"] == "research_verification_pending"
+
+def test_capacity_deferred_lead_waits_for_capacity_recovery_not_research_update(tmp_path):
+    db = LeadDB(data_dir=str(tmp_path))
+    lead = {
+        "fingerprint": "capacity-deferred-001",
+        "company": "Capacity Deferred Corp",
+        "signal": "verified hiring need",
+    }
+    assert db.insert_if_new(lead)
+
+    db.defer_sync("capacity-deferred-001", "airtable_record_capacity")
+    with patch("lead_engine.sales_handoff.package_is_ready", return_value=True):
+        db.update_payload("capacity-deferred-001", {"notes": "updated while capacity blocked"})
+
+    assert db.pending(limit=10) == []
+    assert db.get("capacity-deferred-001")["_airtable_sync_deferred"] == "airtable_record_capacity"
+    assert db.requeue_sync_deferred("airtable_record_capacity") == 1
+    assert len(db.pending(limit=10)) == 1
+    assert "_airtable_sync_deferred" not in db.get("capacity-deferred-001")
