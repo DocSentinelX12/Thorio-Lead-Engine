@@ -154,7 +154,7 @@ def _request(
         )
         if not update_existing_record:
             raise AirtableCapacityDeferred(
-                "Airtable base record capacity is exhausted; new records and table-level "
+                "Airtable mutation blocked: base record capacity is exhausted; new records and table-level "
                 "upserts remain queued without consuming retry attempts."
             )
     _require_config()
