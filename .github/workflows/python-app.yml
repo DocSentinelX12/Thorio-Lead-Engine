@@ -764,7 +764,6 @@ jobs:
                       "the research backlog are preserved; no records are deleted."
                   )
                   raise SystemExit(0)
-              raise SystemExit(0)
               raise SystemExit(
                   "AIRTABLE AUTHORIZATION/WRITE FAILURE: no configured credential could complete "
                   "the real Thorio route write probe. Review the per-credential HTTP diagnostics above."
