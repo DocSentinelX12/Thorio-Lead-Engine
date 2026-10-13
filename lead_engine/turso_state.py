@@ -221,7 +221,7 @@ def restore(data_dir: Path) -> bool:
         if not generations:
             print("TURSO STATE: no complete remote generation exists yet; existing artifact recovery remains active.")
             return False
-        generation_id, _, expected_count, expected_manifest = generations[0]
+        generation_id, generation_created_at, expected_count, expected_manifest = generations[0]
         rows = conn.execute(
             "SELECT database_name, chunk_index, chunk_count, compressed_sha256, payload "
             "FROM thorio_state_chunks WHERE generation_id = ? ORDER BY database_name, chunk_index",
@@ -275,6 +275,7 @@ def restore(data_dir: Path) -> bool:
                 shutil.copy2(source, temporary_target)
                 os.replace(temporary_target, destination)
         print(f"TURSO STATE RESTORED: generation={generation_id}; databases={len(staged)}; SQLite integrity and manifest verified.")
+        print(f"restored_at={generation_created_at}")
         return True
     finally:
         conn.close()
