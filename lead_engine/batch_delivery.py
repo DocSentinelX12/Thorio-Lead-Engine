@@ -200,13 +200,15 @@ def sync_pending_batched(
 ) -> Dict[str, Any]:
     """Synchronize pending leads with batch-first, durable delivery.
 
-    Exclusions are scoped to one bounded drain cycle. Deferred leads remain
-    durable and pending, but are not selected repeatedly within that same cycle.
+    Raw discoveries stay durable in SQLite/Turso and are deferred from the
+    Airtable hot queue until research is ready. Exclusions are cycle-scoped.
     """
     excluded = {str(value).strip() for value in (exclude_fingerprints or ()) if str(value).strip()}
     valid: List[tuple[str, Dict[str, Any]]] = []
     failed: List[Dict[str, Any]] = []
     deferred_research: List[Dict[str, Any]] = []
+    deferred_research_count = 0
+    deferred_sample_limit = 100
     after_rowid = 0
     page_size = max(100, min(500, limit * 10))
 
@@ -231,14 +233,15 @@ def sync_pending_batched(
                 continue
             if not package_is_ready(lead):
                 deferred_page.append((fingerprint, lead))
-                deferred_research.append({
-                    "status": "deferred_research",
-                    "lead": lead,
-                    "airtable_record": None,
-                    "research_record": None,
-                    "error": None,
-                    "reason": "research_verification_pending",
-                })
+                deferred_research_count += 1
+                if len(deferred_research) < deferred_sample_limit:
+                    deferred_research.append({
+                        "status": "deferred_research",
+                        "fingerprint": fingerprint,
+                        "company": str(lead.get("company") or ""),
+                        "error": None,
+                        "reason": "research_verification_pending",
+                    })
                 continue
             valid.append((fingerprint, lead))
             if len(valid) >= limit:
@@ -264,14 +267,15 @@ def sync_pending_batched(
                 ready_chunk.append((fingerprint, lead))
             else:
                 db.defer_sync(fingerprint, "research_verification_pending")
-                deferred_research.append({
-                    "status": "deferred_research",
-                    "lead": lead,
-                    "airtable_record": None,
-                    "research_record": None,
-                    "error": None,
-                    "reason": "research_verification_pending",
-                })
+                deferred_research_count += 1
+                if len(deferred_research) < deferred_sample_limit:
+                    deferred_research.append({
+                        "status": "deferred_research",
+                        "fingerprint": fingerprint,
+                        "company": str(lead.get("company") or ""),
+                        "error": None,
+                        "reason": "research_verification_pending",
+                    })
         if not ready_chunk:
             continue
 
@@ -294,7 +298,15 @@ def sync_pending_batched(
                 result = sync_one(lead, db=db)
                 if result.get("status") == "deferred_research":
                     db.defer_sync(fingerprint, "research_verification_pending")
-                    deferred_research.append(result)
+                    deferred_research_count += 1
+                    if len(deferred_research) < deferred_sample_limit:
+                        deferred_research.append({
+                            "status": "deferred_research",
+                            "fingerprint": fingerprint,
+                            "company": str(lead.get("company") or ""),
+                            "error": None,
+                            "reason": "research_verification_pending",
+                        })
                     continue
                 if result.get("status") in {"synced", "already_exists"}:
                     db.mark_synced(fingerprint)
@@ -314,7 +326,15 @@ def sync_pending_batched(
                 result = sync_one(lead, db=db)
                 if result.get("status") == "deferred_research":
                     db.defer_sync(fingerprint, "research_verification_pending")
-                    deferred_research.append(result)
+                    deferred_research_count += 1
+                    if len(deferred_research) < deferred_sample_limit:
+                        deferred_research.append({
+                            "status": "deferred_research",
+                            "fingerprint": fingerprint,
+                            "company": str(lead.get("company") or ""),
+                            "error": None,
+                            "reason": "research_verification_pending",
+                        })
                     continue
                 if result.get("status") == "synced":
                     db.mark_synced(fingerprint)
@@ -338,7 +358,8 @@ def sync_pending_batched(
         "already_exists_count": len(already_exists),
         "failed_count": len(failed),
         "deferred_research": deferred_research,
-        "deferred_research_count": len(deferred_research),
+        "deferred_research_count": deferred_research_count,
+        "deferred_research_sample_truncated": deferred_research_count > len(deferred_research),
         "batch_mode": True,
         "batch_size": BATCH_SIZE,
     }
