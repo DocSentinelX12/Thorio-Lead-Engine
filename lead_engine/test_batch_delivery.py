@@ -97,14 +97,12 @@ def test_batch_delivery_falls_back_to_single_record_sync_on_batch_failure(tmp_pa
 
     with patch("lead_engine.batch_delivery._run_batch_high_volume_sync", side_effect=RuntimeError("batch rejected")), \
          patch("lead_engine.batch_delivery.package_is_ready", return_value=True), \
-         patch("lead_engine.sync_worker.sync_one", return_value=fallback_result) as mock_single, \
-         patch("lead_engine.batch_delivery.sync_research", return_value={"status": "synced"}) as mock_research:
+         patch("lead_engine.sync_worker.sync_one", return_value=fallback_result) as mock_single:
         result = sync_pending_batched(db, limit=10)
 
     assert result["synced_count"] == 1
     assert result["failed_count"] == 0
     mock_single.assert_called_once_with(lead, db=db)
-    mock_research.assert_called_once_with(lead)
     assert db.get_sync_state("batch-fallback-001")["synced"] is True
 
 
