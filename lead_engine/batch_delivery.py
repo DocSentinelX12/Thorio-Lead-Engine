@@ -229,9 +229,11 @@ def sync_pending_batched(
     deferred_research: List[Dict[str, Any]] = []
     deferred_research_count = 0
     deferred_capacity_count = 0
-    deferred_sample_limit = 100
+    deferred_sample_limit = 500
     after_rowid = 0
+    scanned_count = 0
     page_size = max(100, min(500, limit * 10))
+    max_scan_count = page_size * 10
 
     # Scan by stable rowid so deferring a page cannot shift offsets and skip
     # other records. This lets ready leads behind a large raw backlog proceed.
@@ -243,6 +245,7 @@ def sync_pending_batched(
         invalid_page: List[tuple[str, str]] = []
         for rowid, fingerprint, payload_json, _attempts in rows:
             after_rowid = int(rowid)
+            scanned_count += 1
             if fingerprint in excluded:
                 continue
             try:
@@ -259,6 +262,7 @@ def sync_pending_batched(
                     deferred_research.append({
                         "status": "deferred_research",
                         "fingerprint": fingerprint,
+                        "lead": lead,
                         "company": str(lead.get("company") or ""),
                         "error": None,
                         "reason": "research_verification_pending",
@@ -274,7 +278,7 @@ def sync_pending_batched(
         for fingerprint, error in invalid_page:
             db.mark_error(fingerprint, error)
             failed.append({"status": "failed", "lead": {}, "error": error})
-        if len(valid) >= limit or len(rows) < page_size:
+        if len(valid) >= limit or len(rows) < page_size or scanned_count >= max_scan_count:
             break
 
     synced: List[Dict[str, Any]] = []
