@@ -61,6 +61,63 @@ def test_resilient_connection_reopens_expired_turso_stream():
     assert len(connections) == 2
 
 
+class ExpiringFetchCursor:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self.expire_next_fetch = True
+
+    def fetchone(self):
+        if self.expire_next_fetch:
+            self.expire_next_fetch = False
+            raise RuntimeError("stream not found")
+        return self.cursor.fetchone()
+
+    def fetchall(self):
+        if self.expire_next_fetch:
+            self.expire_next_fetch = False
+            raise RuntimeError("stream not found")
+        return self.cursor.fetchall()
+
+    def __getattr__(self, name):
+        return getattr(self.cursor, name)
+
+
+class ExpiringFetchConnection:
+    def __init__(self, delegate):
+        self.delegate = delegate
+
+    def execute(self, *args, **kwargs):
+        cursor = self.delegate.execute(*args, **kwargs)
+        if args and str(args[0]).lstrip().upper().startswith("SELECT"):
+            return ExpiringFetchCursor(cursor)
+        return cursor
+
+    def commit(self):
+        return self.delegate.commit()
+
+    def close(self):
+        return None
+
+
+def test_resilient_connection_reopens_stream_that_expires_during_read():
+    remote = PersistentConnection()
+    connections = []
+
+    def factory():
+        connection = ExpiringFetchConnection(remote) if not connections else remote
+        connections.append(connection)
+        return connection
+
+    connection = turso_state._ResilientConnection(factory)
+    connection.execute("CREATE TABLE IF NOT EXISTS fetch_recovery (value TEXT)")
+    connection.execute("INSERT OR REPLACE INTO fetch_recovery (rowid, value) VALUES (1, 'preserved')")
+    connection.commit()
+
+    rows = connection.execute("SELECT value FROM fetch_recovery").fetchall()
+    assert rows == [("preserved",)]
+    assert len(connections) == 2
+
+
 def make_data_dir(path: Path, lead_name: str) -> None:
     path.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path / "leads.sqlite3") as conn:
