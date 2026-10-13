@@ -316,6 +316,47 @@ def restore(data_dir: Path) -> bool:
         conn.close()
 
 
+def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dict[str, str]) -> None:
+    """Read every persisted chunk back before a generation can be marked complete."""
+    stored_names = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT database_name FROM thorio_state_chunks WHERE generation_id = ?",
+            (generation_id,),
+        ).fetchall()
+    }
+    if stored_names != set(expected_raw_hashes):
+        raise RuntimeError(
+            "Turso snapshot read-back failed: stored database names do not match the manifest."
+        )
+
+    for name, expected_raw_hash in expected_raw_hashes.items():
+        rows = conn.execute(
+            "SELECT chunk_index, chunk_count, compressed_sha256, payload "
+            "FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? "
+            "ORDER BY chunk_index",
+            (generation_id, name),
+        ).fetchall()
+        if not rows:
+            raise RuntimeError(f"Turso snapshot read-back failed: no persisted chunks for {name}.")
+        expected_chunks = int(rows[0][1])
+        if (
+            len(rows) != expected_chunks
+            or [int(row[0]) for row in rows] != list(range(expected_chunks))
+            or any(int(row[1]) != expected_chunks for row in rows)
+        ):
+            raise RuntimeError(f"Turso snapshot read-back failed: missing or inconsistent chunks for {name}.")
+        compressed_hashes = {str(row[2]) for row in rows}
+        if len(compressed_hashes) != 1:
+            raise RuntimeError(f"Turso snapshot read-back failed: inconsistent chunk checksums for {name}.")
+        compressed = b"".join(bytes(row[3]) for row in rows)
+        if hashlib.sha256(compressed).hexdigest() != next(iter(compressed_hashes)):
+            raise RuntimeError(f"Turso snapshot read-back failed: compressed checksum mismatch for {name}.")
+        raw = gzip.decompress(compressed)
+        if hashlib.sha256(raw).hexdigest() != expected_raw_hash:
+            raise RuntimeError(f"Turso snapshot read-back failed: database checksum mismatch for {name}.")
+
+
 def snapshot(data_dir: Path) -> None:
     """Write a new complete generation, then prune old generations."""
     conn = _connect()
@@ -355,6 +396,14 @@ def snapshot(data_dir: Path) -> None:
         manifest_hash = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
+        expected_raw_hashes = {
+            str(item["name"]): str(item["sha256"])
+            for item in manifest
+        }
+        # Do not publish a generation as complete based only on successful
+        # write acknowledgments. Read back every remote chunk and verify the
+        # reconstructed SQLite bytes before it becomes eligible for restore.
+        _verify_generation_chunks(conn, generation_id, expected_raw_hashes)
         conn.execute(
             "UPDATE thorio_state_generations SET status = 'complete', manifest_sha256 = ? WHERE generation_id = ?",
             (manifest_hash, generation_id),
