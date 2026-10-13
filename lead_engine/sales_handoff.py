@@ -143,14 +143,8 @@ def _read_airtable_record(table_key: str, record_id: str) -> Mapping[str, Any]:
     record_id = str(record_id or "").strip()
     if not record_id:
         raise ValueError(f"Airtable readback requires a record ID for {table_key}.")
-    from .airtable_sync import _master_table_url, _request
-    if table_key == "research":
-        from .research_sync import _research_table_url
-        table_url = _research_table_url()
-    else:
-        table_url = _master_table_url(table_key)
-    encoded = urllib.parse.quote(record_id, safe="")
-    record = _request("GET", f"{table_url}/{encoded}")
+    from .airtable_sync import read_master_record
+    record = read_master_record(table_key, record_id)
     if not isinstance(record, Mapping):
         raise ValueError(f"Airtable returned an invalid {table_key} record for {record_id}.")
     return record
