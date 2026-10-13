@@ -168,7 +168,12 @@ def _opportunity_records(leads: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
-    """Synchronize high-volume tables with resilient bounded batches."""
+    """Synchronize only fully researched leads into the Airtable workspace."""
+    if any(not package_is_ready(lead) for lead in leads):
+        raise AirtableSyncError(
+            "Raw or research-incomplete discoveries must remain in canonical storage; "
+            "Airtable batch projection accepts only ready research packages."
+        )
     for chunk in _chunks([
         {"fields": _lead_machine_fields(lead)} for lead in leads
     ]):
@@ -226,31 +231,45 @@ def sync_pending_batched(
 
     for start in range(0, len(valid), BATCH_SIZE):
         chunk = valid[start:start + BATCH_SIZE]
-        leads = [lead for _fingerprint, lead in chunk]
+        ready_chunk: List[tuple[str, Dict[str, Any]]] = []
+        for fingerprint, lead in chunk:
+            if package_is_ready(lead):
+                ready_chunk.append((fingerprint, lead))
+            else:
+                db.defer_sync(fingerprint, "research_verification_pending")
+                deferred_research.append({
+                    "status": "deferred_research",
+                    "lead": lead,
+                    "airtable_record": None,
+                    "research_record": None,
+                    "error": None,
+                    "reason": "research_verification_pending",
+                })
+        if not ready_chunk:
+            continue
+
+        ready_leads = [lead for _fingerprint, lead in ready_chunk]
         try:
-            _run_batch_high_volume_sync(leads)
+            _run_batch_high_volume_sync(ready_leads)
         except AirtableTransientError as batch_exc:
             # Do not fall back to one request per record after a transient
-            # outage. Keep durable rows pending for a later cycle.
-            for fingerprint, lead in chunk:
+            # outage. Keep ready records pending for a later cycle.
+            for fingerprint, lead in ready_chunk:
                 message = str(batch_exc)
                 db.mark_error(fingerprint, message)
                 failed.append({"status": "failed", "lead": lead, "error": message})
             continue
         except Exception as batch_exc:
+            # A batch-level failure falls back only for the same ready subset.
+            # Raw discoveries never enter a per-record Airtable create path.
             from .sync_worker import sync_one
-            for fingerprint, lead in chunk:
+            for fingerprint, lead in ready_chunk:
                 result = sync_one(lead, db=db)
                 if result.get("status") == "deferred_research":
+                    db.defer_sync(fingerprint, "research_verification_pending")
                     deferred_research.append(result)
                     continue
                 if result.get("status") in {"synced", "already_exists"}:
-                    try:
-                        sync_research(lead)
-                    except Exception as research_exc:
-                        db.mark_error(fingerprint, str(research_exc))
-                        failed.append({**result, "status": "failed", "error": str(research_exc)})
-                        continue
                     db.mark_synced(fingerprint)
                     if result.get("status") == "already_exists":
                         already_exists.append(result)
@@ -263,65 +282,23 @@ def sync_pending_batched(
             continue
 
         from .sync_worker import sync_one
-        for fingerprint, lead in chunk:
+        for fingerprint, lead in ready_chunk:
             try:
-                if not package_is_ready(lead):
-                    deferred_research.append({
-                        "status": "deferred_research",
-                        "lead": lead,
-                        "error": None,
-                        "reason": "research_verification_pending",
-                    })
+                result = sync_one(lead, db=db)
+                if result.get("status") == "deferred_research":
+                    db.defer_sync(fingerprint, "research_verification_pending")
+                    deferred_research.append(result)
                     continue
-                if package_is_ready(lead):
-                    result = sync_one(lead, db=db)
-                    if result.get("status") not in {"synced", "already_exists"}:
-                        raise AirtableSyncError(result.get("error") or "complete sales handoff confirmation failed")
+                if result.get("status") == "synced":
                     db.mark_synced(fingerprint)
-                    if result.get("status") == "already_exists":
-                        already_exists.append(result)
-                    else:
-                        synced.append(result)
-                    continue
-                if _outreach_ready(lead):
-                    outreach_result = sync_outreach(_build_outreach_payload(lead))
-                    if outreach_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
-                        raise AirtableSyncError(outreach_result.get("error") or "Outreach synchronization failed")
-                    if _followup_required(lead):
-                        followup_result = sync_followup(_build_followup_payload(lead))
-                        if followup_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
-                            raise AirtableSyncError(followup_result.get("error") or "Follow-up synchronization failed")
-
-                referral = lead_to_paxus_referral(lead)
-                if (
-                    referral.referral_submitted
-                    or referral.contact_consent
-                    or referral.warm_referral_ready
-                    or referral.paxus_accepted
-                    or referral.introduction_made
-                    or referral.placement_count > 0
-                    or referral.client_payment_received
-                    or referral.commission_due
-                ):
-                    referral_result = sync_paxus_referral_state(referral)
-                    if referral_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
-                        raise AirtableSyncError(referral_result.get("error") or "Referral synchronization failed")
-
-                commission_result = sync_commission(lead)
-                if commission_result is not None and commission_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
-                    raise AirtableSyncError(commission_result.get("error") or "Commission synchronization failed")
-
-                research_result = sync_research(lead)
-                if research_result.get("status") not in {"created", "updated", "synced", "already_exists"}:
-                    raise AirtableSyncError(research_result.get("error") or "Research synchronization failed")
-
-                db.mark_synced(fingerprint)
-                synced.append({
-                    "status": "synced",
-                    "lead": lead,
-                    "airtable_record": None,
-                    "error": None,
-                })
+                    synced.append(result)
+                elif result.get("status") == "already_exists":
+                    db.mark_synced(fingerprint)
+                    already_exists.append(result)
+                else:
+                    error = result.get("error") or "Complete sales handoff confirmation failed."
+                    db.mark_error(fingerprint, error)
+                    failed.append({**result, "error": error})
             except Exception as exc:
                 db.mark_error(fingerprint, str(exc))
                 failed.append({"status": "failed", "lead": lead, "error": str(exc)})
