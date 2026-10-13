@@ -142,6 +142,9 @@ def configured_revenue_transport() -> RevenueTransport | None:
     if mode == "brevo_smtp":
         from .brevo_smtp_transport import BrevoSMTPTransport
         return BrevoSMTPTransport()
+    if mode == "brevo_api":
+        from .brevo_api_transport import BrevoAPITransport
+        return BrevoAPITransport()
     if mode not in {"", "auto", "http"}:
         raise RevenueTransportUnavailable(
             f"unsupported THORIO_REVENUE_TRANSPORT_MODE: {mode}"
@@ -160,8 +163,14 @@ def configured_revenue_transport() -> RevenueTransport | None:
         from .browser_revenue_transport import BrowserRevenueTransport
         return BrowserRevenueTransport()
 
-    # Prefer Brevo automatically when its full production configuration is verified.
-    # This avoids falling back to a known-failing Gmail transport when Brevo is ready.
+    # Prefer Brevo's HTTPS API when a key is present. It avoids SMTP port
+    # connectivity problems and prevents falling back to Gmail when Brevo was
+    # intentionally configured but sender settings still need attention.
+    from .brevo_api_transport import BrevoAPITransport, brevo_api_key_configured
+    if brevo_api_key_configured():
+        return BrevoAPITransport()
+
+    # SMTP remains a supported fallback for installations with relay credentials.
     from .brevo_smtp_transport import BrevoSMTPTransport, brevo_smtp_configured
     if brevo_smtp_configured():
         return BrevoSMTPTransport()
