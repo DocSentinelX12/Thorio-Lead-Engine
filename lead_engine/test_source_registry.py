@@ -108,3 +108,38 @@ def test_active_airtable_search_theme_without_url_is_skipped_from_direct_catalog
     records = {"records": [{"id": "rec-search-theme", "fields": {"Active": True, "Source / Search": "LinkedIn hiring", "Source URL": "", "Collector Type": ""}}]}
     with patch.dict("os.environ", {"AIRTABLE_BASE_ID": "app-test", "AIRTABLE_API_KEY": "pat-test"}, clear=True), patch("lead_engine.source_registry._request", return_value=records):
         assert _load_airtable_source_catalog() == ()
+
+def test_airtable_source_catalog_reads_legacy_bases_and_deduplicates_identical_sources(monkeypatch):
+    from lead_engine import source_registry
+
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "appActive")
+    monkeypatch.setenv("AIRTABLE_LEGACY_BASE_IDS", "appLegacyB,appLegacyA")
+    monkeypatch.setenv("AIRTABLE_API_KEY", "pat-test")
+    calls = []
+    record = {
+        "id": "rec-source-shared",
+        "fields": {
+            "Active": True,
+            "Source / Search": "Remote engineering RSS",
+            "Source URL": "https://example.com/jobs.xml",
+            "Collector Type": "rss",
+            "Signal Keywords": "software engineer;remote",
+        },
+    }
+
+    def fake_request(method, url, payload=None):
+        calls.append(url)
+        if "/appActive/" in url:
+            return {"records": []}
+        return {"records": [record]}
+
+    with patch("lead_engine.source_registry._request", side_effect=fake_request):
+        catalog = source_registry._load_airtable_source_catalog()
+
+    assert catalog == ((
+        "Remote engineering RSS",
+        "https://example.com/jobs.xml",
+        "rss",
+        ("software engineer", "remote"),
+    ),)
+    assert len(calls) == 3
