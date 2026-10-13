@@ -16,8 +16,8 @@ from .airtable_sync import (
     AirtableCapacityDeferred,
     AirtableSyncError,
     AirtableTransientError,
-    find_by_fingerprint,
     find_master_records,
+    find_master_records_by_values,
     _master_table_url,
     _normalize_lead,
     _request,
@@ -178,34 +178,58 @@ def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
             "Raw or research-incomplete discoveries must remain in canonical storage; "
             "Airtable batch projection accepts only ready research packages."
         )
-    new_leads = []
+    fingerprints = []
     for lead in leads:
         fingerprint = str(lead.get("fingerprint") or "").strip()
         if not fingerprint:
             raise AirtableSyncError("Ready Airtable projection requires a stable lead fingerprint.")
-        if not find_by_fingerprint(fingerprint):
-            new_leads.append(lead)
+        fingerprints.append(fingerprint)
+    existing_lead_keys = {
+        str((record.get("fields") or {}).get("Duplicate Key") or "").strip()
+        for record in find_master_records_by_values("lead_radar", "Duplicate Key", fingerprints)
+        if isinstance(record, dict) and isinstance(record.get("fields"), dict)
+    }
+    new_leads = [
+        lead for lead in leads
+        if str(lead.get("fingerprint") or "").strip() not in existing_lead_keys
+    ]
     for chunk in _chunks([
         {"fields": _lead_machine_fields(lead)} for lead in new_leads
     ]):
         _resilient_batch_upsert("lead_radar", "Duplicate Key", chunk)
 
     companies: Dict[str, Dict[str, Any]] = {}
+    company_names = list(dict.fromkeys(str(lead.get("company") or "").strip() for lead in leads if str(lead.get("company") or "").strip()))
+    existing_companies = {
+        str((record.get("fields") or {}).get("Company") or "").strip()
+        for record in find_master_records_by_values("companies", "Company", company_names)
+        if isinstance(record, dict) and isinstance(record.get("fields"), dict)
+    }
     for lead in leads:
         company = str(lead.get("company") or "").strip()
-        if company and company not in companies:
-            existing_company = find_master_records("companies", "Company", company)
-            if not existing_company:
-                companies[company] = {"fields": _company_fields(lead)}
+        if company and company not in existing_companies and company not in companies:
+            companies[company] = {"fields": _company_fields(lead)}
     company_records = list(companies.values())
     for chunk in _chunks(company_records):
         _resilient_batch_upsert("companies", "Company", chunk)
 
     opportunities = []
-    for item in _opportunity_records(leads):
+    opportunity_items = _opportunity_records(leads)
+    opportunity_keys = [
+        str(item.get("fields", {}).get("Opportunity") or "").strip()
+        for item in opportunity_items
+        if isinstance(item, dict) and isinstance(item.get("fields"), dict)
+        and str(item["fields"].get("Opportunity") or "").strip()
+    ]
+    existing_opportunity_keys = {
+        str((record.get("fields") or {}).get("Opportunity") or "").strip()
+        for record in find_master_records_by_values("opportunities", "Opportunity", opportunity_keys)
+        if isinstance(record, dict) and isinstance(record.get("fields"), dict)
+    }
+    for item in opportunity_items:
         fields = item.get("fields") if isinstance(item, dict) else None
         opportunity_key = str(fields.get("Opportunity") or "").strip() if isinstance(fields, dict) else ""
-        if opportunity_key and not find_master_records("opportunities", "Opportunity", opportunity_key):
+        if opportunity_key and opportunity_key not in existing_opportunity_keys:
             opportunities.append(item)
     for chunk in _chunks(opportunities):
         _resilient_batch_upsert("opportunities", "Opportunity", chunk)
