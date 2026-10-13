@@ -9,11 +9,15 @@ does not turn into one HTTP request per discovered record.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict, Iterable, List
 
 from .airtable_sync import (
+    AirtableCapacityDeferred,
     AirtableSyncError,
     AirtableTransientError,
+    find_by_fingerprint,
+    find_master_records,
     _master_table_url,
     _normalize_lead,
     _request,
@@ -174,8 +178,15 @@ def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
             "Raw or research-incomplete discoveries must remain in canonical storage; "
             "Airtable batch projection accepts only ready research packages."
         )
+    new_leads = []
+    for lead in leads:
+        fingerprint = str(lead.get("fingerprint") or "").strip()
+        if not fingerprint:
+            raise AirtableSyncError("Ready Airtable projection requires a stable lead fingerprint.")
+        if not find_by_fingerprint(fingerprint):
+            new_leads.append(lead)
     for chunk in _chunks([
-        {"fields": _lead_machine_fields(lead)} for lead in leads
+        {"fields": _lead_machine_fields(lead)} for lead in new_leads
     ]):
         _resilient_batch_upsert("lead_radar", "Duplicate Key", chunk)
 
@@ -183,12 +194,19 @@ def _run_batch_high_volume_sync(leads: List[Dict[str, Any]]) -> None:
     for lead in leads:
         company = str(lead.get("company") or "").strip()
         if company and company not in companies:
-            companies[company] = {"fields": _company_fields(lead)}
+            existing_company = find_master_records("companies", "Company", company)
+            if not existing_company:
+                companies[company] = {"fields": _company_fields(lead)}
     company_records = list(companies.values())
     for chunk in _chunks(company_records):
         _resilient_batch_upsert("companies", "Company", chunk)
 
-    opportunities = _opportunity_records(leads)
+    opportunities = []
+    for item in _opportunity_records(leads):
+        fields = item.get("fields") if isinstance(item, dict) else None
+        opportunity_key = str(fields.get("Opportunity") or "").strip() if isinstance(fields, dict) else ""
+        if opportunity_key and not find_master_records("opportunities", "Opportunity", opportunity_key):
+            opportunities.append(item)
     for chunk in _chunks(opportunities):
         _resilient_batch_upsert("opportunities", "Opportunity", chunk)
 
@@ -204,10 +222,13 @@ def sync_pending_batched(
     Airtable hot queue until research is ready. Exclusions are cycle-scoped.
     """
     excluded = {str(value).strip() for value in (exclude_fingerprints or ()) if str(value).strip()}
+    if os.getenv("AIRTABLE_SYNC_BLOCK_REASON", "").strip().lower() != "record_capacity":
+        db.requeue_sync_deferred("airtable_record_capacity")
     valid: List[tuple[str, Dict[str, Any]]] = []
     failed: List[Dict[str, Any]] = []
     deferred_research: List[Dict[str, Any]] = []
     deferred_research_count = 0
+    deferred_capacity_count = 0
     deferred_sample_limit = 100
     after_rowid = 0
     page_size = max(100, min(500, limit * 10))
@@ -290,6 +311,34 @@ def sync_pending_batched(
                 db.mark_error(fingerprint, message)
                 failed.append({"status": "failed", "lead": lead, "error": message})
             continue
+        except AirtableCapacityDeferred:
+            # Existing records can still be updated. New records remain durable
+            # and are requeued automatically when the active base has capacity.
+            from .sync_worker import sync_one
+            for fingerprint, lead in ready_chunk:
+                result = sync_one(lead, db=db)
+                if result.get("status") == "deferred_capacity":
+                    db.defer_sync(fingerprint, "airtable_record_capacity")
+                    deferred_capacity_count += 1
+                elif result.get("status") == "deferred_research":
+                    db.defer_sync(fingerprint, "research_verification_pending")
+                    deferred_research_count += 1
+                    if len(deferred_research) < deferred_sample_limit:
+                        deferred_research.append({
+                            "status": "deferred_research",
+                            "fingerprint": fingerprint,
+                            "company": str(lead.get("company") or ""),
+                            "error": None,
+                            "reason": "research_verification_pending",
+                        })
+                elif result.get("status") in {"synced", "already_exists"}:
+                    db.mark_synced(fingerprint)
+                    (already_exists if result.get("status") == "already_exists" else synced).append(result)
+                else:
+                    error = result.get("error") or "Airtable capacity recovery could not complete this handoff."
+                    db.mark_error(fingerprint, error)
+                    failed.append({**result, "error": error})
+            continue
         except Exception as batch_exc:
             # A batch-level failure falls back only for the same ready subset.
             # Raw discoveries never enter a per-record Airtable create path.
@@ -307,6 +356,10 @@ def sync_pending_batched(
                             "error": None,
                             "reason": "research_verification_pending",
                         })
+                    continue
+                if result.get("status") == "deferred_capacity":
+                    db.defer_sync(fingerprint, "airtable_record_capacity")
+                    deferred_capacity_count += 1
                     continue
                 if result.get("status") in {"synced", "already_exists"}:
                     db.mark_synced(fingerprint)
@@ -336,6 +389,10 @@ def sync_pending_batched(
                             "reason": "research_verification_pending",
                         })
                     continue
+                if result.get("status") == "deferred_capacity":
+                    db.defer_sync(fingerprint, "airtable_record_capacity")
+                    deferred_capacity_count += 1
+                    continue
                 if result.get("status") == "synced":
                     db.mark_synced(fingerprint)
                     synced.append(result)
@@ -360,6 +417,7 @@ def sync_pending_batched(
         "deferred_research": deferred_research,
         "deferred_research_count": deferred_research_count,
         "deferred_research_sample_truncated": deferred_research_count > len(deferred_research),
+        "deferred_capacity_count": deferred_capacity_count,
         "batch_mode": True,
         "batch_size": BATCH_SIZE,
     }
