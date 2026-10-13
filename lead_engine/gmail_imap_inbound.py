@@ -71,7 +71,7 @@ def _outbound_message_index(db: Any, *, limit: int) -> dict[str, dict[str, str]]
             result = item.get("provider_result")
             if not isinstance(result, Mapping):
                 continue
-            if result.get("provider") != "gmail_smtp" or result.get("accepted") is not True:
+            if result.get("provider") not in {"gmail_smtp", "brevo_smtp"} or result.get("accepted") is not True:
                 continue
             message_id = _normalize_message_id(str(result.get("message_id") or ""))
             recipient = parseaddr(str(result.get("recipient") or ""))[1].strip().lower()
@@ -184,7 +184,13 @@ class GmailIMAPObserver:
                     if _normalize_message_id(original_id) not in referenced:
                         continue
                     sender = parseaddr(str(message.get("From") or ""))[1].strip().lower()
-                    if not sender or sender == EXPECTED_SENDER:
+                    own_addresses = {
+                        EXPECTED_SENDER,
+                        _env("THORIO_BREVO_SENDER_EMAIL").lower(),
+                        _env("THORIO_BREVO_REPLY_TO_EMAIL").lower(),
+                    }
+                    own_addresses.discard("")
+                    if not sender or sender in own_addresses:
                         continue
                     body = _reply_body(message)
                     if not body:
