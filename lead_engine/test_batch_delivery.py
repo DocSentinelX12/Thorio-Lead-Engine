@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from .batch_delivery import _batch_upsert, _company_fields, _run_batch_high_volume_sync, sync_pending_batched
@@ -203,3 +204,8 @@ def test_batch_delivery_scans_past_raw_backlog_to_sync_ready_lead(tmp_path):
     assert db.pending(limit=10) == []
     assert db.get("raw-first")["_airtable_sync_deferred"] == "research_verification_pending"
     assert "_airtable_sync_deferred" not in db.get("ready-second")
+
+@pytest.fixture(autouse=True)
+def _explicit_test_airtable_base(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+
