@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import patch
 
 from lead_engine.airtable_sync import sync_lead_if_missing
@@ -47,3 +48,8 @@ def test_airtable_sync_does_not_approve_delivery():
     assert "Contacted" not in fields.values()
 
     assert fields["Outreach Status"] == "Not Contacted"
+
+@pytest.fixture(autouse=True)
+def _explicit_test_airtable_base(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_BASE_ID", "app12345678901234")
+
