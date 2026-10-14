@@ -1483,11 +1483,16 @@ jobs:
       - name: Require durable Turso persistence
         if: always()
         env:
+          TURSO_ENABLED: ${{ steps.turso_restore.outputs.enabled }}
           TURSO_SNAPSHOT_OUTCOME: ${{ steps.turso_snapshot.outcome }}
         run: |
           set -euo pipefail
-          if [ "${TURSO_SNAPSHOT_OUTCOME:-skipped}" != "success" ]; then
+          if [ "${TURSO_ENABLED:-false}" = "true" ] && [ "${TURSO_SNAPSHOT_OUTCOME:-skipped}" != "success" ]; then
             echo "DURABLE STATE FAILURE: Turso persistence did not complete within its bounded window. The validated local-state artifact was allowed to persist for recovery; the workflow remains failed until remote durability is verified." >&2
             exit 1
           fi
-          echo "DURABLE STATE VERIFIED: Turso snapshot completed within the bounded window."
+          if [ "${TURSO_ENABLED:-false}" = "true" ]; then
+            echo "DURABLE STATE VERIFIED: Turso snapshot completed within the bounded window."
+          else
+            echo "TURSO STATE STORAGE DISABLED: the existing verified artifact recovery path remains active."
+          fi
