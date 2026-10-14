@@ -1243,7 +1243,7 @@ jobs:
           exit "$engine_status"
       - name: Persist durable Turso engine state
         id: turso_snapshot
-        timeout-minutes: 9
+        timeout-minutes: 3
         continue-on-error: true
         if: always() && steps.turso_restore.outputs.enabled == 'true' && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
         env:
@@ -1251,8 +1251,8 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          echo "TURSO SNAPSHOT DEADLINE: this step is bounded to 8 minutes; the verified local-state artifact is preserved even if remote persistence stalls."
-          timeout --signal=TERM --kill-after=15s 480s python -u -m lead_engine.turso_state snapshot --data-dir data
+          echo "TURSO SNAPSHOT DEADLINE: remote persistence is bounded to 2 minutes; the verified local-state artifact is preserved if Turso stalls."
+          timeout --signal=TERM --kill-after=5s 120s python -u -m lead_engine.turso_state snapshot --data-dir data
 
       - name: Verify active collection and Airtable delivery
         run: |
