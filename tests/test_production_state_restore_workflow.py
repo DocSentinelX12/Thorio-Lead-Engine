@@ -66,3 +66,20 @@ def test_invalid_preflight_run_cannot_publish_empty_state_artifact():
     assert "PRAGMA integrity_check" in persistence
     assert "steps.persist_state_validation.outcome == 'success'" in upload
 
+
+
+def test_turso_persistence_is_bounded_and_state_artifact_survives_timeout():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    snapshot = workflow.split("- name: Persist durable Turso engine state", 1)[1]
+    snapshot = snapshot.split("- name: Verify active collection and Airtable delivery", 1)[0]
+    artifact_upload = workflow.split("- name: Persist Lead Engine state", 1)[1]
+    final_gate = workflow.split("- name: Require durable Turso persistence", 1)[1]
+
+    assert "id: turso_snapshot" in snapshot
+    assert "timeout-minutes: 9" in snapshot
+    assert "continue-on-error: true" in snapshot
+    assert "timeout --signal=TERM --kill-after=15s 480s python -u -m lead_engine.turso_state snapshot --data-dir data" in snapshot
+    assert "name: thorio-lead-engine-state" in artifact_upload
+    assert "TURSO_SNAPSHOT_OUTCOME" in final_gate
+    assert '!= "success"' in final_gate
+    assert "the workflow remains failed until remote durability is verified" in final_gate
