@@ -21,6 +21,26 @@ class PersistentConnection:
         return None
 
 
+class BatchPersistentConnection(PersistentConnection):
+    def __init__(self):
+        super().__init__()
+        self.batch_calls = []
+
+    def batch(self, statements, mode=None):
+        statements = list(statements)
+        self.batch_calls.append((len(statements), mode))
+        if mode == "immediate":
+            self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            for sql, parameters in statements:
+                self.connection.execute(sql, parameters)
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        return [None] * len(statements)
+
+
 class ExpiringConnection:
     def __init__(self, delegate):
         self.delegate = delegate
@@ -206,6 +226,21 @@ class DroppingChunkConnection(PersistentConnection):
             self.dropped_chunk = True
             return self.connection.execute("SELECT 1")
         return self.connection.execute(sql, *args, **kwargs)
+
+
+def test_turso_snapshot_batches_remote_chunk_writes(monkeypatch, tmp_path):
+    remote = BatchPersistentConnection()
+    monkeypatch.setattr(turso_state, "_connect", lambda: remote)
+    data_dir = tmp_path / "data"
+    make_data_dir(data_dir, "batched-state")
+
+    turso_state.snapshot(data_dir)
+
+    assert remote.batch_calls == [(2, "immediate")]
+    statuses = remote.execute(
+        "SELECT status FROM thorio_state_generations"
+    ).fetchall()
+    assert statuses == [("complete",)]
 
 
 def test_turso_snapshot_never_marks_missing_remote_chunks_complete(monkeypatch, tmp_path):
