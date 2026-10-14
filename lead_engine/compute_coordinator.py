@@ -3878,12 +3878,18 @@ def coordinator_from_environment() -> ComputeCoordinator:
 
 def serve_from_environment() -> None:
     coordinator = coordinator_from_environment()
-    host = os.environ.get("THORIO_COMPUTE_BIND_HOST", "127.0.0.1")
-    port = int(os.environ.get("THORIO_COMPUTE_PORT", os.environ.get("PORT", "8787")))
+    # Hosted platforms provide PORT and route public HTTPS traffic through their
+    # TLS-terminating proxy. Bind to all interfaces there; loopback is only the
+    # safe default for a local process without a platform-assigned port.
+    platform_port = os.environ.get("PORT", "").strip()
+    default_host = "0.0.0.0" if platform_port else "127.0.0.1"
+    host = os.environ.get("THORIO_COMPUTE_BIND_HOST", default_host)
+    port = int(os.environ.get("THORIO_COMPUTE_PORT", platform_port or "8787"))
     server = ComputeCoordinatorServer(coordinator, host, port)
     if host not in {"127.0.0.1", "localhost", "::1"}:
+        proxy_default = "1" if platform_port else "0"
         proxy_terminates_tls = os.environ.get(
-            "THORIO_COMPUTE_TLS_TERMINATED_BY_PROXY", "0"
+            "THORIO_COMPUTE_TLS_TERMINATED_BY_PROXY", proxy_default
         ).strip().lower() in {"1", "true", "yes", "on"}
         if not proxy_terminates_tls:
             cert = os.environ.get("THORIO_COMPUTE_TLS_CERT", "")
