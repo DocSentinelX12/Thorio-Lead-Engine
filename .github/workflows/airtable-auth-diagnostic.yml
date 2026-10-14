@@ -94,7 +94,7 @@ jobs:
           lead_sources_file="$(mktemp)"
           encoded_table="$(python - <<'PY'
           import urllib.parse
-          print(urllib.parse.quote("Lead Sources", safe=""))
+          print(urllib.parse.quote("Lead Radar", safe=""))
           PY
           )"
 
@@ -110,7 +110,7 @@ jobs:
           )"
 
           echo ""
-          echo "Airtable Lead Sources HTTP status: ${lead_sources_code}"
+          echo "Airtable Lead Radar HTTP status: ${lead_sources_code}"
 
           python - "$lead_sources_file" <<'PY'
           import json
@@ -122,7 +122,7 @@ jobs:
           try:
               payload = json.loads(text)
           except json.JSONDecodeError:
-              print("Lead Sources response: non-JSON response")
+              print("Lead Radar response: non-JSON response")
               print("Response body length:", len(text))
               sys.exit(0)
 
@@ -133,17 +133,17 @@ jobs:
                   safe["records"] = {
                       "count": len(records) if isinstance(records, list) else None
                   }
-              print("Lead Sources response:", json.dumps(safe, sort_keys=True))
+              print("Lead Radar response:", json.dumps(safe, sort_keys=True))
           else:
-              print("Lead Sources response type:", type(payload).__name__)
+              print("Lead Radar response type:", type(payload).__name__)
           PY
 
           if [ "$lead_sources_code" != "200" ]; then
             echo ""
-            echo "RESULT: Airtable authentication succeeded at /v0/meta/whoami, but the Lead Sources base/table request failed."
+            echo "RESULT: Airtable authentication succeeded at /v0/meta/whoami, but the Lead Radar base/table request failed."
             echo "This points away from the PAT itself and toward base/table access or the exact API request."
             exit 1
           fi
 
           echo ""
-          echo "RESULT: GitHub injected the PAT, Airtable accepted the credential, and the Lead Sources table is reachable."
+          echo "RESULT: GitHub injected the PAT, Airtable accepted the credential, and the Lead Radar table is reachable."
