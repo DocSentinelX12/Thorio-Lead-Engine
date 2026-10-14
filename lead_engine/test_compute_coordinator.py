@@ -150,3 +150,36 @@ def test_coordinator_rejects_invalid_auth(tmp_path):
             raise AssertionError("unauthenticated coordinator request was accepted")
     finally:
         _stop_server(server, thread)
+
+
+def test_hosted_coordinator_binds_public_interface_behind_platform_tls_proxy(monkeypatch):
+    import pytest
+    import lead_engine.compute_coordinator as coordinator_module
+
+    class StopServing(Exception):
+        pass
+
+    captured = {}
+
+    class FakeServer:
+        def __init__(self, coordinator, host, port):
+            captured["host"] = host
+            captured["port"] = port
+
+        def serve_forever(self, poll_interval):
+            raise StopServing
+
+        def server_close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(coordinator_module, "coordinator_from_environment", lambda: object())
+    monkeypatch.setattr(coordinator_module, "ComputeCoordinatorServer", FakeServer)
+    monkeypatch.setenv("PORT", "8787")
+    monkeypatch.delenv("THORIO_COMPUTE_BIND_HOST", raising=False)
+    monkeypatch.delenv("THORIO_COMPUTE_PORT", raising=False)
+    monkeypatch.delenv("THORIO_COMPUTE_TLS_TERMINATED_BY_PROXY", raising=False)
+
+    with pytest.raises(StopServing):
+        coordinator_module.serve_from_environment()
+
+    assert captured == {"host": "0.0.0.0", "port": 8787, "closed": True}
