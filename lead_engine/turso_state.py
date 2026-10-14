@@ -462,7 +462,14 @@ def snapshot(data_dir: Path) -> None:
             # The batch is transactional, and every statement uses stable keys
             # with INSERT OR REPLACE. The connection wrapper can safely replay
             # the batch if Turso loses the response after applying the writes.
-            conn.batch(batch, mode="immediate")
+            batch_method = getattr(conn, "batch", None)
+            if callable(batch_method):
+                batch_method(batch, mode="immediate")
+            else:
+                # Keep the DB-API-compatible fallback for older drivers/test doubles.
+                for sql, params in batch:
+                    conn.execute(sql, params)
+                    conn.commit()
             pending_chunks.clear()
 
         print(
