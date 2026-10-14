@@ -54,7 +54,6 @@ jobs:
     timeout-minutes: 75
     env:
       AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
-      AIRTABLE_API_KEY_CANDIDATE: ${{ secrets.AIRTABLE_API_KEY }}
       AIRTABLE_BASE_ID: appBHsCquEQImXmLy
       AIRTABLE_LEGACY_BASE_IDS: appoEHF48vTHjCcWF,appxz89RYpxIOpdMD
       # New actionable records go to the dedicated revenue workspace; both older bases remain readable.
@@ -690,9 +689,11 @@ jobs:
           base_id = os.environ["AIRTABLE_BASE_ID"]
           table = urllib.parse.quote(os.environ.get("AIRTABLE_LEAD_TABLE", "Lead Radar"), safe="")
           url = f"https://api.airtable.com/v0/{base_id}/{table}"
+          # Thorio uses one Airtable credential: the configured Personal Access Token.
+          # AIRTABLE_API_KEY is only the application's legacy environment-variable name
+          # for the bearer token; no separate Airtable API key is supported or required.
           candidates = [
               ("AIRTABLE_PAT", os.environ.get("AIRTABLE_PAT_CANDIDATE", "").strip()),
-              ("AIRTABLE_API_KEY", os.environ.get("AIRTABLE_API_KEY_CANDIDATE", "").strip()),
           ]
           probe_id = f"__THORIO_CREDENTIAL_PROBE__{int(time.time())}"
           probe_fields = {"Lead": probe_id, "Applicable Routes": ["Thorio"]}
@@ -766,8 +767,8 @@ jobs:
                   )
                   raise SystemExit(0)
               raise SystemExit(
-                  "AIRTABLE AUTHORIZATION/WRITE FAILURE: no configured credential could complete "
-                  "the real Thorio route write probe. Review the per-credential HTTP diagnostics above."
+                  "AIRTABLE PAT WRITE FAILURE: the configured AIRTABLE_PAT could not complete "
+                  "the real Thorio route write probe. Review the PAT HTTP diagnostic above."
               )
 
           label, token, record_id = selected
