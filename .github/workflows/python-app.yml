@@ -1242,13 +1242,17 @@ jobs:
           rm -f data/browser-worker.pid
           exit "$engine_status"
       - name: Persist durable Turso engine state
+        id: turso_snapshot
+        timeout-minutes: 9
+        continue-on-error: true
         if: always() && steps.turso_restore.outputs.enabled == 'true' && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          python -m lead_engine.turso_state snapshot --data-dir data
+          echo "TURSO SNAPSHOT DEADLINE: this step is bounded to 8 minutes; the verified local-state artifact is preserved even if remote persistence stalls."
+          timeout --signal=TERM --kill-after=15s 480s python -u -m lead_engine.turso_state snapshot --data-dir data
 
       - name: Verify active collection and Airtable delivery
         run: |
@@ -1476,3 +1480,14 @@ jobs:
           retention-days: 7
           compression-level: 6
           overwrite: false
+      - name: Require durable Turso persistence
+        if: always()
+        env:
+          TURSO_SNAPSHOT_OUTCOME: ${{ steps.turso_snapshot.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "${TURSO_SNAPSHOT_OUTCOME:-skipped}" != "success" ]; then
+            echo "DURABLE STATE FAILURE: Turso persistence did not complete within its bounded window. The validated local-state artifact was allowed to persist for recovery; the workflow remains failed until remote durability is verified." >&2
+            exit 1
+          fi
+          echo "DURABLE STATE VERIFIED: Turso snapshot completed within the bounded window."
