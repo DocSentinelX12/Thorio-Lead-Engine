@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timezone
 
 CHUNK_BYTES = 48 * 1024
+BATCH_CHUNKS = 8
 DB_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 RETAIN_GENERATIONS = 2
 
@@ -160,6 +161,30 @@ class _ResilientConnection:
             # write after reconnect handles both rollback and lost acknowledgments.
             self._connection.execute(sql, *args, **kwargs)
             self._connection.commit()
+
+    def batch(self, statements, mode=None):
+        """Batch idempotent snapshot writes to avoid one HTTP round trip per chunk."""
+        statements = list(statements)
+        if not statements:
+            return []
+        if not all(self._is_idempotent_write(sql) for sql, _ in statements):
+            raise RuntimeError("Turso retryable batches may contain only idempotent writes.")
+        batch_method = getattr(self._connection, "batch", None)
+        if not callable(batch_method):
+            # Compatibility fallback for older drivers and simple DB-API test doubles.
+            for sql, params in statements:
+                self.execute(sql, params)
+                self.commit()
+            return [None] * len(statements)
+        try:
+            return batch_method(statements, mode=mode)
+        except Exception as exc:
+            if not _is_expired_stream_error(exc):
+                raise
+            # Each statement is an INSERT OR REPLACE with stable keys, so replaying
+            # the whole batch is safe if Turso loses the response after applying writes.
+            self._reconnect()
+            return self._connection.batch(statements, mode=mode)
 
     def close(self) -> None:
         # Closing an already-expired remote stream is cleanup, not a reason to
@@ -356,6 +381,11 @@ def restore(data_dir: Path) -> bool:
 
 def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dict[str, str]) -> None:
     """Read every persisted chunk back before a generation can be marked complete."""
+    print(
+        f"TURSO STATE SNAPSHOT VERIFY START: generation={generation_id}; "
+        f"databases={len(expected_raw_hashes)}.",
+        flush=True,
+    )
     stored_names = {
         str(row[0])
         for row in conn.execute(
@@ -369,6 +399,7 @@ def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dic
         )
 
     for name, expected_raw_hash in expected_raw_hashes.items():
+        print(f"TURSO STATE SNAPSHOT VERIFY DATABASE: generation={generation_id}; database={name}.", flush=True)
         rows = conn.execute(
             "SELECT chunk_index, chunk_count, compressed_sha256, payload "
             "FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? "
@@ -393,6 +424,8 @@ def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dic
         raw = gzip.decompress(compressed)
         if hashlib.sha256(raw).hexdigest() != expected_raw_hash:
             raise RuntimeError(f"Turso snapshot read-back failed: database checksum mismatch for {name}.")
+        print(f"TURSO STATE SNAPSHOT DATABASE VERIFIED: generation={generation_id}; database={name}; chunks={len(rows)}.", flush=True)
+    print(f"TURSO STATE SNAPSHOT VERIFY COMPLETE: generation={generation_id}.", flush=True)
 
 
 def snapshot(data_dir: Path) -> None:
@@ -415,22 +448,49 @@ def snapshot(data_dir: Path) -> None:
         )
         conn.commit()
         manifest = []
+        pending_chunks = []
+
+        def flush_chunks() -> None:
+            if not pending_chunks:
+                return
+            batch = list(pending_chunks)
+            print(
+                f"TURSO STATE SNAPSHOT UPLOAD BATCH: generation={generation_id}; "
+                f"chunks={len(batch)}.",
+                flush=True,
+            )
+            # The batch is transactional, and every statement uses stable keys
+            # with INSERT OR REPLACE. The connection wrapper can safely replay
+            # the batch if Turso loses the response after applying the writes.
+            conn.batch(batch, mode="immediate")
+            pending_chunks.clear()
+
+        print(
+            f"TURSO STATE SNAPSHOT START: generation={generation_id}; "
+            f"databases={len(files)}; chunk_bytes={CHUNK_BYTES}; batch_chunks={BATCH_CHUNKS}.",
+            flush=True,
+        )
         for name, source in files:
+            print(f"TURSO STATE SNAPSHOT BACKUP DATABASE: generation={generation_id}; database={name}.", flush=True)
             raw = _backup_bytes(source)
             compressed = gzip.compress(raw, mtime=0)
             compressed_hash = hashlib.sha256(compressed).hexdigest()
             count = max(1, (len(compressed) + CHUNK_BYTES - 1) // CHUNK_BYTES)
+            print(
+                f"TURSO STATE SNAPSHOT DATABASE PREPARED: generation={generation_id}; "
+                f"database={name}; raw_bytes={len(raw)}; compressed_bytes={len(compressed)}; chunks={count}.",
+                flush=True,
+            )
             for index in range(count):
                 payload = compressed[index * CHUNK_BYTES:(index + 1) * CHUNK_BYTES]
-                conn.execute(
+                pending_chunks.append((
                     "INSERT OR REPLACE INTO thorio_state_chunks (generation_id, database_name, chunk_index, chunk_count, compressed_sha256, payload) VALUES (?, ?, ?, ?, ?, ?)",
                     (generation_id, name, index, count, compressed_hash, payload),
-                )
-                # Commit each idempotent chunk independently. Long interactive
-                # Turso streams can expire during a large snapshot; per-chunk
-                # commits bound the amount of work that must be retried.
-                conn.commit()
+                ))
+                if len(pending_chunks) >= BATCH_CHUNKS:
+                    flush_chunks()
             manifest.append({"name": name, "sha256": hashlib.sha256(raw).hexdigest()})
+        flush_chunks()
         manifest_hash = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -441,6 +501,7 @@ def snapshot(data_dir: Path) -> None:
         # Do not publish a generation as complete based only on successful
         # write acknowledgments. Read back every remote chunk and verify the
         # reconstructed SQLite bytes before it becomes eligible for restore.
+        print(f"TURSO STATE SNAPSHOT READ-BACK START: generation={generation_id}.", flush=True)
         _verify_generation_chunks(conn, generation_id, expected_raw_hashes)
         conn.execute(
             "UPDATE thorio_state_generations SET status = 'complete', manifest_sha256 = ? WHERE generation_id = ?",
