@@ -301,42 +301,72 @@ def _complete_generations(conn) -> list[tuple]:
 
 
 def _restore_generation(conn, data_dir: Path, generation: tuple) -> bool:
-    """Validate and install one complete generation without deleting local state."""
+    """Validate and install one complete generation without deleting local state or loading it all into RAM."""
     generation_id, generation_created_at, expected_count, expected_manifest = generation
-    rows = conn.execute(
-        "SELECT database_name, chunk_index, chunk_count, compressed_sha256, payload "
-        "FROM thorio_state_chunks WHERE generation_id = ? ORDER BY database_name, chunk_index",
-        (generation_id,),
-    ).fetchall()
-    grouped: dict[str, list[tuple]] = {}
-    for row in rows:
-        grouped.setdefault(str(row[0]), []).append(row)
-    if len(grouped) != int(expected_count):
+    names = [
+        str(row[0]) for row in conn.execute(
+            "SELECT DISTINCT database_name FROM thorio_state_chunks WHERE generation_id = ? ORDER BY database_name",
+            (generation_id,),
+        ).fetchall()
+    ]
+    if len(names) != int(expected_count):
         raise RuntimeError("Turso state snapshot is incomplete: database count does not match its manifest.")
     manifest = []
     staged: list[tuple[str, Path]] = []
     with tempfile.TemporaryDirectory(prefix="thorio-state-restore-") as temporary:
         root = Path(temporary)
-        for name, chunks in sorted(grouped.items()):
+        for name in names:
             relative = PurePosixPath(name)
             if relative.is_absolute() or ".." in relative.parts or not relative.parts:
                 raise RuntimeError(f"Unsafe database path in Turso state manifest: {name!r}")
-            expected_chunks = int(chunks[0][2])
-            if len(chunks) != expected_chunks or [int(item[1]) for item in chunks] != list(range(expected_chunks)):
-                raise RuntimeError(f"Turso state snapshot has missing or out-of-order chunks for {name}.")
-            compressed = b"".join(bytes(item[4]) for item in chunks)
-            digest = hashlib.sha256(compressed).hexdigest()
-            if digest != str(chunks[0][3]):
-                raise RuntimeError(f"Turso state snapshot checksum mismatch for {name}.")
+            compressed_path = root / (hashlib.sha256(name.encode()).hexdigest() + ".gz")
             target = root.joinpath(*relative.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(gzip.decompress(compressed))
+            next_index, expected_chunks, expected_compressed_hash = 0, None, None
+            compressed_hash = hashlib.sha256()
+            with compressed_path.open("wb") as compressed_file:
+                while True:
+                    rows = conn.execute(
+                        "SELECT chunk_index, chunk_count, compressed_sha256, payload "
+                        "FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? "
+                        "AND chunk_index >= ? ORDER BY chunk_index LIMIT 64",
+                        (generation_id, name, next_index),
+                    ).fetchall()
+                    if not rows:
+                        break
+                    for row in rows:
+                        index, count, digest, payload = int(row[0]), int(row[1]), str(row[2]), bytes(row[3])
+                        if index != next_index:
+                            raise RuntimeError(f"Turso state snapshot has missing or out-of-order chunks for {name}.")
+                        if expected_chunks is None:
+                            expected_chunks, expected_compressed_hash = count, digest
+                        if count != expected_chunks or digest != expected_compressed_hash:
+                            raise RuntimeError(f"Turso state snapshot has inconsistent chunk metadata for {name}.")
+                        compressed_file.write(payload)
+                        compressed_hash.update(payload)
+                        next_index += 1
+            if expected_chunks is None or next_index != expected_chunks:
+                raise RuntimeError(f"Turso state snapshot has missing chunks for {name}: expected {expected_chunks}, found {next_index}.")
+            if compressed_hash.hexdigest() != expected_compressed_hash:
+                raise RuntimeError(f"Turso state snapshot checksum mismatch for {name}.")
+            raw_hash = hashlib.sha256()
+            try:
+                with gzip.open(compressed_path, "rb") as compressed_file, target.open("wb") as target_file:
+                    while True:
+                        block = compressed_file.read(1024 * 1024)
+                        if not block:
+                            break
+                        target_file.write(block)
+                        raw_hash.update(block)
+            except (OSError, EOFError) as exc:
+                raise RuntimeError(f"Turso state snapshot gzip stream is corrupt for {name}: {exc}") from exc
             with sqlite3.connect(f"file:{target.resolve()}?mode=ro", uri=True, timeout=60) as db:
                 check = db.execute("PRAGMA integrity_check").fetchone()
             if not check or check[0] != "ok":
                 raise RuntimeError(f"Turso restored SQLite integrity check failed for {name}: {check!r}")
             staged.append((name, target))
-            manifest.append({"name": name, "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+            manifest.append({"name": name, "sha256": raw_hash.hexdigest()})
+            compressed_path.unlink(missing_ok=True)
         actual_manifest = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -359,7 +389,6 @@ def _restore_generation(conn, data_dir: Path, generation: tuple) -> bool:
             temporary_target = destination.with_name(destination.name + ".turso-restore")
             shutil.copy2(source, temporary_target)
             os.replace(temporary_target, destination)
-
     print(f"TURSO STATE RESTORED: generation={generation_id}; databases={len(staged)}; SQLite integrity and manifest verified.")
     print(f"restored_at={generation_created_at}")
     return True
