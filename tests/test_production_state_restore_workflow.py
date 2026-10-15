@@ -76,9 +76,9 @@ def test_turso_persistence_is_bounded_and_state_artifact_survives_timeout():
     final_gate = workflow.split("- name: Require durable Turso persistence", 1)[1]
 
     assert "id: turso_snapshot" in snapshot
-    assert "timeout-minutes: 3" in snapshot
+    assert "timeout-minutes: 16" in snapshot
     assert "continue-on-error: true" in snapshot
-    assert "timeout --signal=TERM --kill-after=5s 120s python -u -m lead_engine.turso_state snapshot --data-dir data" in snapshot
+    assert "timeout --signal=TERM --kill-after=10s 900s python -u -m lead_engine.turso_state snapshot --data-dir data" in snapshot
     assert "name: thorio-lead-engine-state" in artifact_upload
     assert "TURSO_SNAPSHOT_OUTCOME" in final_gate
     assert '!= "success"' in final_gate
