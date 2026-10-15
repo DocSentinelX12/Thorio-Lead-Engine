@@ -554,8 +554,6 @@ def snapshot(data_dir: Path) -> None:
                             flush_chunks()
                 manifest.append({"name": name, "sha256": raw_digest})
         flush_chunks()
-            manifest.append({"name": name, "sha256": hashlib.sha256(raw).hexdigest()})
-        flush_chunks()
         manifest_hash = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
