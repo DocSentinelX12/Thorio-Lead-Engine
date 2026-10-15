@@ -15,6 +15,12 @@ INDIRECT_SIGNAL_PATTERNS = (
 )
 
 STRUCTURAL_SIGNAL_PATTERNS = (
+    ("hiring_capacity", "tech teams"),
+    ("hiring_capacity", "hiring full tech teams"),
+    ("hiring_capacity", "tech team"),
+    ("hiring_capacity", "hiring multiple positions"),
+    ("hiring_capacity", "hiring multiple tech positions"),
+    ("hiring_capacity", "hiring tech positions"),
     ("funding_execution", "raised seed funding"), ("funding_execution", "raised a seed round"), ("funding_execution", "raised series a"), ("funding_execution", "raised series b"), ("funding_execution", "new funding"), ("funding_execution", "recent funding"), ("funding_execution", "recently funded"),
     ("product_event", "new product launch"), ("product_event", "product launch"), ("product_event", "launching a new product"), ("product_event", "launched a new product"),
     ("enterprise_event", "new enterprise customer"), ("enterprise_event", "new enterprise contract"), ("enterprise_event", "enterprise contract"), ("enterprise_event", "enterprise rollout"), ("enterprise_event", "enterprise expansion"),
