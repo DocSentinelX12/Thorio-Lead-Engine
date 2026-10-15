@@ -18,8 +18,8 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 
-CHUNK_BYTES = 48 * 1024
-BATCH_CHUNKS = 8
+CHUNK_BYTES = 256 * 1024
+BATCH_CHUNKS = 16
 DB_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 RETAIN_GENERATIONS = 2
 
