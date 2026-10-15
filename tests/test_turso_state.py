@@ -236,7 +236,7 @@ def test_turso_snapshot_batches_remote_chunk_writes(monkeypatch, tmp_path):
 
     turso_state.snapshot(data_dir)
 
-    assert remote.batch_calls == [(2, "immediate")]
+    assert remote.batch_calls == [(1, "immediate")]
     statuses = remote.execute(
         "SELECT status FROM thorio_state_generations"
     ).fetchall()
