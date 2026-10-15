@@ -91,7 +91,7 @@ def test_hiring_and_tech_team_terms_are_high_value_collection_signals():
 def test_hiring_and_tech_team_phrases_are_collected_with_exact_evidence():
     html = b"""
     <html>
-      <a href="/careers/engineering" data-company="Acme">
+      <a href="/growth/engineering-team" data-company="Acme">
         We are hiring multiple tech positions and hiring full tech teams.
       </a>
     </html>
@@ -105,3 +105,24 @@ def test_hiring_and_tech_team_phrases_are_collected_with_exact_evidence():
     assert records[0]["signal_type"] == "commercial_intent"
     assert "hiring multiple tech positions" in records[0]["evidence"].lower()
     assert "hiring full tech teams" in records[0]["evidence"].lower()
+
+
+def test_broadened_signal_extractor_preserves_hiring_capacity_observations():
+    from .commercial_signal_broadening import extract_broadened_signals
+
+    result = extract_broadened_signals(
+        "Acme is hiring multiple tech positions and hiring full tech teams.",
+        company="Acme",
+    )
+    matches = result["matches"]
+
+    assert any(
+        item["category"] == "hiring_capacity"
+        and item["phrase"].lower() == "hiring multiple tech positions"
+        for item in matches
+    )
+    assert any(
+        item["category"] == "hiring_capacity"
+        and item["phrase"].lower() == "hiring full tech teams"
+        for item in matches
+    )
