@@ -1405,18 +1405,18 @@ jobs:
         if: steps.production_mode.outputs.full_revenue_ready != 'true'
         run: |
           python - <<'PY'
-          from collections import Counter
-          from lead_engine.agent_queue import pending
           from lead_engine.database import LeadDB
 
           db = LeadDB(data_dir="data")
           try:
-              tasks = pending(db)
-              queued = Counter(
-                  str(task.get("agent") or "unknown")
-                  for task in tasks
-                  if str(task.get("status") or "").lower() in {"queued", "running"}
-              )
+              # Aggregate in SQLite. Do not deserialize hundreds of thousands of
+              # queued task payloads just to report two queue counts.
+              rows = db.conn.execute(
+                  "SELECT agent, COUNT(*) FROM agent_queue "
+                  "WHERE agent IN (?, ?) AND status IN (?, ?) GROUP BY agent",
+                  ("outreach_closer", "follow_up", "queued", "running"),
+              ).fetchall()
+              queued = {str(agent): int(count) for agent, count in rows}
               print("OUTREACH SAFETY HOLD VERIFIED: outbound transport is disabled for this run.")
               print(f"Durable queued/running outreach_closer tasks: {queued.get('outreach_closer', 0)}")
               print(f"Durable queued/running follow_up tasks: {queued.get('follow_up', 0)}")
