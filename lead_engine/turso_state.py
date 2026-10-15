@@ -271,6 +271,14 @@ def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 8
     print(f"TURSO STATE SNAPSHOT BACKUP COMPLETE: database={source.name}; bytes={backup_path.stat().st_size}; elapsed_seconds={time.monotonic() - started:.1f}; validation=consistent-backup-and-schema.", flush=True)
 
 
+def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
+    """Compatibility helper for small test databases; production snapshots stream to disk."""
+    with tempfile.TemporaryDirectory(prefix="thorio-state-backup-") as temporary:
+        backup_path = Path(temporary) / "snapshot.sqlite3"
+        _backup_file(source, backup_path, deadline_seconds=deadline_seconds)
+        return backup_path.read_bytes()
+
+
 def _validate_primary_database(path: Path, *, full_integrity: bool = True) -> None:
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError("Turso state snapshot has no non-empty data/leads.sqlite3; refusing to restore empty production state.")
