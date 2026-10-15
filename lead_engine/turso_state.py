@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 
 CHUNK_BYTES = 48 * 1024
-BATCH_CHUNKS = 8
+BATCH_CHUNKS = 16
 DB_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 RETAIN_GENERATIONS = 2
 
@@ -244,7 +244,7 @@ def _sqlite_files(data_dir: Path) -> list[tuple[str, Path]]:
     return found
 
 
-def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 85.0) -> None:
+def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 240.0) -> None:
     """Create a consistent SQLite backup on disk without loading multi-GB state into RAM."""
     import time
     started = time.monotonic()
@@ -252,6 +252,12 @@ def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 8
     source_uri = f"file:{source.resolve()}?mode=ro"
     with sqlite3.connect(source_uri, uri=True, timeout=5) as src:
         with sqlite3.connect(backup_path, timeout=5) as dst:
+            # This database is a disposable snapshot staging file, not the live
+            # engine database. Avoid journal/fsync overhead on multi-GB copies;
+            # the authoritative source is read-only and the remote generation is
+            # not marked complete until every uploaded chunk is read back/verified.
+            dst.execute("PRAGMA journal_mode=OFF")
+            dst.execute("PRAGMA synchronous=OFF")
             last_report = 0.0
             def report_progress(status: int, remaining: int, total: int) -> None:
                 nonlocal last_report
@@ -271,7 +277,7 @@ def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 8
     print(f"TURSO STATE SNAPSHOT BACKUP COMPLETE: database={source.name}; bytes={backup_path.stat().st_size}; elapsed_seconds={time.monotonic() - started:.1f}; validation=consistent-backup-and-schema.", flush=True)
 
 
-def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
+def _backup_bytes(source: Path, *, deadline_seconds: float = 240.0) -> bytes:
     """Compatibility helper for small test databases; production snapshots stream to disk."""
     with tempfile.TemporaryDirectory(prefix="thorio-state-backup-") as temporary:
         backup_path = Path(temporary) / "snapshot.sqlite3"
@@ -529,7 +535,7 @@ def snapshot(data_dir: Path) -> None:
                 _backup_file(source, backup_path)
                 raw_hash = hashlib.sha256()
                 with backup_path.open("rb") as source_stream, compressed_path.open("wb") as compressed_stream:
-                    with gzip.GzipFile(fileobj=compressed_stream, mode="wb", mtime=0) as gzip_stream:
+                    with gzip.GzipFile(fileobj=compressed_stream, mode="wb", compresslevel=1, mtime=0) as gzip_stream:
                         while True:
                             block = source_stream.read(1024 * 1024)
                             if not block:
