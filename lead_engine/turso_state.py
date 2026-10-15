@@ -18,8 +18,8 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 
-CHUNK_BYTES = 48 * 1024
-BATCH_CHUNKS = 8
+CHUNK_BYTES = 192 * 1024
+BATCH_CHUNKS = 16
 DB_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 RETAIN_GENERATIONS = 2
 
@@ -244,12 +244,12 @@ def _sqlite_files(data_dir: Path) -> list[tuple[str, Path]]:
     return found
 
 
-def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
+def _backup_bytes(source: Path, *, deadline_seconds: float = 600.0) -> bytes:
     """Create an integrity-checked backup incrementally and bound lock/contention stalls.
 
     A one-shot sqlite3 backup can appear hung for the entire workflow timeout. Copy
     pages in bounded steps instead, report progress, and fail with actionable evidence
-    before the outer Turso snapshot deadline expires. The source database is never
+    before the outer Turso snapshot deadline expires (now bounded to 20 minutes). The source database is never
     modified and the previous complete remote generation remains authoritative.
     """
     import time
