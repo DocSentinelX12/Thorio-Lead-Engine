@@ -244,7 +244,7 @@ def _sqlite_files(data_dir: Path) -> list[tuple[str, Path]]:
     return found
 
 
-def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
+def _backup_bytes(source: Path, *, deadline_seconds: float = 900.0) -> bytes:
     """Create an integrity-checked backup incrementally and bound lock/contention stalls.
 
     A one-shot sqlite3 backup can appear hung for the entire workflow timeout. Copy
