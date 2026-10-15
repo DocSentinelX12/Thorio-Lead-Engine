@@ -18,7 +18,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 
-CHUNK_BYTES = 48 * 1024
+CHUNK_BYTES = 768 * 1024
 BATCH_CHUNKS = 8
 DB_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 RETAIN_GENERATIONS = 2
@@ -329,7 +329,7 @@ def _restore_generation(conn, data_dir: Path, generation: tuple) -> bool:
                     rows = conn.execute(
                         "SELECT chunk_index, chunk_count, compressed_sha256, payload "
                         "FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? "
-                        "AND chunk_index >= ? ORDER BY chunk_index LIMIT 64",
+                        "AND chunk_index >= ? ORDER BY chunk_index LIMIT 4",
                         (generation_id, name, next_index),
                     ).fetchall()
                     if not rows:
@@ -445,7 +445,7 @@ def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dic
         decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
         next_index, expected_chunks, expected_compressed_hash = 0, None, None
         while True:
-            rows = conn.execute("SELECT chunk_index, chunk_count, compressed_sha256, payload FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? AND chunk_index >= ? ORDER BY chunk_index LIMIT 64", (generation_id, name, next_index)).fetchall()
+            rows = conn.execute("SELECT chunk_index, chunk_count, compressed_sha256, payload FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? AND chunk_index >= ? ORDER BY chunk_index LIMIT 4", (generation_id, name, next_index)).fetchall()
             if not rows:
                 break
             for row in rows:
