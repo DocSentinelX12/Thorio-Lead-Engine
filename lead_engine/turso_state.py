@@ -244,73 +244,41 @@ def _sqlite_files(data_dir: Path) -> list[tuple[str, Path]]:
     return found
 
 
-def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
-    """Create an integrity-checked backup incrementally and bound lock/contention stalls.
-
-    A one-shot sqlite3 backup can appear hung for the entire workflow timeout. Copy
-    pages in bounded steps instead, report progress, and fail with actionable evidence
-    before the outer Turso snapshot deadline expires. The source database is never
-    modified and the previous complete remote generation remains authoritative.
-    """
+def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 85.0) -> None:
+    """Create a consistent SQLite backup on disk without loading multi-GB state into RAM."""
     import time
-
     started = time.monotonic()
     deadline = started + max(1.0, float(deadline_seconds))
-    with tempfile.TemporaryDirectory(prefix="thorio-state-backup-") as temporary:
-        backup_path = Path(temporary) / "snapshot.sqlite3"
-        source_uri = f"file:{source.resolve()}?mode=ro"
-        with sqlite3.connect(source_uri, uri=True, timeout=5) as src:
-            with sqlite3.connect(backup_path, timeout=5) as dst:
-                last_report = 0.0
-
-                def report_progress(status: int, remaining: int, total: int) -> None:
-                    nonlocal last_report
-                    now = time.monotonic()
-                    if now >= deadline:
-                        raise TimeoutError(
-                            f"SQLite backup exceeded {deadline_seconds:.0f}s; "
-                            f"remaining_pages={remaining}; total_pages={total}; sqlite_status={status}. "
-                            "Remote snapshot was not marked complete; retain the verified artifact for recovery."
-                        )
-                    if now - last_report >= 5.0 or remaining == 0:
-                        copied = max(0, total - remaining)
-                        percent = (100.0 * copied / total) if total else 100.0
-                        print(
-                            f"TURSO STATE SNAPSHOT BACKUP PROGRESS: database={source.name}; "
-                            f"copied_pages={copied}; total_pages={total}; remaining_pages={remaining}; "
-                            f"percent={percent:.1f}; elapsed_seconds={now - started:.1f}; sqlite_status={status}.",
-                            flush=True,
-                        )
-                        last_report = now
-
-                # Small page batches keep lock waits observable and let the deadline
-                # callback interrupt a stalled backup rather than silently hanging.
-                src.backup(dst, pages=256, progress=report_progress, sleep=0.05)
-                # The source was fully checked by _validate_primary_database before
-                # copying. A second full integrity_check scans every page again and
-                # can consume the entire workflow deadline on multi-gigabyte state.
-                # quick_check validates the copied database structure here; later
-                # remote read-back verifies the exact compressed bytes and restore
-                # performs a full integrity_check before installing a generation.
-                check = dst.execute("PRAGMA quick_check").fetchone()
-                if not check or check[0] != "ok":
-                    raise RuntimeError(f"SQLite backup quick_check failed for {source}: {check!r}")
-        result = backup_path.read_bytes()
-        print(
-            f"TURSO STATE SNAPSHOT BACKUP COMPLETE: database={source.name}; "
-            f"bytes={len(result)}; elapsed_seconds={time.monotonic() - started:.1f}; integrity=ok.",
-            flush=True,
-        )
-        return result
+    source_uri = f"file:{source.resolve()}?mode=ro"
+    with sqlite3.connect(source_uri, uri=True, timeout=5) as src:
+        with sqlite3.connect(backup_path, timeout=5) as dst:
+            last_report = 0.0
+            def report_progress(status: int, remaining: int, total: int) -> None:
+                nonlocal last_report
+                now = time.monotonic()
+                if now >= deadline:
+                    raise TimeoutError(f"SQLite backup exceeded {deadline_seconds:.0f}s; remaining_pages={remaining}; total_pages={total}; sqlite_status={status}. Previous complete remote generation remains authoritative.")
+                if now - last_report >= 5.0 or remaining == 0:
+                    copied = max(0, total - remaining)
+                    percent = (100.0 * copied / total) if total else 100.0
+                    print(f"TURSO STATE SNAPSHOT BACKUP PROGRESS: database={source.name}; copied_pages={copied}; total_pages={total}; remaining_pages={remaining}; percent={percent:.1f}; elapsed_seconds={now - started:.1f}; sqlite_status={status}.", flush=True)
+                    last_report = now
+            # SQLite's online backup API creates a transactionally consistent copy.
+            # Full integrity scans are reserved for restore; they doubled snapshot cost.
+            src.backup(dst, pages=256, progress=report_progress, sleep=0.05)
+            if not dst.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
+                raise RuntimeError(f"SQLite backup has no tables: {source}")
+    print(f"TURSO STATE SNAPSHOT BACKUP COMPLETE: database={source.name}; bytes={backup_path.stat().st_size}; elapsed_seconds={time.monotonic() - started:.1f}; validation=consistent-backup-and-schema.", flush=True)
 
 
-def _validate_primary_database(path: Path) -> None:
+def _validate_primary_database(path: Path, *, full_integrity: bool = True) -> None:
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError("Turso state snapshot has no non-empty data/leads.sqlite3; refusing to restore empty production state.")
     with sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True, timeout=60) as conn:
-        check = conn.execute("PRAGMA integrity_check").fetchone()
-        if not check or check[0] != "ok":
-            raise RuntimeError(f"Restored primary SQLite integrity check failed: {check!r}")
+        if full_integrity:
+            check = conn.execute("PRAGMA integrity_check").fetchone()
+            if not check or check[0] != "ok":
+                raise RuntimeError(f"Restored primary SQLite integrity check failed: {check!r}")
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         missing = sorted({"leads", "checkpoints"} - tables)
         if missing:
@@ -427,51 +395,42 @@ def restore(data_dir: Path) -> bool:
 
 
 def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dict[str, str]) -> None:
-    """Read every persisted chunk back before a generation can be marked complete."""
-    print(
-        f"TURSO STATE SNAPSHOT VERIFY START: generation={generation_id}; "
-        f"databases={len(expected_raw_hashes)}.",
-        flush=True,
-    )
-    stored_names = {
-        str(row[0])
-        for row in conn.execute(
-            "SELECT DISTINCT database_name FROM thorio_state_chunks WHERE generation_id = ?",
-            (generation_id,),
-        ).fetchall()
-    }
+    """Verify remote chunks incrementally without joining multi-GB snapshots in memory."""
+    import zlib
+    print(f"TURSO STATE SNAPSHOT VERIFY START: generation={generation_id}; databases={len(expected_raw_hashes)}.", flush=True)
+    stored_names = {str(row[0]) for row in conn.execute("SELECT DISTINCT database_name FROM thorio_state_chunks WHERE generation_id = ?", (generation_id,)).fetchall()}
     if stored_names != set(expected_raw_hashes):
-        raise RuntimeError(
-            "Turso snapshot read-back failed: stored database names do not match the manifest."
-        )
-
+        raise RuntimeError("Turso snapshot read-back failed: stored database names do not match the manifest.")
     for name, expected_raw_hash in expected_raw_hashes.items():
         print(f"TURSO STATE SNAPSHOT VERIFY DATABASE: generation={generation_id}; database={name}.", flush=True)
-        rows = conn.execute(
-            "SELECT chunk_index, chunk_count, compressed_sha256, payload "
-            "FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? "
-            "ORDER BY chunk_index",
-            (generation_id, name),
-        ).fetchall()
-        if not rows:
-            raise RuntimeError(f"Turso snapshot read-back failed: no persisted chunks for {name}.")
-        expected_chunks = int(rows[0][1])
-        if (
-            len(rows) != expected_chunks
-            or [int(row[0]) for row in rows] != list(range(expected_chunks))
-            or any(int(row[1]) != expected_chunks for row in rows)
-        ):
-            raise RuntimeError(f"Turso snapshot read-back failed: missing or inconsistent chunks for {name}.")
-        compressed_hashes = {str(row[2]) for row in rows}
-        if len(compressed_hashes) != 1:
-            raise RuntimeError(f"Turso snapshot read-back failed: inconsistent chunk checksums for {name}.")
-        compressed = b"".join(bytes(row[3]) for row in rows)
-        if hashlib.sha256(compressed).hexdigest() != next(iter(compressed_hashes)):
+        compressed_hash, raw_hash = hashlib.sha256(), hashlib.sha256()
+        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        next_index, expected_chunks, expected_compressed_hash = 0, None, None
+        while True:
+            rows = conn.execute("SELECT chunk_index, chunk_count, compressed_sha256, payload FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? AND chunk_index >= ? ORDER BY chunk_index LIMIT 64", (generation_id, name, next_index)).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                index, count, digest, payload = int(row[0]), int(row[1]), str(row[2]), bytes(row[3])
+                if index != next_index:
+                    raise RuntimeError(f"Turso snapshot read-back failed: missing or out-of-order chunk for {name} at {next_index}.")
+                if expected_chunks is None:
+                    expected_chunks, expected_compressed_hash = count, digest
+                if count != expected_chunks or digest != expected_compressed_hash:
+                    raise RuntimeError(f"Turso snapshot read-back failed: inconsistent chunk metadata for {name}.")
+                compressed_hash.update(payload)
+                raw_hash.update(decompressor.decompress(payload))
+                next_index += 1
+        if expected_chunks is None or next_index != expected_chunks:
+            raise RuntimeError(f"Turso snapshot read-back failed: expected {expected_chunks} chunks, found {next_index} for {name}.")
+        raw_hash.update(decompressor.flush())
+        if not decompressor.eof:
+            raise RuntimeError(f"Turso snapshot read-back failed: truncated compressed stream for {name}.")
+        if compressed_hash.hexdigest() != expected_compressed_hash:
             raise RuntimeError(f"Turso snapshot read-back failed: compressed checksum mismatch for {name}.")
-        raw = gzip.decompress(compressed)
-        if hashlib.sha256(raw).hexdigest() != expected_raw_hash:
+        if raw_hash.hexdigest() != expected_raw_hash:
             raise RuntimeError(f"Turso snapshot read-back failed: database checksum mismatch for {name}.")
-        print(f"TURSO STATE SNAPSHOT DATABASE VERIFIED: generation={generation_id}; database={name}; chunks={len(rows)}.", flush=True)
+        print(f"TURSO STATE SNAPSHOT DATABASE VERIFIED: generation={generation_id}; database={name}; chunks={next_index}.", flush=True)
     print(f"TURSO STATE SNAPSHOT VERIFY COMPLETE: generation={generation_id}.", flush=True)
 
 
@@ -486,7 +445,7 @@ def snapshot(data_dir: Path) -> None:
         by_name = dict(files)
         if "leads.sqlite3" not in by_name:
             raise RuntimeError("Cannot snapshot Thorio state: data/leads.sqlite3 is missing.")
-        _validate_primary_database(by_name["leads.sqlite3"])
+        _validate_primary_database(by_name["leads.sqlite3"], full_integrity=False)
         generation_id = uuid.uuid4().hex
         created_at = datetime.now(timezone.utc).isoformat()
         conn.execute(
@@ -526,23 +485,38 @@ def snapshot(data_dir: Path) -> None:
         )
         for name, source in files:
             print(f"TURSO STATE SNAPSHOT BACKUP DATABASE: generation={generation_id}; database={name}.", flush=True)
-            raw = _backup_bytes(source)
-            compressed = gzip.compress(raw, mtime=0)
-            compressed_hash = hashlib.sha256(compressed).hexdigest()
-            count = max(1, (len(compressed) + CHUNK_BYTES - 1) // CHUNK_BYTES)
-            print(
-                f"TURSO STATE SNAPSHOT DATABASE PREPARED: generation={generation_id}; "
-                f"database={name}; raw_bytes={len(raw)}; compressed_bytes={len(compressed)}; chunks={count}.",
-                flush=True,
-            )
-            for index in range(count):
-                payload = compressed[index * CHUNK_BYTES:(index + 1) * CHUNK_BYTES]
-                pending_chunks.append((
-                    "INSERT OR REPLACE INTO thorio_state_chunks (generation_id, database_name, chunk_index, chunk_count, compressed_sha256, payload) VALUES (?, ?, ?, ?, ?, ?)",
-                    (generation_id, name, index, count, compressed_hash, payload),
-                ))
-                if len(pending_chunks) >= BATCH_CHUNKS:
-                    flush_chunks()
+            with tempfile.TemporaryDirectory(prefix="thorio-state-snapshot-") as temporary:
+                backup_path = Path(temporary) / "snapshot.sqlite3"
+                compressed_path = Path(temporary) / "snapshot.sqlite3.gz"
+                _backup_file(source, backup_path)
+                raw_hash = hashlib.sha256()
+                with backup_path.open("rb") as source_stream, compressed_path.open("wb") as compressed_stream:
+                    with gzip.GzipFile(fileobj=compressed_stream, mode="wb", mtime=0) as gzip_stream:
+                        while True:
+                            block = source_stream.read(1024 * 1024)
+                            if not block:
+                                break
+                            raw_hash.update(block)
+                            gzip_stream.write(block)
+                compressed_hash = hashlib.sha256()
+                with compressed_path.open("rb") as compressed_stream:
+                    while True:
+                        block = compressed_stream.read(1024 * 1024)
+                        if not block:
+                            break
+                        compressed_hash.update(block)
+                compressed_size = compressed_path.stat().st_size
+                count = max(1, (compressed_size + CHUNK_BYTES - 1) // CHUNK_BYTES)
+                raw_digest, compressed_digest = raw_hash.hexdigest(), compressed_hash.hexdigest()
+                print(f"TURSO STATE SNAPSHOT DATABASE PREPARED: generation={generation_id}; database={name}; raw_bytes={backup_path.stat().st_size}; compressed_bytes={compressed_size}; chunks={count}.", flush=True)
+                with compressed_path.open("rb") as compressed_stream:
+                    for index in range(count):
+                        payload = compressed_stream.read(CHUNK_BYTES)
+                        pending_chunks.append(("INSERT OR REPLACE INTO thorio_state_chunks (generation_id, database_name, chunk_index, chunk_count, compressed_sha256, payload) VALUES (?, ?, ?, ?, ?, ?)", (generation_id, name, index, count, compressed_digest, payload)))
+                        if len(pending_chunks) >= BATCH_CHUNKS:
+                            flush_chunks()
+                manifest.append({"name": name, "sha256": raw_digest})
+        flush_chunks()
             manifest.append({"name": name, "sha256": hashlib.sha256(raw).hexdigest()})
         flush_chunks()
         manifest_hash = hashlib.sha256(
