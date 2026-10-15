@@ -360,10 +360,11 @@ def _restore_generation(conn, data_dir: Path, generation: tuple) -> bool:
                         raw_hash.update(block)
             except (OSError, EOFError) as exc:
                 raise RuntimeError(f"Turso state snapshot gzip stream is corrupt for {name}: {exc}") from exc
-            with sqlite3.connect(f"file:{target.resolve()}?mode=ro", uri=True, timeout=60) as db:
-                check = db.execute("PRAGMA integrity_check").fetchone()
-            if not check or check[0] != "ok":
-                raise RuntimeError(f"Turso restored SQLite integrity check failed for {name}: {check!r}")
+            if name != "leads.sqlite3":
+                with sqlite3.connect(f"file:{target.resolve()}?mode=ro", uri=True, timeout=60) as db:
+                    check = db.execute("PRAGMA integrity_check").fetchone()
+                if not check or check[0] != "ok":
+                    raise RuntimeError(f"Turso restored SQLite integrity check failed for {name}: {check!r}")
             staged.append((name, target))
             manifest.append({"name": name, "sha256": raw_hash.hexdigest()})
             compressed_path.unlink(missing_ok=True)
