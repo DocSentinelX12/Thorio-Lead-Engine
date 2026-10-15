@@ -1251,8 +1251,8 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          echo "TURSO SNAPSHOT DEADLINE: remote persistence is bounded to 2 minutes; the verified local-state artifact is preserved if Turso stalls."
-          timeout --signal=TERM --kill-after=5s 120s python -u -m lead_engine.turso_state snapshot --data-dir data
+          echo "TURSO SNAPSHOT DEADLINE: remote persistence is bounded to 10 minutes; the verified local-state artifact is preserved if Turso stalls."
+          timeout --signal=TERM --kill-after=5s 600s python -u -m lead_engine.turso_state snapshot --data-dir data
 
       - name: Verify active collection and Airtable delivery
         run: |
