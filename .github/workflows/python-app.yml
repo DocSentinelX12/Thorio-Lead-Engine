@@ -1243,7 +1243,7 @@ jobs:
           exit "$engine_status"
       - name: Persist durable Turso engine state
         id: turso_snapshot
-        timeout-minutes: 3
+        timeout-minutes: 12
         continue-on-error: true
         if: always() && steps.turso_restore.outputs.enabled == 'true' && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
         env:
