@@ -5,6 +5,7 @@ on:
     paths:
       - "lead_engine/turso_state.py"
       - "tests/test_turso_state.py"
+      - "tests/test_production_state_restore_workflow.py"
       - ".github/workflows/turso-state-tests.yml"
   workflow_dispatch:
 
@@ -38,4 +39,4 @@ jobs:
           python -m pip install pytest pytest-timeout
 
       - name: Run Turso state snapshot and restore tests
-        run: python -m pytest tests/test_turso_state.py -vv -ra --tb=short --timeout=600
+        run: python -m pytest tests/test_turso_state.py tests/test_production_state_restore_workflow.py -vv -ra --tb=short --timeout=600
