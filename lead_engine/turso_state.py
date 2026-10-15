@@ -286,9 +286,15 @@ def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
                 # Small page batches keep lock waits observable and let the deadline
                 # callback interrupt a stalled backup rather than silently hanging.
                 src.backup(dst, pages=256, progress=report_progress, sleep=0.05)
-                check = dst.execute("PRAGMA integrity_check").fetchone()
+                # The source was fully checked by _validate_primary_database before
+                # copying. A second full integrity_check scans every page again and
+                # can consume the entire workflow deadline on multi-gigabyte state.
+                # quick_check validates the copied database structure here; later
+                # remote read-back verifies the exact compressed bytes and restore
+                # performs a full integrity_check before installing a generation.
+                check = dst.execute("PRAGMA quick_check").fetchone()
                 if not check or check[0] != "ok":
-                    raise RuntimeError(f"SQLite backup integrity failed for {source}: {check!r}")
+                    raise RuntimeError(f"SQLite backup quick_check failed for {source}: {check!r}")
         result = backup_path.read_bytes()
         print(
             f"TURSO STATE SNAPSHOT BACKUP COMPLETE: database={source.name}; "
