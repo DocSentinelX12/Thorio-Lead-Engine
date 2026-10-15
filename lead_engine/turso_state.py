@@ -244,17 +244,58 @@ def _sqlite_files(data_dir: Path) -> list[tuple[str, Path]]:
     return found
 
 
-def _backup_bytes(source: Path) -> bytes:
+def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
+    """Create an integrity-checked backup incrementally and bound lock/contention stalls.
+
+    A one-shot sqlite3 backup can appear hung for the entire workflow timeout. Copy
+    pages in bounded steps instead, report progress, and fail with actionable evidence
+    before the outer Turso snapshot deadline expires. The source database is never
+    modified and the previous complete remote generation remains authoritative.
+    """
+    import time
+
+    started = time.monotonic()
+    deadline = started + max(1.0, float(deadline_seconds))
     with tempfile.TemporaryDirectory(prefix="thorio-state-backup-") as temporary:
         backup_path = Path(temporary) / "snapshot.sqlite3"
         source_uri = f"file:{source.resolve()}?mode=ro"
-        with sqlite3.connect(source_uri, uri=True, timeout=60) as src:
-            with sqlite3.connect(backup_path, timeout=60) as dst:
-                src.backup(dst)
+        with sqlite3.connect(source_uri, uri=True, timeout=5) as src:
+            with sqlite3.connect(backup_path, timeout=5) as dst:
+                last_report = 0.0
+
+                def report_progress(status: int, remaining: int, total: int) -> None:
+                    nonlocal last_report
+                    now = time.monotonic()
+                    if now >= deadline:
+                        raise TimeoutError(
+                            f"SQLite backup exceeded {deadline_seconds:.0f}s; "
+                            f"remaining_pages={remaining}; total_pages={total}; sqlite_status={status}. "
+                            "Remote snapshot was not marked complete; retain the verified artifact for recovery."
+                        )
+                    if now - last_report >= 5.0 or remaining == 0:
+                        copied = max(0, total - remaining)
+                        percent = (100.0 * copied / total) if total else 100.0
+                        print(
+                            f"TURSO STATE SNAPSHOT BACKUP PROGRESS: database={source.name}; "
+                            f"copied_pages={copied}; total_pages={total}; remaining_pages={remaining}; "
+                            f"percent={percent:.1f}; elapsed_seconds={now - started:.1f}; sqlite_status={status}.",
+                            flush=True,
+                        )
+                        last_report = now
+
+                # Small page batches keep lock waits observable and let the deadline
+                # callback interrupt a stalled backup rather than silently hanging.
+                src.backup(dst, pages=256, progress=report_progress, sleep=0.05)
                 check = dst.execute("PRAGMA integrity_check").fetchone()
                 if not check or check[0] != "ok":
                     raise RuntimeError(f"SQLite backup integrity failed for {source}: {check!r}")
-        return backup_path.read_bytes()
+        result = backup_path.read_bytes()
+        print(
+            f"TURSO STATE SNAPSHOT BACKUP COMPLETE: database={source.name}; "
+            f"bytes={len(result)}; elapsed_seconds={time.monotonic() - started:.1f}; integrity=ok.",
+            flush=True,
+        )
+        return result
 
 
 def _validate_primary_database(path: Path) -> None:
