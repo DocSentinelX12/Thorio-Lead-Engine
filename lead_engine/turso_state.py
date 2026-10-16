@@ -539,7 +539,7 @@ def snapshot(data_dir: Path) -> None:
                 _backup_file(source, backup_path)
                 raw_hash = hashlib.sha256()
                 with backup_path.open("rb") as source_stream, compressed_path.open("wb") as compressed_stream:
-                    with gzip.GzipFile(fileobj=compressed_stream, mode="wb", mtime=0) as gzip_stream:
+                    with gzip.GzipFile(fileobj=compressed_stream, mode="wb", compresslevel=1, mtime=0) as gzip_stream:
                         while True:
                             block = source_stream.read(1024 * 1024)
                             if not block:
