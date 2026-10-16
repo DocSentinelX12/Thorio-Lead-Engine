@@ -252,6 +252,12 @@ def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 3
     source_uri = f"file:{source.resolve()}?mode=ro"
     with sqlite3.connect(source_uri, uri=True, timeout=5) as src:
         with sqlite3.connect(backup_path, timeout=5) as dst:
+            # This is a disposable staging copy, never the live engine database.
+            # Avoid journal/fsync overhead while copying multi-GB state; a failed
+            # staging copy cannot become authoritative because remote chunks still
+            # must pass read-back checksums and generation-completion verification.
+            dst.execute("PRAGMA journal_mode=OFF")
+            dst.execute("PRAGMA synchronous=OFF")
             last_report = 0.0
             def report_progress(status: int, remaining: int, total: int) -> None:
                 nonlocal last_report
