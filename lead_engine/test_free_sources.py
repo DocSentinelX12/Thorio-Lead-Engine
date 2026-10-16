@@ -14,6 +14,12 @@ def test_high_value_commercial_triggers_are_captured():
         "new enterprise customer",
         "product launch",
         "acquired",
+        "tech teams",
+        "hiring full tech teams",
+        "tech team",
+        "hiring multiple positions",
+        "hiring multiple tech positions",
+        "hiring tech positions",
     )
     for trigger in triggers:
         assert FreeJobSource._has_b2b_signal(trigger), trigger
@@ -70,3 +76,61 @@ def test_collected_commercial_evidence_preserves_exact_trigger_and_compound_cont
     assert "ai integration" in evidence
     assert records[0]["signal_type"] == "commercial_intent"
     assert records[0]["signal_strength"] == "compound"
+
+
+
+def test_hiring_and_tech_team_terms_are_high_value_collection_signals():
+    from .free_sources import HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS
+
+    triggers = [
+        "tech teams",
+        "hiring full tech teams",
+        "tech team",
+        "hiring multiple positions",
+        "hiring multiple tech positions",
+        "hiring tech positions",
+    ]
+    for trigger in triggers:
+        assert trigger in HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS, trigger
+        assert FreeJobSource._has_b2b_signal(trigger), trigger
+        assert FreeJobSource._commercial_signal_matches(trigger), trigger
+
+
+def test_hiring_and_tech_team_phrases_are_collected_with_exact_evidence():
+    html = b"""
+    <html>
+      <a href="/growth/engineering-team" data-company="Acme">
+        We are hiring multiple tech positions and hiring full tech teams.
+      </a>
+    </html>
+    """
+    source = FreeJobSource("Example Source", "https://example.com/")
+    source._fetch = lambda: html.decode("utf-8")
+    records = source.collect()
+
+    assert len(records) == 1
+    assert records[0]["company"] == "Acme"
+    assert records[0]["signal_type"] == "commercial_intent"
+    assert "hiring multiple tech positions" in records[0]["evidence"].lower()
+    assert "hiring full tech teams" in records[0]["evidence"].lower()
+
+
+def test_broadened_signal_extractor_preserves_hiring_capacity_observations():
+    from .commercial_signal_broadening import extract_broadened_signals
+
+    result = extract_broadened_signals(
+        "Acme is hiring multiple tech positions and hiring full tech teams.",
+        company="Acme",
+    )
+    matches = result["matches"]
+
+    assert any(
+        item["category"] == "hiring_capacity"
+        and item["phrase"].lower() == "hiring multiple tech positions"
+        for item in matches
+    )
+    assert any(
+        item["category"] == "hiring_capacity"
+        and item["phrase"].lower() == "hiring full tech teams"
+        for item in matches
+    )
