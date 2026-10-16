@@ -269,8 +269,9 @@ def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 3
             # SQLite may spend substantial time finalizing/closing the backup
             # after its last progress callback. Enforce the same deadline after
             # backup() returns, not only from the callback.
-            if time.monotonic() >= deadline:
-                elapsed = time.monotonic() - started
+            backup_finished = time.monotonic()
+            if backup_finished >= deadline:
+                elapsed = backup_finished - started
                 raise TimeoutError(
                     f"SQLite backup exceeded {deadline_seconds:.0f}s during finalization "
                     f"(elapsed_seconds={elapsed:.1f}); previous complete remote generation remains authoritative."
