@@ -136,6 +136,12 @@ B2B_SIGNAL_TERMS = (
     "web development",
     "mobile development",
     "technical team",
+    "tech teams",
+    "hiring full tech teams",
+    "tech team",
+    "hiring multiple positions",
+    "hiring multiple tech positions",
+    "hiring tech positions",
     "development team",
     "engineering team",
     "technology partner",
@@ -209,6 +215,12 @@ B2B_SIGNAL_TERMS = (
 )
 
 HIGH_VALUE_COMMERCIAL_SIGNAL_TERMS = (
+    "tech teams",
+    "hiring full tech teams",
+    "tech team",
+    "hiring multiple positions",
+    "hiring multiple tech positions",
+    "hiring tech positions",
     "looking for a development partner", "seeking a development partner", "need a development partner",
     "looking for a technology partner", "seeking a technology partner", "need a technology partner",
     "need an mvp", "need a minimum viable product", "looking to build an mvp", "looking to build a mobile app",
