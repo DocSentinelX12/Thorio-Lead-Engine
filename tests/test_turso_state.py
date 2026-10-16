@@ -356,3 +356,44 @@ def test_turso_restore_refuses_to_delete_local_database_missing_from_snapshot(mo
     assert extra_database.is_file()
     with sqlite3.connect(extra_database) as conn:
         assert conn.execute("SELECT value FROM preserved").fetchone()[0] == "must-survive"
+
+
+def test_backup_deadline_is_checked_after_sqlite_backup_returns(monkeypatch, tmp_path):
+    import time
+
+    class FakeDestination:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            class Result:
+                def fetchone(self):
+                    return ("leads",)
+            return Result()
+
+    class FakeSource(FakeDestination):
+        def backup(self, _destination, **_kwargs):
+            # Simulate SQLite spending most of its time finalizing after its
+            # last progress callback, which the previous deadline missed.
+            return None
+
+    calls = iter([0.0, 100.0])
+    monkeypatch.setattr(time, "monotonic", lambda: next(calls))
+    monkeypatch.setattr(
+        turso_state.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: FakeSource() if _kwargs.get("uri") else FakeDestination(),
+    )
+    source = tmp_path / "leads.sqlite3"
+    source.touch()
+    backup = tmp_path / "backup.sqlite3"
+
+    try:
+        turso_state._backup_file(source, backup, deadline_seconds=85)
+    except TimeoutError as exc:
+        assert "exceeded 85s" in str(exc)
+    else:
+        raise AssertionError("backup deadline must include time spent after SQLite backup progress callbacks")
