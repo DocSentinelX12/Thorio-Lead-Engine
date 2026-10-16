@@ -244,7 +244,7 @@ def _sqlite_files(data_dir: Path) -> list[tuple[str, Path]]:
     return found
 
 
-def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 85.0) -> None:
+def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 300.0) -> None:
     """Create a consistent SQLite backup on disk without loading multi-GB state into RAM."""
     import time
     started = time.monotonic()
@@ -266,12 +266,21 @@ def _backup_file(source: Path, backup_path: Path, *, deadline_seconds: float = 8
             # SQLite's online backup API creates a transactionally consistent copy.
             # Full integrity scans are reserved for restore; they doubled snapshot cost.
             src.backup(dst, pages=256, progress=report_progress, sleep=0.05)
+            # SQLite may spend substantial time finalizing/closing the backup
+            # after its last progress callback. Enforce the same deadline after
+            # backup() returns, not only from the callback.
+            if time.monotonic() >= deadline:
+                elapsed = time.monotonic() - started
+                raise TimeoutError(
+                    f"SQLite backup exceeded {deadline_seconds:.0f}s during finalization "
+                    f"(elapsed_seconds={elapsed:.1f}); previous complete remote generation remains authoritative."
+                )
             if not dst.execute("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
                 raise RuntimeError(f"SQLite backup has no tables: {source}")
     print(f"TURSO STATE SNAPSHOT BACKUP COMPLETE: database={source.name}; bytes={backup_path.stat().st_size}; elapsed_seconds={time.monotonic() - started:.1f}; validation=consistent-backup-and-schema.", flush=True)
 
 
-def _backup_bytes(source: Path, *, deadline_seconds: float = 85.0) -> bytes:
+def _backup_bytes(source: Path, *, deadline_seconds: float = 300.0) -> bytes:
     """Compatibility helper for small test databases; production snapshots stream to disk."""
     with tempfile.TemporaryDirectory(prefix="thorio-state-backup-") as temporary:
         backup_path = Path(temporary) / "snapshot.sqlite3"
