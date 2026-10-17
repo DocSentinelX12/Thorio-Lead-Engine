@@ -33,6 +33,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+      - name: Restore encrypted GitHub Actions state cache
+        id: github_state_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .thorio-state-cache/state.enc
+          key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            thorio-state-v1-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -64,12 +72,6 @@ jobs:
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
-      THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
-      THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
-      THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
-      THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
-      THORIO_STATE_S3_REGION: ${{ vars.THORIO_STATE_S3_REGION || 'auto' }}
-      THORIO_STATE_S3_PREFIX: ${{ vars.THORIO_STATE_S3_PREFIX || 'thorio/lead-engine' }}
       THORIO_FREE_ONLY: "1"
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
@@ -237,23 +239,16 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
-      - name: Validate durable S3 state storage configuration
+      - name: Validate free encrypted state storage configuration
         env:
-          THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
-          THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
-          THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
-          THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
+          THORIO_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_STATE_ENCRYPTION_KEY }}
         run: |
           set -euo pipefail
-          missing=()
-          for name in THORIO_STATE_S3_ENDPOINT_URL THORIO_STATE_S3_BUCKET THORIO_STATE_S3_ACCESS_KEY_ID THORIO_STATE_S3_SECRET_ACCESS_KEY; do
-            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
-          done
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'DURABLE STATE CONFIGURATION BLOCKED: missing GitHub Actions secrets/variables: %s\n' "${missing[*]}" >&2
+          if [ -z "${THORIO_STATE_ENCRYPTION_KEY:-}" ]; then
+            echo "STATE CONFIGURATION BLOCKED: add the GitHub Actions secret THORIO_STATE_ENCRYPTION_KEY. This encrypts the saved database; no paid storage provider is used." >&2
             exit 1
           fi
-          echo "DURABLE STATE CONFIGURATION VERIFIED: S3-compatible object storage credentials are present; secret values were not printed."
+          echo "STATE CONFIGURATION VERIFIED: encrypted GitHub Actions cache selected; no external storage service or billing account is required."
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -984,26 +979,26 @@ jobs:
               echo "This is not full revenue readiness. The run will still collect, qualify, and persist leads when the discovery and storage checks pass."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Restore durable S3 engine state
+      - name: Restore encrypted GitHub Actions state
         id: s3_restore
         env:
-          THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
-          THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
-          THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
-          THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
-          THORIO_STATE_S3_REGION: ${{ vars.THORIO_STATE_S3_REGION || 'auto' }}
-          THORIO_STATE_S3_PREFIX: ${{ vars.THORIO_STATE_S3_PREFIX || 'thorio/lead-engine' }}
+          THORIO_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_STATE_ENCRYPTION_KEY }}
         run: |
           set -euo pipefail
-          mkdir -p data
-          python -m lead_engine.s3_state restore --data-dir data > data/s3-restore.log 2>&1 || {
-            cat data/s3-restore.log
-            echo "S3 STATE RESTORE FAILURE: refusing to silently ignore a configured durable backend failure." >&2
-            exit 1
-          }
-          cat data/s3-restore.log
-          restored="$(sed -n 's/^restored=//p' data/s3-restore.log | tail -n 1)"
-          restored_at="$(sed -n 's/^restored_at=//p' data/s3-restore.log | tail -n 1)"
+          mkdir -p data .thorio-state-cache
+          if [ -s .thorio-state-cache/state.enc ]; then
+            python -m lead_engine.github_state restore --data-dir data --archive .thorio-state-cache/state.enc > data/state-restore.log 2>&1 || {
+              cat data/state-restore.log
+              echo "STATE RESTORE FAILURE: encrypted cached state could not be authenticated and restored; refusing to silently start empty." >&2
+              exit 1
+            }
+            cat data/state-restore.log
+          else
+            echo "STATE CACHE: no encrypted state cache exists yet; checking prior verified GitHub recovery artifacts."
+            echo "restored=false"
+          fi
+          restored="$(sed -n 's/^restored=//p' data/state-restore.log 2>/dev/null | tail -n 1 || true)"
+          restored_at="$(sed -n 's/^restored_at=//p' data/state-restore.log 2>/dev/null | tail -n 1 || true)"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "restored=${restored:-false}" >> "$GITHUB_OUTPUT"
           echo "restored_at=${restored_at:-}" >> "$GITHUB_OUTPUT"
@@ -1031,10 +1026,10 @@ jobs:
             if [ "${S3_STATE_RESTORED:-false}" = "true" ] && [ -n "${S3_STATE_RESTORED_AT:-}" ]; then
               artifact_newer="$(python -c 'import sys; from datetime import datetime; a=datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")); t=datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00")); print("true" if a > t else "false")' "$artifact_created_at" "$S3_STATE_RESTORED_AT")"
               if [ "$artifact_newer" != "true" ]; then
-                echo "ENGINE STATE RECOVERY: restored S3 generation is at least as new as the newest available artifact; keeping S3 state."
+                echo "ENGINE STATE RECOVERY: restored encrypted cache is at least as new as the newest available artifact; keeping encrypted cache state."
                 break
               fi
-              echo "ENGINE STATE RECOVERY: artifact from run $run_id is newer than the restored S3 generation; verifying it before selection."
+              echo "ENGINE STATE RECOVERY: artifact from run $run_id is newer than the restored encrypted cache; verifying it before selection."
             fi
 
             candidate_dir="$(mktemp -d)"
@@ -1080,14 +1075,14 @@ jobs:
             fi
           done <<< "$production_runs"
           if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ] && [ "${S3_STATE_RESTORED:-false}" != "true" ]; then
-            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found and S3 did not restore a usable generation. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
+            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found and the encrypted cache did not restore usable state. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
             exit 1
           fi
           if [ -z "$previous_run_id" ] && [ -z "$prior_production_run_id" ] && [ "${S3_STATE_RESTORED:-false}" != "true" ]; then
             echo "ENGINE STATE BOOTSTRAP: no completed prior production run exists; first-run initialization is permitted."
           fi
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
-      - name: Stage newer verified artifact over older S3 state
+      - name: Stage newer verified artifact over older cached state
         if: steps.previous_state.outputs.run_id != '' && steps.s3_restore.outputs.restored == 'true'
         run: |
           set -euo pipefail
@@ -1251,23 +1246,6 @@ jobs:
           fi
           rm -f data/browser-worker.pid
           exit "$engine_status"
-      - name: Persist durable S3 engine state
-        id: s3_snapshot
-        timeout-minutes: 10
-        continue-on-error: true
-        if: always() && steps.s3_restore.outputs.enabled == 'true' && steps.s3_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
-        env:
-          THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
-          THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
-          THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
-          THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
-          THORIO_STATE_S3_REGION: ${{ vars.THORIO_STATE_S3_REGION || 'auto' }}
-          THORIO_STATE_S3_PREFIX: ${{ vars.THORIO_STATE_S3_PREFIX || 'thorio/lead-engine' }}
-        run: |
-          set -euo pipefail
-          echo "S3 STATE SNAPSHOT DEADLINE: remote persistence is bounded to 9 minutes; the validated local-state artifact remains available for recovery."
-          timeout --signal=TERM --kill-after=5s 540s python -u -m lead_engine.s3_state snapshot --data-dir data
-
       - name: Verify active collection and Airtable delivery
         run: |
           python - <<'PY'
@@ -1453,7 +1431,7 @@ jobs:
           retention-days: 90
           compression-level: 6
           overwrite: true
-      - name: Validate Lead Engine state before artifact persistence
+      - name: Validate Lead Engine state before encrypted persistence
         id: persist_state_validation
         if: always() && steps.s3_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
         run: |
@@ -1484,30 +1462,53 @@ jobs:
                           raise SystemExit(f"STATE ARTIFACT BLOCKED: primary database missing required tables: {missing}")
           print(f"STATE ARTIFACT SAFE TO PERSIST: validated {len(databases)} SQLite database(s).")
           PY
-      - name: Persist Lead Engine state
-        if: always() && steps.persist_state_validation.outcome == 'success'
-        uses: actions/upload-artifact@v6
-        with:
-          name: thorio-lead-engine-state
-          path: data
-          if-no-files-found: warn
-          retention-days: 90
-          compression-level: 6
-          overwrite: false
-      - name: Require durable S3 persistence
-        if: always()
+      - name: Prepare encrypted state backup
+        id: s3_snapshot
+        if: always() && steps.persist_state_validation.outcome == 'success' && steps.s3_restore.outcome == 'success'
         env:
-          S3_ENABLED: ${{ steps.s3_restore.outputs.enabled }}
-          S3_RESTORE_OUTCOME: ${{ steps.s3_restore.outcome }}
-          S3_SNAPSHOT_OUTCOME: ${{ steps.s3_snapshot.outcome }}
+          THORIO_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_STATE_ENCRYPTION_KEY }}
         run: |
           set -euo pipefail
-          if [ "${S3_ENABLED:-false}" != "true" ] || [ "${S3_RESTORE_OUTCOME:-skipped}" != "success" ]; then
-            echo "DURABLE STATE FAILURE: S3-compatible durable storage was not configured and restored/initialized successfully; production cannot be declared healthy." >&2
+          mkdir -p .thorio-state-cache
+          python -m lead_engine.github_state snapshot --data-dir data --archive .thorio-state-cache/state.enc
+      - name: Save encrypted state to free GitHub Actions cache
+        id: save_state_cache
+        if: always() && steps.s3_snapshot.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: .thorio-state-cache/state.enc
+          key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Clean up superseded state caches and legacy unencrypted artifacts
+        if: always() && steps.save_state_cache.outcome == 'success' && steps.s3_restore.outputs.restored == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_CACHE_KEY: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/caches?per_page=100&key=thorio-state-v1-" --jq '.actions_caches[] | select(.key != env.CURRENT_CACHE_KEY) | .id' | while IFS= read -r cache_id; do
+            [ -z "$cache_id" ] && continue
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/caches/$cache_id" >/dev/null
+            echo "Removed superseded encrypted state cache $cache_id."
+          done
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "thorio-lead-engine-state") | .id' | while IFS= read -r artifact_id; do
+            [ -z "$artifact_id" ] && continue
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id" >/dev/null
+            echo "Removed legacy unencrypted state artifact $artifact_id after encrypted cache recovery succeeded."
+          done
+      - name: Require durable encrypted state persistence
+        if: always()
+        env:
+          STATE_CONFIG_OUTCOME: ${{ steps.s3_restore.outcome }}
+          STATE_SNAPSHOT_OUTCOME: ${{ steps.s3_snapshot.outcome }}
+          STATE_CACHE_SAVE_OUTCOME: ${{ steps.save_state_cache.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "${STATE_CONFIG_OUTCOME:-skipped}" != "success" ]; then
+            echo "DURABLE STATE FAILURE: encrypted GitHub Actions state was not restored or initialized successfully." >&2
             exit 1
           fi
-          if [ "${S3_SNAPSHOT_OUTCOME:-skipped}" != "success" ]; then
-            echo "DURABLE STATE FAILURE: S3 generation upload/read-back verification did not complete within the bounded window. The validated local-state artifact remains available for recovery, but the run is failed." >&2
+          if [ "${STATE_SNAPSHOT_OUTCOME:-skipped}" != "success" ] || [ "${STATE_CACHE_SAVE_OUTCOME:-skipped}" != "success" ]; then
+            echo "DURABLE STATE FAILURE: validated state was not encrypted and saved to the bounded GitHub Actions cache. Existing recovery data was not intentionally deleted." >&2
             exit 1
           fi
-          echo "DURABLE STATE VERIFIED: S3 generation objects, checksums, manifest, and latest-generation pointer passed read-back verification."
+          echo "DURABLE STATE VERIFIED: encrypted backup was created and stored in GitHub Actions cache. No external storage provider is used."
