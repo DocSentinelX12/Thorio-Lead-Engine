@@ -70,25 +70,51 @@ def _sqlite_files(data_dir: Path) -> list[Path]:
 
 
 def snapshot(data_dir: Path, archive: Path) -> None:
+    """Create an authenticated encrypted snapshot from a consistent SQLite backup."""
     data_dir = data_dir.resolve()
     primary = data_dir / "leads.sqlite3"
     _validate_sqlite(primary, primary=True)
-    databases = _sqlite_files(data_dir)
-    for database in databases:
-        _validate_sqlite(database, primary=(database == primary))
-
     archive.parent.mkdir(parents=True, exist_ok=True)
     created_at = datetime.now(timezone.utc).isoformat()
+
     with tempfile.TemporaryDirectory(prefix="thorio-state-pack-") as temp:
-        tar_path = Path(temp) / "state.tar.gz"
+        root = Path(temp)
+        staged = root / "data"
+        staged.mkdir()
+        for path in sorted(data_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(data_dir)
+            name = path.name.lower()
+            if name.endswith(("-wal", "-shm")) or name.endswith(".log"):
+                continue
+            if name in {"scheduled-run-output.txt", "browser-state.json", "browser-worker.pid"}:
+                continue
+            target = staged / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}:
+                # SQLite's online backup API captures committed WAL contents without
+                # copying a live database file and its sidecars independently.
+                source_uri = f"file:{path.resolve()}?mode=ro"
+                with sqlite3.connect(source_uri, uri=True, timeout=30) as source_conn:
+                    source_conn.execute("PRAGMA busy_timeout=30000")
+                    with sqlite3.connect(target, timeout=30) as target_conn:
+                        source_conn.backup(target_conn, pages=512, sleep=0.05)
+                _validate_sqlite(target, primary=(relative.as_posix() == "leads.sqlite3"))
+            else:
+                shutil.copy2(path, target)
+
+        databases = _sqlite_files(staged)
+        if not any(path.relative_to(staged).as_posix() == "leads.sqlite3" for path in databases):
+            raise RuntimeError("Encrypted state snapshot is missing data/leads.sqlite3.")
+        for database in databases:
+            _validate_sqlite(database, primary=(database.relative_to(staged).as_posix() == "leads.sqlite3"))
+
+        tar_path = root / "state.tar.gz"
         with tarfile.open(tar_path, mode="w:gz", compresslevel=6) as bundle:
-            for path in sorted(data_dir.rglob("*")):
-                if not path.is_file():
-                    continue
-                relative = path.relative_to(data_dir).as_posix()
-                if relative == META_NAME or path.name.endswith(("-wal", "-shm")):
-                    continue
-                bundle.add(path, arcname=relative, recursive=False)
+            for path in sorted(staged.rglob("*")):
+                if path.is_file():
+                    bundle.add(path, arcname=path.relative_to(staged).as_posix(), recursive=False)
             metadata = json.dumps(
                 {"schema_version": 1, "created_at": created_at, "database_count": len(databases)},
                 sort_keys=True,
