@@ -511,10 +511,11 @@ def snapshot(data_dir: Path) -> None:
         conn.commit()
         manifest = []
         pending_chunks = []
-        # Turso round-trip latency dominates large snapshots. Keep each request
-        # at the known-safe eight-chunk payload size, but upload independent,
-        # idempotent batches concurrently using separate connections.
-        upload_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="turso-snapshot")
+        # Small snapshots stay on the primary connection (simpler and faster);
+        # large snapshots use parallel, independent connections to amortize
+        # Turso's per-request latency without increasing the deadline.
+        parallel_upload = sum(source.stat().st_size for _, source in files) >= 64 * 1024 * 1024
+        upload_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="turso-snapshot") if parallel_upload else None
         upload_futures = []
         worker_local = threading.local()
         worker_connections = []
@@ -547,17 +548,26 @@ def snapshot(data_dir: Path) -> None:
                 f"chunks={len(batch)}.",
                 flush=True,
             )
-            upload_futures.append(upload_executor.submit(upload_batch, batch))
+            if parallel_upload:
+                upload_futures.append(upload_executor.submit(upload_batch, batch))
+                # Bound queued payload memory while allowing multiple network
+                # requests in flight. Eight batches is at most ~48 MiB of chunk data.
+                if len(upload_futures) >= 8:
+                    upload_futures.pop(0).result()
+            else:
+                batch_method = getattr(conn, "batch", None)
+                if callable(batch_method):
+                    batch_method(batch, mode="immediate")
+                else:
+                    for sql, params in batch:
+                        conn.execute(sql, params)
+                        conn.commit()
             pending_chunks.clear()
-            # Bound queued payload memory while allowing multiple network
-            # requests in flight. Eight batches is at most ~48 MiB of chunk data.
-            if len(upload_futures) >= 8:
-                upload_futures.pop(0).result()
 
         print(
             f"TURSO STATE SNAPSHOT START: generation={generation_id}; "
             f"databases={len(files)}; chunk_bytes={CHUNK_BYTES}; "
-            f"batch_chunks={BATCH_CHUNKS}; upload_workers=4.",
+            f"batch_chunks={BATCH_CHUNKS}; upload_workers={4 if parallel_upload else 1}.",
             flush=True,
         )
         try:
@@ -598,7 +608,8 @@ def snapshot(data_dir: Path) -> None:
             for future in upload_futures:
                 future.result()
         finally:
-            upload_executor.shutdown(wait=True)
+            if upload_executor is not None:
+                upload_executor.shutdown(wait=True)
             for worker_conn in worker_connections:
                 worker_conn.close()
         manifest_hash = hashlib.sha256(
