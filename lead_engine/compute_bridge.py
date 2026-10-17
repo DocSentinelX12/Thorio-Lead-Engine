@@ -48,11 +48,23 @@ def _bounded_sqlite_busy_timeout(db: Any, timeout_ms: int = 250):
         return
     original_timeout = int(connection.execute("PRAGMA busy_timeout").fetchone()[0])
     bounded_timeout = min(original_timeout, timeout_ms)
-    connection.execute(f"PRAGMA busy_timeout={bounded_timeout}")
+    original_retry_limit = getattr(db, "_write_retry_attempt_limit", None)
+    configured_retry_limit = 15 if original_retry_limit is None else int(original_retry_limit)
     try:
+        # Bridge work is best-effort and has its own aggregate deadline. Do not
+        # let LeadDB's general-purpose 15-attempt contention policy overrun it.
+        db._write_retry_attempt_limit = min(configured_retry_limit, 4)
+        connection.execute(f"PRAGMA busy_timeout={bounded_timeout}")
         yield
     finally:
         connection.execute(f"PRAGMA busy_timeout={original_timeout}")
+        if original_retry_limit is None:
+            try:
+                delattr(db, "_write_retry_attempt_limit")
+            except AttributeError:
+                pass
+        else:
+            db._write_retry_attempt_limit = original_retry_limit
 
 
 def _persist_remote_result(db: Any, agent: str, result: Mapping[str, Any]) -> None:
