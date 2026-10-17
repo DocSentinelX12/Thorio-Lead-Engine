@@ -52,9 +52,6 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
     env:
       AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
       AIRTABLE_BASE_ID: appBHsCquEQImXmLy
@@ -995,7 +992,7 @@ jobs:
               echo "STATE RESTORE FAILURE: encrypted cached state could not be authenticated and restored; refusing to silently start empty." >&2
               exit 1
             }
-            cat data/state-restore.log
+            cat .thorio-state-cache/restore.log
           else
             echo "STATE CACHE: no encrypted state cache exists yet; checking prior verified GitHub recovery artifacts."
             echo "restored=false"
