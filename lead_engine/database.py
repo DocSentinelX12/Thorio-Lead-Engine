@@ -158,8 +158,9 @@ class LeadDB:
         retry_timeout = min(original_timeout, 250)
         self.conn.execute(f"PRAGMA busy_timeout={retry_timeout}")
         delay = 0.05
+        attempt_limit = max(1, min(15, int(getattr(self, "_write_retry_attempt_limit", 15))))
         try:
-            for attempt in range(15):
+            for attempt in range(attempt_limit):
                 try:
                     self.conn.execute("BEGIN IMMEDIATE")
                     return
@@ -167,13 +168,13 @@ class LeadDB:
                     message = str(exc).lower()
                     if "database is locked" not in message and "database table is locked" not in message:
                         raise
-                    if attempt == 14:
+                    if attempt == attempt_limit - 1:
                         raise sqlite3.OperationalError(
-                            f"SQLite writer lock remained unavailable after 15 bounded attempts: {exc}"
+                            f"SQLite writer lock remained unavailable after {attempt_limit} bounded attempts: {exc}"
                         ) from exc
-                    if attempt in {3, 7, 11}:
+                    if attempt in {3, 7, 11} or attempt == attempt_limit - 2:
                         print(
-                            f"SQLITE WRITE CONTENTION: BEGIN IMMEDIATE retry {attempt + 1}/15; "
+                            f"SQLITE WRITE CONTENTION: BEGIN IMMEDIATE retry {attempt + 1}/{attempt_limit}; "
                             f"waiting {delay:.2f}s before retry.",
                             flush=True,
                         )
