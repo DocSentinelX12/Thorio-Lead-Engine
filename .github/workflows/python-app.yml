@@ -64,8 +64,12 @@ jobs:
       LEAD_ENGINE_SYNC_ENABLED: "true"
       LEAD_ENGINE_BATCH_SIZE: "50"
       LEAD_ENGINE_DATA_DIR: "data"
-      TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-      TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
+      THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
+      THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
+      THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
+      THORIO_STATE_S3_REGION: ${{ vars.THORIO_STATE_S3_REGION || 'auto' }}
+      THORIO_STATE_S3_PREFIX: ${{ vars.THORIO_STATE_S3_PREFIX || 'thorio/lead-engine' }}
       THORIO_FREE_ONLY: "1"
       THORIO_COMPUTE_COORDINATOR_URL: ${{ secrets.THORIO_COMPUTE_COORDINATOR_URL }}
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
@@ -233,6 +237,23 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.10"
+      - name: Validate durable S3 state storage configuration
+        env:
+          THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
+          THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
+          THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
+          THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in THORIO_STATE_S3_ENDPOINT_URL THORIO_STATE_S3_BUCKET THORIO_STATE_S3_ACCESS_KEY_ID THORIO_STATE_S3_SECRET_ACCESS_KEY; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'DURABLE STATE CONFIGURATION BLOCKED: missing GitHub Actions secrets/variables: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          echo "DURABLE STATE CONFIGURATION VERIFIED: S3-compatible object storage credentials are present; secret values were not printed."
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -963,47 +984,36 @@ jobs:
               echo "This is not full revenue readiness. The run will still collect, qualify, and persist leads when the discovery and storage checks pass."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Restore durable Turso engine state
-        id: turso_restore
+      - name: Restore durable S3 engine state
+        id: s3_restore
         env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
+          THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
+          THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
+          THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
+          THORIO_STATE_S3_REGION: ${{ vars.THORIO_STATE_S3_REGION || 'auto' }}
+          THORIO_STATE_S3_PREFIX: ${{ vars.THORIO_STATE_S3_PREFIX || 'thorio/lead-engine' }}
         run: |
           set -euo pipefail
           mkdir -p data
-          if [ -n "${TURSO_DATABASE_URL:-}" ] || [ -n "${TURSO_AUTH_TOKEN:-}" ]; then
-            if python -m lead_engine.turso_state restore --data-dir data > data/turso-restore.log 2>&1; then
-              cat data/turso-restore.log
-              restored="$(sed -n 's/^restored=//p' data/turso-restore.log | tail -n 1)"
-              restored_at="$(sed -n 's/^restored_at=//p' data/turso-restore.log | tail -n 1)"
-              echo "enabled=true" >> "$GITHUB_OUTPUT"
-              echo "restored=${restored:-false}" >> "$GITHUB_OUTPUT"
-              echo "restored_at=${restored_at:-}" >> "$GITHUB_OUTPUT"
-            else
-              cat data/turso-restore.log
-              # Preserve a failed restore workspace for diagnostics; never let a possibly
-              # partial restore contaminate verified GitHub artifact recovery.
-              failed_state_dir="data.turso-restore-failed-${GITHUB_RUN_ID}"
-              mv data "$failed_state_dir"
-              mkdir -p data
-              echo "TURSO RESTORE FAILED: preserved diagnostics at ${failed_state_dir}; falling back to verified GitHub state artifacts."
-              echo "enabled=true" >> "$GITHUB_OUTPUT"
-              echo "restored=false" >> "$GITHUB_OUTPUT"
-              echo "restored_at=" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "TURSO STATE DISABLED: both repository secrets are not configured; existing artifact recovery remains active."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "restored=false" >> "$GITHUB_OUTPUT"
-            echo "restored_at=" >> "$GITHUB_OUTPUT"
-          fi
+          python -m lead_engine.s3_state restore --data-dir data > data/s3-restore.log 2>&1 || {
+            cat data/s3-restore.log
+            echo "S3 STATE RESTORE FAILURE: refusing to silently ignore a configured durable backend failure." >&2
+            exit 1
+          }
+          cat data/s3-restore.log
+          restored="$(sed -n 's/^restored=//p' data/s3-restore.log | tail -n 1)"
+          restored_at="$(sed -n 's/^restored_at=//p' data/s3-restore.log | tail -n 1)"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "restored=${restored:-false}" >> "$GITHUB_OUTPUT"
+          echo "restored_at=${restored_at:-}" >> "$GITHUB_OUTPUT"
 
       - name: Find newest usable engine state
         id: previous_state
         env:
           GH_TOKEN: ${{ github.token }}
-          TURSO_STATE_RESTORED: ${{ steps.turso_restore.outputs.restored }}
-          TURSO_STATE_RESTORED_AT: ${{ steps.turso_restore.outputs.restored_at }}
+          S3_STATE_RESTORED: ${{ steps.s3_restore.outputs.restored }}
+          S3_STATE_RESTORED_AT: ${{ steps.s3_restore.outputs.restored_at }}
         run: |
           set -euo pipefail
           previous_run_id=""
@@ -1018,13 +1028,13 @@ jobs:
             [ -z "$artifact_info" ] && continue
             artifact_id="$(printf '%s' "$artifact_info" | cut -f1)"
             artifact_created_at="$(printf '%s' "$artifact_info" | cut -f2)"
-            if [ "${TURSO_STATE_RESTORED:-false}" = "true" ] && [ -n "${TURSO_STATE_RESTORED_AT:-}" ]; then
-              artifact_newer="$(python -c 'import sys; from datetime import datetime; a=datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")); t=datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00")); print("true" if a > t else "false")' "$artifact_created_at" "$TURSO_STATE_RESTORED_AT")"
+            if [ "${S3_STATE_RESTORED:-false}" = "true" ] && [ -n "${S3_STATE_RESTORED_AT:-}" ]; then
+              artifact_newer="$(python -c 'import sys; from datetime import datetime; a=datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")); t=datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00")); print("true" if a > t else "false")' "$artifact_created_at" "$S3_STATE_RESTORED_AT")"
               if [ "$artifact_newer" != "true" ]; then
-                echo "ENGINE STATE RECOVERY: restored Turso generation is at least as new as the newest available artifact; keeping Turso state."
+                echo "ENGINE STATE RECOVERY: restored S3 generation is at least as new as the newest available artifact; keeping S3 state."
                 break
               fi
-              echo "ENGINE STATE RECOVERY: artifact from run $run_id is newer than the restored Turso generation; verifying it before selection."
+              echo "ENGINE STATE RECOVERY: artifact from run $run_id is newer than the restored S3 generation; verifying it before selection."
             fi
 
             candidate_dir="$(mktemp -d)"
@@ -1069,22 +1079,22 @@ jobs:
               rm -rf "$candidate_dir"
             fi
           done <<< "$production_runs"
-          if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ] && [ "${TURSO_STATE_RESTORED:-false}" != "true" ]; then
-            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found and Turso did not restore a usable generation. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
+          if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ] && [ "${S3_STATE_RESTORED:-false}" != "true" ]; then
+            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found and S3 did not restore a usable generation. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
             exit 1
           fi
-          if [ -z "$previous_run_id" ] && [ -z "$prior_production_run_id" ] && [ "${TURSO_STATE_RESTORED:-false}" != "true" ]; then
+          if [ -z "$previous_run_id" ] && [ -z "$prior_production_run_id" ] && [ "${S3_STATE_RESTORED:-false}" != "true" ]; then
             echo "ENGINE STATE BOOTSTRAP: no completed prior production run exists; first-run initialization is permitted."
           fi
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
-      - name: Stage newer verified artifact over older Turso state
-        if: steps.previous_state.outputs.run_id != '' && steps.turso_restore.outputs.restored == 'true'
+      - name: Stage newer verified artifact over older S3 state
+        if: steps.previous_state.outputs.run_id != '' && steps.s3_restore.outputs.restored == 'true'
         run: |
           set -euo pipefail
-          preserved_dir="data.turso-restored-${GITHUB_RUN_ID}"
+          preserved_dir="data.s3-restored-${GITHUB_RUN_ID}"
           mv data "$preserved_dir"
           mkdir -p data
-          echo "ENGINE STATE RECOVERY: preserved the older Turso restore at ${preserved_dir}; the newer artifact will be downloaded into a clean data directory."
+          echo "ENGINE STATE RECOVERY: preserved the older S3 restore at ${preserved_dir}; the newer artifact will be downloaded into a clean data directory."
       - name: Download previous Lead Engine state
         if: steps.previous_state.outputs.run_id != ''
         uses: actions/download-artifact@v6
@@ -1095,7 +1105,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.previous_state.outputs.run_id }}
       - name: Validate restored Lead Engine state integrity
-        if: steps.turso_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
+        if: steps.s3_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -1241,18 +1251,22 @@ jobs:
           fi
           rm -f data/browser-worker.pid
           exit "$engine_status"
-      - name: Persist durable Turso engine state
-        id: turso_snapshot
-        timeout-minutes: 20
+      - name: Persist durable S3 engine state
+        id: s3_snapshot
+        timeout-minutes: 10
         continue-on-error: true
-        if: always() && steps.turso_restore.outputs.enabled == 'true' && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        if: always() && steps.s3_restore.outputs.enabled == 'true' && steps.s3_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
         env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          THORIO_STATE_S3_ENDPOINT_URL: ${{ vars.THORIO_STATE_S3_ENDPOINT_URL || secrets.THORIO_STATE_S3_ENDPOINT_URL }}
+          THORIO_STATE_S3_BUCKET: ${{ vars.THORIO_STATE_S3_BUCKET || secrets.THORIO_STATE_S3_BUCKET }}
+          THORIO_STATE_S3_ACCESS_KEY_ID: ${{ secrets.THORIO_STATE_S3_ACCESS_KEY_ID }}
+          THORIO_STATE_S3_SECRET_ACCESS_KEY: ${{ secrets.THORIO_STATE_S3_SECRET_ACCESS_KEY }}
+          THORIO_STATE_S3_REGION: ${{ vars.THORIO_STATE_S3_REGION || 'auto' }}
+          THORIO_STATE_S3_PREFIX: ${{ vars.THORIO_STATE_S3_PREFIX || 'thorio/lead-engine' }}
         run: |
           set -euo pipefail
-          echo "TURSO SNAPSHOT DEADLINE: remote persistence is bounded to 15 minutes; the verified local-state artifact is preserved if Turso stalls."
-          timeout --signal=TERM --kill-after=5s 900s python -u -m lead_engine.turso_state snapshot --data-dir data
+          echo "S3 STATE SNAPSHOT DEADLINE: remote persistence is bounded to 9 minutes; the validated local-state artifact remains available for recovery."
+          timeout --signal=TERM --kill-after=5s 540s python -u -m lead_engine.s3_state snapshot --data-dir data
 
       - name: Verify active collection and Airtable delivery
         run: |
@@ -1441,7 +1455,7 @@ jobs:
           overwrite: true
       - name: Validate Lead Engine state before artifact persistence
         id: persist_state_validation
-        if: always() && steps.turso_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        if: always() && steps.s3_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -1477,22 +1491,23 @@ jobs:
           name: thorio-lead-engine-state
           path: data
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 90
           compression-level: 6
           overwrite: false
-      - name: Require durable Turso persistence
+      - name: Require durable S3 persistence
         if: always()
         env:
-          TURSO_ENABLED: ${{ steps.turso_restore.outputs.enabled }}
-          TURSO_SNAPSHOT_OUTCOME: ${{ steps.turso_snapshot.outcome }}
+          S3_ENABLED: ${{ steps.s3_restore.outputs.enabled }}
+          S3_RESTORE_OUTCOME: ${{ steps.s3_restore.outcome }}
+          S3_SNAPSHOT_OUTCOME: ${{ steps.s3_snapshot.outcome }}
         run: |
           set -euo pipefail
-          if [ "${TURSO_ENABLED:-false}" = "true" ] && [ "${TURSO_SNAPSHOT_OUTCOME:-skipped}" != "success" ]; then
-            echo "DURABLE STATE FAILURE: Turso persistence did not complete within its bounded window. The validated local-state artifact was allowed to persist for recovery; the workflow remains failed until remote durability is verified." >&2
+          if [ "${S3_ENABLED:-false}" != "true" ] || [ "${S3_RESTORE_OUTCOME:-skipped}" != "success" ]; then
+            echo "DURABLE STATE FAILURE: S3-compatible durable storage was not configured and restored/initialized successfully; production cannot be declared healthy." >&2
             exit 1
           fi
-          if [ "${TURSO_ENABLED:-false}" = "true" ]; then
-            echo "DURABLE STATE VERIFIED: Turso snapshot completed within the bounded window."
-          else
-            echo "TURSO STATE STORAGE DISABLED: the existing verified artifact recovery path remains active."
+          if [ "${S3_SNAPSHOT_OUTCOME:-skipped}" != "success" ]; then
+            echo "DURABLE STATE FAILURE: S3 generation upload/read-back verification did not complete within the bounded window. The validated local-state artifact remains available for recovery, but the run is failed." >&2
+            exit 1
           fi
+          echo "DURABLE STATE VERIFIED: S3 generation objects, checksums, manifest, and latest-generation pointer passed read-back verification."
