@@ -7,6 +7,7 @@ database or changes the engine's existing database semantics.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import gzip
 import hashlib
 import json
@@ -345,7 +346,7 @@ def _restore_generation(conn, data_dir: Path, generation: tuple) -> bool:
                     rows = conn.execute(
                         "SELECT chunk_index, chunk_count, compressed_sha256, payload "
                         "FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? "
-                        "AND chunk_index >= ? ORDER BY chunk_index LIMIT 4",
+                        "AND chunk_index >= ? ORDER BY chunk_index LIMIT 8",
                         (generation_id, name, next_index),
                     ).fetchall()
                     if not rows:
@@ -509,6 +510,32 @@ def snapshot(data_dir: Path) -> None:
         conn.commit()
         manifest = []
         pending_chunks = []
+        # Turso round-trip latency dominates large snapshots. Keep each request
+        # at the known-safe eight-chunk payload size, but upload independent,
+        # idempotent batches concurrently using separate connections.
+        upload_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="turso-snapshot")
+        upload_futures = []
+        worker_local = __import__("threading").local()
+        worker_connections = []
+        worker_connections_lock = __import__("threading").Lock()
+
+        def upload_batch(batch) -> None:
+            worker_conn = getattr(worker_local, "connection", None)
+            if worker_conn is None:
+                worker_conn = _connect()
+                if worker_conn is None:
+                    raise RuntimeError("Turso snapshot upload worker could not initialize a connection.")
+                worker_local.connection = worker_conn
+                with worker_connections_lock:
+                    worker_connections.append(worker_conn)
+            batch_method = getattr(worker_conn, "batch", None)
+            if callable(batch_method):
+                batch_method(batch, mode="immediate")
+            else:
+                # Compatibility fallback for older drivers/test doubles.
+                for sql, params in batch:
+                    worker_conn.execute(sql, params)
+                    worker_conn.commit()
 
         def flush_chunks() -> None:
             if not pending_chunks:
@@ -519,58 +546,60 @@ def snapshot(data_dir: Path) -> None:
                 f"chunks={len(batch)}.",
                 flush=True,
             )
-            # The batch is transactional, and every statement uses stable keys
-            # with INSERT OR REPLACE. The connection wrapper can safely replay
-            # the batch if Turso loses the response after applying the writes.
-            batch_method = getattr(conn, "batch", None)
-            if callable(batch_method):
-                batch_method(batch, mode="immediate")
-            else:
-                # Keep the DB-API-compatible fallback for older drivers/test doubles.
-                for sql, params in batch:
-                    conn.execute(sql, params)
-                    conn.commit()
+            upload_futures.append(upload_executor.submit(upload_batch, batch))
             pending_chunks.clear()
+            # Bound queued payload memory while allowing multiple network
+            # requests in flight. Eight batches is at most ~48 MiB of chunk data.
+            if len(upload_futures) >= 8:
+                upload_futures.pop(0).result()
 
         print(
             f"TURSO STATE SNAPSHOT START: generation={generation_id}; "
-            f"databases={len(files)}; chunk_bytes={CHUNK_BYTES}; batch_chunks={BATCH_CHUNKS}.",
+            f"databases={len(files)}; chunk_bytes={CHUNK_BYTES}; "
+            f"batch_chunks={BATCH_CHUNKS}; upload_workers=4.",
             flush=True,
         )
-        for name, source in files:
-            print(f"TURSO STATE SNAPSHOT BACKUP DATABASE: generation={generation_id}; database={name}.", flush=True)
-            with tempfile.TemporaryDirectory(prefix="thorio-state-snapshot-") as temporary:
-                backup_path = Path(temporary) / "snapshot.sqlite3"
-                compressed_path = Path(temporary) / "snapshot.sqlite3.gz"
-                _backup_file(source, backup_path)
-                raw_hash = hashlib.sha256()
-                with backup_path.open("rb") as source_stream, compressed_path.open("wb") as compressed_stream:
-                    with gzip.GzipFile(fileobj=compressed_stream, mode="wb", compresslevel=1, mtime=0) as gzip_stream:
+        try:
+            for name, source in files:
+                print(f"TURSO STATE SNAPSHOT BACKUP DATABASE: generation={generation_id}; database={name}.", flush=True)
+                with tempfile.TemporaryDirectory(prefix="thorio-state-snapshot-") as temporary:
+                    backup_path = Path(temporary) / "snapshot.sqlite3"
+                    compressed_path = Path(temporary) / "snapshot.sqlite3.gz"
+                    _backup_file(source, backup_path)
+                    raw_hash = hashlib.sha256()
+                    with backup_path.open("rb") as source_stream, compressed_path.open("wb") as compressed_stream:
+                        with gzip.GzipFile(fileobj=compressed_stream, mode="wb", compresslevel=1, mtime=0) as gzip_stream:
+                            while True:
+                                block = source_stream.read(1024 * 1024)
+                                if not block:
+                                    break
+                                raw_hash.update(block)
+                                gzip_stream.write(block)
+                    compressed_hash = hashlib.sha256()
+                    with compressed_path.open("rb") as compressed_stream:
                         while True:
-                            block = source_stream.read(1024 * 1024)
+                            block = compressed_stream.read(1024 * 1024)
                             if not block:
                                 break
-                            raw_hash.update(block)
-                            gzip_stream.write(block)
-                compressed_hash = hashlib.sha256()
-                with compressed_path.open("rb") as compressed_stream:
-                    while True:
-                        block = compressed_stream.read(1024 * 1024)
-                        if not block:
-                            break
-                        compressed_hash.update(block)
-                compressed_size = compressed_path.stat().st_size
-                count = max(1, (compressed_size + CHUNK_BYTES - 1) // CHUNK_BYTES)
-                raw_digest, compressed_digest = raw_hash.hexdigest(), compressed_hash.hexdigest()
-                print(f"TURSO STATE SNAPSHOT DATABASE PREPARED: generation={generation_id}; database={name}; raw_bytes={backup_path.stat().st_size}; compressed_bytes={compressed_size}; chunks={count}.", flush=True)
-                with compressed_path.open("rb") as compressed_stream:
-                    for index in range(count):
-                        payload = compressed_stream.read(CHUNK_BYTES)
-                        pending_chunks.append(("INSERT OR REPLACE INTO thorio_state_chunks (generation_id, database_name, chunk_index, chunk_count, compressed_sha256, payload) VALUES (?, ?, ?, ?, ?, ?)", (generation_id, name, index, count, compressed_digest, payload)))
-                        if len(pending_chunks) >= BATCH_CHUNKS:
-                            flush_chunks()
-                manifest.append({"name": name, "sha256": raw_digest})
-        flush_chunks()
+                            compressed_hash.update(block)
+                    compressed_size = compressed_path.stat().st_size
+                    count = max(1, (compressed_size + CHUNK_BYTES - 1) // CHUNK_BYTES)
+                    raw_digest, compressed_digest = raw_hash.hexdigest(), compressed_hash.hexdigest()
+                    print(f"TURSO STATE SNAPSHOT DATABASE PREPARED: generation={generation_id}; database={name}; raw_bytes={backup_path.stat().st_size}; compressed_bytes={compressed_size}; chunks={count}.", flush=True)
+                    with compressed_path.open("rb") as compressed_stream:
+                        for index in range(count):
+                            payload = compressed_stream.read(CHUNK_BYTES)
+                            pending_chunks.append(("INSERT OR REPLACE INTO thorio_state_chunks (generation_id, database_name, chunk_index, chunk_count, compressed_sha256, payload) VALUES (?, ?, ?, ?, ?, ?)", (generation_id, name, index, count, compressed_digest, payload)))
+                            if len(pending_chunks) >= BATCH_CHUNKS:
+                                flush_chunks()
+                    manifest.append({"name": name, "sha256": raw_digest})
+            flush_chunks()
+            for future in upload_futures:
+                future.result()
+        finally:
+            upload_executor.shutdown(wait=True)
+            for worker_conn in worker_connections:
+                worker_conn.close()
         manifest_hash = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
