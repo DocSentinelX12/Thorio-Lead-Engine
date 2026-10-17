@@ -12,6 +12,12 @@ class FakeBody(io.BytesIO):
     pass
 
 
+class FakeClientError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
 class FakePaginator:
     def __init__(self, client):
         self.client = client
@@ -39,12 +45,12 @@ class FakeS3:
 
     def get_object(self, Bucket, Key):
         if Key not in self.objects:
-            raise KeyError(Key)
+            raise FakeClientError("NoSuchKey")
         return {"Body": FakeBody(self.objects[Key])}
 
     def head_object(self, Bucket, Key):
         if Key not in self.objects:
-            raise KeyError(Key)
+            raise FakeClientError("NoSuchKey")
         return {"ContentLength": len(self.objects[Key]), "Metadata": self.metadata.get(Key, {})}
 
     def download_file(self, bucket, key, filename):
@@ -72,12 +78,15 @@ def configure(monkeypatch):
 def make_data_dir(path: Path, label: str):
     path.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path / "leads.sqlite3") as conn:
-        conn.execute("CREATE TABLE leads (fingerprint TEXT PRIMARY KEY, payload TEXT NOT NULL)")
-        conn.execute("CREATE TABLE checkpoints (collector TEXT PRIMARY KEY, checkpoint TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS leads (fingerprint TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS checkpoints (collector TEXT PRIMARY KEY, checkpoint TEXT NOT NULL)")
+        conn.execute("DELETE FROM leads")
+        conn.execute("DELETE FROM checkpoints")
         conn.execute("INSERT INTO leads VALUES (?, ?)", (label, json.dumps({"name": label})))
         conn.execute("INSERT INTO checkpoints VALUES (?, ?)", ("source", label))
     with sqlite3.connect(path / "queue.sqlite3") as conn:
-        conn.execute("CREATE TABLE queue (task_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS queue (task_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        conn.execute("DELETE FROM queue")
         conn.execute("INSERT INTO queue VALUES (?, ?)", ("task-1", label))
 
 
