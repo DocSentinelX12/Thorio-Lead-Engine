@@ -980,7 +980,7 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Restore encrypted GitHub Actions state
-        id: s3_restore
+        id: state_restore
         env:
           THORIO_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_STATE_ENCRYPTION_KEY }}
         run: |
@@ -1007,8 +1007,8 @@ jobs:
         id: previous_state
         env:
           GH_TOKEN: ${{ github.token }}
-          CACHE_STATE_RESTORED: ${{ steps.s3_restore.outputs.restored }}
-          CACHE_STATE_RESTORED_AT: ${{ steps.s3_restore.outputs.restored_at }}
+          CACHE_STATE_RESTORED: ${{ steps.state_restore.outputs.restored }}
+          CACHE_STATE_RESTORED_AT: ${{ steps.state_restore.outputs.restored_at }}
         run: |
           set -euo pipefail
           previous_run_id=""
@@ -1083,7 +1083,7 @@ jobs:
           fi
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
       - name: Stage newer verified artifact over older cached state
-        if: steps.previous_state.outputs.run_id != '' && steps.s3_restore.outputs.restored == 'true'
+        if: steps.previous_state.outputs.run_id != '' && steps.state_restore.outputs.restored == 'true'
         run: |
           set -euo pipefail
           preserved_dir="data.cache-restored-${GITHUB_RUN_ID}"
@@ -1100,7 +1100,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.previous_state.outputs.run_id }}
       - name: Validate restored Lead Engine state integrity
-        if: steps.s3_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
+        if: steps.state_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -1433,7 +1433,7 @@ jobs:
           overwrite: true
       - name: Validate Lead Engine state before encrypted persistence
         id: persist_state_validation
-        if: always() && steps.s3_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
+        if: always() && steps.state_restore.outcome == 'success' && steps.previous_state.outcome == 'success' && steps.engine_run.outcome != 'skipped'
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -1463,8 +1463,8 @@ jobs:
           print(f"STATE ARTIFACT SAFE TO PERSIST: validated {len(databases)} SQLite database(s).")
           PY
       - name: Prepare encrypted state backup
-        id: s3_snapshot
-        if: always() && steps.persist_state_validation.outcome == 'success' && steps.s3_restore.outcome == 'success'
+        id: state_snapshot
+        if: always() && steps.persist_state_validation.outcome == 'success' && steps.state_restore.outcome == 'success'
         env:
           THORIO_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_STATE_ENCRYPTION_KEY }}
         run: |
@@ -1473,13 +1473,13 @@ jobs:
           python -m lead_engine.github_state snapshot --data-dir data --archive .thorio-state-cache/state.enc
       - name: Save encrypted state to free GitHub Actions cache
         id: save_state_cache
-        if: always() && steps.s3_snapshot.outcome == 'success'
+        if: always() && steps.state_snapshot.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: .thorio-state-cache/state.enc
           key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Clean up superseded state caches and legacy unencrypted artifacts
-        if: always() && steps.save_state_cache.outcome == 'success' && steps.s3_restore.outputs.restored == 'true'
+        if: always() && steps.save_state_cache.outcome == 'success' && steps.state_restore.outputs.restored == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_CACHE_KEY: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1498,8 +1498,8 @@ jobs:
       - name: Require durable encrypted state persistence
         if: always()
         env:
-          STATE_CONFIG_OUTCOME: ${{ steps.s3_restore.outcome }}
-          STATE_SNAPSHOT_OUTCOME: ${{ steps.s3_snapshot.outcome }}
+          STATE_CONFIG_OUTCOME: ${{ steps.state_restore.outcome }}
+          STATE_SNAPSHOT_OUTCOME: ${{ steps.state_snapshot.outcome }}
           STATE_CACHE_SAVE_OUTCOME: ${{ steps.save_state_cache.outcome }}
         run: |
           set -euo pipefail
