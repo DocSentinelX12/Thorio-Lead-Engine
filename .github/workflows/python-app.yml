@@ -33,14 +33,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
-      - name: Restore encrypted GitHub Actions state cache
-        id: github_state_cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .thorio-state-cache/state.enc
-          key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            thorio-state-v1-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -60,6 +52,17 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+            - name: Restore encrypted GitHub Actions state cache
+              id: github_state_cache
+              uses: actions/cache/restore@v4
+              with:
+                path: .thorio-state-cache/state.enc
+                key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+                restore-keys: |
+                  thorio-state-v1-
     env:
       AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
       AIRTABLE_BASE_ID: appBHsCquEQImXmLy
@@ -988,7 +991,7 @@ jobs:
           mkdir -p data .thorio-state-cache
           if [ -s .thorio-state-cache/state.enc ]; then
             python -m lead_engine.github_state restore --data-dir data --archive .thorio-state-cache/state.enc > .thorio-state-cache/restore.log 2>&1 || {
-              cat data/state-restore.log
+              cat .thorio-state-cache/restore.log
               echo "STATE RESTORE FAILURE: encrypted cached state could not be authenticated and restored; refusing to silently start empty." >&2
               exit 1
             }
