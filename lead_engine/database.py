@@ -147,17 +147,19 @@ class LeadDB:
                 source.replace(destination)
 
     def _begin_immediate(self) -> None:
-        """Acquire SQLite's writer lock with bounded waits and explicit retries.
+        """Acquire SQLite's writer lock with a bounded, contention-tolerant retry budget.
 
-        A long connection busy_timeout otherwise makes this retry loop wait up
-        to two minutes on its first attempt, defeating the retry policy.
+        Keep each SQLite busy wait short, but allow concurrent queue/result writers
+        up to roughly 15 seconds to finish before surfacing a genuine lock failure.
+        This avoids both the old two-minute per-attempt stall and failing after only
+        a few seconds when several workers commit together.
         """
         original_timeout = int(self.conn.execute("PRAGMA busy_timeout").fetchone()[0])
         retry_timeout = min(original_timeout, 250)
         self.conn.execute(f"PRAGMA busy_timeout={retry_timeout}")
         delay = 0.05
         try:
-            for attempt in range(8):
+            for attempt in range(15):
                 try:
                     self.conn.execute("BEGIN IMMEDIATE")
                     return
@@ -165,8 +167,16 @@ class LeadDB:
                     message = str(exc).lower()
                     if "database is locked" not in message and "database table is locked" not in message:
                         raise
-                    if attempt == 7:
-                        raise
+                    if attempt == 14:
+                        raise sqlite3.OperationalError(
+                            f"SQLite writer lock remained unavailable after 15 bounded attempts: {exc}"
+                        ) from exc
+                    if attempt in {3, 7, 11}:
+                        print(
+                            f"SQLITE WRITE CONTENTION: BEGIN IMMEDIATE retry {attempt + 1}/15; "
+                            f"waiting {delay:.2f}s before retry.",
+                            flush=True,
+                        )
                     time.sleep(delay)
                     delay = min(delay * 2, 1.0)
         finally:
