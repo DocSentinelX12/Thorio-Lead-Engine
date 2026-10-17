@@ -15,6 +15,7 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import sqlite3
+import threading
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -462,7 +463,7 @@ def _verify_generation_chunks(conn, generation_id: str, expected_raw_hashes: dic
         decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
         next_index, expected_chunks, expected_compressed_hash = 0, None, None
         while True:
-            rows = conn.execute("SELECT chunk_index, chunk_count, compressed_sha256, payload FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? AND chunk_index >= ? ORDER BY chunk_index LIMIT 4", (generation_id, name, next_index)).fetchall()
+            rows = conn.execute("SELECT chunk_index, chunk_count, compressed_sha256, payload FROM thorio_state_chunks WHERE generation_id = ? AND database_name = ? AND chunk_index >= ? ORDER BY chunk_index LIMIT 8", (generation_id, name, next_index)).fetchall()
             if not rows:
                 break
             for row in rows:
@@ -515,9 +516,9 @@ def snapshot(data_dir: Path) -> None:
         # idempotent batches concurrently using separate connections.
         upload_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="turso-snapshot")
         upload_futures = []
-        worker_local = __import__("threading").local()
+        worker_local = threading.local()
         worker_connections = []
-        worker_connections_lock = __import__("threading").Lock()
+        worker_connections_lock = threading.Lock()
 
         def upload_batch(batch) -> None:
             worker_conn = getattr(worker_local, "connection", None)
