@@ -55,14 +55,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
-            - name: Restore encrypted GitHub Actions state cache
-              id: github_state_cache
-              uses: actions/cache/restore@v4
-              with:
-                path: .thorio-state-cache/state.enc
-                key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
-                restore-keys: |
-                  thorio-state-v1-
     env:
       AIRTABLE_PAT_CANDIDATE: ${{ secrets.AIRTABLE_PAT }}
       AIRTABLE_BASE_ID: appBHsCquEQImXmLy
@@ -238,6 +230,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+      - name: Restore encrypted GitHub Actions state cache
+        id: github_state_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .thorio-state-cache/state.enc
+          key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            thorio-state-v1-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
