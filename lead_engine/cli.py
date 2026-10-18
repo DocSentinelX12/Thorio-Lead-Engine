@@ -243,9 +243,15 @@ def main(argv=None):
                 for agent_result in round_result.get("agents", []):
                     if not isinstance(agent_result, dict) or not int(agent_result.get("failed_count", 0) or 0):
                         continue
+                    agent_errors = [
+                        str(item.get("error", "")).strip()[:240]
+                        for item in agent_result.get("results", [])
+                        if isinstance(item, dict) and str(item.get("error", "")).strip()
+                    ]
                     agent_failure_details.append({
                         "agent": agent_result.get("agent"),
                         "failed_count": int(agent_result.get("failed_count", 0) or 0),
+                        "errors": agent_errors[:3],
                     })
             failure_summary = {
                 "status": result.get("status"),
