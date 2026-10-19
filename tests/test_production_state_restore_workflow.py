@@ -31,3 +31,13 @@ def test_legacy_artifact_recovery_is_retained_until_encrypted_cache_works():
     assert "ENGINE STATE CANDIDATE REJECTED" in workflow
     cleanup = workflow.split("- name: Clean up superseded state caches", 1)[1]
     assert "steps.state_restore.outputs.restored == 'true'" in cleanup
+
+def test_authenticated_cache_skips_expensive_legacy_artifact_history_scan():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    recovery = workflow.split("- name: Find newest usable engine state", 1)[1].split(
+        "- name: Stage newer verified artifact over older cached state", 1
+    )[0]
+    assert "authenticated encrypted cache is authoritative; skipping legacy artifact history scan" in recovery
+    assert 'CACHE_STATE_RESTORED_AT:-' in recovery
+    assert 'production_runs=""' in recovery
+    assert '--limit 1000 --json databaseId,event,status,conclusion' in recovery
