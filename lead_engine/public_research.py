@@ -199,7 +199,7 @@ def _research_focus_sections(lead: Mapping[str, Any]) -> list[str]:
 
 
 def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
-    verified_company_urls = [lead.get("website"), lead.get("company_url")]
+    verified_company_urls = [lead.get("company_website"), lead.get("website"), lead.get("company_url")]
     company_domains: set[str] = set()
     raw_roots: list[str] = []
     for value in verified_company_urls:
