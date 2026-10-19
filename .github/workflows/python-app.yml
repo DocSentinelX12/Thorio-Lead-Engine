@@ -1077,7 +1077,8 @@ jobs:
                       missing = sorted({"leads", "checkpoints"} - tables)
                       if missing:
                           raise SystemExit(f"candidate primary database is missing required tables: {missing}")
-          PY            then
+          PY
+          then
               rm -rf "$candidate_dir"
               previous_run_id="$run_id"
               echo "ENGINE STATE CANDIDATE VERIFIED: run=$run_id artifact_id=$artifact_id."
