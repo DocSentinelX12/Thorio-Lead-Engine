@@ -74,3 +74,26 @@ def test_wrong_key_is_rejected(tmp_path, monkeypatch):
 def test_missing_archive_is_a_first_run_not_a_failure(tmp_path, monkeypatch):
     monkeypatch.setenv("THORIO_STATE_ENCRYPTION_KEY", "a-test-key-that-is-long-enough-for-encryption")
     assert github_state.restore(tmp_path / "data", tmp_path / "missing.enc") is False
+
+def test_restore_validates_primary_once_and_each_secondary_database_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("THORIO_STATE_ENCRYPTION_KEY", "a-test-key-that-is-long-enough-for-encryption")
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    archive = tmp_path / "state.enc"
+    make_data(source, "lead-a")
+    with sqlite3.connect(source / "worker.db") as connection:
+        connection.execute("CREATE TABLE worker_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection.execute("INSERT INTO worker_state VALUES (?, ?)", ("checkpoint", "worker-a"))
+    github_state.snapshot(source, archive)
+
+    original_validate = github_state._validate_sqlite
+    validated = []
+
+    def record_validation(path, primary=False):
+        validated.append((Path(path).name, primary))
+        return original_validate(path, primary=primary)
+
+    monkeypatch.setattr(github_state, "_validate_sqlite", record_validation)
+    assert github_state.restore(target, archive) is True
+    assert validated.count(("leads.sqlite3", True)) == 1
+    assert validated.count(("worker.db", False)) == 1
