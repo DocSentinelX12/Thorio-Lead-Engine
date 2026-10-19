@@ -1430,7 +1430,7 @@ jobs:
         if: steps.production_mode.outputs.full_revenue_ready == 'true'
         run: python -m lead_engine.production_lifecycle_audit --database data/leads.sqlite3
       - name: Report outreach held in durable queue
-        if: steps.production_mode.outputs.full_revenue_ready != 'true'
+        if: always() && steps.production_mode.outputs.full_revenue_ready != 'true'
         run: |
           python - <<'PY'
           from lead_engine.database import LeadDB
