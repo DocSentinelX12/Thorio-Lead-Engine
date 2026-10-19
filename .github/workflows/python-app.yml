@@ -1557,8 +1557,8 @@ jobs:
           done
           CURRENT_ARTIFACT_ID="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name == "thorio-lead-engine-state-encrypted") | .id' | head -n 1)"
           if [ -z "$CURRENT_ARTIFACT_ID" ]; then
-            echo "STATE ARTIFACT CLEANUP BLOCKED: current encrypted recovery artifact could not be identified; preserving all prior artifacts." >&2
-            exit 1
+            echo "STATE ARTIFACT CLEANUP WARNING: current encrypted recovery artifact could not be identified; preserving all prior artifacts." >&2
+            exit 0
           fi
           export CURRENT_ARTIFACT_ID
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "thorio-lead-engine-state-encrypted" and (.id | tostring) != env.CURRENT_ARTIFACT_ID) | .id' | while IFS= read -r artifact_id; do
