@@ -1007,6 +1007,7 @@ jobs:
         id: previous_state
         env:
           GH_TOKEN: ${{ github.token }}
+          THORIO_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_STATE_ENCRYPTION_KEY }}
           CACHE_STATE_RESTORED: ${{ steps.state_restore.outputs.restored }}
           CACHE_STATE_RESTORED_AT: ${{ steps.state_restore.outputs.restored_at }}
         run: |
@@ -1025,7 +1026,7 @@ jobs:
             if [ -z "$prior_production_run_id" ]; then
               prior_production_run_id="$run_id"
             fi
-            artifact_info="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state" and .expired == false) | [.id, .created_at] | @tsv' | head -n 1)"
+            artifact_info="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state-encrypted" and .expired == false) | [.id, .created_at] | @tsv' | head -n 1)"
             [ -z "$artifact_info" ] && continue
             artifact_id="$(printf '%s' "$artifact_info" | cut -f1)"
             artifact_created_at="$(printf '%s' "$artifact_info" | cut -f2)"
@@ -1039,12 +1040,17 @@ jobs:
             fi
 
             candidate_dir="$(mktemp -d)"
-            if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name thorio-lead-engine-state --dir "$candidate_dir"; then
+            if ! gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name thorio-lead-engine-state-encrypted --dir "$candidate_dir"; then
               rm -rf "$candidate_dir"
               echo "ENGINE STATE RECOVERY BLOCKED: artifact $artifact_id from run $run_id was listed but could not be downloaded; refusing to guess or start empty." >&2
               exit 1
             fi
-            if python - "$candidate_dir" <<'PY'
+            if ! python -m lead_engine.github_state restore --data-dir "$candidate_dir/restored" --archive "$candidate_dir/state.enc"; then
+              echo "ENGINE STATE CANDIDATE REJECTED: encrypted artifact $artifact_id failed authentication, decryption, or SQLite integrity validation." >&2
+              rm -rf "$candidate_dir"
+              continue
+            fi
+            if python - "$candidate_dir/restored" <<'PY'
           import pathlib
           import sqlite3
           import sys
@@ -1069,8 +1075,7 @@ jobs:
                       missing = sorted({"leads", "checkpoints"} - tables)
                       if missing:
                           raise SystemExit(f"candidate primary database is missing required tables: {missing}")
-          PY
-            then
+          PY            then
               rm -rf "$candidate_dir"
               previous_run_id="$run_id"
               echo "ENGINE STATE CANDIDATE VERIFIED: run=$run_id artifact_id=$artifact_id."
@@ -1100,11 +1105,23 @@ jobs:
         if: steps.previous_state.outputs.run_id != ''
         uses: actions/download-artifact@v6
         with:
-          name: thorio-lead-engine-state
-          path: data
+          name: thorio-lead-engine-state-encrypted
+          path: .thorio-state-recovery
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ steps.previous_state.outputs.run_id }}
+      - name: Restore authenticated encrypted state artifact
+        id: artifact_state_restore
+        if: steps.previous_state.outputs.run_id != ''
+        env:
+          THORIO_STATE_ENCRYPTION_KEY: ${{ secrets.THORIO_STATE_ENCRYPTION_KEY }}
+        run: |
+          set -euo pipefail
+          test -s .thorio-state-recovery/state.enc || {
+            echo "STATE ARTIFACT RECOVERY BLOCKED: encrypted state.enc is missing from the selected artifact." >&2
+            exit 1
+          }
+          python -m lead_engine.github_state restore --data-dir data --archive .thorio-state-recovery/state.enc
       - name: Validate restored Lead Engine state integrity
         if: steps.state_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != ''
         run: |
@@ -1507,6 +1524,16 @@ jobs:
           set -euo pipefail
           mkdir -p .thorio-state-cache
           python -m lead_engine.github_state snapshot --data-dir data --archive .thorio-state-cache/state.enc
+      - name: Upload encrypted state recovery artifact
+        id: upload_state_artifact
+        if: always() && steps.state_snapshot.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: thorio-lead-engine-state-encrypted
+          path: .thorio-state-cache/state.enc
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
       - name: Save encrypted state to free GitHub Actions cache
         id: save_state_cache
         if: always() && steps.state_snapshot.outcome == 'success'
@@ -1515,7 +1542,7 @@ jobs:
           path: .thorio-state-cache/state.enc
           key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Clean up superseded state caches and legacy unencrypted artifacts
-        if: always() && steps.save_state_cache.outcome == 'success' && steps.state_restore.outputs.restored == 'true'
+        if: always() && steps.save_state_cache.outcome == 'success' && steps.upload_state_artifact.outcome == 'success' && steps.state_restore.outputs.restored == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_CACHE_KEY: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1537,14 +1564,15 @@ jobs:
           STATE_CONFIG_OUTCOME: ${{ steps.state_restore.outcome }}
           STATE_SNAPSHOT_OUTCOME: ${{ steps.state_snapshot.outcome }}
           STATE_CACHE_SAVE_OUTCOME: ${{ steps.save_state_cache.outcome }}
+          STATE_ARTIFACT_UPLOAD_OUTCOME: ${{ steps.upload_state_artifact.outcome }}
         run: |
           set -euo pipefail
           if [ "${STATE_CONFIG_OUTCOME:-skipped}" != "success" ]; then
             echo "DURABLE STATE FAILURE: encrypted GitHub Actions state was not restored or initialized successfully." >&2
             exit 1
           fi
-          if [ "${STATE_SNAPSHOT_OUTCOME:-skipped}" != "success" ] || [ "${STATE_CACHE_SAVE_OUTCOME:-skipped}" != "success" ]; then
-            echo "DURABLE STATE FAILURE: validated state was not encrypted and saved to the bounded GitHub Actions cache. Existing recovery data was not intentionally deleted." >&2
+          if [ "${STATE_SNAPSHOT_OUTCOME:-skipped}" != "success" ] || [ "${STATE_CACHE_SAVE_OUTCOME:-skipped}" != "success" ] || [ "${STATE_ARTIFACT_UPLOAD_OUTCOME:-skipped}" != "success" ]; then
+            echo "DURABLE STATE FAILURE: validated state was not encrypted and persisted to both the GitHub Actions cache and encrypted recovery artifact. Existing recovery data was not intentionally deleted." >&2
             exit 1
           fi
-          echo "DURABLE STATE VERIFIED: encrypted backup was created and stored in GitHub Actions cache. No external storage provider is used."
+          echo "DURABLE STATE VERIFIED: authenticated encrypted snapshot saved to both the GitHub Actions cache and a 90-day encrypted recovery artifact. No external storage provider is used."
