@@ -28,9 +28,13 @@ def test_discovery_worker_only_normalizes_observed_evidence(tmp_path):
     db = _db(tmp_path); orchestrator = AgentOrchestrator(db); task = orchestrator.dispatch_discovery("x_signal", {"source": "x", "signal": "Company is hiring a software engineer", "source_id": "1"}); result = run_worker_once(db, "x_signal", worker_id="x-worker")
     assert result["completed_count"] == 1 and result["failed_count"] == 0; assert result["results"][0]["qualification_performed"] is False; assert result["results"][0]["record"]["source_id"] == "1"; assert task["agent"] == "x_signal"
 
-def test_social_source_discovery_handoffs_to_social_research(tmp_path):
+def test_social_source_discovery_hands_off_only_to_matching_research_roles(tmp_path):
     db = _db(tmp_path); lead = {"fingerprint": "social-handoff-test", "company": "Acme", "signal": "Acme is hiring a CTO", "source": "linkedin"}; db.insert_if_new(lead); AgentOrchestrator(db).dispatch_discovery("linkedin_signal", {**lead, "evidence": "Acme is hiring a CTO", "source_id": "social-1"}); result = run_worker_once(db, "linkedin_signal", worker_id="linkedin-worker")
-    agents = {task["agent"] for task in pending(db)}; assert result["completed_count"] == 1; assert "company_research" in agents; assert "qualification_a" not in agents; assert {"social_intelligence", "social_hiring_research", "social_decision_maker_research", "social_inquiry_research", "social_company_context"}.issubset(agents)
+    agents = {task["agent"] for task in pending(db)}; assert result["completed_count"] == 1; assert agents == {"company_research", "recent_inquiry_discovery", "social_intelligence", "social_hiring_research", "social_decision_maker_research"}; assert "qualification_a" not in agents
+
+def test_irrelevant_social_observation_does_not_fan_out_specialist_work(tmp_path):
+    db = _db(tmp_path); lead = {"fingerprint": "irrelevant-social-observation", "company": "Acme", "signal": "Beautiful weather for a walk", "source": "linkedin"}; db.insert_if_new(lead); AgentOrchestrator(db).dispatch_discovery("linkedin_signal", {**lead, "evidence": "Beautiful weather for a walk", "source_id": "social-irrelevant"}); result = run_worker_once(db, "linkedin_signal", worker_id="linkedin-worker")
+    assert result["completed_count"] == 1 and result["failed_count"] == 0; assert pending(db) == []; assert result["results"][0]["handoffs"] == []
 
 def test_advanced_discovery_specialist_extracts_evidence_without_qualifying(tmp_path):
     db = _db(tmp_path); task = AgentOrchestrator(db).dispatch_discovery("engineering_demand_discovery", {"lead": {"fingerprint": "d1", "company": "Acme"}, "evidence_events": [{"source": "linkedin", "signal": "Acme is hiring a backend engineer", "observed_at": _recent()}]}); result = run_worker_once(db, "engineering_demand_discovery", worker_id="engineering-worker")
