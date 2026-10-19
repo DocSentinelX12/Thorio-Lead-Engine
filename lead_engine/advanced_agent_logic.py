@@ -192,7 +192,27 @@ def social_research(agent: str, payload: Mapping[str, Any], db: Any = None) -> D
     handoff = None
     if findings and fingerprint and db is not None:
         stored_lead = db.get(fingerprint) or dict(lead)
-        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "social_research_agent": agent, "social_findings": findings}, priority=7, dedupe_key=f"company_research:{fingerprint}")
+        specialist_findings = dict(stored_lead.get("specialist_findings") or {}) if isinstance(stored_lead.get("specialist_findings"), Mapping) else {}
+        existing_finding = specialist_findings.get(agent)
+        existing_finding = dict(existing_finding) if isinstance(existing_finding, Mapping) else {}
+        existing_items = existing_finding.get("findings")
+        merged_findings = list(existing_items) if isinstance(existing_items, list) else []
+        for finding in findings:
+            if finding not in merged_findings:
+                merged_findings.append(finding)
+        specialist_findings[agent] = {
+            **existing_finding,
+            "findings": merged_findings,
+            "matched_event_count": len(merged_findings),
+            "recent_event_count": sum(1 for item in merged_findings if isinstance(item, Mapping) and item.get("recent") is True),
+            "source_count": len({str(item.get("source") or "unknown") for item in merged_findings if isinstance(item, Mapping)}),
+            "sources": sorted({str(item.get("source") or "unknown") for item in merged_findings if isinstance(item, Mapping)}),
+            "research_status": "evidence_found",
+            "verification_required": True,
+            "fabricated_fields": [],
+        }
+        stored_lead = db.update_payload(fingerprint, {"specialist_findings": specialist_findings}) or stored_lead
+        enqueue(db, "company_research", {"lead": stored_lead, "evidence_events": events, "social_research_agent": agent, "social_findings": merged_findings}, priority=7, dedupe_key=f"company_research:{fingerprint}")
         handoff = "company_research"
     return {"agent": agent, "role": "social_research", "fingerprint": fingerprint, "matched_event_count": len(findings), "recent_event_count": recent, "source_count": len(sources), "sources": sorted(sources), "findings": findings, "research_status": "evidence_found" if findings else "research_required", "verification_required": True, "fabricated_fields": [], "handoff": handoff}
 
@@ -402,7 +422,15 @@ def company_research(payload: Mapping[str, Any], ctx: Any) -> Dict[str, Any]:
     stored = ctx.db.update_payload(fingerprint, {"company_research": facts, "research_status": status, "research_verified_fields": verified_fields})
     if stored is None:
         raise ValueError(f"Lead not found for company research: {fingerprint}")
-    if status == "research_complete":
+    specialist = stored.get("specialist_findings") if isinstance(stored.get("specialist_findings"), Mapping) else {}
+    dm_candidate = specialist.get("social_decision_maker_research")
+    dm_findings = dm_candidate.get("findings") if isinstance(dm_candidate, Mapping) else []
+    has_dm_candidate = bool(str(facts.get("decision_maker") or facts.get("observed_decision_maker") or lead.get("contact_name") or lead.get("person") or "").strip())
+    has_dm_candidate = has_dm_candidate or (isinstance(dm_findings, list) and bool(dm_findings))
+    # Verification must be allowed to verify a candidate before research is
+    # complete. Requiring research_complete here creates a deadlock because
+    # research_complete itself requires a verified decision maker.
+    if company_verified and has_dm_candidate:
         enqueue(ctx.db, "verification", {"lead": stored, "evidence_events": events, "research_result": {"status": status, "verified_fields": verified_fields}}, priority=9, dedupe_key=f"verification_researched:{fingerprint}")
     return {"role": "company_research", "fingerprint": fingerprint, "lead": stored, "research": facts, "research_status": status, "decision_maker_verified": decision_maker_verified, "verified_fields": verified_fields, "fabricated_fields": [], "public_research_status": public_research.get("status"), "next_evidence_to_find": research_focus, "handoff": "verification" if status == "research_complete" else "research_required"}
 
