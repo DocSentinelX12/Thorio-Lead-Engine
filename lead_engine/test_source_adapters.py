@@ -850,3 +850,40 @@ def test_normalize_job_record_preserves_hiring_signal_without_false_commercial_m
     assert "signal_matches" not in record
     assert "signal_strength" not in record
     assert "signal_context" not in record
+
+def test_normalize_job_record_preserves_observed_company_website_fields():
+    from .source_adapters import normalize_job_record
+
+    direct = normalize_job_record(
+        {
+            "id": "company-website-direct",
+            "title": "Senior Engineer",
+            "company": "Acme",
+            "url": "https://jobs.example.com/roles/direct",
+            "company_website": "https://acme.example.com/",
+            "description": "Build reliable software.",
+        },
+        source="Example JSON",
+        source_url="https://jobs.example.com/api",
+    )
+    nested = normalize_job_record(
+        {
+            "id": "company-website-nested",
+            "title": "Senior Engineer",
+            "company": {"name": "Acme", "website": "https://acme.example.org/"},
+            "url": "https://jobs.example.com/roles/nested",
+            "description": "Build reliable software.",
+        },
+        source="Example JSON",
+        source_url="https://jobs.example.com/api",
+        definition=__import__("lead_engine.source_definition", fromlist=["SourceDefinition"]).SourceDefinition(
+            name="Example JSON",
+            provider="Example",
+            collector_type="json",
+            url="https://jobs.example.com/api",
+            company_field="company.name",
+        ),
+    )
+
+    assert direct is not None and direct["company_website"] == "https://acme.example.com/"
+    assert nested is not None and nested["company_website"] == "https://acme.example.org/"
