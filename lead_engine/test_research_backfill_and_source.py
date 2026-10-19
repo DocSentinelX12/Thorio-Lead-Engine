@@ -57,3 +57,11 @@ def test_candidate_urls_does_not_replace_verified_company_domain_with_source_dom
     })
     assert "https://jobs.example.com/roles/1" not in urls
     assert "https://acme.example.com/" in urls
+
+def test_candidate_urls_prefers_observed_company_website_over_job_board_source():
+    urls = _candidate_urls({
+        "company_website": "https://acme.example.com/about",
+        "source_url": "https://jobs.example.com/roles/1",
+    })
+    assert "https://acme.example.com/" in urls
+    assert "https://jobs.example.com/roles/1" not in urls
