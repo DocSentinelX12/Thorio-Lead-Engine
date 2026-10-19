@@ -1013,7 +1013,13 @@ jobs:
           set -euo pipefail
           previous_run_id=""
           prior_production_run_id=""
-          production_runs="$(gh run list --workflow python-app.yml --branch main --limit 25 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')"
+          # Authenticated cache snapshots are saved after each attempted cycle. Avoid the slow legacy artifact scan when one restored successfully.
+          if [ "${CACHE_STATE_RESTORED:-false}" = "true" ] && [ -n "${CACHE_STATE_RESTORED_AT:-}" ]; then
+            echo "ENGINE STATE RECOVERY: authenticated encrypted cache is authoritative; skipping legacy artifact history scan."
+            production_runs=""
+          else
+            production_runs="$(gh run list --workflow python-app.yml --branch main --limit 1000 --json databaseId,event,status,conclusion --jq '.[] | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure") and (.event == "schedule" or .event == "workflow_dispatch" or .event == "repository_dispatch" or .event == "issue_comment" or .event == "issues")) | .databaseId')"
+          fi
           while IFS= read -r run_id; do
             [ -z "$run_id" ] && continue
             if [ -z "$prior_production_run_id" ]; then
