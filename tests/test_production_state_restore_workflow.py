@@ -48,7 +48,7 @@ def test_encrypted_state_artifact_is_part_of_persistence_gate():
     assert "thorio-lead-engine-state-encrypted" in workflow
     assert "retention-days: 90" in workflow
     assert "STATE_ARTIFACT_UPLOAD_OUTCOME" in workflow
-    assert "steps.upload_state_artifact.outcome != 'success'" in workflow
+    assert 'STATE_ARTIFACT_UPLOAD_OUTCOME:-skipped}" != "success"' in workflow
 
 
 def test_encrypted_state_artifact_is_decrypted_before_recovery():
