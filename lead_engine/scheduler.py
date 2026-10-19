@@ -427,7 +427,7 @@ class LeadScheduler:
         return {"results": results, "failed": failed, "skipped": skipped, "source_count": source_count, "successful_source_count": len(results), "failed_count": len(failed), "skipped_count": len(skipped), "discovered_count": discovered_total, "accepted_count": accepted_total, "duplicate_count": duplicate_total, "processing_failed_count": processing_failed_total, "sync": sync_result, "agents": agent_result, "post_sync_agents": post_sync_agents, "due_followups_enqueued": due_followups, "revenue_inbound_health": revenue_inbound_health, "remote_compute_before": remote_before, "remote_compute_after": remote_after, "paxus_research": paxus_research, "handoff_recovery": handoff_recovery}
 
     def run_bounded(self, sources: Iterable[LeadSource], interval_seconds: float = 60.0, max_cycles: int = 1) -> Dict[str, Any]:
-        """Run a finite production window and force each supplied source through its bounded cycles."""
+        """Run finite production cycles while honoring each source's persisted poll interval."""
         source_list = list(sources)
         if interval_seconds < 0:
             raise ValueError("interval_seconds must be greater than or equal to 0.")
@@ -437,9 +437,11 @@ class LeadScheduler:
             return {"status": "completed", "cycles": 0, "results": [], "source_count": 0, "successful_source_count": 0, "failed_count": 0, "skipped_count": 0, "discovered_count": 0, "accepted_count": 0, "duplicate_count": 0, "processing_failed_count": 0}
         cycle_results = []
         for cycle_index in range(max_cycles):
-            for source in source_list:
-                key = self._source_key(source)
-                self._next_run_at[key] = 0.0
+            # Do not reset every source to due on each scheduled workflow run.
+            # The persisted poll interval is the backpressure mechanism that
+            # prevents repeated discoveries from outpacing the durable specialist
+            # queue. The run still drains queued work and synchronizes ready
+            # records when sources are not yet due.
             cycle_results.append(self.run(source_list, agent_max_rounds=self._agent_drain_rounds()))
             if cycle_index + 1 < max_cycles:
                 time.sleep(interval_seconds)
