@@ -10,6 +10,10 @@ def test_state_recovery_uses_only_successful_completed_production_runs():
     assert '.status == "completed" and .conclusion == "success"' in text
     assert '--limit 1000 --json databaseId,event,status,conclusion' in text
     assert 'thorio-lead-engine-state' in text
+    assert 'authenticated encrypted cache is authoritative; skipping legacy artifact history scan' in text
+    assert 'SPECIALIST FAILED TASK DETAIL:' in text
+    assert 'error_category={category}' in text
+    assert 'FROM agent_queue WHERE status = \'failed\' ORDER BY updated_at DESC LIMIT 20' in text
 
 
 def test_production_gate_preserves_durable_specialist_backlog_but_fails_terminal_work():
