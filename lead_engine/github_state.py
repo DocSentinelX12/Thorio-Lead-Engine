@@ -111,7 +111,7 @@ def snapshot(data_dir: Path, archive: Path) -> None:
             _validate_sqlite(database, primary=(database.relative_to(staged).as_posix() == "leads.sqlite3"))
 
         tar_path = root / "state.tar.gz"
-        with tarfile.open(tar_path, mode="w:gz", compresslevel=6) as bundle:
+        with tarfile.open(tar_path, mode="w:gz", compresslevel=1) as bundle:
             for path in sorted(staged.rglob("*")):
                 if path.is_file():
                     bundle.add(path, arcname=path.relative_to(staged).as_posix(), recursive=False)
