@@ -41,3 +41,18 @@ def test_authenticated_cache_skips_expensive_legacy_artifact_history_scan():
     assert 'CACHE_STATE_RESTORED_AT:-' in recovery
     assert 'production_runs=""' in recovery
     assert '--limit 1000 --json databaseId,event,status,conclusion' in recovery
+
+def test_encrypted_state_artifact_is_part_of_persistence_gate():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "Upload encrypted state recovery artifact" in workflow
+    assert "thorio-lead-engine-state-encrypted" in workflow
+    assert "retention-days: 90" in workflow
+    assert "STATE_ARTIFACT_UPLOAD_OUTCOME" in workflow
+    assert "steps.upload_state_artifact.outcome != 'success'" in workflow
+
+
+def test_encrypted_state_artifact_is_decrypted_before_recovery():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "Restore authenticated encrypted state artifact" in workflow
+    assert 'lead_engine.github_state restore --data-dir "$candidate_dir/restored" --archive "$candidate_dir/state.enc"' in workflow
+    assert 'select(.name == "thorio-lead-engine-state-encrypted" and .expired == false)' in workflow
