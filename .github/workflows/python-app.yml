@@ -1462,11 +1462,30 @@ jobs:
                   lead = item.get("lead") if isinstance(item.get("lead"), dict) else {}
                   print(f"SYNC FAILURE {index}: fingerprint={lead.get('fingerprint', '')} company={lead.get('company', '')} route={lead.get('route', '')} error={item.get('error', '')}")
               sys.exit(1)
-          if (sync_completed + sync_already_exists + sync_deferred_research) <= 0:
-              print("AIRTABLE DELIVERY FAILURE: the production result contained no completed, already-existing, or explicitly deferred research delivery evidence.")
-              sys.exit(1)
-          print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
-          print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
+          if sync_completed + sync_already_exists <= 0:
+              backlog_remaining = any(int(count or 0) > 0 for count in agent_remaining_queue)
+              if sync_deferred_research > 0:
+                  delivery_state = (
+                      "AIRTABLE DELIVERY PENDING: "
+                      f"{sync_deferred_research} lead(s) remain safely deferred until research verification is complete. "
+                      "No successful Airtable delivery is claimed for this cycle."
+                  )
+              elif discovered_total == 0 and backlog_paused_total > 0 and backlog_remaining and sync_evidence_found:
+                  delivery_state = (
+                      "AIRTABLE DELIVERY PENDING: new collection was paused by durable-backlog backpressure, "
+                      "and no research-ready Airtable records were pending in this cycle. "
+                      "Existing lead and specialist state remains preserved; no successful delivery is claimed."
+                  )
+              else:
+                  print("AIRTABLE DELIVERY FAILURE: no record was delivered, no research deferral was reported, and this was not a legitimate backlog-paused cycle.")
+                  sys.exit(1)
+              print(delivery_state)
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write("\\n## Airtable delivery status\\n")
+                  summary.write(f"- {delivery_state}\\n")
+          else:
+              print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
+              print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
           PY
       - name: Verify production revenue lifecycle and outreach
         if: steps.production_mode.outputs.full_revenue_ready == 'true'
