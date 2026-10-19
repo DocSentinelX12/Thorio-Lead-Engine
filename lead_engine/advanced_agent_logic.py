@@ -97,15 +97,51 @@ def _source_signal(agent: str, payload: Mapping[str, Any], db: Any = None) -> Di
     normalized["provenance"] = provenance
     handoffs = []
     if fingerprint and lead is not None:
-        tasks = [{"agent": "company_research", "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, "priority": 7, "dedupe_key": f"company_research:{fingerprint}"}]
-        handoffs.append("company_research")
-        for discovery_agent in DISCOVERY_TARGETS:
-            tasks.append({"agent": discovery_agent, "payload": {"lead": dict(lead), "evidence_events": [normalized], "source_lane": agent}, "priority": 3, "dedupe_key": f"{discovery_agent}:{fingerprint}:{agent}"})
-            handoffs.append(discovery_agent)
-        if agent != "web_job_signal":
-            for social_agent in SOCIAL_TARGETS:
-                tasks.append({"agent": social_agent, "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent}, "priority": 3, "dedupe_key": f"{social_agent}:{fingerprint}:{agent}"})
-                handoffs.append(social_agent)
+        # Fan out only to specialists whose evidence domains match the observed
+        # signal. Sending every job listing to every specialist creates a
+        # multiplicative queue backlog and starves the company-research handoff.
+        searchable_text = " ".join(
+            str(record.get(key) or "").strip()
+            for key in ("signal", "evidence", "job_title", "description", "notes")
+        )
+        matched_discovery = [
+            name for name, terms in DISCOVERY_TARGETS.items()
+            if _matches(searchable_text, terms)
+        ]
+        matched_social = [
+            name for name, terms in SOCIAL_TARGETS.items()
+            if terms and _matches(searchable_text, terms)
+        ]
+        is_relevant = agent == "web_job_signal" or bool(matched_discovery or matched_social)
+        tasks = []
+        if is_relevant:
+            tasks.append({
+                "agent": "company_research",
+                "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent},
+                "priority": 7,
+                "dedupe_key": f"company_research:{fingerprint}",
+            })
+            handoffs.append("company_research")
+            for discovery_agent in matched_discovery:
+                tasks.append({
+                    "agent": discovery_agent,
+                    "payload": {"lead": dict(lead), "evidence_events": [normalized], "source_lane": agent},
+                    "priority": 3,
+                    "dedupe_key": f"{discovery_agent}:{fingerprint}:{agent}",
+                })
+                handoffs.append(discovery_agent)
+            if agent != "web_job_signal":
+                # Social intelligence is broad, but should run only after a
+                # signal has matched at least one actionable evidence domain.
+                social_agents = ["social_intelligence", *matched_social]
+                for social_agent in dict.fromkeys(social_agents):
+                    tasks.append({
+                        "agent": social_agent,
+                        "payload": {"lead": dict(lead), "evidence_events": [normalized], "discovery_agent": agent},
+                        "priority": 3,
+                        "dedupe_key": f"{social_agent}:{fingerprint}:{agent}",
+                    })
+                    handoffs.append(social_agent)
         enqueue_many(db, tasks)
     return {"agent": agent, "role": "discovery", "source": record.get("source") or _SOURCE_SIGNAL_ALIASES.get(agent, agent), "source_lane": agent, "record": normalized, "observed": True, "qualification_performed": False, "handoffs": handoffs, "handoff": handoffs[0] if handoffs else "awaiting_persistence", "provenance": provenance}
 
