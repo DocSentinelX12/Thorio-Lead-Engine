@@ -213,7 +213,8 @@ def _candidate_urls(lead: Mapping[str, Any]) -> list[str]:
             company_domains.add(_domain(value))
             raw_roots.append(f"{parsed.scheme}://{parsed.netloc}/")
             raw_roots.append(value)
-    source_url = str(lead.get("source_url") or lead.get("url") or "").strip()
+    # Prefer the individual observed lead/posting URL over the collector API endpoint.
+    source_url = str(lead.get("url") or lead.get("source_url") or "").strip()
     if source_url.startswith(("http://", "https://")):
         source_parsed = urlparse(source_url)
         if source_parsed.netloc and _domain(source_url) in company_domains:
