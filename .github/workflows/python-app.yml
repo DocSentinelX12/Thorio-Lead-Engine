@@ -1258,6 +1258,7 @@ jobs:
           import json
           import os
           import pathlib
+          import sqlite3
           import sys
           airtable_capacity_blocked = os.environ.get("AIRTABLE_SYNC_BLOCK_REASON", "").strip() == "record_capacity"
           path = pathlib.Path("data/scheduled-run-output.txt")
@@ -1330,6 +1331,35 @@ jobs:
           if specialist_failed_total > 0:
               print(f"SPECIALIST EXECUTION FAILURE: {specialist_failed_total} terminal specialist task(s) are failed and require retry or repair.")
               print(f"SPECIALIST QUEUE HEALTH: {queue_health}")
+              database = pathlib.Path("data/leads.sqlite3")
+              if database.is_file():
+                  with sqlite3.connect(f"file:{database.resolve()}?mode=ro", uri=True, timeout=10) as connection:
+                      rows = connection.execute(
+                          "SELECT agent, task_id, attempts, updated_at, COALESCE(last_error, '') "
+                          "FROM agent_queue WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 20"
+                      ).fetchall()
+                  for agent, task_id, attempts, updated_at, last_error in rows:
+                      message = " ".join(str(last_error or "").split())
+                      lowered = message.lower()
+                      if "http 503" in lowered:
+                          category = "coordinator_http_503"
+                      elif "timeout" in lowered or "timed out" in lowered:
+                          category = "timeout"
+                      elif "database is locked" in lowered or "sqlite lock" in lowered:
+                          category = "sqlite_lock"
+                      elif "requires fingerprint" in lowered:
+                          category = "missing_fingerprint"
+                      elif "missing lead" in lowered:
+                          category = "missing_lead"
+                      elif message:
+                          category = message.split(":", 1)[0][:100]
+                      else:
+                          category = "unspecified"
+                      print(
+                          "SPECIALIST FAILED TASK DETAIL: "
+                          f"agent={agent} task_id={task_id} attempts={attempts} "
+                          f"updated_at={updated_at} error_category={category}"
+                      )
               sys.exit(1)
           if any(not complete for complete in agent_drain_complete):
               print(f"SPECIALIST DRAIN DEFERRED: bounded production execution left durable specialist work for the next cycle. drain_complete={agent_drain_complete}, remaining_queue_count={agent_remaining_queue}, queue_health={queue_health}")
