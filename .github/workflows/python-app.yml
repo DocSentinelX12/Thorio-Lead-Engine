@@ -1016,6 +1016,7 @@ jobs:
           set -euo pipefail
           previous_run_id=""
           prior_production_run_id=""
+          state_artifact_seen=false
           # Authenticated cache snapshots are saved after each attempted cycle. Avoid the slow legacy artifact scan when one restored successfully.
           if [ "${CACHE_STATE_RESTORED:-false}" = "true" ] && [ -n "${CACHE_STATE_RESTORED_AT:-}" ]; then
             echo "ENGINE STATE RECOVERY: authenticated encrypted cache is authoritative; skipping legacy artifact history scan."
@@ -1030,6 +1031,7 @@ jobs:
             fi
             artifact_info="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" --paginate --jq '.artifacts[] | select(.name == "thorio-lead-engine-state-encrypted" and .expired == false) | [.id, .created_at] | @tsv' | head -n 1)"
             [ -z "$artifact_info" ] && continue
+            state_artifact_seen=true
             artifact_id="$(printf '%s' "$artifact_info" | cut -f1)"
             artifact_created_at="$(printf '%s' "$artifact_info" | cut -f2)"
             if [ "${CACHE_STATE_RESTORED:-false}" = "true" ] && [ -n "${CACHE_STATE_RESTORED_AT:-}" ]; then
@@ -1088,12 +1090,16 @@ jobs:
               rm -rf "$candidate_dir"
             fi
           done <<< "$production_runs"
-          if [ -z "$previous_run_id" ] && [ -n "$prior_production_run_id" ] && [ "${CACHE_STATE_RESTORED:-false}" != "true" ]; then
-            echo "ENGINE STATE RECOVERY BLOCKED: prior production runs exist, but no unexpired thorio-lead-engine-state artifact was found and the encrypted cache did not restore usable state. Refusing to start from an empty database and risk losing leads, checkpoints, queues, or handoff state. Restore a verified backup before retrying." >&2
+          if [ -z "$previous_run_id" ] && [ "$state_artifact_seen" = "true" ] && [ "${CACHE_STATE_RESTORED:-false}" != "true" ]; then
+            echo "ENGINE STATE RECOVERY BLOCKED: one or more prior encrypted state artifacts exist, but none passed authentication and full integrity validation, and the encrypted cache did not restore usable state. Refusing to overwrite potentially recoverable state." >&2
             exit 1
           fi
-          if [ -z "$previous_run_id" ] && [ -z "$prior_production_run_id" ] && [ "${CACHE_STATE_RESTORED:-false}" != "true" ]; then
-            echo "ENGINE STATE BOOTSTRAP: no completed prior production run exists; first-run initialization is permitted."
+          if [ -z "$previous_run_id" ] && [ "${CACHE_STATE_RESTORED:-false}" != "true" ] && [ "$state_artifact_seen" = "false" ]; then
+            if [ -n "$prior_production_run_id" ]; then
+              echo "ENGINE STATE BOOTSTRAP: prior workflow runs exist, but none has ever produced an encrypted engine-state artifact and no cache restored. Airtable remains the durable record of previously delivered leads; initializing the local SQLite state so this run can create and verify the first encrypted GitHub backup."
+            else
+              echo "ENGINE STATE BOOTSTRAP: no completed prior production run exists; first-run initialization is permitted."
+            fi
           fi
           echo "run_id=$previous_run_id" >> "$GITHUB_OUTPUT"
       - name: Stage newer verified artifact over older cached state
