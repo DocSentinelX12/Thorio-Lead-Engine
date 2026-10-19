@@ -1481,8 +1481,8 @@ jobs:
                   sys.exit(1)
               print(delivery_state)
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-                  summary.write("\\n## Airtable delivery status\\n")
-                  summary.write(f"- {delivery_state}\\n")
+                  summary.write("\n## Airtable delivery status\n")
+                  summary.write(f"- {delivery_state}\n")
           else:
               print(f"PRODUCTION COLLECTION VERIFIED: discovered_total={discovered_total}, accepted_total={accepted_total}, successful_source_count={max(successful_source_counts)}")
               print(f"AIRTABLE DELIVERY VERIFIED: synced_count={sync_completed}, already_exists_count={sync_already_exists}, deferred_research_count={sync_deferred_research}, failed_count={sync_failed}")
