@@ -56,3 +56,23 @@ def test_encrypted_state_artifact_is_decrypted_before_recovery():
     assert "Restore authenticated encrypted state artifact" in workflow
     assert 'lead_engine.github_state restore --data-dir "$candidate_dir/restored" --archive "$candidate_dir/state.enc"' in workflow
     assert 'select(.name == "thorio-lead-engine-state-encrypted" and .expired == false)' in workflow
+
+def test_invalid_cache_falls_back_to_encrypted_artifact_recovery():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    restore = workflow.split("- name: Restore encrypted GitHub Actions state cache", 1)[1].split(
+        "- name: Set up Python", 1
+    )[0]
+    assert "STATE CACHE REJECTED" in restore
+    assert "attempting verified encrypted artifact recovery instead" in restore
+    assert 'printf "restored=false\\n" > .thorio-state-cache/restore.log' in restore
+
+
+def test_encrypted_recovery_artifact_retention_is_bounded():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    cleanup = workflow.split("- name: Clean up superseded state caches", 1)[1].split(
+        "- name: Require durable encrypted state persistence", 1
+    )[0]
+    assert "CURRENT_ARTIFACT_ID" in cleanup
+    assert "thorio-lead-engine-state-encrypted" in cleanup
+    assert "Removed superseded encrypted state artifact" in cleanup
+    assert "preserving all prior artifacts" in cleanup
