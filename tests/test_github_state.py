@@ -25,8 +25,17 @@ def test_encrypted_snapshot_round_trip_restores_sqlite_and_other_state(tmp_path,
     archive = tmp_path / "state.enc"
     make_data(source, "lead-a")
     (source / "queue.json").write_text('{"pending": 3}', encoding="utf-8")
+    original_tar_open = github_state.tarfile.open
+    compression = {}
 
+    def record_archive_compression(*args, **kwargs):
+        if kwargs.get("mode") == "w:gz":
+            compression["level"] = kwargs.get("compresslevel")
+        return original_tar_open(*args, **kwargs)
+
+    monkeypatch.setattr(github_state.tarfile, "open", record_archive_compression)
     github_state.snapshot(source, archive)
+    assert compression["level"] == 1
     assert archive.is_file()
     assert b"lead-a" not in archive.read_bytes()
     assert github_state.restore(target, archive) is True
