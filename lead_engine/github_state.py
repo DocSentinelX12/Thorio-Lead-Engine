@@ -230,8 +230,13 @@ def restore(data_dir: Path, archive: Path) -> bool:
             path for path in extracted.rglob("*")
             if path.is_file() and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
         ]
+        # The primary database was validated immediately above. Avoid a
+        # second full integrity scan of that same large file; validate every
+        # additional database exactly once here.
         for database in databases:
-            _validate_sqlite(database, primary=(database == primary))
+            if database == primary:
+                continue
+            _validate_sqlite(database)
         if metadata.get("schema_version") != 1:
             raise RuntimeError("Encrypted state archive metadata version is missing or unsupported.")
         data_dir.mkdir(parents=True, exist_ok=True)
