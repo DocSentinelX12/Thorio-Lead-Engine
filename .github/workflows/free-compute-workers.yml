@@ -73,11 +73,12 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      # Keep the existing worker fan-out, but stagger coordinator health probes
-      # and retry transient 5xx responses before failing a worker closed.
-      max-parallel: 20
+      # Bound coordinator load: one short cycle uses eight workers, not an
+      # 80-job fan-out that can overwhelm a small free hosting instance.
+      # Health probes remain staggered and transient 5xx responses are retried.
+      max-parallel: 8
       matrix:
-        worker: [01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80]
+        worker: [01, 02, 03, 04, 05, 06, 07, 08]
 
     env:
       THORIO_FREE_ONLY: "1"
@@ -136,7 +137,7 @@ jobs:
 
           # Worker jobs can sit in GitHub's queue after the coordinator gate passes.
           # Spread their first health request to avoid a synchronized cold-start burst.
-          stagger_seconds = ((worker_number - 1) % 20) * 2
+          stagger_seconds = ((worker_number - 1) % 8) * 2
           if stagger_seconds:
               print(f"COORDINATOR_HEALTH_STAGGER seconds={stagger_seconds}", flush=True)
               time.sleep(stagger_seconds)
