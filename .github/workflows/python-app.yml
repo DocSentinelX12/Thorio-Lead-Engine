@@ -167,6 +167,7 @@ jobs:
       THORIO_SOURCE_COLLECTION_WORKERS: "64"
       THORIO_AGENT_EXECUTION_WORKERS: "128"
       THORIO_AGENT_DRAIN_ROUNDS: "32"
+      THORIO_AGENT_BACKLOG_COLLECTION_PAUSE_THRESHOLD: "5000"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
       THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
       THORIO_ACCOUNT_LINKEDIN_LOGIN_URL: ${{ vars.THORIO_ACCOUNT_LINKEDIN_LOGIN_URL || secrets.THORIO_ACCOUNT_LINKEDIN_LOGIN_URL }}
@@ -1318,6 +1319,7 @@ jobs:
           source_failure_counts = [int(result.get("failed_count", 0) or 0) for result in results]
           source_skip_counts = [int(result.get("skipped_count", 0) or 0) for result in results]
           not_due_total = 0
+          backlog_paused_total = 0
           unexpected_skips = []
           for result in results:
               skipped = result.get("skipped", [])
@@ -1326,13 +1328,16 @@ jobs:
               for item in skipped:
                   if isinstance(item, dict) and item.get("reason") == "not_due":
                       not_due_total += 1
+                  elif isinstance(item, dict) and item.get("reason") == "agent_backlog_limit":
+                      backlog_paused_total += 1
                   else:
                       unexpected_skips.append(item)
           if not source_counts or not successful_source_counts:
               print("PRODUCTION COLLECTION FAILURE: source collection metadata was missing from the production result.")
               sys.exit(1)
-          if any(successful + not_due < source_count for successful, not_due, source_count in zip(successful_source_counts, [not_due_total] * len(successful_source_counts), source_counts)):
-              print(f"PRODUCTION COLLECTION FAILURE: configured sources were neither run nor legitimately deferred by their poll interval. source_counts={source_counts}, successful_source_counts={successful_source_counts}, not_due_total={not_due_total}")
+          legitimate_skips_total = not_due_total + backlog_paused_total
+          if any(successful + legitimate_skips_total < source_count for successful, source_count in zip(successful_source_counts, source_counts)):
+              print(f"PRODUCTION COLLECTION FAILURE: configured sources were neither run nor legitimately deferred by polling/backpressure. source_counts={source_counts}, successful_source_counts={successful_source_counts}, not_due_total={not_due_total}, backlog_paused_total={backlog_paused_total}")
               sys.exit(1)
           if any(count > 0 for count in source_failure_counts):
               print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources failed. failed_source_counts={source_failure_counts}")
@@ -1340,8 +1345,8 @@ jobs:
           if unexpected_skips:
               print(f"PRODUCTION COLLECTION FAILURE: one or more configured sources were skipped for an unexpected reason. skipped_source_counts={source_skip_counts}, examples={unexpected_skips[:10]}")
               sys.exit(1)
-          if discovered_total <= 0 and (sum(successful_source_counts) > 0 or not_due_total <= 0):
-              print("PRODUCTION COLLECTION FAILURE: no leads were discovered and the run did not consist solely of sources correctly deferred by their poll intervals.")
+          if discovered_total <= 0 and (sum(successful_source_counts) > 0 or legitimate_skips_total <= 0):
+              print("PRODUCTION COLLECTION FAILURE: no leads were discovered and the run did not consist solely of sources correctly deferred by polling/backpressure.")
               sys.exit(1)
           agents_evidence_found = False
           agent_drain_complete = []
