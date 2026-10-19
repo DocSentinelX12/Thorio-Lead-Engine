@@ -236,10 +236,12 @@ def test_scheduler_bounded_run_collects_even_when_persisted_deadlines_are_future
     second_scheduler = LeadScheduler(runner=runner)
     with patch("lead_engine.scheduler.time.time", return_value=1001.0):
         result = second_scheduler.run_bounded([source], interval_seconds=0, max_cycles=1)
-    assert result["successful_source_count"] == 1
+    assert result["successful_source_count"] == 0
     assert result["failed_count"] == 0
-    assert result["discovered_count"] == 1
-    assert runner.run_source.call_count == 1
+    assert result["discovered_count"] == 0
+    assert result["skipped_count"] == 1
+    assert result["skipped"][0]["reason"] == "not_due"
+    assert runner.run_source.call_count == 0
     db.close()
 
 
