@@ -275,6 +275,47 @@ def _configured_url(
     )
 
 
+def _company_website_url(
+    item: Dict[str, Any],
+    definition: Optional[SourceDefinition] = None,
+) -> str:
+    """Preserve an explicitly supplied company website for later public research."""
+    configured_field = None
+    if definition is not None and isinstance(definition.metadata, dict):
+        configured_field = definition.metadata.get("company_website_field")
+    paths = [
+        str(configured_field).strip() if configured_field else "",
+        "company_website",
+        "companyWebsite",
+        "company_website_url",
+        "companyWebsiteUrl",
+        "company_site",
+        "companySite",
+        "website",
+        "website_url",
+        "homepage",
+        "employer_website",
+        "employerWebsite",
+        "employer_site",
+        "company.website",
+        "company.website_url",
+        "company.homepage",
+        "company.homepage_url",
+        "employer.website",
+        "employer.website_url",
+    ]
+    for path in paths:
+        if not path:
+            continue
+        value = _field_value(item, path)
+        if isinstance(value, dict):
+            value = value.get("url") or value.get("href") or value.get("website")
+        url = _text(value)
+        if url.startswith(("http://", "https://")):
+            return url
+    return ""
+
+
 def _json_records_from_definition(
     payload: Any,
     definition: SourceDefinition,
@@ -670,6 +711,10 @@ def normalize_job_record(
             " ".join((signal, evidence)),
             commercial_matches,
         )
+
+    company_website = _company_website_url(item, definition)
+    if company_website:
+        record["company_website"] = company_website
 
     return record
 
