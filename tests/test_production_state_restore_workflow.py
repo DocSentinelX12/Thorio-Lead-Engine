@@ -24,11 +24,15 @@ def test_cache_is_saved_only_after_database_integrity_validation():
     assert "DURABLE STATE FAILURE" in workflow
 
 
-def test_legacy_artifact_recovery_is_retained_until_encrypted_cache_works():
+def test_legacy_artifact_recovery_fails_closed_only_when_a_prior_state_artifact_exists():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "Find newest usable engine state" in workflow
+    assert "state_artifact_seen=false" in workflow
+    assert 'state_artifact_seen=true' in workflow
+    assert '&& [ "$state_artifact_seen" = "true" ]' in workflow
     assert "ENGINE STATE RECOVERY BLOCKED" in workflow
     assert "ENGINE STATE CANDIDATE REJECTED" in workflow
+    assert "ENGINE STATE BOOTSTRAP: prior workflow runs exist, but none has ever produced an encrypted engine-state artifact" in workflow
     cleanup = workflow.split("- name: Clean up superseded state caches", 1)[1]
     assert "steps.state_restore.outputs.restored == 'true'" in cleanup
 
