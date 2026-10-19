@@ -40,9 +40,54 @@ def test_advanced_discovery_specialist_extracts_evidence_without_qualifying(tmp_
     db = _db(tmp_path); task = AgentOrchestrator(db).dispatch_discovery("engineering_demand_discovery", {"lead": {"fingerprint": "d1", "company": "Acme"}, "evidence_events": [{"source": "linkedin", "signal": "Acme is hiring a backend engineer", "observed_at": _recent()}]}); result = run_worker_once(db, "engineering_demand_discovery", worker_id="engineering-worker")
     finding = result["results"][0]; assert result["completed_count"] == 1; assert finding["matched_event_count"] == 1 and finding["requires_verification"] is True and finding["handoff"] == "company_research"; assert task["agent"] == "engineering_demand_discovery"
 
-def test_social_research_handoffs_to_company_research(tmp_path):
-    db = _db(tmp_path); lead = {"fingerprint": "social-research-handoff", "company": "Acme"}; db.insert_if_new(lead); AgentOrchestrator(db).dispatch_social_research("social_decision_maker_research", {"lead": lead, "evidence_events": [{"source": "linkedin", "signal": "Taylor is CTO at Acme", "observed_at": _recent()}]}); result = run_worker_once(db, "social_decision_maker_research", worker_id="social-worker")
-    output = result["results"][0]; assert result["completed_count"] == 1; assert output["matched_event_count"] == 1 and output["fabricated_fields"] == [] and output["verification_required"] is True and output["handoff"] == "company_research"; assert any(task["agent"] == "company_research" for task in pending(db))
+def test_social_research_handoffs_to_company_research_and_persists_verifiable_findings(tmp_path):
+    db = _db(tmp_path); lead = {"fingerprint": "social-research-handoff", "company": "Acme", "person": "Taylor"}; db.insert_if_new(lead); AgentOrchestrator(db).dispatch_social_research("social_decision_maker_research", {"lead": lead, "evidence_events": [{"source": "linkedin", "url": "https://linkedin.example/posts/1", "signal": "Taylor is CTO at Acme", "observed_at": _recent()}]}); result = run_worker_once(db, "social_decision_maker_research", worker_id="social-worker")
+    output = result["results"][0]; stored = db.get(lead["fingerprint"]); specialist = stored["specialist_findings"]["social_decision_maker_research"]; assert result["completed_count"] == 1; assert output["matched_event_count"] == 1 and output["fabricated_fields"] == [] and output["verification_required"] is True and output["handoff"] == "company_research"; assert specialist["findings"][0]["evidence"] == "Taylor is CTO at Acme"; assert any(task["agent"] == "company_research" for task in pending(db))
+
+def test_company_research_queues_verification_before_research_is_complete(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from .advanced_agent_logic import company_research
+    db = _db(tmp_path)
+    lead = {
+        "fingerprint": "decision-maker-verification-deadlock",
+        "company": "Acme",
+        "person": "Taylor Doe",
+        "source": "linkedin",
+        "source_id": "social-42",
+        "url": "https://linkedin.example/posts/42",
+        "source_url": "https://linkedin.example/posts/42",
+        "signal": "Taylor Doe is CTO at Acme",
+        "evidence": "Taylor Doe is CTO at Acme",
+        "specialist_findings": {
+            "social_decision_maker_research": {
+                "findings": [{
+                    "matches": ["CTO"],
+                    "source": "linkedin",
+                    "url": "https://linkedin.example/posts/42",
+                    "recent": True,
+                    "evidence": "Taylor Doe is CTO at Acme",
+                }]
+            }
+        },
+    }
+    db.insert_if_new(lead)
+    monkeypatch.setattr("lead_engine.advanced_agent_logic.research_public_web", lambda candidate, checkpoint=None: {
+        "status": "evidence_found",
+        "research_method": "public_web_http",
+        "researched_at": _recent(),
+        "pages_attempted": 1,
+        "pages_collected": 1,
+        "sources": [{"url": "https://acme.example.com/", "status": "collected"}],
+        "facts": {"company": [], "product": [], "hiring": [], "decision_maker": [], "business_need": [], "commercial": []},
+        "raw_pages": [{"url": "https://acme.example.com/", "status": "collected", "facts": [{"field": "page_text", "value": "Acme company website"}]}],
+        "verified_fields": [],
+        "fabricated_fields": [],
+    })
+    monkeypatch.setattr("lead_engine.advanced_agent_logic._company_identity_verified", lambda company, public: (True, ["https://acme.example.com/"]))
+    result = company_research({"lead": lead, "evidence_events": []}, SimpleNamespace(db=db))
+    assert result["research_status"] == "research_required"
+    assert any(task["agent"] == "verification" for task in pending(db))
+    db.close()
 
 def test_qualification_worker_requires_completed_company_research(tmp_path):
     db = _db(tmp_path); lead = {"fingerprint": "qualification-research-gate", "company": "Acme", "signal": "Acme is hiring a remote software engineer"}; db.insert_if_new(lead); enqueue(db, "qualification_a", {"lead": lead}); result = run_worker_once(db, "qualification_a", worker_id="qualification-a"); assert result["completed_count"] == 0 and result["failed_count"] == 1; assert db.get(lead["fingerprint"]).get("qualification_results") is None
