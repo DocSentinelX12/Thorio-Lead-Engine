@@ -22,6 +22,7 @@ def test_production_gate_preserves_durable_specialist_backlog_but_fails_terminal
     assert 'SPECIALIST EXECUTION FAILURE:' in text
     assert 'SPECIALIST DRAIN DEFERRED:' in text
     assert 'SPECIALIST DRAIN FAILURE: specialist backlog remained' not in text
+    assert "Report outreach held in durable queue\n        if: always() && steps.production_mode.outputs.full_revenue_ready != 'true'" in text
 
 
 def test_production_airtable_workspace_keeps_legacy_bases_readable():
