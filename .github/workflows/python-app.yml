@@ -987,12 +987,14 @@ jobs:
           set -euo pipefail
           mkdir -p data .thorio-state-cache
           if [ -s .thorio-state-cache/state.enc ]; then
-            python -m lead_engine.github_state restore --data-dir data --archive .thorio-state-cache/state.enc > .thorio-state-cache/restore.log 2>&1 || {
+            if python -m lead_engine.github_state restore --data-dir data --archive .thorio-state-cache/state.enc > .thorio-state-cache/restore.log 2>&1; then
               cat .thorio-state-cache/restore.log
-              echo "STATE RESTORE FAILURE: encrypted cached state could not be authenticated and restored; refusing to silently start empty." >&2
-              exit 1
-            }
-            cat .thorio-state-cache/restore.log
+            else
+              cat .thorio-state-cache/restore.log
+              echo "STATE CACHE REJECTED: cached snapshot failed authentication or integrity validation; attempting verified encrypted artifact recovery instead." >&2
+              rm -f .thorio-state-cache/state.enc
+              printf "restored=false\n" > .thorio-state-cache/restore.log
+            fi
           else
             echo "STATE CACHE: no encrypted state cache exists yet; checking prior verified GitHub recovery artifacts."
             echo "restored=false"
@@ -1542,7 +1544,7 @@ jobs:
           path: .thorio-state-cache/state.enc
           key: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Clean up superseded state caches and legacy unencrypted artifacts
-        if: always() && steps.save_state_cache.outcome == 'success' && steps.upload_state_artifact.outcome == 'success' && steps.state_restore.outputs.restored == 'true'
+        if: always() && steps.save_state_cache.outcome == 'success' && steps.upload_state_artifact.outcome == 'success' && (steps.state_restore.outputs.restored == 'true' || steps.previous_state.outputs.run_id != '')
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_CACHE_KEY: thorio-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1553,10 +1555,21 @@ jobs:
             gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/caches/$cache_id" >/dev/null
             echo "Removed superseded encrypted state cache $cache_id."
           done
+          CURRENT_ARTIFACT_ID="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" --jq '.artifacts[] | select(.name == "thorio-lead-engine-state-encrypted") | .id' | head -n 1)"
+          if [ -z "$CURRENT_ARTIFACT_ID" ]; then
+            echo "STATE ARTIFACT CLEANUP BLOCKED: current encrypted recovery artifact could not be identified; preserving all prior artifacts." >&2
+            exit 1
+          fi
+          export CURRENT_ARTIFACT_ID
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "thorio-lead-engine-state-encrypted" and (.id | tostring) != env.CURRENT_ARTIFACT_ID) | .id' | while IFS= read -r artifact_id; do
+            [ -z "$artifact_id" ] && continue
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id" >/dev/null
+            echo "Removed superseded encrypted state artifact $artifact_id after current encrypted recovery artifact was verified and saved."
+          done
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[] | select(.name == "thorio-lead-engine-state") | .id' | while IFS= read -r artifact_id; do
             [ -z "$artifact_id" ] && continue
             gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id" >/dev/null
-            echo "Removed legacy unencrypted state artifact $artifact_id after encrypted cache recovery succeeded."
+            echo "Removed legacy unencrypted state artifact $artifact_id after encrypted recovery was saved."
           done
       - name: Require durable encrypted state persistence
         if: always()
