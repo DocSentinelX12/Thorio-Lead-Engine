@@ -26,19 +26,23 @@ def test_encrypted_snapshot_round_trip_restores_sqlite_and_other_state(tmp_path,
     make_data(source, "lead-a")
     (source / "queue.json").write_text('{"pending": 3}', encoding="utf-8")
     original_tar_open = github_state.tarfile.open
-    compression = {}
+    archive_options = {}
 
-    def record_archive_compression(*args, **kwargs):
-        if kwargs.get("mode") == "w:gz":
-            compression["level"] = kwargs.get("compresslevel")
+    def record_archive_options(*args, **kwargs):
+        mode = kwargs.get("mode")
+        if mode == "w:gz":
+            archive_options["compression_level"] = kwargs.get("compresslevel")
+        if mode == "r|gz":
+            archive_options["restore_mode"] = mode
         return original_tar_open(*args, **kwargs)
 
-    monkeypatch.setattr(github_state.tarfile, "open", record_archive_compression)
+    monkeypatch.setattr(github_state.tarfile, "open", record_archive_options)
     github_state.snapshot(source, archive)
-    assert compression["level"] == 1
+    assert archive_options["compression_level"] == 1
     assert archive.is_file()
     assert b"lead-a" not in archive.read_bytes()
     assert github_state.restore(target, archive) is True
+    assert archive_options["restore_mode"] == "r|gz"
 
     with sqlite3.connect(target / "leads.sqlite3") as conn:
         assert conn.execute("SELECT fingerprint FROM leads").fetchone()[0] == "lead-a"
