@@ -65,3 +65,10 @@ def test_candidate_urls_prefers_observed_company_website_over_job_board_source()
     })
     assert "https://acme.example.com/" in urls
     assert "https://jobs.example.com/roles/1" not in urls
+
+def test_candidate_urls_prefers_individual_lead_url_over_collector_api_endpoint():
+    urls = _candidate_urls({
+        "url": "https://jobs.example.com/roles/1",
+        "source_url": "https://jobs.example.com/api/job-board",
+    })
+    assert urls == ["https://jobs.example.com/roles/1"]
