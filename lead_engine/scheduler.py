@@ -89,6 +89,19 @@ class LeadScheduler:
             value = 4
         return max(1, min(value, 32))
 
+    def _source_collection_backlog_state(self) -> Dict[str, Any]:
+        """Apply optional backpressure before collection can add more specialist work."""
+        raw = os.environ.get("THORIO_AGENT_BACKLOG_COLLECTION_PAUSE_THRESHOLD", "0").strip()
+        try:
+            threshold = max(0, int(raw))
+        except ValueError:
+            threshold = 0
+        if threshold <= 0:
+            return {"paused": False, "threshold": 0, "pending_count": 0}
+        health = self.agent_orchestrator._queue_health()
+        pending_count = int(health.get("queued_count", 0) or 0) + int(health.get("running_count", 0) or 0)
+        return {"paused": pending_count >= threshold, "threshold": threshold, "pending_count": pending_count}
+
     def _collect_source(self, source: LeadSource, checkpoint: str):
         try:
             records = source.collect(checkpoint=checkpoint)
@@ -255,8 +268,17 @@ class LeadScheduler:
         now = time.monotonic()
         wall_now = time.time()
         due_sources = []
+        backlog_state = self._source_collection_backlog_state()
         for source in source_list:
             source_name = source.name
+            if backlog_state["paused"]:
+                skipped.append({
+                    "source": source_name,
+                    "reason": "agent_backlog_limit",
+                    "pending_agent_tasks": backlog_state["pending_count"],
+                    "threshold": backlog_state["threshold"],
+                })
+                continue
             if not self._is_due(source, now, wall_now):
                 skipped.append({"source": source_name, "reason": "not_due"})
                 continue
