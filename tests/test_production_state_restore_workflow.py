@@ -59,8 +59,8 @@ def test_encrypted_state_artifact_is_decrypted_before_recovery():
 
 def test_invalid_cache_falls_back_to_encrypted_artifact_recovery():
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    restore = workflow.split("- name: Restore encrypted GitHub Actions state cache", 1)[1].split(
-        "- name: Set up Python", 1
+    restore = workflow.split("- name: Restore encrypted GitHub Actions state", 1)[1].split(
+        "- name: Find newest usable engine state", 1
     )[0]
     assert "STATE CACHE REJECTED" in restore
     assert "attempting verified encrypted artifact recovery instead" in restore
