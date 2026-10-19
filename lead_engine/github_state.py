@@ -201,8 +201,11 @@ def restore(data_dir: Path, archive: Path) -> bool:
         extracted.mkdir()
         metadata: dict = {}
         try:
-            with tarfile.open(tar_path, mode="r:gz") as bundle:
-                for member in bundle.getmembers():
+            with tarfile.open(tar_path, mode="r|gz") as bundle:
+                # Stream once through the archive. getmembers() followed by
+                # extractfile() forces gzip archives to be replayed from the
+                # beginning, doubling decompression work for the multi-GB DB.
+                for member in bundle:
                     relative = PurePosixPath(member.name)
                     if relative.is_absolute() or not relative.parts or ".." in relative.parts:
                         raise RuntimeError(f"Unsafe path in encrypted state archive: {member.name}")
