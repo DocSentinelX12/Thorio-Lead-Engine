@@ -103,3 +103,13 @@ def test_evidence_deduplication_preserves_verified_upgrade():
     assert len(result) == 1
     assert result[0]["verification_status"] == "verified"
     assert result[0]["verified"] is True
+
+
+def test_route_section_is_assigned_before_scope_validation():
+    event = normalize_evidence_event(
+        {"opportunity_id": "opp-1", "fingerprint": "opp-1", "evidence": "Route evidence", "route": "Shiftr"},
+        opportunity_id="opp-1",
+        research_section="route_research",
+    )
+    assert event["research_section"] == "route_research"
+    assert event["route"] == "Shiftr"
