@@ -307,6 +307,30 @@ def test_company_research_persists_research_intelligence_handoff(tmp_path):
     assert "evidence_graph" in intelligence and "claims" in intelligence
 
 
+def test_company_research_accepts_route_tagged_events_without_misclassifying_them(tmp_path):
+    db = _db(tmp_path)
+    lead = {"fingerprint": "route-evidence-ledger-test", "company": "Acme", "signal": "Acme needs an engineering team"}
+    db.insert_if_new(lead)
+    route_event = {
+        "source": "linkedin",
+        "url": "https://example.com/shiftr-need",
+        "evidence": "Acme needs an engineering team to build a product",
+        "route": "Shiftr",
+        "observed_at": _recent(),
+    }
+    enqueue(db, "company_research", {"lead": lead, "evidence_events": [route_event]})
+
+    result = run_worker_once(db, "company_research", worker_id="route-evidence-ledger-worker")
+
+    assert result["completed_count"] == 1, result
+    assert result["failed_count"] == 0, result
+    stored = db.get(lead["fingerprint"])
+    matching = [event for event in stored["evidence_events"] if event.get("url") == route_event["url"]]
+    assert len(matching) == 1
+    assert matching[0]["research_section"] == "route_research"
+    assert matching[0]["route"] == "Shiftr"
+
+
 def test_company_research_does_not_mark_observed_person_as_verified_decision_maker(tmp_path):
     db = _db(tmp_path); lead = {"fingerprint": "research-verification-test", "company": "Acme", "person": "Taylor", "signal": "Acme is hiring a backend engineer"}; db.insert_if_new(lead); enqueue(db, "company_research", {"lead": lead, "evidence_events": [{"source": "linkedin", "signal": "Taylor is mentioned by Acme"}]}); result = run_worker_once(db, "company_research", worker_id="research-worker"); stored = db.get(lead["fingerprint"]); assert result["completed_count"] == 1; assert stored["research_status"] == "research_required" and stored["company_research"]["decision_maker_verification_status"] == "observed_needs_role_verification"
 
