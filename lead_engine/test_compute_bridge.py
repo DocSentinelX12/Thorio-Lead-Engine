@@ -368,6 +368,11 @@ def test_unclaimed_remote_task_keeps_its_published_lease_until_worker_startup(tm
                     "attempts": 0,
                 }
 
+            def status(self, task_id):
+                response = super().status(task_id)
+                response["attempts"] = 0
+                return response
+
         result = bridge_once(db, NotYetClaimedClient(), publish_limit=10, reconcile_limit=10)
         output = capsys.readouterr().out
 
