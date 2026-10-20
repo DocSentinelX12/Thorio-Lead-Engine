@@ -336,3 +336,45 @@ def test_remote_queued_task_logs_coordinator_failure_reason(tmp_path, capsys):
         assert "remote task returned to queue" in output
         assert "task_id=" + task["task_id"] in output
         assert "physical allocation unavailable: no eligible CPU resource" in output
+
+def test_unclaimed_remote_task_keeps_its_published_lease_until_worker_startup(tmp_path, capsys):
+    db = LeadDB(data_dir=Path(tmp_path))
+    try:
+        lead = {
+            "fingerprint": "remote-unclaimed-lease",
+            "company": "Example",
+            "signal": "We need an AI development team",
+        }
+        assert db.insert_if_new(lead)
+        task = enqueue(db, "ai_demand_discovery", {"lead": lead, "evidence_events": []})
+        worker_id = "remote-compute:worker-1"
+        db.compute_bridge_prepare(
+            task["task_id"],
+            worker_id,
+            {"kind": "agent_task", "agent": "ai_demand_discovery", "payload": {"lead": lead}},
+            "2026-10-20T00:00:00+00:00",
+        )
+        claim_task(db, task["task_id"], worker_id=worker_id, lease_seconds=900)
+        db.compute_bridge_mark_published(task["task_id"], "2026-10-20T00:00:00+00:00")
+
+        class NotYetClaimedClient(FakeRemoteClient):
+            def __init__(self):
+                super().__init__()
+                self.tasks[task["task_id"]] = {
+                    "status": "queued",
+                    "payload": {"kind": "agent_task", "agent": "ai_demand_discovery"},
+                    "result": None,
+                    "error": "",
+                    "attempts": 0,
+                }
+
+        result = bridge_once(db, NotYetClaimedClient(), publish_limit=10, reconcile_limit=10)
+        output = capsys.readouterr().out
+
+        assert result["reconciled"]["retried_count"] == 0
+        assert pending(db, "ai_demand_discovery")[0]["status"] == "running"
+        assert db.compute_bridge_get(task["task_id"])["status"] == "published"
+        assert "retaining published lease" in output
+    finally:
+        db.close()
+
