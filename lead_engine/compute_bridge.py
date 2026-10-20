@@ -365,6 +365,18 @@ def reconcile_remote_work(db: Any, client: ComputeWorkerClient, *, limit: int = 
                 f"attempts={remote_attempts} error={(remote_error or 'none reported')[:1200]}",
                 flush=True,
             )
+            # A newly published task is normally still queued until the separate
+            # GitHub worker workflow starts. Do not revoke the durable local lease
+            # just because the first status poll races ahead of worker startup.
+            # Genuine worker failures carry an error or a nonzero attempt count
+            # and continue through the existing retry/release path below.
+            if not remote_error and remote_worker == "unreported" and str(remote_attempts).strip() == "0":
+                print(
+                    "REMOTE COMPUTE BRIDGE: task has not been claimed by a worker yet; "
+                    f"retaining published lease task_id={task['task_id']}.",
+                    flush=True,
+                )
+                continue
             try:
                 retry(db, task["task_id"], worker_id=task["worker_id"], error=remote_error or "remote task returned to queue")
             except sqlite3.OperationalError as error:
