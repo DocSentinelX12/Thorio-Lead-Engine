@@ -129,3 +129,33 @@ def test_research_package_rejects_cross_opportunity_existing_evidence():
 
     with pytest.raises(ValueError, match="opportunity"):
         merge_canonical_section(generated, existing, opportunity_id="opp-1", research_section="business_need_research")
+
+def test_route_tagged_specialist_evidence_is_excluded_from_general_sections_and_stays_on_its_route():
+    lead = {"fingerprint": "route-tagged-evidence", "opportunity_id": "route-tagged-evidence", "company": "Acme"}
+    route_evidence = {
+        "url": "https://example.com/route",
+        "evidence": "Acme needs a contract engineering team",
+        "observed_at": "2026-10-20T00:00:00+00:00",
+        "route": "Shiftr",
+    }
+    package = build_canonical_research_package(
+        lead,
+        {"public_company_facts": [], "public_hiring_facts": [], "public_product_facts": [], "public_business_need_facts": [], "public_commercial_facts": []},
+        {"contract_team_demand_discovery": {"findings": [route_evidence]}},
+    )
+
+    for section_name in (
+        "business_need_research",
+        "current_intent_research",
+        "technical_product_hiring_research",
+        "commercial_research",
+        "closer_package",
+    ):
+        assert all(item.get("route") != "Shiftr" for item in package[section_name]["evidence"])
+
+    route = package["route_research"]["routes"]
+    assert [item["route"] for item in route["Shiftr"]["evidence"]] == ["Shiftr"]
+    assert route["Paxus"]["evidence"] == []
+    assert route["Thorio"]["evidence"] == []
+    assert route["Astrivon Labs"]["evidence"] == []
+
