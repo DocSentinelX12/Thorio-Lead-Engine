@@ -73,10 +73,13 @@ def normalize_evidence_event(
         raise ValueError("Evidence provenance requires a research_section.")
 
     candidate = dict(event)
+    # The caller's canonical section is authoritative for where this evidence is
+    # being materialized. Set it before validating scope so route-tagged evidence
+    # can be normalized into route_research, but cannot leak into general sections.
+    candidate["research_section"] = section
     validate_provenance_scope(candidate, opportunity_id=expected, route=route)
     candidate["opportunity_id"] = _text(candidate.get("opportunity_id")) or expected
     candidate["fingerprint"] = _text(candidate.get("fingerprint")) or expected
-    candidate["research_section"] = section
     if route is not None:
         expected_route = _text(route)
         if not expected_route:
