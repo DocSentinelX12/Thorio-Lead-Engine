@@ -12,6 +12,23 @@ from .research_queue import process_paxus_research_queue
 from .research_package import RESEARCH_SECTIONS, VERIFIABLE_RESEARCH_SECTIONS, build_canonical_research_package, finalize_research_readiness, merge_canonical_section
 from .research_intelligence import build_research_intelligence
 from .opportunity_provenance import normalize_evidence_event, validate_provenance_collection
+
+
+def _normalize_research_evidence_events(events: Iterable[Any], *, opportunity_id: str) -> list[Dict[str, Any]]:
+    """Keep route-scoped observations in route_research even in the raw event ledger."""
+    general_events: list[Mapping[str, Any]] = []
+    route_events: list[Mapping[str, Any]] = []
+    for event in events:
+        if not isinstance(event, Mapping):
+            continue
+        (route_events if str(event.get("route") or "").strip() else general_events).append(event)
+    normalized = validate_provenance_collection(
+        general_events, opportunity_id=opportunity_id, research_section="evidence_events"
+    )
+    normalized.extend(validate_provenance_collection(
+        route_events, opportunity_id=opportunity_id, research_section="route_research"
+    ))
+    return normalized
 from .outreach_engine import OutreachContractError, apply_outcome, build_outreach_decision, objection_response
 from .sales_closer_intelligence import build_commercial_strategy, evaluate_closer_message
 from .revenue_conversation import objection_reply
@@ -117,13 +134,13 @@ def _company_research(_: str, payload: Mapping[str, Any], ctx: AgentExecutionCon
     payload_findings = payload.get("specialist_findings") if isinstance(payload.get("specialist_findings"), Mapping) else {}
     if payload_findings: specialist_findings = {**dict(specialist_findings), **dict(payload_findings)}
     opportunity_id = str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip()
-    merged_events = validate_provenance_collection(list(lead.get("evidence_events", [])) + list(payload.get("evidence_events", [])), opportunity_id=opportunity_id, research_section="evidence_events")
+    merged_events = _normalize_research_evidence_events(list(lead.get("evidence_events", [])) + list(payload.get("evidence_events", [])), opportunity_id=opportunity_id)
     canonical = build_canonical_research_package(lead, merged_research, specialist_findings)
     for section_name in RESEARCH_SECTIONS:
         current_section = lead.get(section_name)
         if isinstance(current_section, Mapping): canonical[section_name] = merge_canonical_section(canonical[section_name], current_section, opportunity_id=str(lead.get("opportunity_id") or lead.get("fingerprint") or "").strip(), research_section=section_name)
     merged = dict(lead); merged["company_research"] = merged_research; merged["evidence_events"] = merged_events; merged.update(canonical); merged["research_intelligence"] = build_research_intelligence(merged); merged, readiness = finalize_research_readiness(merged); merged["research_intelligence"] = build_research_intelligence(merged)
-    merged["evidence_events"] = validate_provenance_collection(merged.get("evidence_events", []), opportunity_id=opportunity_id, research_section="evidence_events")
+    merged["evidence_events"] = _normalize_research_evidence_events(merged.get("evidence_events", []), opportunity_id=opportunity_id)
     research = merged.get("company_research") if isinstance(merged.get("company_research"), Mapping) else {}
     specialist = merged.get("specialist_findings") if isinstance(merged.get("specialist_findings"), Mapping) else {}
     dm_findings = specialist.get("social_decision_maker_research")
