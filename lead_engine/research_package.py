@@ -36,6 +36,12 @@ def _refs(
     route: str | None = None,
 ) -> list[Dict[str, Any]]:
     raw_items = [dict(item) for item in items if isinstance(item, Mapping)]
+    # Route-tagged observations belong exclusively to route_research. The same
+    # specialist finding can feed multiple general research collections, so
+    # partition here rather than letting one route-scoped item fail the entire
+    # company_research task or leak into unrelated sections.
+    if research_section != "route_research":
+        raw_items = [item for item in raw_items if not str(item.get("route") or "").strip()]
     if opportunity_id:
         return validate_provenance_collection(
             raw_items,
@@ -86,10 +92,26 @@ def _route_section(evidence: list[Dict[str, Any]], company: str, opportunity_id:
     refs = section["evidence"]
     route_refs: Dict[str, list[Dict[str, Any]]] = {route: [] for route in ROUTES}
     for ref in refs:
-        text = str(ref.get("evidence") or ref.get("signal") or "").strip()
-        if not text:
+        evidence_text = str(ref.get("evidence") or ref.get("signal") or "").strip()
+        if not evidence_text:
             continue
-        scores = score_routes(company=company, signal=text, evidence=text)
+        supplied_route = str(ref.get("route") or "").strip()
+        if supplied_route:
+            # An explicitly scoped observation must never be copied to another
+            # revenue route just because its text also scores for that route.
+            if supplied_route in route_refs:
+                route_refs[supplied_route].append(
+                    normalize_evidence_event(
+                        ref,
+                        opportunity_id=opportunity_id,
+                        research_section="route_research",
+                        route=supplied_route,
+                    )
+                    if opportunity_id
+                    else dict(ref)
+                )
+            continue
+        scores = score_routes(company=company, signal=evidence_text, evidence=evidence_text)
         for route in ROUTES:
             if int(scores.get(route, 0) or 0) > 0:
                 route_refs[route].append(normalize_evidence_event(ref, opportunity_id=opportunity_id, research_section="route_research", route=route) if opportunity_id else dict(ref))
