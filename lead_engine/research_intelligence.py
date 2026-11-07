@@ -104,14 +104,26 @@ def _collect_evidence(lead: Mapping[str, Any], opportunity_id: str) -> dict[str,
                         "route": str(route),
                     }
         for raw in _evidence_list(section.get("evidence")):
+            supplied_route = _text(raw.get("route"))
+            # Legacy records may still contain route-tagged observations in a
+            # general research section. Preserve them, but canonicalize them
+            # into route_research instead of relabeling them as general evidence.
+            evidence_section = (
+                "route_research"
+                if supplied_route and section_name != "route_research"
+                else section_name
+            )
             event = normalize_evidence_event(
                 raw,
                 opportunity_id=opportunity_id,
-                research_section=section_name,
-                route=_text(raw.get("route")) or None,
+                research_section=evidence_section,
+                route=supplied_route or None,
                 collector="research_intelligence",
             )
-            nodes[event["canonical_evidence_key"]] = {**event, "research_section": section_name}
+            nodes[event["canonical_evidence_key"]] = {
+                **event,
+                "research_section": evidence_section,
+            }
     company = lead.get("company_research")
     if isinstance(company, Mapping):
         for field in (
@@ -124,13 +136,19 @@ def _collect_evidence(lead: Mapping[str, Any], opportunity_id: str) -> dict[str,
             "social_findings",
         ):
             for raw in _evidence_list(company.get(field)):
+                supplied_route = _text(raw.get("route"))
+                evidence_section = "route_research" if supplied_route else "company_research"
                 event = normalize_evidence_event(
                     raw,
                     opportunity_id=opportunity_id,
-                    research_section="company_research",
+                    research_section=evidence_section,
+                    route=supplied_route or None,
                     collector="research_intelligence",
                 )
-                nodes[event["canonical_evidence_key"]] = {**event, "research_section": "company_research"}
+                nodes[event["canonical_evidence_key"]] = {
+                    **event,
+                    "research_section": evidence_section,
+                }
     return nodes
 
 
@@ -254,7 +272,12 @@ def _claims_for_section(
     opportunity_id: str,
     lead: Mapping[str, Any],
 ) -> list[Dict[str, Any]]:
-    refs = [item for item in _evidence_list(section.get("evidence")) if isinstance(item, Mapping)]
+    refs = [
+        item
+        for item in _evidence_list(section.get("evidence"))
+        if isinstance(item, Mapping)
+        and (section_name == "route_research" or not _text(item.get("route")))
+    ]
     normalized_refs = [normalize_evidence_event(item, opportunity_id=opportunity_id, research_section=section_name, route=_text(item.get("route")) or None, collector="research_intelligence") for item in refs]
     keys = [str(item["canonical_evidence_key"]) for item in normalized_refs]
     explicit: list[Dict[str, Any]] = []
