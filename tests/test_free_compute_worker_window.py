@@ -30,3 +30,16 @@ def test_runtime_has_success_markers_for_registration_and_heartbeat():
     source = (WORKFLOW.parents[2] / "lead_engine" / "compute_worker.py").read_text(encoding="utf-8")
     assert 'print(f"THORIO_WORKER_REGISTERED worker_id={client.worker_id}", flush=True)' in source
     assert 'print(f"THORIO_WORKER_HEARTBEAT_OK worker_id={client.worker_id}", flush=True)' in source
+
+
+def test_worker_window_requires_task_plane_health_and_real_processing_evidence():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "/work/health" in text or "task_plane_ready" in text
+    assert "THORIO_WORKER_COORDINATOR_ERROR" in text
+    assert "THORIO_WORKER_TASK_FAILED" in text
+    assert "THORIO_WORKER_TASK_COMPLETED" in text
+    assert "verify_worker_task_processing" in text
+    assert "max-parallel: 4" in text
+    assert "240s" in text
+    assert "THORIO_WORKER_IDLE_SECONDS" in text
+    assert "THORIO_WORKER_FABRIC_POLL_SECONDS" in text

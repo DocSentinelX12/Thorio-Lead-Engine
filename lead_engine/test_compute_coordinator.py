@@ -183,3 +183,40 @@ def test_hosted_coordinator_binds_public_interface_behind_platform_tls_proxy(mon
         coordinator_module.serve_from_environment()
 
     assert captured == {"host": "0.0.0.0", "port": 8787, "closed": True}
+
+
+def test_health_probe_reports_task_plane_queue_counts(tmp_path):
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token")
+    coordinator.enqueue({"kind": "agent_task", "agent": "engineering_demand_discovery", "payload": {"lead": {"fingerprint": "queued-task"}}})
+    server, thread = _start_server(coordinator)
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        status, health = _request(base_url, "/health")
+        assert status == 200
+        assert health["ok"] is True
+        assert health["free_only"] is True
+        assert health["task_plane_ready"] is True
+        assert health["queued_tasks"] == 1
+        assert health["leased_tasks"] == 0
+        assert health["completed_tasks"] == 0
+    finally:
+        _stop_server(server, thread)
+
+
+def test_claim_maintenance_is_throttled_to_one_pass_per_interval(monkeypatch, tmp_path):
+    import lead_engine.compute_coordinator as coordinator_module
+
+    coordinator = ComputeCoordinator(str(tmp_path / "coordinator.sqlite3"), auth_token="test-token")
+    current = [100.0]
+    calls = {"reap": 0, "recover": 0}
+    monkeypatch.setattr(coordinator_module.time, "monotonic", lambda: current[0])
+    monkeypatch.setattr(coordinator.pool, "reap_stale_workers", lambda: calls.__setitem__("reap", calls["reap"] + 1))
+    monkeypatch.setattr(coordinator, "recover_expired_tasks", lambda: calls.__setitem__("recover", calls["recover"] + 1))
+
+    assert coordinator.claim("missing-worker") is None
+    assert coordinator.claim("missing-worker") is None
+    assert calls == {"reap": 1, "recover": 1}
+
+    current[0] += 31
+    assert coordinator.claim("missing-worker") is None
+    assert calls == {"reap": 2, "recover": 2}

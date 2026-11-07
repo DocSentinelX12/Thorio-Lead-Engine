@@ -123,3 +123,85 @@ def test_worker_client_request_uses_remaining_bridge_deadline(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     assert client.request("/work/status/task-1", timeout_seconds=0.25) == {"status": "leased"}
     assert observed["timeout"] == 0.25
+
+
+def test_worker_register_and_heartbeat_require_positive_coordinator_acknowledgements(monkeypatch):
+    client = ComputeWorkerClient("https://coordinator.example", "token", "worker-ack")
+
+    monkeypatch.setattr(client, "request", lambda path, payload=None: {"worker_id": "different-worker", "status": "ready"})
+    try:
+        client.register()
+    except ComputeWorkerError:
+        pass
+    else:
+        raise AssertionError("worker registration must reject a mismatched acknowledgement")
+    assert client._registered is False
+
+    client._registered = True
+    monkeypatch.setattr(client, "request", lambda path, payload=None: {"ok": False})
+    try:
+        client.heartbeat()
+    except ComputeWorkerError:
+        pass
+    else:
+        raise AssertionError("worker heartbeat must reject a negative acknowledgement")
+
+
+def test_worker_throttles_fabric_polling_and_emits_task_completion_marker(capsys):
+    from lead_engine.compute_worker import run_worker
+
+    class StopAfterOneIdleWait:
+        def __init__(self):
+            self.waits = 0
+
+        def is_set(self):
+            return self.waits >= 1
+
+        def wait(self, seconds):
+            self.waits += 1
+            return self.waits >= 1
+
+    class FakeClient:
+        worker_id = "worker-test"
+        _registered = True
+        _active_task = None
+
+        def __init__(self):
+            self.fabric_polls = 0
+            self.claims = 0
+
+        def heartbeat(self, current_load=0):
+            return {"ok": True}
+
+        def fabric_assignments(self):
+            self.fabric_polls += 1
+            return []
+
+        def claim(self):
+            self.claims += 1
+            if self.claims == 1:
+                return {
+                    "task_id": "task-test",
+                    "lease_token": "lease-test",
+                    "payload": {
+                        "kind": "agent_task",
+                        "agent": "engineering_demand_discovery",
+                        "payload": {"lead": {"fingerprint": "worker-test"}, "evidence_events": []},
+                    },
+                }
+            return None
+
+        def complete(self, task_id, lease_token, result):
+            return {"completed": True}
+
+    client = FakeClient()
+    run_worker(
+        client,
+        idle_seconds=0.01,
+        heartbeat_seconds=30,
+        fabric_poll_seconds=30,
+        stop_event=StopAfterOneIdleWait(),
+    )
+    output = capsys.readouterr().out
+    assert client.fabric_polls == 1
+    assert "THORIO_WORKER_TASK_COMPLETED worker_id=worker-test task_id=task-test kind=agent_task" in output
