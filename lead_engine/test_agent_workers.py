@@ -494,11 +494,12 @@ def test_route_tagged_discovery_evidence_is_normalized_into_route_research(tmp_p
     result = run_worker_once(db, "linkedin_signal", worker_id="route-tagged-worker")
     assert result["completed_count"] == 1, result
     assert result["failed_count"] == 0, result
-    stored = db.get(lead["fingerprint"])
+    research_tasks = [task for task in pending(db) if task["agent"] == "company_research"]
+    assert research_tasks
+    queued_events = research_tasks[0]["payload"]["evidence_events"]
     assert any(
         event.get("route") == "Shiftr"
         and event.get("research_section") == "route_research"
-        for event in stored["evidence_events"]
+        for event in queued_events
     )
-    assert any(task["agent"] == "company_research" for task in pending(db))
     db.close()
