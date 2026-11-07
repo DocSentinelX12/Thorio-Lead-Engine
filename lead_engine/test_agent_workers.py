@@ -471,3 +471,34 @@ def test_stale_followup_task_stops_after_opt_out(tmp_path):
     assert result["results"][0]["action"] == "stop"
     assert transport.calls == []
 
+def test_route_tagged_discovery_evidence_is_normalized_into_route_research(tmp_path):
+    db = _db(tmp_path)
+    lead = {
+        "fingerprint": "route-tagged-discovery-regression",
+        "company": "Acme",
+        "source": "linkedin",
+    }
+    db.insert_if_new(lead)
+    AgentOrchestrator(db).dispatch_discovery(
+        "linkedin_signal",
+        {
+            **lead,
+            "source_id": "route-tagged-1",
+            "evidence": "Acme is seeking a contract engineering team.",
+            "signal": "Acme is seeking a contract engineering team.",
+            "url": "https://linkedin.example/posts/route-tagged-1",
+            "route": "Shiftr",
+        },
+    )
+
+    result = run_worker_once(db, "linkedin_signal", worker_id="route-tagged-worker")
+    assert result["completed_count"] == 1, result
+    assert result["failed_count"] == 0, result
+    stored = db.get(lead["fingerprint"])
+    assert any(
+        event.get("route") == "Shiftr"
+        and event.get("research_section") == "route_research"
+        for event in stored["evidence_events"]
+    )
+    assert any(task["agent"] == "company_research" for task in pending(db))
+    db.close()
