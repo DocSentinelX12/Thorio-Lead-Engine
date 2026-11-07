@@ -1186,6 +1186,36 @@ jobs:
           PY
       - name: Ensure Lead Engine data directory exists
         run: mkdir -p data
+      - name: Recover one-time route-evidence specialist failures
+        run: |
+          python - <<'PY'
+          import pathlib
+
+          database = pathlib.Path("data/leads.sqlite3")
+          if not database.is_file():
+              print("SPECIALIST RECOVERY: no prior SQLite state exists; no failed tasks to repair.")
+              raise SystemExit(0)
+
+          from lead_engine.agent_queue import requeue_failed_matching
+          from lead_engine.database import LeadDB
+
+          db = LeadDB(data_dir="data")
+          try:
+              recovered = requeue_failed_matching(
+                  db,
+                  agent="company_research",
+                  error_substring="Route-specific evidence must remain in route_research.",
+                  max_attempts=1,
+                  limit=250,
+              )
+              print(
+                  "SPECIALIST RECOVERY: requeued "
+                  f"{len(recovered)} matching one-time company_research failure(s); "
+                  "attempt counters and original error diagnostics were preserved."
+              )
+          finally:
+              db.close()
+          PY
       - name: Restore encrypted external browser authentication state
         env:
           GH_TOKEN: ${{ github.token }}

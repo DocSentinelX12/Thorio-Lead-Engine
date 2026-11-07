@@ -339,6 +339,93 @@ def _finish(db, task_id: str, *, worker_id: str, lease_token: str | None, status
     task["status"] = status; task["result"] = result; task["last_error"] = error; task["worker_id"] = None; task["lease_until"] = None; task["updated_at"] = _iso(_now()); _save(db, state); return dict(task)
 
 
+def requeue_failed_matching(
+    db,
+    *,
+    agent: str,
+    error_substring: str,
+    max_attempts: int = 1,
+    limit: int = 250,
+) -> List[str]:
+    """Requeue a bounded set of matching terminal failures exactly once.
+
+    This is a repair primitive, not a general retry policy. It preserves the
+    original error for diagnostics and does not reset the attempt counter.
+    """
+    agent = str(agent or "").strip()
+    error_substring = str(error_substring or "").strip()
+    if not agent:
+        raise ValueError("agent is required")
+    if not error_substring:
+        raise ValueError("error_substring is required")
+    if max_attempts < 0:
+        raise ValueError("max_attempts must be non-negative")
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+
+    now = _iso(_now())
+    recovered: List[str] = []
+    if _queue_db(db):
+        begin_immediate = getattr(db, "_begin_immediate", None)
+        if callable(begin_immediate):
+            begin_immediate()
+        else:
+            db.conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = db.conn.execute(
+                """SELECT task_id FROM agent_queue
+                   WHERE status = ? AND agent = ? AND attempts <= ?
+                     AND instr(COALESCE(last_error, ''), ?) > 0
+                   ORDER BY updated_at, task_id LIMIT ?""",
+                (FAILED, agent, int(max_attempts), error_substring, int(limit)),
+            ).fetchall()
+            for (task_id,) in rows:
+                cursor = db.conn.execute(
+                    """UPDATE agent_queue
+                       SET status = ?, worker_id = NULL, lease_until = NULL,
+                           lease_token = NULL, updated_at = ?
+                       WHERE task_id = ? AND status = ? AND agent = ?
+                         AND attempts <= ?
+                         AND instr(COALESCE(last_error, ''), ?) > 0""",
+                    (
+                        QUEUED, now, task_id, FAILED, agent,
+                        int(max_attempts), error_substring,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    recovered.append(str(task_id))
+            db.conn.commit()
+            return recovered
+        except Exception:
+            if db.conn.in_transaction:
+                db.conn.rollback()
+            raise
+
+    state = _load(db)
+    for task in sorted(
+        state["items"].values(),
+        key=lambda item: (str(item.get("updated_at") or ""), str(item.get("task_id") or "")),
+    ):
+        if len(recovered) >= limit:
+            break
+        if (
+            task.get("status") != FAILED
+            or task.get("agent") != agent
+            or int(task.get("attempts", 0) or 0) > max_attempts
+            or error_substring not in str(task.get("last_error") or "")
+        ):
+            continue
+        task["status"] = QUEUED
+        task["worker_id"] = None
+        task["lease_until"] = None
+        task["lease_token"] = None
+        task["updated_at"] = now
+        recovered.append(str(task.get("task_id") or ""))
+    if recovered:
+        _save(db, state)
+    return recovered
+
+
 def pending(db, agent: str | None = None) -> List[Dict[str, Any]]:
     """List active tasks without taking a global write lock to recover leases.
 
