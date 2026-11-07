@@ -50,6 +50,27 @@ def _domain(url: str) -> str:
     return urlparse(url).hostname.lower() if urlparse(url).hostname else ""
 
 
+def _same_site_redirect(source_url: str, target_url: str) -> bool:
+    """Allow only same-host or www/apex redirects without scheme/port changes."""
+    source = urlparse(source_url)
+    target = urlparse(target_url)
+    if source.scheme not in {"http", "https"} or target.scheme != source.scheme:
+        return False
+    if source.port != target.port:
+        return False
+    source_host = (source.hostname or "").lower()
+    target_host = (target.hostname or "").lower()
+    if not source_host or not target_host:
+        return False
+    if source_host == target_host:
+        return True
+    return (
+        source_host.startswith("www.") and target_host == source_host[4:]
+    ) or (
+        target_host.startswith("www.") and source_host == target_host[4:]
+    )
+
+
 def _public_host(url: str) -> tuple[bool, str]:
     """Allow only globally routable host addresses for outbound research."""
     host = urlparse(url).hostname
@@ -132,7 +153,7 @@ def _fetch(url: str) -> Dict[str, Any]:
                 base.update({"status": "not_collected", "http_status": response.status_code, "reason": "redirect_without_location"})
                 return base
             redirected = urljoin(url, location)
-            if _domain(redirected) != domain:
+            if not _same_site_redirect(url, redirected):
                 base.update({"status": "not_collected", "http_status": response.status_code, "reason": "cross_domain_redirect_blocked"})
                 return base
             redirect_allowed, redirect_reason = _allowed(redirected)

@@ -40,3 +40,9 @@ def test_airtable_capacity_blocks_new_records_without_discarding_local_collectio
     assert 'updates to known existing records may continue' in capacity_gate
     assert 'AIRTABLE DELIVERY BLOCKED: the base record limit prevented synchronization.' in text
     assert 'Local SQLite state and the pending backlog will be persisted for recovery' in text
+
+
+def test_production_run_uses_two_bounded_drain_cycles_to_recover_backlog():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "run-scheduled --interval 60 --cycles 2" in text
+    assert "timeout --signal=TERM --kill-after=30s 3600s" in text

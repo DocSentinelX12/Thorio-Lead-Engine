@@ -46,3 +46,59 @@ def test_public_research_does_not_claim_access_when_robots_disallow(monkeypatch)
     assert result["status"] == "no_public_evidence"
     assert result["pages_collected"] == 0
     assert result["raw_pages"][0]["reason"] == "robots_disallowed"
+
+
+def test_public_research_allows_safe_www_apex_redirect(monkeypatch):
+    calls = []
+
+    class RedirectResponse:
+        status_code = 301
+        encoding = "utf-8"
+        headers = {"Location": "https://nomado24.de/en/remote-jobs/job"}
+        is_redirect = True
+        is_permanent_redirect = False
+
+    class PageResponse:
+        status_code = 200
+        encoding = "utf-8"
+        headers = {"content-type": "text/html"}
+        is_redirect = False
+        is_permanent_redirect = False
+
+        def iter_content(self, chunk_size=16384):
+            yield b"<html><head><title>Remote DevOps role</title></head><body>Remote engineering role at Acme.</body></html>"
+
+    responses = [RedirectResponse(), PageResponse()]
+
+    def fake_get(url, *args, **kwargs):
+        calls.append(url)
+        return responses.pop(0)
+
+    monkeypatch.setattr(public_research, "_allowed", lambda url: (True, "robots_checked:public_address"))
+    monkeypatch.setattr(public_research, "_throttle", lambda domain: None)
+    monkeypatch.setattr(public_research.requests, "get", fake_get)
+    public_research._PAGE_CACHE.clear()
+
+    result = public_research._fetch("https://www.nomado24.de/en/remote-jobs/job")
+
+    assert result["status"] == "collected"
+    assert calls == [
+        "https://www.nomado24.de/en/remote-jobs/job",
+        "https://nomado24.de/en/remote-jobs/job",
+    ]
+    assert result["facts"][0]["value"] == "Remote DevOps role"
+
+
+def test_public_research_still_blocks_unrelated_redirect_hosts():
+    assert public_research._same_site_redirect(
+        "https://www.nomado24.de/job",
+        "https://nomado24.com/job",
+    ) is False
+    assert public_research._same_site_redirect(
+        "https://www.nomado24.de/job",
+        "https://attacker.example/job",
+    ) is False
+    assert public_research._same_site_redirect(
+        "https://www.nomado24.de/job",
+        "http://nomado24.de/job",
+    ) is False

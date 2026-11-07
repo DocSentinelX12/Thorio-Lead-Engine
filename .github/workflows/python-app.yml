@@ -1292,7 +1292,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 1 2>&1 | tee data/scheduled-run-output.txt
+          timeout --signal=TERM --kill-after=30s 3600s python -u -m lead_engine run-scheduled --interval 60 --cycles 2 2>&1 | tee data/scheduled-run-output.txt
           engine_status=${PIPESTATUS[0]}
           set -e
           if [ -f data/browser-worker.pid ]; then
