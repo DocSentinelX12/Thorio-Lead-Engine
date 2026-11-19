@@ -487,9 +487,12 @@ def test_coordinator_health_probe_does_not_run_expensive_maintenance(tmp_path, m
     monkeypatch.setattr(coordinator.inventory, "fleet_resource_intelligence", unexpected)
     monkeypatch.setattr(coordinator.free_compute_acquisition, "status", unexpected)
 
-    assert coordinator.health_probe() == {
-        "ok": True,
-        "free_only": True,
-        "paid_capacity_allowed": False,
-    }
+    health = coordinator.health_probe()
+    assert health["ok"] is True
+    assert health["free_only"] is True
+    assert health["paid_capacity_allowed"] is False
+    assert health["task_plane_ready"] is True
+    assert health["queued_tasks"] == 0
+    assert health["leased_tasks"] == 0
+    assert health["completed_tasks"] == 0
 
