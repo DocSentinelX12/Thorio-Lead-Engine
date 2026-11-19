@@ -66,6 +66,8 @@ class ComputeCoordinator:
         self.llama_cpp_rpc_execution: LlamaCppRpcExecutionProvider | None = None
         self.compute_execution = ComputeExecutionRegistry()
         self._lock = threading.RLock()
+        self._claim_maintenance_interval_seconds = max(0.0, float(os.environ.get("THORIO_CLAIM_MAINTENANCE_INTERVAL_SECONDS", "30")))
+        self._last_claim_maintenance_at = float("-inf")
         self._initialize_tasks()
 
     def recover_compute_attempt(
@@ -1170,10 +1172,18 @@ class ComputeCoordinator:
                 },
             }
 
+    def _maintain_claim_state(self) -> None:
+        """Run stale-worker and lease recovery at a bounded cadence, not per poll."""
+        now = time.monotonic()
+        if now - self._last_claim_maintenance_at < self._claim_maintenance_interval_seconds:
+            return
+        self.pool.reap_stale_workers()
+        self.recover_expired_tasks()
+        self._last_claim_maintenance_at = now
+
     def claim(self, worker_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
-            self.pool.reap_stale_workers()
-            self.recover_expired_tasks()
+            self._maintain_claim_state()
             worker = self.pool.worker(worker_id)
             if not worker or worker["status"] != "ready":
                 return None
@@ -3577,13 +3587,29 @@ class ComputeCoordinator:
                 return result.rowcount == 1
 
     def health_probe(self) -> Dict[str, Any]:
-        """Return lightweight readiness without running maintenance or fabric reconciliation."""
-        # /health is called concurrently by every remote worker before enrollment.
-        # It must not take the global coordinator lock or trigger full reconciliation,
-        # fleet intelligence scans, or acquisition status aggregation.
-        with self._connect() as connection:
-            connection.execute("SELECT 1").fetchone()
-        return {"ok": True, "free_only": True, "paid_capacity_allowed": False}
+        """Return bounded, read-only readiness for every SQLite task-plane store."""
+        # Remote workers call this concurrently. Do not run maintenance, acquire the
+        # coordinator lock, reconcile the fabric, or aggregate provider intelligence.
+        counts = {"queued_tasks": None, "leased_tasks": None, "completed_tasks": None}
+        try:
+            with self._connect() as connection:
+                counts = {
+                    "queued_tasks": int(connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='queued'").fetchone()[0]),
+                    "leased_tasks": int(connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='leased'").fetchone()[0]),
+                    "completed_tasks": int(connection.execute("SELECT COUNT(*) FROM compute_tasks WHERE status='completed'").fetchone()[0]),
+                }
+                connection.execute("BEGIN IMMEDIATE")
+                connection.rollback()
+        except (sqlite3.Error, OSError):
+            return {"ok": False, "free_only": True, "paid_capacity_allowed": False, "task_plane_ready": False, "task_plane_failed_store": "coordinator", **counts}
+        for name, store in (("worker_pool", self.pool), ("resource_inventory", self.inventory), ("free_compute_acquisition", self.free_compute_acquisition.store)):
+            try:
+                with store._connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.rollback()
+            except (sqlite3.Error, OSError):
+                return {"ok": False, "free_only": True, "paid_capacity_allowed": False, "task_plane_ready": False, "task_plane_failed_store": name, **counts}
+        return {"ok": True, "free_only": True, "paid_capacity_allowed": False, "task_plane_ready": True, **counts}
 
     def health(self) -> Dict[str, Any]:
         with self._lock:
@@ -3618,7 +3644,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if not self._authorized(): self._send(401, {"error": "unauthorized"}); return
-        if self.path == "/health": self._send(200, self.server.coordinator.health_probe()); return
+        if self.path in {"/health", "/work/health"}:
+            health = self.server.coordinator.health_probe()
+            self._send(200 if health.get("task_plane_ready") is True else 503, health)
+            return
         if self.path == "/status": self._send(200, self.server.coordinator.health()); return
         if self.path.startswith("/fabric/rendezvous?") or self.path.startswith("/fabric/acquisition/rendezvous?"):
             session_id = self.path.split("session_id=", 1)[-1].split("&", 1)[0]

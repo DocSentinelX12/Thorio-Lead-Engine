@@ -730,3 +730,8 @@ def test_recovery_queue_discovers_all_triggered_paths_without_a_backlog_cap(tmp_
 
     assert {item["path_id"] for item in actions} == {"queued-0", "queued-1", "queued-2"}
     assert {item["path_id"] for item in due} == {"queued-0", "queued-1", "queued-2"}
+def test_inventory_creates_missing_parent_directory_for_database(tmp_path):
+    db_path = tmp_path / "nested" / "inventory.sqlite3"
+    inventory = ComputeInventory(str(db_path))
+    assert db_path.is_file()
+    assert inventory.db_path == str(db_path)

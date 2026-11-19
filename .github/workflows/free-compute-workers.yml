@@ -53,7 +53,7 @@ jobs:
               exit 1
               ;;
           esac
-          health_url="${THORIO_COMPUTE_COORDINATOR_URL%/}/health"
+          health_url="${THORIO_COMPUTE_COORDINATOR_URL%/}/work/health"
           if ! curl --fail --silent --show-error --max-time "${THORIO_COMPUTE_HTTP_TIMEOUT}" --retry 4 --retry-delay 2 --retry-max-time 30 --retry-connrefused \
             -H "Authorization: Bearer ${THORIO_COMPUTE_AUTH_TOKEN}" \
             -H "Accept: application/json" \
@@ -65,8 +65,8 @@ jobs:
           import json
           from pathlib import Path
           payload = json.loads(Path('/tmp/thorio-coordinator-health.json').read_text())
-          if payload.get('ok') is not True or payload.get('free_only') is not True:
-              raise SystemExit('Coordinator health response is not an active free-only coordinator.')
+          if payload.get('ok') is not True or payload.get('free_only') is not True or payload.get('task_plane_ready') is not True:
+              raise SystemExit('Coordinator task plane is not ready and free-only.')
           print('Coordinator health check passed.')
           print(json.dumps(payload, sort_keys=True))
           PY
@@ -83,7 +83,7 @@ jobs:
       # Bound coordinator load: one short cycle uses eight workers, not an
       # 80-job fan-out that can overwhelm a small free hosting instance.
       # Health probes remain staggered and transient 5xx responses are retried.
-      max-parallel: 8
+      max-parallel: 4
       matrix:
         worker: [01, 02, 03, 04, 05, 06, 07, 08]
 
@@ -93,6 +93,8 @@ jobs:
       THORIO_COMPUTE_AUTH_TOKEN: ${{ secrets.THORIO_COMPUTE_AUTH_TOKEN }}
       THORIO_WORKER_ID: github-${{ matrix.worker }}
       THORIO_COMPUTE_HTTP_TIMEOUT: "20"
+      THORIO_WORKER_IDLE_SECONDS: "2"
+      THORIO_WORKER_FABRIC_POLL_SECONDS: "30"
       THORIO_ACCOUNT_LINKEDIN_USERNAME: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_USERNAME }}
       THORIO_ACCOUNT_LINKEDIN_PASSWORD: ${{ secrets.THORIO_ACCOUNT_LINKEDIN_PASSWORD }}
       THORIO_ACCOUNT_X_USERNAME: ${{ secrets.THORIO_ACCOUNT_X_USERNAME }}
@@ -150,11 +152,14 @@ jobs:
               time.sleep(stagger_seconds)
 
           retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+          # Bound coordinator rechecks to a hard 240s ceiling.
+          retry_window_seconds = 240
+          retry_deadline = time.monotonic() + retry_window_seconds
           payload = None
           last_failure = "no response"
           for attempt in range(1, 9):
               request = urllib.request.Request(
-                  base + "/health",
+                  base + "/work/health",
                   headers={
                       "Authorization": f"Bearer {token}",
                       "Accept": "application/json",
@@ -192,20 +197,36 @@ jobs:
                   raise SystemExit("Coordinator health endpoint returned invalid JSON.") from exc
 
               if attempt < 8:
-                  delay = min(5 * (2 ** (attempt - 1)), 30) + (worker_number % 5)
+                  remaining = retry_deadline - time.monotonic()
+                  if remaining <= 0:
+                      raise SystemExit("Coordinator health retry window expired after 240s.")
+                  delay = min(min(5 * (2 ** (attempt - 1)), 30) + (worker_number % 5), remaining)
                   print(f"COORDINATOR_HEALTH_RETRY delay_seconds={delay}", flush=True)
                   time.sleep(delay)
 
-          if not isinstance(payload, dict) or payload.get("ok") is not True or payload.get("free_only") is not True:
-              raise SystemExit("Coordinator health response is not an active free-only coordinator.")
+          if not isinstance(payload, dict) or payload.get("ok") is not True or payload.get("free_only") is not True or payload.get("task_plane_ready") is not True:
+              raise SystemExit("Coordinator task plane is not ready and free-only.")
           print("Coordinator health recheck passed.")
           PY
 
       - name: Run bounded worker and require readiness evidence
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           mkdir -p data
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+          base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
+          request = urllib.request.Request(base + "/work/health", headers={"Authorization": "Bearer " + os.environ["THORIO_COMPUTE_AUTH_TOKEN"], "Accept": "application/json"})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              before = json.loads(response.read().decode("utf-8"))
+          if before.get("task_plane_ready") is not True:
+              raise SystemExit("Coordinator task plane was not ready before worker launch.")
+          Path("data/task-plane-before.json").write_text(json.dumps(before), encoding="utf-8")
+          PY
           set +e
           timeout --signal=TERM --kill-after=20s 510s python -u -m lead_engine.compute_worker 2>&1 | tee data/compute-worker.log
           worker_status=${PIPESTATUS[0]}
@@ -227,3 +248,37 @@ jobs:
             exit 1
           fi
           exit "$worker_status"
+      - name: Verify worker task processing evidence
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          def verify_worker_task_processing(log_path):
+              path = Path(log_path)
+              log = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+              if "THORIO_WORKER_TASK_FAILED" in log:
+                  raise SystemExit("Worker reported a task execution failure.")
+              before_path = Path("data/task-plane-before.json")
+              before = json.loads(before_path.read_text(encoding="utf-8")) if before_path.exists() else {}
+              base = os.environ["THORIO_COMPUTE_COORDINATOR_URL"].rstrip("/")
+              request = urllib.request.Request(base + "/work/health", headers={"Authorization": "Bearer " + os.environ["THORIO_COMPUTE_AUTH_TOKEN"], "Accept": "application/json"})
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  after = json.loads(response.read().decode("utf-8"))
+              if after.get("task_plane_ready") is not True:
+                  raise SystemExit("Coordinator task plane became unhealthy during the worker window.")
+              if "THORIO_WORKER_TASK_COMPLETED" in log or int(after.get("completed_tasks") or 0) > int(before.get("completed_tasks") or 0):
+                  print("A real coordinator task completion was observed during the worker window.")
+                  return
+              if int(before.get("queued_tasks") or 0) == 0 and int(before.get("leased_tasks") or 0) == 0:
+                  if "THORIO_WORKER_REGISTERED" in log and "THORIO_WORKER_HEARTBEAT_OK" in log:
+                      print("Worker readiness verified; the coordinator had no queued or leased work to process.")
+                      return
+              raise SystemExit("Queued work existed but no task completion was observed during the worker window.")
+
+          verify_worker_task_processing("data/compute-worker.log")
+          PY

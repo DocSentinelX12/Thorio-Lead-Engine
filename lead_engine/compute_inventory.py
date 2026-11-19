@@ -31,6 +31,8 @@ class ComputeInventory:
                 os.path.join(data_dir, "leads.sqlite3"),
             )
         self.db_path = db_path
+        if str(db_path) != ":memory:" and not str(db_path).startswith("file:"):
+            os.makedirs(os.path.dirname(os.path.abspath(os.fspath(db_path))), exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:

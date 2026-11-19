@@ -654,3 +654,8 @@ def test_acquire_for_requirements_filters_providers_before_acquisition(tmp_path)
     assert result["acquired"]["provider_id"] == "cluster"
     assert rejected.acquired == 0
     assert selected.acquired == 1
+def test_free_compute_store_creates_missing_parent_directory(tmp_path):
+    db_path = tmp_path / "nested" / "acquisition.sqlite3"
+    store = FreeComputeAcquisitionStore(str(db_path))
+    assert db_path.is_file()
+    assert store.records() == []

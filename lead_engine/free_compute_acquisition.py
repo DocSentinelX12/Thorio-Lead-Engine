@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import time
 from abc import ABC, abstractmethod
@@ -106,6 +107,8 @@ class FreeComputeAcquisitionStore:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
+        if str(db_path) != ":memory:" and not str(db_path).startswith("file:"):
+            os.makedirs(os.path.dirname(os.path.abspath(os.fspath(db_path))), exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:

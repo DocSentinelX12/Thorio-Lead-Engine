@@ -82,10 +82,16 @@ class ComputeWorkerClient:
             item = asdict(gpu); item["health_state"] = gpu.health_state.value; item["availability_state"] = gpu.availability_state.value; gpu_resources.append(item)
         result = self.request("/workers/register", {"worker_id": identity.worker_id, "hostname": identity.hostname, "architecture": identity.architecture, "cpu_count": identity.cpu_count, "memory_mb": identity.memory_mb, "capabilities": list(identity.capabilities) + ["lead_prepare"] + executable_agents, "gpu_resources": gpu_resources, "driver_version": identity.driver_version, "cuda_version": identity.cuda_version, "nccl_version": identity.nccl_version, "nic_names": list(identity.nic_names), "gpu_discovery_state": identity.gpu_discovery_state, "gpu_discovery_error": identity.gpu_discovery_error,
             "domain_id": identity.domain_id, "physical_fabric_evidence": dict(identity.physical_fabric_evidence)})
+        if not isinstance(result, dict) or result.get("worker_id") != self.worker_id or result.get("status") != "ready":
+            raise ComputeWorkerError("coordinator returned an invalid worker registration acknowledgement")
         self._registered = True
         return result
 
-    def heartbeat(self, current_load: int = 0) -> Dict[str, Any]: return self.request("/workers/heartbeat", {"worker_id": self.worker_id, "current_load": current_load})
+    def heartbeat(self, current_load: int = 0) -> Dict[str, Any]:
+        result = self.request("/workers/heartbeat", {"worker_id": self.worker_id, "current_load": current_load})
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise ComputeWorkerError("coordinator rejected worker heartbeat")
+        return result
     def gpu_api_execute(self, data: list[Any], required_capabilities: Mapping[str, bool] | None = None) -> Dict[str, Any]:
         if not isinstance(data, list):
             raise ComputeWorkerError("GPU API execution data must be a list")
@@ -557,9 +563,12 @@ def run_integrated_fabric_execution(
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=max(1.0, heartbeat_seconds))
 
-def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartbeat_seconds: float = 15.0, fabric_rendezvous_endpoint: str | None = None, stop_event=None) -> None:
-    if idle_seconds <= 0 or heartbeat_seconds <= 0: raise ValueError("worker intervals must be positive")
-    stop_event=stop_event or _NeverStop(); fabric_rendezvous_endpoint=(fabric_rendezvous_endpoint or os.environ.get("THORIO_FABRIC_RENDEZVOUS_ENDPOINT","")).strip(); backoff=1.0; last_heartbeat=0.0
+def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartbeat_seconds: float = 15.0, fabric_poll_seconds: float | None = None, fabric_rendezvous_endpoint: str | None = None, stop_event=None) -> None:
+    if fabric_poll_seconds is None:
+        fabric_poll_seconds = float(os.environ.get("THORIO_WORKER_FABRIC_POLL_SECONDS", "30"))
+    if idle_seconds <= 0 or heartbeat_seconds <= 0 or fabric_poll_seconds <= 0:
+        raise ValueError("worker intervals must be positive")
+    stop_event=stop_event or _NeverStop(); fabric_rendezvous_endpoint=(fabric_rendezvous_endpoint or os.environ.get("THORIO_FABRIC_RENDEZVOUS_ENDPOINT","")).strip(); backoff=1.0; last_heartbeat=0.0; last_fabric_poll=float("-inf")
     while not stop_event.is_set():
         try:
             if not client._registered:
@@ -570,7 +579,10 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                 client.heartbeat(1 if getattr(client,"_active_task",None) else 0)
                 last_heartbeat=now
                 print(f"THORIO_WORKER_HEARTBEAT_OK worker_id={client.worker_id}", flush=True)
-            assignments=client.fabric_assignments()
+            assignments=[]
+            if now-last_fabric_poll>=fabric_poll_seconds:
+                assignments=client.fabric_assignments()
+                last_fabric_poll=now
             if assignments:
                 if not fabric_rendezvous_endpoint:
                     for assignment in assignments:
@@ -610,7 +622,14 @@ def run_worker(client: ComputeWorkerClient, *, idle_seconds: float = 2.0, heartb
                 result=execute_gpu_workload(client,task,heartbeat_seconds=heartbeat_seconds)
             else:
                 result=execute_checkpointed_lead_prepare(client,task["task_id"],task["lease_token"],payload) if kind=="lead_prepare" else execute_compute_task(payload, client)
-            client.complete(task["task_id"],task["lease_token"],result)
+            completion=client.complete(task["task_id"],task["lease_token"],result)
+            if not isinstance(completion, Mapping) or completion.get("completed") is not True:
+                raise ComputeWorkerError("coordinator did not positively acknowledge task completion")
+            print(
+                "THORIO_WORKER_TASK_COMPLETED "
+                f"worker_id={client.worker_id} task_id={task['task_id']} kind={kind or '<missing>'}",
+                flush=True,
+            )
         except Exception as error:
             task_payload = task.get("payload")
             task_kind = str(task_payload.get("kind") or "<missing>") if isinstance(task_payload, Mapping) else "<invalid>"
@@ -645,4 +664,10 @@ def client_from_environment() -> ComputeWorkerClient:
     return ComputeWorkerClient(url,token,worker_id,int(os.environ.get("THORIO_COMPUTE_HTTP_TIMEOUT","20")))
 
 
-if __name__ == "__main__": run_worker(client_from_environment())
+if __name__ == "__main__":
+    run_worker(
+        client_from_environment(),
+        idle_seconds=float(os.environ.get("THORIO_WORKER_IDLE_SECONDS", "2")),
+        heartbeat_seconds=float(os.environ.get("THORIO_WORKER_HEARTBEAT_SECONDS", "15")),
+        fabric_poll_seconds=float(os.environ.get("THORIO_WORKER_FABRIC_POLL_SECONDS", "30")),
+    )
