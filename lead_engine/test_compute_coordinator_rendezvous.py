@@ -247,7 +247,7 @@ def test_free_compute_workers_retry_transient_coordinator_health_failures():
     assert "retryable_statuses = {408, 425, 429, 500, 502, 503, 504}" in text
     assert "for attempt in range(1, 9)" in text
     assert "timeout-minutes: 15" in text
-    assert "max-parallel: 8" in text
+    assert "max-parallel: 4" in text
     assert "worker: [01, 02, 03, 04, 05, 06, 07, 08]" in text
 
 

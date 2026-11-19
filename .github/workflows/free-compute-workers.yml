@@ -261,6 +261,8 @@ jobs:
           def verify_worker_task_processing(log_path):
               path = Path(log_path)
               log = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+              if "THORIO_WORKER_COORDINATOR_ERROR" in log:
+                  raise SystemExit("Worker reported a coordinator communication failure.")
               if "THORIO_WORKER_TASK_FAILED" in log:
                   raise SystemExit("Worker reported a task execution failure.")
               before_path = Path("data/task-plane-before.json")
