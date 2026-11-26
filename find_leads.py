@@ -74,7 +74,8 @@ def recent(timestamp):
 
 def draft_message(name, post_text):
     excerpt = re.sub(r"\s+", " ", str(post_text)).strip()
-    excerpt = excerpt[:150].rstrip()
+    excerpt = excerpt[:150].rstrip().rstrip(".!?")
+    excerpt = excerpt.replace("|", " ").replace("—", ",").replace("–", ",")
     greeting = f"Hi {name}," if name else "Hi there,"
     return f"{greeting} I saw your post: "{excerpt}". I thought it might be useful to connect. Would you be open to a quick conversation?"
 
@@ -165,7 +166,7 @@ def airtable_url():
     base = os.getenv("AIRTABLE_BASE_ID")
     if not base:
         raise RuntimeError("AIRTABLE_BASE_ID is missing.")
-    table = urllib.parse.quote(os.getenv("AIRTABLE_LEAD_TABLE", "Lead Radar"), safe="")
+    table = urllib.parse.quote((os.getenv("AIRTABLE_LEAD_TABLE") or "Lead Radar"), safe="")
     return f"https://api.airtable.com/v0/{base}/{table}"
 
 
