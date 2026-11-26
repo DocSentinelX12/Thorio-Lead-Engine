@@ -5,13 +5,11 @@ import sys
 import json
 import urllib.parse
 import urllib.request
-import urllib.error
 from datetime import datetime, timedelta, timezone
 
 import yaml
 
 PARTNERS = ("Shiftr", "Paxus", "Thorio", "Astrivon Labs")
-STATUSES = ("New", "Contacted", "Replied", "Partner approved", "Added to portal", "Signed", "Paid", "Not a fit")
 INTENT = (
     "hiring", "looking for a developer", "need a developer", "need developers",
     "looking for developers", "need an engineer", "looking for an engineer",
@@ -24,7 +22,7 @@ NEGATIVE = (
     "looking for a job", "looking for work", "open to work", "hire me",
     "my resume", "my cv", "recruiter looking", "i am a recruiter",
     "we are recruiting", "we're recruiting", "recruitment agency",
-    "staffing agency hiring", "dm me for candidates", "apply now",
+    "staffing agency", "recruiter", "we recruit", "dm me for candidates", "apply now",
 )
 SPAM = ("giveaway", "airdrop", "crypto signal", "赚", "telegram group", "click my bio")
 
@@ -51,6 +49,12 @@ def partner_match(post_text, keywords):
     return best if best and scores[best] else None
 
 
+def is_duplicate(post_url, handle, seen_posts, seen_handles):
+    return normalize(post_url) in seen_posts or (
+        bool(handle) and normalize(handle).lstrip("@") in seen_handles
+    )
+
+
 def is_real_need(text):
     value = normalize(text)
     if any(term in value for term in NEGATIVE + SPAM):
@@ -72,7 +76,7 @@ def draft_message(name, post_text):
     excerpt = re.sub(r"\s+", " ", str(post_text)).strip()
     excerpt = excerpt[:150].rstrip()
     greeting = f"Hi {name}," if name else "Hi there,"
-    return f"{greeting} I saw your post about {excerpt}. I thought it might be useful to connect. Would you be open to a quick conversation?"
+    return f"{greeting} I saw your post: "{excerpt}". I thought it might be useful to connect. Would you be open to a quick conversation?"
 
 
 def request_json(url, token, params=None):
@@ -121,7 +125,7 @@ def search_threads(keywords):
     posts = []
     for term in keywords:
         try:
-            data = request_json("https://graph.threads.net/v1.0/keyword_search", token, {
+            data = request_json("https://graph.threads.com/v1.0/keyword_search", token, {
                 "q": term, "search_type": "RECENT", "limit": "100",
                 "fields": "id,text,permalink,timestamp,username",
             })
@@ -228,7 +232,7 @@ def main():
     for lead in candidates:
         post_url = normalize(lead["url"])
         handle = normalize(lead["handle"]).lstrip("@")
-        if post_url in seen_posts or (handle and handle in seen_handles):
+        if is_duplicate(post_url, handle, seen_posts, seen_handles):
             skipped += 1
             continue
         if saved >= 40:
