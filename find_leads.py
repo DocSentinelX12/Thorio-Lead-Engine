@@ -41,7 +41,7 @@ def normalize(value):
 def matching_terms(post_text, terms):
     text = normalize(post_text)
     return [term for term in terms if re.search(
-        r"(?<![a-z0-9])" + re.escape(normalize(term)) + r"(?![a-z0-9])", text
+        r"(?<![a-z0-9])" + re.escape(normalize(term)) + r"s?(?![a-z0-9])", text
     )]
 
 
