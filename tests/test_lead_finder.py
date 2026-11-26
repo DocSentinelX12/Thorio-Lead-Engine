@@ -12,7 +12,7 @@ class LeadFinderTests(unittest.TestCase):
     def test_partner_matching(self):
         keywords = load_keywords()
         self.assertEqual(partner_match("We need a dev agency to build our MVP", keywords), "Astrivon Labs")
-        self.assertEqual(partner_match("We need contractors to help our software team", keywords), "Paxus")
+        self.assertEqual(partner_match("We need contractors for a short-term project", keywords), "Paxus")
 
     def test_duplicates_are_skipped(self):
         posts = {"https://x.com/example/status/123"}
