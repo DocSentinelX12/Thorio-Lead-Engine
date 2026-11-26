@@ -1,8 +1,6 @@
-import tempfile
 import unittest
-from pathlib import Path
 
-from find_leads import load_keywords, partner_match, normalize
+from find_leads import is_duplicate, load_keywords, partner_match
 
 
 class LeadFinderTests(unittest.TestCase):
@@ -16,11 +14,11 @@ class LeadFinderTests(unittest.TestCase):
         self.assertEqual(partner_match("We need a dev agency to build our MVP", keywords), "Astrivon Labs")
 
     def test_duplicates_are_skipped(self):
-        already_saved_posts = {"https://x.com/example/status/123"}
-        already_saved_handles = {"example"}
-        post_url, handle = "https://x.com/example/status/123", "Example"
-        duplicate = normalize(post_url) in already_saved_posts or normalize(handle).lstrip("@") in already_saved_handles
-        self.assertTrue(duplicate)
+        posts = {"https://x.com/example/status/123"}
+        handles = {"example"}
+        self.assertTrue(is_duplicate("https://x.com/example/status/123", "", posts, handles))
+        self.assertTrue(is_duplicate("https://x.com/example/status/456", "Example", posts, handles))
+        self.assertFalse(is_duplicate("https://x.com/new/status/789", "New", posts, handles))
 
 
 if __name__ == "__main__":
