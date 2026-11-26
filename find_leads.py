@@ -38,13 +38,15 @@ def normalize(value):
     return " ".join(str(value or "").lower().split())
 
 
-def partner_match(post_text, keywords):
+def matching_terms(post_text, terms):
     text = normalize(post_text)
-    scores = {}
-    for partner, terms in keywords.items():
-        scores[partner] = sum(1 for term in terms if re.search(
-            r"(?<![a-z0-9])" + re.escape(normalize(term)) + r"(?![a-z0-9])", text
-        ))
+    return [term for term in terms if re.search(
+        r"(?<![a-z0-9])" + re.escape(normalize(term)) + r"(?![a-z0-9])", text
+    )]
+
+
+def partner_match(post_text, keywords):
+    scores = {partner: len(matching_terms(post_text, terms)) for partner, terms in keywords.items()}
     best = max(scores, key=scores.get) if scores else None
     return best if best and scores[best] else None
 
@@ -225,7 +227,8 @@ def main():
         if not partner:
             continue
         post["partner"] = partner
-        post["reason"] = f"Your post mentions a business need and matches {partner} keywords."
+        matched = matching_terms(text, keywords[partner])[:3]
+        post["reason"] = f"Post mentions {', '.join(matched)} and describes a business need."
         post["draft"] = draft_message(post.get("name"), text)
         candidates.append(post)
 
