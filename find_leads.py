@@ -100,8 +100,8 @@ def search_x(keywords):
         print("X skipped: add the X_BEARER_TOKEN secret in GitHub Actions.")
         return []
     posts = []
-    for term in keywords:
-        try:
+    try:
+        for term in keywords:
             query = f'"{term}" -is:retweet'
             data = request_json("https://api.x.com/2/tweets/search/recent", token, {
                 "query": query, "max_results": "100",
@@ -119,8 +119,8 @@ def search_x(keywords):
                     "profile": f'https://x.com/{user["username"]}' if user.get("username") else "",
                     "url": f'https://x.com/{user["username"]}/status/{item["id"]}' if user.get("username") else "",
                 })
-        except Exception as exc:
-            print(f"X search warning for '{term}': {exc}")
+    except Exception as exc:
+        print(f"X search stopped: {exc}. Threads will still be searched.")
     return posts
 
 
@@ -130,8 +130,8 @@ def search_threads(keywords):
         print("Threads skipped: add the THREADS_ACCESS_TOKEN secret in GitHub Actions.")
         return []
     posts = []
-    for term in keywords:
-        try:
+    try:
+        for term in keywords:
             data = request_json("https://graph.threads.com/v1.0/keyword_search", token, {
                 "q": term, "search_type": "RECENT", "limit": "100",
                 "fields": "id,text,permalink,timestamp,username",
@@ -146,8 +146,8 @@ def search_threads(keywords):
                     "profile": f"https://www.threads.net/@{username}" if username else "",
                     "url": item.get("permalink", ""),
                 })
-        except Exception as exc:
-            print(f"Threads search warning for '{term}': {exc}")
+    except Exception as exc:
+        print(f"Threads search stopped: {exc}. X results will still be saved.")
     return posts
 
 
