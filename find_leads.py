@@ -77,7 +77,7 @@ def draft_message(name, post_text):
     excerpt = excerpt[:150].rstrip().rstrip(".!?")
     excerpt = excerpt.replace("|", " ").replace("—", ",").replace("–", ",")
     greeting = f"Hi {name}," if name else "Hi there,"
-    return f"{greeting} I saw your post: "{excerpt}". I thought it might be useful to connect. Would you be open to a quick conversation?"
+    return f'{greeting} I saw your post: "{excerpt}". I thought it might be useful to connect. Would you be open to a quick conversation?'
 
 
 def request_json(url, token, params=None, token_in_query=False):
@@ -143,7 +143,7 @@ def search_threads(keywords):
                     "platform": "Threads", "id": item.get("id"),
                     "text": item.get("text", ""), "timestamp": item.get("timestamp"),
                     "name": username, "handle": username,
-                    "profile": f"https://www.threads.net/@{username}" if username else "",
+                    "profile": f"https://www.threads.com/@{username}" if username else "",
                     "url": item.get("permalink", ""),
                 })
     except Exception as exc:
