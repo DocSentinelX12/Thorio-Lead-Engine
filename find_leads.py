@@ -255,7 +255,8 @@ def main():
                 seen_handles.add(handle)
             saved += 1
         except Exception as exc:
-            print(f"Could not save lead from {lead['platform']} to Airtable: {exc}")
+            print(f"Airtable save stopped after an error: {exc}")
+            break
     print(f"Finished: saved {saved} new leads; skipped {skipped} duplicates.")
     return 0
 
