@@ -36,14 +36,19 @@ The table name defaults to **Lead Radar**. If your table has a different name, a
 
 ## 2. Run it by hand
 
+**One required GitHub setting:** GitHub only enables both scheduled runs and the Run workflow button for a workflow file on the repository's default branch. The workflow is safely stored on `lite`, so make `lite` the default branch before trying to run it. This does not delete or change the `main` branch.
+
+To make `lite` the default branch:
 1. Open the repository on GitHub.
-2. Select the **Actions** tab.
-3. Select **Daily Leads** on the left.
-4. Press **Run workflow**, select the `lite` branch, and press the green **Run workflow** button.
+2. Select **Settings → General**.
+3. Find **Default branch**, choose `lite`, and save the change.
 
-It also runs automatically every day at 13:00 UTC. Each run saves no more than 40 new leads.
+Then run it by hand:
+1. Open the **Actions** tab.
+2. Select **Daily Leads** on the left.
+3. Press **Run workflow** and then the green **Run workflow** button.
 
-**Important:** GitHub only starts scheduled workflows from the repository's default branch. Because this work is safely isolated on `lite`, the manual Run workflow button works immediately, but the daily schedule will not start until you make `lite` the default branch. To do that without deleting `main`, open **Settings → General → Default branch**, choose `lite`, and save. The `main` branch remains available and unchanged.
+After the default branch is changed, it also runs automatically every day at 13:00 UTC. Each run saves no more than 40 new leads.
 
 ## 3. Edit your keywords
 
