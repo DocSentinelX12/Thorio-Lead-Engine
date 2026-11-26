@@ -43,6 +43,8 @@ The table name defaults to **Lead Radar**. If your table has a different name, a
 
 It also runs automatically every day at 13:00 UTC. Each run saves no more than 40 new leads.
 
+**Important:** GitHub only starts scheduled workflows from the repository's default branch. Because this work is safely isolated on `lite`, the manual Run workflow button works immediately, but the daily schedule will not start until you make `lite` the default branch. To do that without deleting `main`, open **Settings → General → Default branch**, choose `lite`, and save. The `main` branch remains available and unchanged.
+
 ## 3. Edit your keywords
 
 1. Open `keywords.yaml` in the repository.
