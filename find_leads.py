@@ -79,10 +79,16 @@ def draft_message(name, post_text):
     return f"{greeting} I saw your post: "{excerpt}". I thought it might be useful to connect. Would you be open to a quick conversation?"
 
 
-def request_json(url, token, params=None):
+def request_json(url, token, params=None, token_in_query=False):
+    params = dict(params or {})
+    headers = {}
+    if token_in_query:
+        params["access_token"] = token
+    else:
+        headers["Authorization"] = f"Bearer {token}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=25) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -128,7 +134,8 @@ def search_threads(keywords):
             data = request_json("https://graph.threads.com/v1.0/keyword_search", token, {
                 "q": term, "search_type": "RECENT", "limit": "100",
                 "fields": "id,text,permalink,timestamp,username",
-            })
+                "since": str(int((datetime.now(timezone.utc) - timedelta(days=7)).timestamp())),
+            }, token_in_query=True)
             for item in data.get("data", []):
                 username = item.get("username", "")
                 posts.append({
