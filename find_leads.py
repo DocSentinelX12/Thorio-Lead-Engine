@@ -195,6 +195,7 @@ def existing_leads(url):
 
 def save_lead(url, lead):
     fields = {
+        "Lead": f'{lead["name"] or lead["handle"] or "New lead"} - {lead["partner"]}',
         "Date found": datetime.now(timezone.utc).date().isoformat(),
         "Platform": lead["platform"], "Name": lead["name"],
         "Handle": lead["handle"], "Profile link": lead["profile"],
